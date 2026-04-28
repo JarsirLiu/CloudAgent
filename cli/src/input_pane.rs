@@ -60,10 +60,16 @@ impl InputPane {
         self.composer.handle_key(key).map(InputPaneAction::Composer)
     }
 
-    pub fn render(&self, mode: FrontendMode, status_text: &str, area_width: u16) -> (Paragraph<'static>, u16, u16) {
+    pub fn render(
+        &self,
+        mode: FrontendMode,
+        status_text: &str,
+        status_meta: &str,
+        area_width: u16,
+    ) -> (Paragraph<'static>, u16, u16) {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(divider_line(area_width as usize));
-        lines.push(status_line(mode, status_text));
+        lines.push(status_line(mode, status_text, status_meta));
         lines.push(Line::raw(""));
 
         let mut lines_before_composer = 3u16;
@@ -75,7 +81,9 @@ impl InputPane {
         }
 
         if self.view_stack.is_empty() {
-            let composer = self.composer.render(mode, area_width.saturating_sub(4) as usize);
+            let composer = self
+                .composer
+                .render(mode, area_width.saturating_sub(4) as usize);
             lines_before_composer += composer.cursor_row;
             lines.extend(composer.lines);
             lines.push(hint_line(mode));
@@ -131,7 +139,8 @@ impl InputPane {
 
     pub fn set_approval(&mut self, approval: ApprovalInlineState) {
         self.clear_non_approval_views();
-        self.view_stack.push(Box::new(ApprovalOverlay::new(approval)));
+        self.view_stack
+            .push(Box::new(ApprovalOverlay::new(approval)));
         self.approval_active = true;
     }
 

@@ -50,7 +50,9 @@ impl WelcomeScreen {
             Span::raw("   "),
             Span::styled(
                 "Hello, I'm CloudAgent",
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
         lines.push(Line::from(vec![
@@ -72,9 +74,7 @@ impl WelcomeScreen {
         } else {
             vec![Span::styled(
                 "CloudAgent",
-                Style::default()
-                    .fg(logo_color)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(logo_color).add_modifier(Modifier::BOLD),
             )]
         };
 
@@ -107,10 +107,7 @@ impl WelcomeScreen {
             lines.push(Line::from(vec![
                 Span::raw("    "),
                 Span::styled("→ ", Style::default().fg(Color::Rgb(90, 100, 135))),
-                Span::styled(
-                    suggestion.to_string(),
-                    Style::default().fg(soft),
-                ),
+                Span::styled(suggestion.to_string(), Style::default().fg(soft)),
             ]));
         }
 
@@ -119,24 +116,32 @@ impl WelcomeScreen {
             Span::raw("  "),
             Span::styled(
                 "Enter ",
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("send  ", Style::default().fg(dim)),
             Span::styled(
                 "Ctrl+K ",
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("interrupt  ", Style::default().fg(dim)),
             Span::styled(
                 "F2 ",
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("history  ", Style::default().fg(dim)),
             Span::styled(
                 "F4 ",
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("reset", Style::default().fg(dim)),
+            Span::styled("clear", Style::default().fg(dim)),
         ]));
 
         Paragraph::new(Text::from(lines))

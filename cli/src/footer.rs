@@ -56,9 +56,7 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str) -> Line<'s
 
 pub fn hint_line(mode: FrontendMode) -> Line<'static> {
     let hint = match mode {
-        FrontendMode::Idle => {
-            "  Enter submit  ·  Ctrl+F search  ·  [ ] tool nav  ·  o toggle tool  ·  O all tools"
-        }
+        FrontendMode::Idle => "  Enter submit  ·  [ ] tool nav  ·  o toggle tool  ·  O all tools",
         FrontendMode::Running => "  Ctrl+K interrupt the current turn",
         FrontendMode::WaitingForApproval => "  Enter submit  ·  y approve  ·  n deny",
     };

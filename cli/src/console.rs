@@ -1,7 +1,6 @@
 use crate::chat_composer::ComposerAction;
 use crate::history_cell::{
-    HistoryCell, HistoryTone, Transcript, TranscriptRenderState, render_history_entry,
-    render_turn_event,
+    HistoryCell, HistoryTone, Transcript, TranscriptRenderState, render_turn_event,
 };
 use crate::input_pane::{ApprovalInlineState, InputPane, InputPaneAction, InputPaneViewState};
 use crate::welcome::WelcomeScreen;
@@ -13,7 +12,7 @@ use agent_protocol::{
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use crossterm::cursor::MoveTo;
-use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
@@ -42,7 +41,7 @@ impl ConsoleBanner {
         Self {
             title: format!("cloudagent session `{session_id}`"),
             commands:
-                "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt  F2 history  F3 status  F4 reset"
+                "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt  F2 history  F3 status  F4 clear"
                     .to_string(),
             idle_prompt: "message".to_string(),
             approval_prompt: "approval".to_string(),
@@ -127,7 +126,6 @@ impl ConsoleState {
 enum ParsedInput {
     Command(AppClientCommand),
     ApprovalAnswer { approved: bool, reason: String },
-    Search(String),
 }
 
 struct TuiApp {
@@ -142,10 +140,6 @@ struct TuiApp {
     tool_cell_indices: Vec<usize>,
     selected_tool_index: Option<usize>,
     history_loaded: bool,
-    show_history_panel_on_next_response: bool,
-    search_query: Option<String>,
-    search_matches: Vec<usize>,
-    search_match_index: usize,
     status_text: String,
     last_model_name: Option<String>,
     last_message_count: usize,
@@ -168,10 +162,6 @@ impl TuiApp {
             tool_cell_indices: Vec::new(),
             selected_tool_index: None,
             history_loaded: false,
-            show_history_panel_on_next_response: false,
-            search_query: None,
-            search_matches: Vec::new(),
-            search_match_index: 0,
             status_text: format!("Connected via {connection_label}"),
             last_model_name: None,
             last_message_count: 0,
@@ -197,10 +187,6 @@ impl TuiApp {
         self.tool_cell_indices.clear();
         self.selected_tool_index = None;
         self.history_loaded = true;
-        self.show_history_panel_on_next_response = false;
-        self.search_query = None;
-        self.search_matches.clear();
-        self.search_match_index = 0;
         self.status_text = format!("Connected via {}", self.connection_label);
         self.last_model_name = None;
         self.last_message_count = 0;
@@ -251,33 +237,6 @@ impl TuiApp {
                         self.transcript_scroll = 0;
                     }
                     self.history_loaded = true;
-                    if self.show_history_panel_on_next_response {
-                        let history_lines = messages
-                            .iter()
-                            .map(|message| {
-                                let cell = render_history_entry(message);
-                                cell.to_lines(96)
-                                    .into_iter()
-                                    .map(|line| line.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            })
-                            .collect::<Vec<_>>();
-                        self.input_pane.set_panel(Some(InputPaneViewState {
-                            title: "Session history".to_string(),
-                            lines: if history_lines.is_empty() {
-                                vec![
-                                    "No history yet.".to_string(),
-                                    "Esc closes this panel.".to_string(),
-                                ]
-                            } else {
-                                let mut lines = history_lines;
-                                lines.push("Esc closes this panel.".to_string());
-                                lines
-                            },
-                        }));
-                        self.show_history_panel_on_next_response = false;
-                    }
                 }
                 AppServerNotification::SubscriptionChanged {
                     session_id,
@@ -429,19 +388,6 @@ impl TuiApp {
                     }
                     return None;
                 }
-                KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.input_pane
-                        .set_search(self.search_query.clone().unwrap_or_default());
-                    return None;
-                }
-                KeyCode::Char('n') => {
-                    self.jump_to_search_match(1);
-                    return None;
-                }
-                KeyCode::Char('N') => {
-                    self.jump_to_search_match(-1);
-                    return None;
-                }
                 KeyCode::Char(']') => {
                     self.move_tool_focus(1);
                     return None;
@@ -468,7 +414,6 @@ impl TuiApp {
                 Some(ParsedInput::Command(AppClientCommand::Exit))
             }
             InputPaneAction::Composer(ComposerAction::History) => {
-                self.show_history_panel_on_next_response = true;
                 Some(ParsedInput::Command(AppClientCommand::RequestHistory {
                     session_id: self.session_id.clone(),
                 }))
@@ -487,7 +432,6 @@ impl TuiApp {
             InputPaneAction::ApprovalSubmit { approved, reason } => {
                 Some(ParsedInput::ApprovalAnswer { approved, reason })
             }
-            InputPaneAction::SearchSubmit { query } => Some(ParsedInput::Search(query)),
         }
     }
 
@@ -546,7 +490,6 @@ impl TuiApp {
         } else {
             "tools expanded"
         };
-        let search_hint = self.search_summary();
         let tool_focus = self.tool_focus_summary();
 
         let model = self.last_model_name.as_deref().unwrap_or("pending");
@@ -593,8 +536,6 @@ impl TuiApp {
             Span::styled(tool_view, Style::default().fg(Color::Rgb(90, 110, 140))),
             Span::raw("  "),
             Span::styled(tool_focus, Style::default().fg(Color::Rgb(120, 150, 130))),
-            Span::raw("  "),
-            Span::styled(search_hint, Style::default().fg(Color::Rgb(120, 130, 150))),
             Span::raw("  "),
             Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
         ])]))
@@ -736,70 +677,8 @@ impl TuiApp {
         if let Some(tool) = &self.last_tool_name {
             parts.push(format!("tool {tool}"));
         }
-        if let Some(query) = &self.search_query {
-            parts.push(format!("search {query}"));
-        }
         parts.push(self.connection_label.clone());
         parts.join("  ·  ")
-    }
-
-    fn perform_search(&mut self, query: String) {
-        if query.is_empty() {
-            self.search_query = None;
-            self.search_matches.clear();
-            self.search_match_index = 0;
-            self.status_text = "Search cleared".to_string();
-            return;
-        }
-
-        self.search_query = Some(query.clone());
-        self.search_matches = self.transcript.find_matches(&query);
-        self.search_match_index = 0;
-        if self.search_matches.is_empty() {
-            self.status_text = format!("No matches for `{query}`");
-            return;
-        }
-        self.selected_tool_index = self
-            .tool_cell_indices
-            .iter()
-            .position(|idx| *idx == self.search_matches[0]);
-        self.status_text = format!("Found {} matches for `{query}`", self.search_matches.len());
-        self.focus_current_search_match();
-    }
-
-    fn jump_to_search_match(&mut self, delta: isize) {
-        if self.search_matches.is_empty() {
-            return;
-        }
-        let len = self.search_matches.len() as isize;
-        self.search_match_index =
-            (self.search_match_index as isize + delta).rem_euclid(len) as usize;
-        self.focus_current_search_match();
-    }
-
-    fn focus_current_search_match(&mut self) {
-        let Some(&cell_index) = self.search_matches.get(self.search_match_index) else {
-            return;
-        };
-        self.transcript_scroll = self.transcript.scroll_for_cell_with_state(
-            cell_index,
-            108,
-            self.transcript_viewport_height.max(1),
-            &self.transcript_render_state(),
-        );
-    }
-
-    fn search_summary(&self) -> String {
-        match (&self.search_query, self.search_matches.is_empty()) {
-            (Some(query), false) => format!(
-                "search `{}` {}/{}",
-                query,
-                self.search_match_index + 1,
-                self.search_matches.len()
-            ),
-            (Some(query), true) => format!("search `{}` 0/0", query),
-            (None, _) => "search off".to_string(),
-        }
     }
 
     fn tool_focus_summary(&self) -> String {
@@ -864,13 +743,8 @@ impl TuiApp {
         TranscriptRenderState {
             compact_tools: self.compact_tools,
             expanded_tool_cells: self.expanded_tool_cells.clone(),
-            selected_cell: selected_cell.or_else(|| {
-                self.search_matches
-                    .get(self.search_match_index)
-                    .copied()
-                    .filter(|_| !self.search_matches.is_empty())
-            }),
-            matched_cells: self.search_matches.iter().copied().collect(),
+            selected_cell,
+            matched_cells: HashSet::new(),
         }
     }
 }
@@ -1074,9 +948,6 @@ fn handle_tui_input(
                 reason: Some(reason),
             })?;
         }
-        ParsedInput::Search(query) => {
-            app.perform_search(query);
-        }
     }
     Ok(false)
 }
@@ -1091,7 +962,7 @@ fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
 
     let command = match trimmed {
         "/exit" | "/quit" => AppClientCommand::Exit,
-        "/reset" => AppClientCommand::ResetSession {
+        "/clear" => AppClientCommand::ResetSession {
             session_id: session_id.to_string(),
         },
         "/history" => AppClientCommand::RequestHistory {

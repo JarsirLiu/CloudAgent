@@ -112,7 +112,9 @@ impl BottomPaneView for ApprovalOverlay {
                 Span::raw("  "),
                 Span::styled(
                     self.state.title.clone(),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
@@ -122,7 +124,11 @@ impl BottomPaneView for ApprovalOverlay {
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
-                    if self.selected == 0 { "  > 1." } else { "    1." },
+                    if self.selected == 0 {
+                        "  > 1."
+                    } else {
+                        "    1."
+                    },
                     Style::default()
                         .fg(Color::Rgb(100, 255, 100))
                         .add_modifier(Modifier::BOLD),
@@ -132,7 +138,11 @@ impl BottomPaneView for ApprovalOverlay {
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
-                    if self.selected == 1 { "  > 2." } else { "    2." },
+                    if self.selected == 1 {
+                        "  > 2."
+                    } else {
+                        "    2."
+                    },
                     Style::default()
                         .fg(Color::Rgb(255, 100, 100))
                         .add_modifier(Modifier::BOLD),
@@ -179,7 +189,9 @@ impl BottomPaneView for ApprovalOverlay {
 
     fn cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
         let prompt_width = 10usize;
-        let x = area.x + prompt_width as u16 + unicode_width::UnicodeWidthStr::width(self.reply.text()) as u16;
+        let x = area.x
+            + prompt_width as u16
+            + unicode_width::UnicodeWidthStr::width(self.reply.text()) as u16;
         let y = area.y + 7;
         Some((x, y))
     }
