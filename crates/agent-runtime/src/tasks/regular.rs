@@ -99,16 +99,58 @@ where
             },
         );
 
+        let mut streaming_assistant_item_id: Option<String> = None;
         let response = runtime
-            .complete_model_request(
+            .complete_model_request_streaming(
                 &cancellation_token,
                 ModelRequest {
                     messages: session.messages.clone(),
                     tools: tool_specs.clone(),
                     temperature: runtime.config.llm.temperature,
                 },
+                &mut |delta: String| {
+                    if delta.is_empty() {
+                        return;
+                    }
+                    let item_id = streaming_assistant_item_id.get_or_insert_with(|| {
+                        let id = format!("assistant:{turn_id}:{}", assistant_item_seq);
+                        assistant_item_seq += 1;
+                        emit_event(
+                            &mut events,
+                            on_event,
+                            TurnEvent::ItemStarted {
+                                turn_id: turn_id.to_string(),
+                                item_id: id.clone(),
+                                kind: TurnItemKind::AssistantMessage,
+                                title: Some("assistant_message".to_string()),
+                            },
+                        );
+                        id
+                    });
+                    emit_event(
+                        &mut events,
+                        on_event,
+                        TurnEvent::ItemDelta {
+                            turn_id: turn_id.to_string(),
+                            item_id: item_id.clone(),
+                            kind: TurnItemDeltaKind::Text,
+                            delta,
+                        },
+                    );
+                },
             )
             .await?;
+
+        if let Some(item_id) = streaming_assistant_item_id.take() {
+            emit_event(
+                &mut events,
+                on_event,
+                TurnEvent::ItemCompleted {
+                    turn_id: turn_id.to_string(),
+                    item_id,
+                },
+            );
+        }
 
         last_model_name = response.model_name.clone();
         let tool_calls = response.tool_calls.clone();
@@ -122,16 +164,6 @@ where
                 tool_call_count: tool_calls.len(),
             },
         );
-
-        if let Some(content) = response.content.clone() {
-            emit_assistant_item(
-                &mut events,
-                on_event,
-                turn_id,
-                &content,
-                &mut assistant_item_seq,
-            );
-        }
 
         session.push_assistant_message(response.content.clone(), tool_calls.clone());
 
@@ -361,22 +393,6 @@ where
     })
 }
 
-fn assistant_deltas(content: &str, chunk_chars: usize) -> Vec<String> {
-    if content.is_empty() || chunk_chars == 0 {
-        return Vec::new();
-    }
-
-    let chars: Vec<char> = content.chars().collect();
-    let mut out = Vec::new();
-    let mut start = 0usize;
-    while start < chars.len() {
-        let end = (start + chunk_chars).min(chars.len());
-        out.push(chars[start..end].iter().collect());
-        start = end;
-    }
-    out
-}
-
 fn emit_assistant_item(
     events: &mut Vec<TurnEvent>,
     on_event: &mut impl FnMut(&TurnEvent),
@@ -396,18 +412,16 @@ fn emit_assistant_item(
             title: Some("assistant_message".to_string()),
         },
     );
-    for delta in assistant_deltas(content, 96) {
-        emit_event(
-            events,
-            on_event,
-            TurnEvent::ItemDelta {
-                turn_id: turn_id.to_string(),
-                item_id: assistant_item_id.clone(),
-                kind: TurnItemDeltaKind::Text,
-                delta,
-            },
-        );
-    }
+    emit_event(
+        events,
+        on_event,
+        TurnEvent::ItemDelta {
+            turn_id: turn_id.to_string(),
+            item_id: assistant_item_id.clone(),
+            kind: TurnItemDeltaKind::Text,
+            delta: content.to_string(),
+        },
+    );
     emit_event(
         events,
         on_event,
