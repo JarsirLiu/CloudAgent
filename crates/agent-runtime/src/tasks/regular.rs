@@ -1,7 +1,10 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{AgentSession, ModelRequest};
-use agent_protocol::{ApprovalDecision, ApprovalRequest, ToolResult, TurnEvent, TurnItemKind, TurnState};
+use agent_protocol::{
+    ApprovalDecision, ApprovalRequest, ToolResult, TurnEvent, TurnItemDeltaKind, TurnItemKind,
+    TurnState,
+};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
@@ -63,6 +66,7 @@ where
     let mut session = session;
     let mut events = Vec::new();
     let mut last_model_name = None;
+    let mut assistant_item_seq: usize = 0;
     let tool_specs = runtime.tools.specs();
 
     for _ in 0..runtime.policy.max_tool_roundtrips {
@@ -120,44 +124,32 @@ where
         );
 
         if let Some(content) = response.content.clone() {
-            let assistant_item_id = format!("assistant:{turn_id}");
-            emit_event(
+            emit_assistant_item(
                 &mut events,
                 on_event,
-                TurnEvent::ItemStarted {
-                    turn_id: turn_id.to_string(),
-                    item_id: assistant_item_id.clone(),
-                    kind: TurnItemKind::AssistantMessage,
-                    title: Some("assistant_message".to_string()),
-                },
-            );
-            for delta in assistant_deltas(&content, 96) {
-                emit_event(
-                    &mut events,
-                    on_event,
-                    TurnEvent::ItemDelta {
-                        turn_id: turn_id.to_string(),
-                        item_id: assistant_item_id.clone(),
-                        delta: delta.clone(),
-                    },
-                );
-            }
-            emit_event(
-                &mut events,
-                on_event,
-                TurnEvent::ItemCompleted {
-                    turn_id: turn_id.to_string(),
-                    item_id: assistant_item_id,
-                },
+                turn_id,
+                &content,
+                &mut assistant_item_seq,
             );
         }
 
         session.push_assistant_message(response.content.clone(), tool_calls.clone());
 
         if tool_calls.is_empty() {
+            let has_content = response.content.is_some();
             let final_response = response
                 .content
+                .clone()
                 .unwrap_or_else(|| "The model returned an empty response.".to_string());
+            if !has_content {
+                emit_assistant_item(
+                    &mut events,
+                    on_event,
+                    turn_id,
+                    &final_response,
+                    &mut assistant_item_seq,
+                );
+            }
             emit_event(
                 &mut events,
                 on_event,
@@ -264,12 +256,13 @@ where
                     emit_event(
                         &mut events,
                         on_event,
-                        TurnEvent::ItemDelta {
-                            turn_id: turn_id.to_string(),
-                            item_id: tool_item_id.clone(),
-                            delta: format!("Tool execution skipped: {reason}"),
-                        },
-                    );
+                    TurnEvent::ItemDelta {
+                        turn_id: turn_id.to_string(),
+                        item_id: tool_item_id.clone(),
+                        kind: TurnItemDeltaKind::ToolOutput,
+                        delta: format!("Tool execution skipped: {reason}"),
+                    },
+                );
                     emit_event(
                         &mut events,
                         on_event,
@@ -311,6 +304,7 @@ where
                     TurnEvent::ItemDelta {
                         turn_id: turn_id.to_string(),
                         item_id: tool_item_id.clone(),
+                        kind: TurnItemDeltaKind::ToolOutput,
                         delta: result.content.clone(),
                     },
                 );
@@ -321,6 +315,7 @@ where
                     TurnEvent::ItemDelta {
                         turn_id: turn_id.to_string(),
                         item_id: tool_item_id.clone(),
+                        kind: TurnItemDeltaKind::ToolOutput,
                         delta: result.summary.clone(),
                     },
                 );
@@ -340,6 +335,13 @@ where
     let final_response =
         "Reached the configured tool roundtrip limit before the model produced a final answer."
             .to_string();
+    emit_assistant_item(
+        &mut events,
+        on_event,
+        turn_id,
+        &final_response,
+        &mut assistant_item_seq,
+    );
     session.push_assistant_message(Some(final_response.clone()), Vec::new());
     emit_event(
         &mut events,
@@ -373,4 +375,45 @@ fn assistant_deltas(content: &str, chunk_chars: usize) -> Vec<String> {
         start = end;
     }
     out
+}
+
+fn emit_assistant_item(
+    events: &mut Vec<TurnEvent>,
+    on_event: &mut impl FnMut(&TurnEvent),
+    turn_id: &str,
+    content: &str,
+    assistant_item_seq: &mut usize,
+) {
+    let assistant_item_id = format!("assistant:{turn_id}:{}", *assistant_item_seq);
+    *assistant_item_seq += 1;
+    emit_event(
+        events,
+        on_event,
+        TurnEvent::ItemStarted {
+            turn_id: turn_id.to_string(),
+            item_id: assistant_item_id.clone(),
+            kind: TurnItemKind::AssistantMessage,
+            title: Some("assistant_message".to_string()),
+        },
+    );
+    for delta in assistant_deltas(content, 96) {
+        emit_event(
+            events,
+            on_event,
+            TurnEvent::ItemDelta {
+                turn_id: turn_id.to_string(),
+                item_id: assistant_item_id.clone(),
+                kind: TurnItemDeltaKind::Text,
+                delta,
+            },
+        );
+    }
+    emit_event(
+        events,
+        on_event,
+        TurnEvent::ItemCompleted {
+            turn_id: turn_id.to_string(),
+            item_id: assistant_item_id,
+        },
+    );
 }

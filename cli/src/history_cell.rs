@@ -315,19 +315,11 @@ impl Transcript {
         let end = total.saturating_sub(scroll);
         let start = end.saturating_sub(height);
 
-        let mut result: Vec<Line<'static>> = all_lines
+        let result: Vec<Line<'static>> = all_lines
             .into_iter()
             .skip(start)
             .take(end - start)
             .collect();
-
-        // If we have less lines than height and we are at the bottom (scroll=0),
-        // we can pad with empty lines at the TOP to push content to bottom.
-        if result.len() < height && scroll == 0 {
-            let mut padded = vec![Line::raw(""); height - result.len()];
-            padded.extend(result);
-            result = padded;
-        }
 
         result
     }

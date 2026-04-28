@@ -1,6 +1,7 @@
 use agent_protocol::FrontendMode;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use crate::history_cell::shimmer_spans;
 
@@ -11,7 +12,7 @@ pub fn divider_line(width: usize) -> Line<'static> {
     ))
 }
 
-pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str) -> Line<'static> {
+pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str, width: usize) -> Line<'static> {
     let (dot_color, mode_label, badge_bg) = match mode {
         FrontendMode::Idle => (Color::Rgb(80, 200, 120), "IDLE", Color::Rgb(18, 34, 24)),
         FrontendMode::Running => (Color::Rgb(100, 160, 255), "WORKING", Color::Rgb(18, 28, 45)),
@@ -42,12 +43,31 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str) -> Line<'s
     ];
     spans.extend(status_spans);
     if !meta.is_empty() {
+        let current_width: usize = spans
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
+        let available_meta = width.saturating_sub(current_width + 5);
+        if available_meta == 0 {
+            return Line::from(spans);
+        }
+        let mut meta_text = String::new();
+        let mut used = 0usize;
+        for ch in meta.chars() {
+            let w = UnicodeWidthStr::width(ch.encode_utf8(&mut [0; 4]));
+            if used + w > available_meta {
+                meta_text.push('…');
+                break;
+            }
+            meta_text.push(ch);
+            used += w;
+        }
         spans.push(Span::styled(
             "  ·  ",
             Style::default().fg(Color::Rgb(60, 60, 70)),
         ));
         spans.push(Span::styled(
-            meta.to_string(),
+            meta_text,
             Style::default().fg(Color::Rgb(95, 105, 120)),
         ));
     }
@@ -56,7 +76,7 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str) -> Line<'s
 
 pub fn hint_line(mode: FrontendMode) -> Line<'static> {
     let hint = match mode {
-        FrontendMode::Idle => "  Enter submit  ·  [ ] tool nav  ·  o toggle tool  ·  O all tools",
+        FrontendMode::Idle => "  Enter submit  ·  Ctrl+K interrupt  ·  /clear clear session",
         FrontendMode::Running => "  Ctrl+K interrupt the current turn",
         FrontendMode::WaitingForApproval => "  Enter submit  ·  y approve  ·  n deny",
     };

@@ -11,8 +11,6 @@ pub enum ComposerAction {
     Submit(String),
     Interrupt,
     Exit,
-    History,
-    Status,
     Reset,
     None,
 }
@@ -24,14 +22,12 @@ pub struct ComposerRender {
 
 pub struct ChatComposer {
     textarea: TextArea,
-    slash_selected: usize,
 }
 
 impl ChatComposer {
     pub fn new() -> Self {
         Self {
             textarea: TextArea::new(),
-            slash_selected: 0,
         }
     }
 
@@ -54,9 +50,6 @@ impl ChatComposer {
 
         match key.code {
             KeyCode::Enter => Some(self.submit()),
-            KeyCode::F(2) => Some(ComposerAction::History),
-            KeyCode::F(3) => Some(ComposerAction::Status),
-            KeyCode::F(4) => Some(ComposerAction::Reset),
             _ => {
                 self.textarea.handle_key(key);
                 None
@@ -164,14 +157,11 @@ impl ChatComposer {
 
     fn submit(&mut self) -> ComposerAction {
         let text = self.textarea.take_trimmed();
-        self.slash_selected = 0;
         if text.is_empty() {
             ComposerAction::None
         } else {
             match text.as_str() {
                 "/clear" => ComposerAction::Reset,
-                "/history" => ComposerAction::History,
-                "/status" => ComposerAction::Status,
                 "/interrupt" => ComposerAction::Interrupt,
                 "/exit" | "/quit" => ComposerAction::Exit,
                 _ => ComposerAction::Submit(text),
