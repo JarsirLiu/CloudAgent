@@ -1,7 +1,7 @@
 use crate::bottom_pane::{ApprovalInlineState, BottomPane, BottomPaneViewState};
 use crate::composer::ComposerAction;
 use crate::history_cell::{
-    HistoryCell, HistoryTone, Transcript, render_history_entry, render_turn_event,
+    HistoryCell, HistoryTone, Transcript, render_history_entry, render_turn_event, shimmer_spans,
 };
 use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
 use agent_protocol::{
@@ -367,17 +367,17 @@ impl TuiApp {
 
     fn render(&self, frame: &mut Frame) {
         let area = frame.area();
-        let content = centered_column(area, 112);
+        // Claude-style: full width, no centering column
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
-                Constraint::Min(8),
-                Constraint::Length(6),
+                Constraint::Length(1), // header bar
+                Constraint::Min(6),    // transcript / welcome
+                Constraint::Length(7), // input pane
             ])
-            .split(content);
+            .split(area);
 
-        frame.render_widget(self.header_block(), sections[0]);
+        frame.render_widget(self.header_bar(area.width), sections[0]);
         if self.transcript.is_empty() {
             self.render_welcome(frame, sections[1]);
         } else {
@@ -397,168 +397,154 @@ impl TuiApp {
         frame.set_cursor_position((x, y));
     }
 
-    fn header_block(&self) -> Paragraph<'static> {
-        let status = match self.console_state.mode {
-            FrontendMode::Idle => ("IDLE", Color::Green),
-            FrontendMode::Running => ("RUNNING", Color::Cyan),
-            FrontendMode::WaitingForApproval => ("APPROVAL", Color::Yellow),
+    fn header_bar(&self, total_width: u16) -> Paragraph<'static> {
+        let (mode_color, mode_label) = match self.console_state.mode {
+            FrontendMode::Idle => (Color::Rgb(80, 200, 120), "IDLE"),
+            FrontendMode::Running => (Color::Rgb(100, 160, 255), "RUNNING"),
+            FrontendMode::WaitingForApproval => (Color::Rgb(255, 180, 50), "APPROVAL"),
         };
 
         let scroll_hint = if self.transcript_scroll > 0 {
-            format!("scroll +{}", self.transcript_scroll)
+            format!(" ↑ scroll +{} ", self.transcript_scroll)
         } else {
-            "live".to_string()
+            " live ".to_string()
         };
 
-        Paragraph::new(Text::from(vec![Line::from(vec![
+        // Build: " cloudagent  session <id>  [MODE]  live "
+        // with full-width dark background
+        let mut spans: Vec<Span<'static>> = vec![
             Span::styled(
-                "── CloudAgent",
+                " ❯ cloudagent ",
                 Style::default()
-                    .fg(Color::LightRed)
+                    .fg(Color::Rgb(220, 220, 230))
+                    .bg(Color::Rgb(25, 25, 35))
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("  "),
             Span::styled(
-                format!("session {}", self.session_id),
-                Style::default().fg(Color::White),
+                format!(" session {} ", self.session_id),
+                Style::default()
+                    .fg(Color::Rgb(100, 100, 120))
+                    .bg(Color::Rgb(25, 25, 35)),
             ),
-            Span::raw("  "),
             Span::styled(
-                format!("[{}]", status.0),
-                Style::default().fg(status.1).add_modifier(Modifier::BOLD),
+                format!(" {} ", mode_label),
+                Style::default()
+                    .fg(mode_color)
+                    .bg(Color::Rgb(25, 25, 35))
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("  "),
-            Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
-        ])]))
+            Span::styled(
+                scroll_hint,
+                Style::default()
+                    .fg(Color::Rgb(70, 70, 90))
+                    .bg(Color::Rgb(25, 25, 35)),
+            ),
+        ];
+
+        // Pad to full width with bg color
+        let used: usize = spans.iter().map(|s| s.content.len()).sum();
+        let pad = (total_width as usize).saturating_sub(used);
+        if pad > 0 {
+            spans.push(Span::styled(
+                " ".repeat(pad),
+                Style::default().bg(Color::Rgb(25, 25, 35)),
+            ));
+        }
+
+        Paragraph::new(Text::from(vec![Line::from(spans)]))
     }
 
     fn render_welcome(&self, frame: &mut Frame, area: Rect) {
-        let outer = area.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
-            .split(outer);
+        let inner = area.inner(Margin { horizontal: 4, vertical: 2 });
 
-        let left_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::LightRed));
-        let right_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::LightRed));
+        // ── Logo / tagline ───────────────────────────────────────────────────
+        let logo_color = Color::Rgb(100, 120, 200);
+        let dim = Color::Rgb(70, 70, 90);
+        let accent = Color::Rgb(140, 160, 230);
 
-        let left_inner = left_block.inner(cols[0]);
-        let right_inner = right_block.inner(cols[1]);
+        let shimmer_title = if self.history_loaded {
+            shimmer_spans("CloudAgent")
+        } else {
+            vec![Span::styled(
+                "CloudAgent",
+                Style::default().fg(logo_color).add_modifier(Modifier::BOLD),
+            )]
+        };
 
-        frame.render_widget(left_block, cols[0]);
-        frame.render_widget(right_block, cols[1]);
+        let mut logo_line = vec![Span::raw("  ")];
+        logo_line.extend(shimmer_title);
+        logo_line.push(Span::styled(
+            "  ·  server ops assistant",
+            Style::default().fg(dim),
+        ));
 
-        let mascot = vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "Welcome back!",
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
-            Line::from(""),
-            Line::from(Span::styled(
-                "  ▄▄▄▄  ",
-                Style::default().fg(Color::LightRed),
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
-            Line::from(Span::styled(
-                " ▐  ▄ ▌ ",
-                Style::default().fg(Color::LightRed),
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
-            Line::from(Span::styled(
-                " ▐ ▄▄▌ ",
-                Style::default().fg(Color::LightRed),
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
-            Line::from(Span::styled(
-                "  ▘  ▘  ",
-                Style::default().fg(Color::LightRed),
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
-            Line::from(""),
-            Line::from(Span::styled(
-                "CloudAgent · server ops assistant",
-                Style::default().fg(Color::Gray),
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
-            Line::from(Span::styled(
-                if self.history_loaded {
-                    self.status_text.clone()
-                } else {
-                    "Loading session history...".to_string()
-                },
-                Style::default().fg(Color::DarkGray),
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
+        let subtitle = if self.history_loaded {
+            self.status_text.clone()
+        } else {
+            "Loading session history…".to_string()
+        };
+
+        let mut welcome_lines = vec![
+            Line::raw(""),
+            Line::from(logo_line),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(subtitle, Style::default().fg(dim)),
+            ]),
+            Line::raw(""),
+            Line::raw(""),
+            // ── Try asking ──────────────────────────────────────────────────
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Try asking", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::raw(""),
         ];
 
-        let recent = self.recent_activity_lines();
-        let mut tips = vec![
-            Line::from(Span::styled(
-                "Tips for getting started",
-                Style::default()
-                    .fg(Color::LightRed)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "Run /init to create an AGENTS guide later.",
-                Style::default().fg(Color::White),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Recent activity",
-                Style::default()
-                    .fg(Color::LightRed)
-                    .add_modifier(Modifier::BOLD),
-            )),
-        ];
-        tips.extend(recent);
-        tips.push(Line::from(""));
-        tips.push(Line::from(Span::styled(
-            "Try asking:",
-            Style::default()
-                .fg(Color::LightRed)
-                .add_modifier(Modifier::BOLD),
-        )));
-        tips.push(Line::from(Span::styled(
-            "check disk pressure",
-            Style::default().fg(Color::White),
-        )));
-        tips.push(Line::from(Span::styled(
-            "inspect this repo and explain it",
-            Style::default().fg(Color::White),
-        )));
-        tips.push(Line::from(Span::styled(
-            "write a safe nginx restart script",
-            Style::default().fg(Color::White),
-        )));
+        for suggestion in &[
+            "check disk pressure on all nodes",
+            "inspect this repo and explain the architecture",
+            "write a safe nginx restart script with health check",
+            "tail the last 50 lines of the application log",
+        ] {
+            welcome_lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("❯ ", Style::default().fg(Color::Rgb(80, 80, 100))),
+                Span::styled(
+                    suggestion.to_string(),
+                    Style::default().fg(Color::Rgb(170, 170, 185)),
+                ),
+            ]));
+        }
+
+        welcome_lines.push(Line::raw(""));
+        welcome_lines.push(Line::raw(""));
+        welcome_lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "Enter  ",
+                Style::default().fg(Color::Rgb(220, 220, 230)).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("send  ", Style::default().fg(dim)),
+            Span::styled("Ctrl+K  ", Style::default().fg(Color::Rgb(220, 220, 230)).add_modifier(Modifier::BOLD)),
+            Span::styled("interrupt  ", Style::default().fg(dim)),
+            Span::styled("F2  ", Style::default().fg(Color::Rgb(220, 220, 230)).add_modifier(Modifier::BOLD)),
+            Span::styled("history  ", Style::default().fg(dim)),
+            Span::styled("F4  ", Style::default().fg(Color::Rgb(220, 220, 230)).add_modifier(Modifier::BOLD)),
+            Span::styled("reset", Style::default().fg(dim)),
+        ]));
 
         frame.render_widget(
-            Paragraph::new(Text::from(mascot))
-                .alignment(ratatui::layout::Alignment::Center)
-                .wrap(Wrap { trim: false }),
-            left_inner,
-        );
-        frame.render_widget(
-            Paragraph::new(Text::from(tips)).wrap(Wrap { trim: false }),
-            right_inner,
+            Paragraph::new(Text::from(welcome_lines)).wrap(Wrap { trim: false }),
+            inner,
         );
     }
 
     fn transcript_panel(&self, area: Rect) -> Paragraph<'static> {
+        // Claude style: small side margins only, no top/bottom, no border
         let inner = area.inner(Margin {
             vertical: 0,
-            horizontal: 2,
+            horizontal: 3,
         });
         let lines = self.transcript.render_lines(
             inner.width as usize,
@@ -567,28 +553,10 @@ impl TuiApp {
         );
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
-            .block(Block::default())
+            .block(Block::default().borders(Borders::NONE))
     }
 
-    fn recent_activity_lines(&self) -> Vec<Line<'static>> {
-        if self.transcript.is_empty() {
-            return vec![Line::from(Span::styled(
-                "No recent activity",
-                Style::default().fg(Color::Gray),
-            ))];
-        }
 
-        vec![
-            Line::from(Span::styled(
-                "Session has recent conversation",
-                Style::default().fg(Color::Gray),
-            )),
-            Line::from(Span::styled(
-                "Use F2 to inspect transcript history",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ]
-    }
 
     fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
         let content_width = 108usize;
@@ -701,7 +669,8 @@ fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
     let (tx, rx) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         loop {
-            match event::poll(Duration::from_millis(120)) {
+            // 50 ms tick for shimmer animation smoothness (~20 fps)
+            match event::poll(Duration::from_millis(50)) {
                 Ok(true) => match event::read() {
                     Ok(CEvent::Key(key)) => {
                         if tx.send(UiEvent::Key(key)).is_err() {
@@ -1058,13 +1027,4 @@ fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
     ParsedInput::Command(command)
 }
 
-fn centered_column(area: Rect, max_width: u16) -> Rect {
-    let width = area.width.min(max_width);
-    let horizontal_padding = area.width.saturating_sub(width) / 2;
-    Rect {
-        x: area.x + horizontal_padding,
-        y: area.y,
-        width,
-        height: area.height,
-    }
-}
+
