@@ -1,6 +1,7 @@
 use crate::chat_composer::ComposerAction;
 use crate::history_cell::{
-    HistoryCell, HistoryTone, Transcript, render_history_entry, render_turn_event,
+    HistoryCell, HistoryTone, Transcript, TranscriptRenderState, render_history_entry,
+    render_turn_event,
 };
 use crate::input_pane::{ApprovalInlineState, InputPane, InputPaneAction, InputPaneViewState};
 use crate::welcome::WelcomeScreen;
@@ -12,7 +13,7 @@ use agent_protocol::{
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use crossterm::cursor::MoveTo;
-use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
@@ -21,6 +22,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
 use std::sync::Arc;
@@ -125,6 +127,7 @@ impl ConsoleState {
 enum ParsedInput {
     Command(AppClientCommand),
     ApprovalAnswer { approved: bool, reason: String },
+    Search(String),
 }
 
 struct TuiApp {
@@ -133,9 +136,20 @@ struct TuiApp {
     console_state: ConsoleState,
     transcript: Transcript,
     transcript_scroll: usize,
+    transcript_viewport_height: usize,
+    compact_tools: bool,
+    expanded_tool_cells: HashSet<usize>,
+    tool_cell_indices: Vec<usize>,
+    selected_tool_index: Option<usize>,
     history_loaded: bool,
     show_history_panel_on_next_response: bool,
+    search_query: Option<String>,
+    search_matches: Vec<usize>,
+    search_match_index: usize,
     status_text: String,
+    last_model_name: Option<String>,
+    last_message_count: usize,
+    last_tool_name: Option<String>,
     input_pane: InputPane,
     should_exit: bool,
 }
@@ -148,9 +162,20 @@ impl TuiApp {
             console_state: ConsoleState::new(),
             transcript: Transcript::default(),
             transcript_scroll: 0,
+            transcript_viewport_height: 0,
+            compact_tools: false,
+            expanded_tool_cells: HashSet::new(),
+            tool_cell_indices: Vec::new(),
+            selected_tool_index: None,
             history_loaded: false,
             show_history_panel_on_next_response: false,
+            search_query: None,
+            search_matches: Vec::new(),
+            search_match_index: 0,
             status_text: format!("Connected via {connection_label}"),
+            last_model_name: None,
+            last_message_count: 0,
+            last_tool_name: None,
             input_pane: InputPane::new(),
             should_exit: false,
         }
@@ -158,6 +183,7 @@ impl TuiApp {
 
     fn push_cell(&mut self, cell: HistoryCell) {
         self.transcript.push(cell);
+        self.refresh_tool_focus();
         self.transcript_scroll = 0;
     }
 
@@ -165,9 +191,20 @@ impl TuiApp {
         self.console_state = ConsoleState::new();
         self.transcript = Transcript::default();
         self.transcript_scroll = 0;
+        self.transcript_viewport_height = 0;
+        self.compact_tools = false;
+        self.expanded_tool_cells.clear();
+        self.tool_cell_indices.clear();
+        self.selected_tool_index = None;
         self.history_loaded = true;
         self.show_history_panel_on_next_response = false;
+        self.search_query = None;
+        self.search_matches.clear();
+        self.search_match_index = 0;
         self.status_text = format!("Connected via {}", self.connection_label);
+        self.last_model_name = None;
+        self.last_message_count = 0;
+        self.last_tool_name = None;
         self.input_pane.clear_views();
     }
 
@@ -189,6 +226,7 @@ impl TuiApp {
             AppServerMessage::Notification(notification) => match notification {
                 AppServerNotification::FrontendStateChanged { mode, .. } => self.set_mode(*mode),
                 AppServerNotification::SessionStatus { snapshot, .. } => {
+                    self.last_message_count = snapshot.message_count;
                     self.status_text = format!(
                         "{:?}  turn={:?}  messages={}",
                         snapshot.session_state, snapshot.turn_state, snapshot.message_count
@@ -206,8 +244,10 @@ impl TuiApp {
                 }
                 AppServerNotification::SessionHistory { messages, .. } => {
                     self.status_text = "Loaded history".to_string();
+                    self.last_message_count = messages.len();
                     if !self.history_loaded || self.transcript.is_empty() {
                         self.transcript.replace_with_history(messages);
+                        self.refresh_tool_focus();
                         self.transcript_scroll = 0;
                     }
                     self.history_loaded = true;
@@ -293,6 +333,26 @@ impl TuiApp {
                         _ => {}
                     }
                     let rendered = render_turn_event(event);
+                    match event {
+                        agent_protocol::TurnEvent::ModelRequestStarted {
+                            message_count, ..
+                        } => {
+                            self.last_message_count = *message_count;
+                        }
+                        agent_protocol::TurnEvent::ModelResponseReceived { model_name, .. } => {
+                            self.last_model_name = model_name.clone();
+                        }
+                        agent_protocol::TurnEvent::ToolCallRequested { call, .. } => {
+                            self.last_tool_name = Some(call.name.clone());
+                        }
+                        agent_protocol::TurnEvent::ToolCallCompleted { result, .. } => {
+                            self.last_tool_name = Some(result.name.clone());
+                        }
+                        agent_protocol::TurnEvent::ToolCallFailed { tool_name, .. } => {
+                            self.last_tool_name = Some(tool_name.clone());
+                        }
+                        _ => {}
+                    }
                     if let Some(status) = rendered.status {
                         self.status_text = status;
                     }
@@ -322,21 +382,72 @@ impl TuiApp {
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
         if matches!(key.kind, KeyEventKind::Press) {
+            let page_step = self.page_scroll_step();
             match key.code {
-                KeyCode::PageUp | KeyCode::Up => {
-                    self.transcript_scroll = self.transcript_scroll.saturating_add(6);
+                KeyCode::PageUp => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_add(page_step);
                     return None;
                 }
-                KeyCode::PageDown | KeyCode::Down => {
-                    self.transcript_scroll = self.transcript_scroll.saturating_sub(6);
+                KeyCode::PageDown => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_sub(page_step);
+                    return None;
+                }
+                KeyCode::Up => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_add(1);
+                    return None;
+                }
+                KeyCode::Down => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
                     return None;
                 }
                 KeyCode::Home => {
-                    self.transcript_scroll = self.max_transcript_scroll(0);
+                    self.transcript_scroll =
+                        self.max_transcript_scroll(self.transcript_viewport_height);
                     return None;
                 }
                 KeyCode::End => {
                     self.transcript_scroll = 0;
+                    return None;
+                }
+                KeyCode::Char('g') => {
+                    self.transcript_scroll =
+                        self.max_transcript_scroll(self.transcript_viewport_height);
+                    return None;
+                }
+                KeyCode::Char('G') => {
+                    self.transcript_scroll = 0;
+                    return None;
+                }
+                KeyCode::Char('o') => {
+                    self.toggle_selected_tool();
+                    return None;
+                }
+                KeyCode::Char('O') => {
+                    self.compact_tools = !self.compact_tools;
+                    if self.compact_tools {
+                        self.expanded_tool_cells.clear();
+                    }
+                    return None;
+                }
+                KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.input_pane
+                        .set_search(self.search_query.clone().unwrap_or_default());
+                    return None;
+                }
+                KeyCode::Char('n') => {
+                    self.jump_to_search_match(1);
+                    return None;
+                }
+                KeyCode::Char('N') => {
+                    self.jump_to_search_match(-1);
+                    return None;
+                }
+                KeyCode::Char(']') => {
+                    self.move_tool_focus(1);
+                    return None;
+                }
+                KeyCode::Char('[') => {
+                    self.move_tool_focus(-1);
                     return None;
                 }
                 _ => {}
@@ -362,18 +473,25 @@ impl TuiApp {
                     session_id: self.session_id.clone(),
                 }))
             }
-            InputPaneAction::Composer(ComposerAction::Status) => Some(ParsedInput::Command(AppClientCommand::RequestStatus {
-                session_id: self.session_id.clone(),
-            })),
-            InputPaneAction::Composer(ComposerAction::Reset) => Some(ParsedInput::Command(AppClientCommand::ResetSession {
-                session_id: self.session_id.clone(),
-            })),
+            InputPaneAction::Composer(ComposerAction::Status) => {
+                Some(ParsedInput::Command(AppClientCommand::RequestStatus {
+                    session_id: self.session_id.clone(),
+                }))
+            }
+            InputPaneAction::Composer(ComposerAction::Reset) => {
+                Some(ParsedInput::Command(AppClientCommand::ResetSession {
+                    session_id: self.session_id.clone(),
+                }))
+            }
             InputPaneAction::Composer(ComposerAction::None) => None,
-            InputPaneAction::ApprovalSubmit { approved, reason } => Some(ParsedInput::ApprovalAnswer { approved, reason }),
+            InputPaneAction::ApprovalSubmit { approved, reason } => {
+                Some(ParsedInput::ApprovalAnswer { approved, reason })
+            }
+            InputPaneAction::SearchSubmit { query } => Some(ParsedInput::Search(query)),
         }
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let content = centered_column(area, 112);
         let bottom_height = self
@@ -393,21 +511,21 @@ impl TuiApp {
         if self.transcript.is_empty() {
             self.render_welcome(frame, sections[1]);
         } else {
+            self.transcript_viewport_height = sections[1].height.saturating_sub(0) as usize;
             frame.render_widget(self.transcript_panel(sections[1]), sections[1]);
         }
 
         let (bottom_widget, lines_before, _) = self.input_pane.render(
             self.console_state.mode,
             &self.status_text,
+            &self.status_meta_text(),
             sections[2].width,
         );
         frame.render_widget(bottom_widget, sections[2]);
 
-        let (x, y) = self.input_pane.cursor_position(
-            sections[2],
-            lines_before,
-            self.console_state.mode,
-        );
+        let (x, y) =
+            self.input_pane
+                .cursor_position(sections[2], lines_before, self.console_state.mode);
         frame.set_cursor_position((x, y));
     }
 
@@ -423,6 +541,16 @@ impl TuiApp {
         } else {
             "live".to_string()
         };
+        let tool_view = if self.compact_tools {
+            "tools compact"
+        } else {
+            "tools expanded"
+        };
+        let search_hint = self.search_summary();
+        let tool_focus = self.tool_focus_summary();
+
+        let model = self.last_model_name.as_deref().unwrap_or("pending");
+        let last_tool = self.last_tool_name.as_deref().unwrap_or("none");
 
         Paragraph::new(Text::from(vec![Line::from(vec![
             Span::styled(
@@ -441,6 +569,32 @@ impl TuiApp {
                 format!("[{}]", status.0),
                 Style::default().fg(status.1).add_modifier(Modifier::BOLD),
             ),
+            Span::raw("  "),
+            Span::styled(
+                format!("model {model}"),
+                Style::default().fg(Color::Rgb(170, 180, 200)),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("msgs {}", self.last_message_count),
+                Style::default().fg(Color::Rgb(130, 140, 160)),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("tool {last_tool}"),
+                Style::default().fg(Color::Rgb(130, 140, 160)),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                self.connection_label.clone(),
+                Style::default().fg(Color::Rgb(90, 110, 140)),
+            ),
+            Span::raw("  "),
+            Span::styled(tool_view, Style::default().fg(Color::Rgb(90, 110, 140))),
+            Span::raw("  "),
+            Span::styled(tool_focus, Style::default().fg(Color::Rgb(120, 150, 130))),
+            Span::raw("  "),
+            Span::styled(search_hint, Style::default().fg(Color::Rgb(120, 130, 150))),
             Span::raw("  "),
             Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
         ])]))
@@ -525,10 +679,12 @@ impl TuiApp {
             vertical: 0,
             horizontal: 2,
         });
+        let render_state = self.transcript_render_state();
         let lines = self.transcript.render_lines(
             inner.width as usize,
             inner.height as usize,
             self.transcript_scroll,
+            &render_state,
         );
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
@@ -557,8 +713,165 @@ impl TuiApp {
 
     fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
         let content_width = 108usize;
-        let total = self.transcript.total_lines(content_width);
+        let total = self
+            .transcript
+            .total_lines_with_state(content_width, &self.transcript_render_state());
         total.saturating_sub(viewport_height)
+    }
+
+    fn page_scroll_step(&self) -> usize {
+        self.transcript_viewport_height
+            .saturating_sub(2)
+            .clamp(6, 18)
+    }
+
+    fn status_meta_text(&self) -> String {
+        let mut parts = vec![
+            format!("session {}", self.session_id),
+            format!("messages {}", self.last_message_count),
+        ];
+        if let Some(model) = &self.last_model_name {
+            parts.push(format!("model {model}"));
+        }
+        if let Some(tool) = &self.last_tool_name {
+            parts.push(format!("tool {tool}"));
+        }
+        if let Some(query) = &self.search_query {
+            parts.push(format!("search {query}"));
+        }
+        parts.push(self.connection_label.clone());
+        parts.join("  ·  ")
+    }
+
+    fn perform_search(&mut self, query: String) {
+        if query.is_empty() {
+            self.search_query = None;
+            self.search_matches.clear();
+            self.search_match_index = 0;
+            self.status_text = "Search cleared".to_string();
+            return;
+        }
+
+        self.search_query = Some(query.clone());
+        self.search_matches = self.transcript.find_matches(&query);
+        self.search_match_index = 0;
+        if self.search_matches.is_empty() {
+            self.status_text = format!("No matches for `{query}`");
+            return;
+        }
+        self.selected_tool_index = self
+            .tool_cell_indices
+            .iter()
+            .position(|idx| *idx == self.search_matches[0]);
+        self.status_text = format!("Found {} matches for `{query}`", self.search_matches.len());
+        self.focus_current_search_match();
+    }
+
+    fn jump_to_search_match(&mut self, delta: isize) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        let len = self.search_matches.len() as isize;
+        self.search_match_index =
+            (self.search_match_index as isize + delta).rem_euclid(len) as usize;
+        self.focus_current_search_match();
+    }
+
+    fn focus_current_search_match(&mut self) {
+        let Some(&cell_index) = self.search_matches.get(self.search_match_index) else {
+            return;
+        };
+        self.transcript_scroll = self.transcript.scroll_for_cell_with_state(
+            cell_index,
+            108,
+            self.transcript_viewport_height.max(1),
+            &self.transcript_render_state(),
+        );
+    }
+
+    fn search_summary(&self) -> String {
+        match (&self.search_query, self.search_matches.is_empty()) {
+            (Some(query), false) => format!(
+                "search `{}` {}/{}",
+                query,
+                self.search_match_index + 1,
+                self.search_matches.len()
+            ),
+            (Some(query), true) => format!("search `{}` 0/0", query),
+            (None, _) => "search off".to_string(),
+        }
+    }
+
+    fn tool_focus_summary(&self) -> String {
+        match (self.selected_tool_index, self.tool_cell_indices.is_empty()) {
+            (_, true) => "tool focus off".to_string(),
+            (Some(idx), false) => format!("tool {}/{}", idx + 1, self.tool_cell_indices.len()),
+            (None, false) => format!("tool 0/{}", self.tool_cell_indices.len()),
+        }
+    }
+
+    fn refresh_tool_focus(&mut self) {
+        self.tool_cell_indices = self.transcript.tool_cell_indices();
+        self.selected_tool_index =
+            match (self.selected_tool_index, self.tool_cell_indices.is_empty()) {
+                (_, true) => None,
+                (Some(current), false) => Some(current.min(self.tool_cell_indices.len() - 1)),
+                (None, false) => Some(self.tool_cell_indices.len() - 1),
+            };
+        self.expanded_tool_cells
+            .retain(|idx| self.tool_cell_indices.contains(idx));
+    }
+
+    fn move_tool_focus(&mut self, delta: isize) {
+        if self.tool_cell_indices.is_empty() {
+            return;
+        }
+        let len = self.tool_cell_indices.len() as isize;
+        let next = match self.selected_tool_index {
+            Some(current) => (current as isize + delta).rem_euclid(len) as usize,
+            None => 0,
+        };
+        self.selected_tool_index = Some(next);
+        if let Some(&cell_index) = self.tool_cell_indices.get(next) {
+            self.transcript_scroll = self.transcript.scroll_for_cell_with_state(
+                cell_index,
+                108,
+                self.transcript_viewport_height.max(1),
+                &self.transcript_render_state(),
+            );
+        }
+    }
+
+    fn toggle_selected_tool(&mut self) {
+        let Some(tool_index) = self.selected_tool_index else {
+            return;
+        };
+        let Some(&cell_index) = self.tool_cell_indices.get(tool_index) else {
+            return;
+        };
+        if !self.compact_tools {
+            self.compact_tools = true;
+        }
+        if !self.expanded_tool_cells.insert(cell_index) {
+            self.expanded_tool_cells.remove(&cell_index);
+        }
+    }
+
+    fn transcript_render_state(&self) -> TranscriptRenderState {
+        let selected_cell = self
+            .selected_tool_index
+            .and_then(|idx| self.tool_cell_indices.get(idx).copied());
+        TranscriptRenderState {
+            compact_tools: self.compact_tools,
+            expanded_tool_cells: self.expanded_tool_cells.clone(),
+            selected_cell: selected_cell.or_else(|| {
+                self.search_matches
+                    .get(self.search_match_index)
+                    .copied()
+                    .filter(|_| !self.search_matches.is_empty())
+            }),
+            matched_cells: self.search_matches.iter().copied().collect(),
+        }
     }
 }
 
@@ -760,6 +1073,9 @@ fn handle_tui_input(
                 approved,
                 reason: Some(reason),
             })?;
+        }
+        ParsedInput::Search(query) => {
+            app.perform_search(query);
         }
     }
     Ok(false)
