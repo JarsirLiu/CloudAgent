@@ -364,6 +364,31 @@ impl From<AppServerMessageEnvelope> for JsonRpcMessage {
     }
 }
 
+impl TryFrom<JsonRpcMessage> for AppServerMessageEnvelope {
+    type Error = anyhow::Error;
+
+    fn try_from(message: JsonRpcMessage) -> Result<Self, Self::Error> {
+        match message {
+            JsonRpcMessage::Notification(notification) => Ok(AppServerMessageEnvelope {
+                message: AppServerMessage::Notification(parse_server_notification(
+                    &notification.method,
+                    notification.params,
+                )?),
+            }),
+            JsonRpcMessage::Request(request) => Ok(AppServerMessageEnvelope {
+                message: AppServerMessage::Request(parse_server_request(
+                    request.id,
+                    &request.method,
+                    request.params,
+                )?),
+            }),
+            JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
+                anyhow::bail!("server envelope expects a notification or request")
+            }
+        }
+    }
+}
+
 fn command_from_request(request: JsonRpcRequest) -> anyhow::Result<AppClientCommandEnvelope> {
     let command = parse_command(&request.method, request.params)?;
     Ok(AppClientCommandEnvelope {
@@ -385,7 +410,9 @@ fn command_from_notification(
 fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClientCommand> {
     let params = params.unwrap_or(Value::Null);
     match method {
-        "turn/start" => Ok(AppClientCommand::SubmitTurn(serde_json::from_value(params)?)),
+        "turn/start" => Ok(AppClientCommand::SubmitTurn(serde_json::from_value(
+            params,
+        )?)),
         "turn/interrupt" => Ok(AppClientCommand::InterruptTurn {
             session_id: value_field(params, "session_id")?,
         }),
@@ -499,6 +526,53 @@ fn request_method_and_params(request: &AppServerRequest) -> (RequestId, &'static
                 "request": request,
             }),
         ),
+    }
+}
+
+fn parse_server_notification(
+    method: &str,
+    params: Option<Value>,
+) -> anyhow::Result<AppServerNotification> {
+    let params = params.unwrap_or(Value::Null);
+    match method {
+        "frontend/state_changed"
+        | "turn/event"
+        | "session/status"
+        | "session/history"
+        | "turn/finished"
+        | "session/subscription_changed"
+        | "app/info"
+        | "app/error" => Ok(serde_json::from_value(params)?),
+        other => anyhow::bail!("unsupported notification method: {other}"),
+    }
+}
+
+fn parse_server_request(
+    request_id: RequestId,
+    method: &str,
+    params: Option<Value>,
+) -> anyhow::Result<AppServerRequest> {
+    let params = params.unwrap_or(Value::Null);
+    match method {
+        "approval/request" => {
+            let object = params
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("expected object params"))?;
+            let session_id = object
+                .get("session_id")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("missing `session_id` field"))?;
+            let request = object
+                .get("request")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("missing `request` field"))?;
+            Ok(AppServerRequest::Approval {
+                request_id,
+                session_id: serde_json::from_value(session_id)?,
+                request: serde_json::from_value(request)?,
+            })
+        }
+        other => anyhow::bail!("unsupported server request method: {other}"),
     }
 }
 

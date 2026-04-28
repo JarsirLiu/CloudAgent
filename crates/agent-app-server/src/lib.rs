@@ -1,7 +1,7 @@
 mod in_process;
 pub mod transport;
 
-use agent_protocol::{AppServerMessageEnvelope, AppClientCommandEnvelope};
+use agent_protocol::{AppClientCommandEnvelope, AppServerMessageEnvelope};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use std::sync::Arc;
@@ -22,9 +22,7 @@ pub async fn run_stdio_server(
     let (command_tx, mut command_rx) = mpsc::unbounded_channel::<AppClientCommandEnvelope>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<AppServerMessageEnvelope>();
 
-    let read_task = tokio::spawn(async move {
-        transport::stdio::read_commands(command_tx).await
-    });
+    let read_task = tokio::spawn(async move { transport::stdio::read_commands(command_tx).await });
     let write_task = tokio::spawn(async move { transport::stdio::write_events(event_rx).await });
     let forward_events = tokio::spawn(async move {
         while let Some(message) = client.next_message().await {

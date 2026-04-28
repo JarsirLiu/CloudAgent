@@ -26,13 +26,11 @@ impl AgentSession {
         });
     }
 
-    pub fn push_assistant_message(
-        &mut self,
-        content: Option<String>,
-        tool_calls: Vec<ToolCall>,
-    ) {
-        self.messages
-            .push(ConversationMessage::Assistant { content, tool_calls });
+    pub fn push_assistant_message(&mut self, content: Option<String>, tool_calls: Vec<ToolCall>) {
+        self.messages.push(ConversationMessage::Assistant {
+            content,
+            tool_calls,
+        });
     }
 
     pub fn push_tool_result(&mut self, result: ToolResult) {
@@ -45,12 +43,19 @@ impl AgentSession {
 
     pub fn ensure_system_prompt(&mut self, system_prompt: impl Into<String>) {
         let system_prompt = system_prompt.into();
-        let has_system = matches!(self.messages.first(), Some(ConversationMessage::System { .. }));
+        let has_system = matches!(
+            self.messages.first(),
+            Some(ConversationMessage::System { .. })
+        );
         if has_system {
             return;
         }
-        self.messages
-            .insert(0, ConversationMessage::System { content: system_prompt });
+        self.messages.insert(
+            0,
+            ConversationMessage::System {
+                content: system_prompt,
+            },
+        );
     }
 }
 

@@ -1,5 +1,5 @@
-use agent_protocol::{TurnEvent, TurnId, TurnState};
 use crate::tool::ToolEvent;
+use agent_protocol::{TurnEvent, TurnId, TurnState};
 
 #[derive(Clone, Debug)]
 pub struct AgentTurnOutput {

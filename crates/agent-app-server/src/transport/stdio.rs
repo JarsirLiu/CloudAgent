@@ -19,9 +19,7 @@ pub async fn read_commands(tx: mpsc::UnboundedSender<AppClientCommandEnvelope>) 
     Ok(())
 }
 
-pub async fn write_events(
-    mut rx: mpsc::UnboundedReceiver<AppServerMessageEnvelope>,
-) -> Result<()> {
+pub async fn write_events(mut rx: mpsc::UnboundedReceiver<AppServerMessageEnvelope>) -> Result<()> {
     let mut stdout = io::stdout();
     while let Some(event) = rx.recv().await {
         let payload = serde_json::to_string(&JsonRpcMessage::from(event))?;

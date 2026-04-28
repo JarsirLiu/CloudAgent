@@ -1,4 +1,5 @@
 target/
+target-verify/
 
 # Local runtime data
 data/state/*

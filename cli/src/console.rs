@@ -1,12 +1,30 @@
-use agent_app_server_client::InProcessAppServerClient;
+use crate::bottom_pane::{ApprovalInlineState, BottomPane, BottomPaneViewState};
+use crate::composer::ComposerAction;
+use crate::history_cell::{
+    HistoryCell, HistoryTone, Transcript, render_history_entry, render_turn_event,
+};
+use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    HistoryEntry, RequestId, TurnEvent, UserTurnInput,
+    RequestId, UserTurnInput,
 };
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
+use crossterm::cursor::MoveTo;
+use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::{Frame, Terminal};
+use std::ffi::OsString;
+use std::io::{self, IsTerminal as _, Write as _};
 use std::sync::Arc;
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, watch};
 
 #[derive(Clone, Debug)]
@@ -21,38 +39,55 @@ impl ConsoleBanner {
     pub fn cli(session_id: &str) -> Self {
         Self {
             title: format!("cloudagent session `{session_id}`"),
-            commands: "commands: /exit /reset /history /status /interrupt".to_string(),
-            idle_prompt: "you> ".to_string(),
-            approval_prompt: "approve> ".to_string(),
+            commands: "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt  F2 history  F3 status  F4 reset".to_string(),
+            idle_prompt: "message".to_string(),
+            approval_prompt: "approval".to_string(),
         }
     }
 
     pub fn daemon(session_id: &str) -> Self {
         Self {
             title: format!("agentd console attached to session `{session_id}`"),
-            commands: "commands: /exit /interrupt".to_string(),
-            idle_prompt: "daemon-you> ".to_string(),
-            approval_prompt: "daemon-approve> ".to_string(),
+            commands: "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt".to_string(),
+            idle_prompt: "daemon-message".to_string(),
+            approval_prompt: "daemon-approval".to_string(),
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ConsoleConfig {
     pub session_id: String,
     pub banner: ConsoleBanner,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
+    pub connection: ConsoleConnection,
 }
 
-#[derive(Debug)]
-enum ParsedInput {
-    Command(AppClientCommand),
-    ApprovalAnswer {
-        approved: bool,
-        reason: String,
+#[derive(Clone)]
+pub enum ConsoleConnection {
+    InProcess {
+        runtime: Arc<AgentRuntime>,
     },
-    Empty,
+    Stdio {
+        program: OsString,
+        args: Vec<OsString>,
+    },
+}
+
+impl ConsoleConnection {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::InProcess { .. } => "in-process",
+            Self::Stdio { .. } => "stdio-bridge",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum UiMode {
+    Tui,
+    Line,
 }
 
 #[derive(Clone, Debug)]
@@ -76,9 +111,7 @@ impl ConsoleState {
     fn update_from_message(&mut self, message: &AppServerMessage) {
         match message {
             AppServerMessage::Notification(notification) => match notification {
-                AppServerNotification::FrontendStateChanged { mode, .. } => {
-                    self.mode = *mode;
-                }
+                AppServerNotification::FrontendStateChanged { mode, .. } => self.mode = *mode,
                 AppServerNotification::TurnFinished { .. } => {
                     self.mode = FrontendMode::Idle;
                     self.pending_approval_request_id = None;
@@ -93,12 +126,690 @@ impl ConsoleState {
     }
 }
 
-struct ConsoleRenderer {
+enum ParsedInput {
+    Command(AppClientCommand),
+    ApprovalAnswer { approved: bool, reason: String },
+    Empty,
+}
+
+struct TuiApp {
+    session_id: String,
+    console_state: ConsoleState,
+    transcript: Transcript,
+    transcript_scroll: usize,
+    status_text: String,
+    bottom_pane: BottomPane,
+    approval_inline: Option<ApprovalInlineState>,
+    should_exit: bool,
+}
+
+impl TuiApp {
+    fn new(session_id: String, _banner: ConsoleBanner, connection_label: &str) -> Self {
+        Self {
+            session_id,
+            console_state: ConsoleState::new(),
+            transcript: Transcript::default(),
+            transcript_scroll: 0,
+            status_text: format!("Connected via {connection_label}"),
+            bottom_pane: BottomPane::new(),
+            approval_inline: None,
+            should_exit: false,
+        }
+    }
+
+    fn push_cell(&mut self, cell: HistoryCell) {
+        self.transcript.push(cell);
+        self.transcript_scroll = 0;
+    }
+
+    fn set_mode(&mut self, mode: FrontendMode) {
+        self.console_state.mode = mode;
+        if mode != FrontendMode::WaitingForApproval {
+            self.approval_inline = None;
+        }
+        self.status_text = match mode {
+            FrontendMode::Idle => "Idle".to_string(),
+            FrontendMode::Running => "Thinking".to_string(),
+            FrontendMode::WaitingForApproval => "Waiting for approval".to_string(),
+        };
+    }
+
+    fn handle_server_message(&mut self, message: &AppServerMessage) {
+        self.console_state.update_from_message(message);
+        match message {
+            AppServerMessage::Notification(notification) => match notification {
+                AppServerNotification::FrontendStateChanged { mode, .. } => self.set_mode(*mode),
+                AppServerNotification::SessionStatus { snapshot, .. } => {
+                    self.status_text = format!(
+                        "{:?}  turn={:?}  messages={}",
+                        snapshot.session_state, snapshot.turn_state, snapshot.message_count
+                    );
+                    self.bottom_pane.set_panel(Some(BottomPaneViewState {
+                        title: "Session status".to_string(),
+                        lines: vec![
+                            format!("state: {:?}", snapshot.session_state),
+                            format!("active turn: {:?}", snapshot.active_turn),
+                            format!("turn state: {:?}", snapshot.turn_state),
+                            format!("message count: {}", snapshot.message_count),
+                            "Esc closes this panel.".to_string(),
+                        ],
+                    }));
+                }
+                AppServerNotification::SessionHistory { messages, .. } => {
+                    self.status_text = "Loaded history".to_string();
+                    let history_lines = messages
+                        .iter()
+                        .map(|message| {
+                            let cell = render_history_entry(message);
+                            cell.to_lines(96)
+                                .into_iter()
+                                .map(|line| line.to_string())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
+                        .collect::<Vec<_>>();
+                    self.bottom_pane.set_panel(Some(BottomPaneViewState {
+                        title: "Session history".to_string(),
+                        lines: if history_lines.is_empty() {
+                            vec![
+                                "No history yet.".to_string(),
+                                "Esc closes this panel.".to_string(),
+                            ]
+                        } else {
+                            let mut lines = history_lines;
+                            lines.push("Esc closes this panel.".to_string());
+                            lines
+                        },
+                    }));
+                }
+                AppServerNotification::SubscriptionChanged {
+                    session_id,
+                    subscribed,
+                } => self.push_cell(HistoryCell::from_message(
+                    "session",
+                    format!(
+                        "{} {}",
+                        if *subscribed {
+                            "Subscribed to"
+                        } else {
+                            "Unsubscribed from"
+                        },
+                        session_id
+                    ),
+                    HistoryTone::Meta,
+                )),
+                AppServerNotification::Info { message, .. } => {
+                    self.status_text = message.clone();
+                }
+                AppServerNotification::Error { message, .. } => {
+                    self.status_text = message.clone();
+                    self.bottom_pane.clear_views();
+                    self.push_cell(HistoryCell::from_message(
+                        "error",
+                        message.clone(),
+                        HistoryTone::Error,
+                    ));
+                }
+                AppServerNotification::TurnFinished { result, .. } => {
+                    if let Some(error) = &result.error {
+                        self.push_cell(HistoryCell::from_message(
+                            "turn",
+                            format!("failed: {error}"),
+                            HistoryTone::Error,
+                        ));
+                    } else {
+                        self.status_text = "Turn completed".to_string();
+                    }
+                }
+                AppServerNotification::TurnEvent { event, .. } => {
+                    let rendered = render_turn_event(event);
+                    if let Some(status) = rendered.status {
+                        self.status_text = status;
+                    }
+                    if let Some(cell) = rendered.log {
+                        self.push_cell(cell);
+                    }
+                }
+            },
+            AppServerMessage::Request(AppServerRequest::Approval {
+                request_id,
+                request,
+                ..
+            }) => {
+                self.console_state.pending_approval_request_id = Some(request_id.clone());
+                self.set_mode(FrontendMode::WaitingForApproval);
+                self.approval_inline = Some(ApprovalInlineState {
+                    title: format!("tool `{}` wants to run", request.tool_name),
+                    detail: format!(
+                        "reason: {}  args: {}",
+                        request.reason, request.arguments_preview
+                    ),
+                });
+                self.push_cell(HistoryCell::from_message(
+                    "approval",
+                    format!(
+                        "tool `{}` wants to run. reason: {} | args: {}",
+                        request.tool_name, request.reason, request.arguments_preview
+                    ),
+                    HistoryTone::Warning,
+                ));
+                self.status_text = format!("Approval for {}", request.tool_name);
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
+        if matches!(key.kind, KeyEventKind::Press) {
+            match key.code {
+                KeyCode::PageUp => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_add(8);
+                    return None;
+                }
+                KeyCode::PageDown => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_sub(8);
+                    return None;
+                }
+                KeyCode::Home => {
+                    self.transcript_scroll = self.max_transcript_scroll(0);
+                    return None;
+                }
+                KeyCode::End => {
+                    self.transcript_scroll = 0;
+                    return None;
+                }
+                _ => {}
+            }
+        }
+
+        match self.bottom_pane.handle_key(key)? {
+            ComposerAction::Submit(text) => {
+                Some(parse_line(&text, &self.session_id, self.console_state.mode))
+            }
+            ComposerAction::Interrupt => {
+                Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
+                    session_id: self.session_id.clone(),
+                }))
+            }
+            ComposerAction::Exit => {
+                self.should_exit = true;
+                Some(ParsedInput::Command(AppClientCommand::Exit))
+            }
+            ComposerAction::History => {
+                Some(ParsedInput::Command(AppClientCommand::RequestHistory {
+                    session_id: self.session_id.clone(),
+                }))
+            }
+            ComposerAction::Status => Some(ParsedInput::Command(AppClientCommand::RequestStatus {
+                session_id: self.session_id.clone(),
+            })),
+            ComposerAction::Reset => Some(ParsedInput::Command(AppClientCommand::ResetSession {
+                session_id: self.session_id.clone(),
+            })),
+            ComposerAction::None => None,
+        }
+    }
+
+    fn render(&self, frame: &mut Frame) {
+        let area = frame.area();
+        let content = centered_column(area, 112);
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(8),
+                Constraint::Length(6),
+            ])
+            .split(content);
+
+        frame.render_widget(self.header_block(), sections[0]);
+        if self.transcript.is_empty() {
+            self.render_welcome(frame, sections[1]);
+        } else {
+            frame.render_widget(self.transcript_panel(sections[1]), sections[1]);
+        }
+        frame.render_widget(
+            self.bottom_pane.render(
+                self.console_state.mode,
+                &self.status_text,
+                self.approval_inline.as_ref(),
+                sections[2].width,
+            ),
+            sections[2],
+        );
+
+        let (x, y) = self.bottom_pane.cursor_position(sections[2]);
+        frame.set_cursor_position((x, y));
+    }
+
+    fn header_block(&self) -> Paragraph<'static> {
+        let status = match self.console_state.mode {
+            FrontendMode::Idle => ("IDLE", Color::Green),
+            FrontendMode::Running => ("RUNNING", Color::Cyan),
+            FrontendMode::WaitingForApproval => ("APPROVAL", Color::Yellow),
+        };
+
+        Paragraph::new(Text::from(vec![Line::from(vec![
+            Span::styled(
+                "── CloudAgent",
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("session {}", self.session_id),
+                Style::default().fg(Color::White),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("[{}]", status.0),
+                Style::default().fg(status.1).add_modifier(Modifier::BOLD),
+            ),
+        ])]))
+    }
+
+    fn render_welcome(&self, frame: &mut Frame, area: Rect) {
+        let outer = area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
+            .split(outer);
+
+        let left_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::LightRed));
+        let right_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::LightRed));
+
+        let left_inner = left_block.inner(cols[0]);
+        let right_inner = right_block.inner(cols[1]);
+
+        frame.render_widget(left_block, cols[0]);
+        frame.render_widget(right_block, cols[1]);
+
+        let mascot = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "Welcome back!",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(ratatui::layout::Alignment::Center),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  ▄▄▄▄  ",
+                Style::default().fg(Color::LightRed),
+            ))
+            .alignment(ratatui::layout::Alignment::Center),
+            Line::from(Span::styled(
+                " ▐  ▄ ▌ ",
+                Style::default().fg(Color::LightRed),
+            ))
+            .alignment(ratatui::layout::Alignment::Center),
+            Line::from(Span::styled(
+                " ▐ ▄▄▌ ",
+                Style::default().fg(Color::LightRed),
+            ))
+            .alignment(ratatui::layout::Alignment::Center),
+            Line::from(Span::styled(
+                "  ▘  ▘  ",
+                Style::default().fg(Color::LightRed),
+            ))
+            .alignment(ratatui::layout::Alignment::Center),
+            Line::from(""),
+            Line::from(Span::styled(
+                "CloudAgent · server ops assistant",
+                Style::default().fg(Color::Gray),
+            ))
+            .alignment(ratatui::layout::Alignment::Center),
+            Line::from(Span::styled(
+                self.status_text.clone(),
+                Style::default().fg(Color::DarkGray),
+            ))
+            .alignment(ratatui::layout::Alignment::Center),
+        ];
+
+        let recent = self.recent_activity_lines();
+        let mut tips = vec![
+            Line::from(Span::styled(
+                "Tips for getting started",
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Run /init to create an AGENTS guide later.",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Recent activity",
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD),
+            )),
+        ];
+        tips.extend(recent);
+        tips.push(Line::from(""));
+        tips.push(Line::from(Span::styled(
+            "Try asking:",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        )));
+        tips.push(Line::from(Span::styled(
+            "check disk pressure",
+            Style::default().fg(Color::White),
+        )));
+        tips.push(Line::from(Span::styled(
+            "inspect this repo and explain it",
+            Style::default().fg(Color::White),
+        )));
+        tips.push(Line::from(Span::styled(
+            "write a safe nginx restart script",
+            Style::default().fg(Color::White),
+        )));
+
+        frame.render_widget(
+            Paragraph::new(Text::from(mascot))
+                .alignment(ratatui::layout::Alignment::Center)
+                .wrap(Wrap { trim: false }),
+            left_inner,
+        );
+        frame.render_widget(
+            Paragraph::new(Text::from(tips)).wrap(Wrap { trim: false }),
+            right_inner,
+        );
+    }
+
+    fn transcript_panel(&self, area: Rect) -> Paragraph<'static> {
+        let inner = area.inner(Margin {
+            vertical: 0,
+            horizontal: 2,
+        });
+        let lines = self.transcript.render_lines(
+            inner.width as usize,
+            inner.height as usize,
+            self.transcript_scroll,
+        );
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .block(Block::default())
+    }
+
+    fn recent_activity_lines(&self) -> Vec<Line<'static>> {
+        if self.transcript.is_empty() {
+            return vec![Line::from(Span::styled(
+                "No recent activity",
+                Style::default().fg(Color::Gray),
+            ))];
+        }
+
+        vec![
+            Line::from(Span::styled(
+                "Session has recent conversation",
+                Style::default().fg(Color::Gray),
+            )),
+            Line::from(Span::styled(
+                "Use F2 to inspect transcript history",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]
+    }
+
+    fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
+        let content_width = 108usize;
+        let total = self.transcript.total_lines(content_width);
+        total.saturating_sub(viewport_height)
+    }
+}
+
+struct TerminalGuard {
+    terminal: Terminal<CrosstermBackend<io::Stdout>>,
+}
+
+impl TerminalGuard {
+    fn new() -> Result<Self> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+        let backend = CrosstermBackend::new(io::stdout());
+        let terminal = Terminal::new(backend)?;
+        Ok(Self { terminal })
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = self.terminal.show_cursor();
+        let _ = disable_raw_mode();
+    }
+}
+
+enum UiEvent {
+    Key(KeyEvent),
+    Tick,
+}
+
+pub async fn run_console(config: ConsoleConfig) -> Result<()> {
+    let mode = if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        UiMode::Tui
+    } else {
+        UiMode::Line
+    };
+
+    match mode {
+        UiMode::Tui => run_tui_console(config).await,
+        UiMode::Line => run_line_console(config).await,
+    }
+}
+
+async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
+    let session_id = config.session_id.clone();
+    let mut client = create_client(&config, session_id.clone()).await?;
+    let mut app = TuiApp::new(session_id.clone(), config.banner, config.connection.label());
+    let mut terminal = TerminalGuard::new()?;
+    let mut events = spawn_tui_event_loop();
+
+    loop {
+        terminal.terminal.draw(|frame| app.render(frame))?;
+
+        tokio::select! {
+            Some(message) = client.next_message() => {
+                app.handle_server_message(&message);
+            }
+            Some(event) = events.recv() => {
+                match event {
+                    UiEvent::Key(key) => {
+                        if let Some(input) = app.handle_key(key) {
+                            if handle_tui_input(&session_id, &mut app, &client, input)? {
+                                break;
+                            }
+                        }
+                    }
+                    UiEvent::Tick => {}
+                }
+            }
+            else => break,
+        }
+
+        if app.should_exit {
+            break;
+        }
+    }
+
+    client.shutdown().await
+}
+
+async fn create_client(config: &ConsoleConfig, session_id: String) -> Result<AppServerClient> {
+    match &config.connection {
+        ConsoleConnection::InProcess { runtime } => {
+            Ok(AppServerClient::in_process(InProcessClientConfig {
+                runtime: runtime.clone(),
+                session_id,
+                auto_approve: config.auto_approve,
+                auto_approve_reason: config.auto_approve_reason.clone(),
+            }))
+        }
+        ConsoleConnection::Stdio { program, args } => {
+            AppServerClient::stdio(StdioClientConfig {
+                program: program.clone(),
+                args: args.clone(),
+            })
+            .await
+        }
+    }
+}
+
+fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        loop {
+            match event::poll(Duration::from_millis(120)) {
+                Ok(true) => match event::read() {
+                    Ok(CEvent::Key(key)) => {
+                        if tx.send(UiEvent::Key(key)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                },
+                Ok(false) => {
+                    if tx.send(UiEvent::Tick).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    rx
+}
+
+fn handle_tui_input(
+    session_id: &str,
+    app: &mut TuiApp,
+    client: &AppServerClient,
+    input: ParsedInput,
+) -> Result<bool> {
+    match input {
+        ParsedInput::Empty => {}
+        ParsedInput::Command(command) => {
+            if let AppClientCommand::Exit = command {
+                if app.console_state.mode != FrontendMode::Idle {
+                    client.send_command(AppClientCommand::InterruptTurn {
+                        session_id: session_id.to_string(),
+                    })?;
+                }
+                app.should_exit = true;
+                return Ok(true);
+            }
+
+            if matches!(command, AppClientCommand::SubmitTurn(_))
+                && !app.console_state.can_submit_turn()
+            {
+                app.push_cell(HistoryCell::from_message(
+                    "session",
+                    "turn already running; wait, answer approval, or interrupt first",
+                    HistoryTone::Warning,
+                ));
+                return Ok(false);
+            }
+
+            if let AppClientCommand::ApprovalResponse { .. } = &command {
+                app.console_state.mode = FrontendMode::Running;
+                app.console_state.pending_approval_request_id = None;
+                app.bottom_pane.clear_views();
+            }
+            if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
+                app.console_state.mode = FrontendMode::Running;
+                app.status_text = "Submitting turn".to_string();
+                app.bottom_pane.clear_views();
+                app.push_cell(HistoryCell::from_message(
+                    "you",
+                    content.clone(),
+                    HistoryTone::User,
+                ));
+            }
+            client.send_command(command)?;
+        }
+        ParsedInput::ApprovalAnswer { approved, reason } => {
+            let Some(request_id) = app.console_state.pending_approval_request_id.clone() else {
+                app.push_cell(HistoryCell::from_message(
+                    "approval",
+                    "no pending approval request",
+                    HistoryTone::Error,
+                ));
+                return Ok(false);
+            };
+            app.console_state.mode = FrontendMode::Running;
+            app.console_state.pending_approval_request_id = None;
+            app.bottom_pane.clear_views();
+            app.push_cell(HistoryCell::from_message(
+                "approval",
+                if approved { "approved" } else { "denied" },
+                if approved {
+                    HistoryTone::Agent
+                } else {
+                    HistoryTone::Warning
+                },
+            ));
+            client.send_command(AppClientCommand::ApprovalResponse {
+                session_id: session_id.to_string(),
+                request_id,
+                approved,
+                reason: Some(reason),
+            })?;
+        }
+    }
+    Ok(false)
+}
+
+async fn run_line_console(config: ConsoleConfig) -> Result<()> {
+    let session_id = config.session_id.clone();
+    let mut client = create_client(&config, session_id.clone()).await?;
+
+    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<ParsedInput>();
+    let (mode_tx, mode_rx) = watch::channel(FrontendMode::Idle);
+    let mut state = ConsoleState::new();
+    let mut renderer = LineRenderer::new(config.banner);
+
+    spawn_line_input_loop(session_id.clone(), input_tx, mode_rx);
+    renderer.render_banner().await?;
+
+    loop {
+        tokio::select! {
+            Some(message) = client.next_message() => {
+                state.update_from_message(&message);
+                renderer.render_message(&message).await?;
+                renderer.render_prompt(state.mode).await?;
+                let _ = mode_tx.send(state.mode);
+            }
+            Some(input) = input_rx.recv() => {
+                if handle_line_input(&session_id, &mut state, &mut renderer, &client, input).await? {
+                    break;
+                }
+                let _ = mode_tx.send(state.mode);
+            }
+            else => break,
+        }
+    }
+
+    client.shutdown().await
+}
+
+struct LineRenderer {
     banner: ConsoleBanner,
     stdout: io::Stdout,
 }
 
-impl ConsoleRenderer {
+impl LineRenderer {
     fn new(banner: ConsoleBanner) -> Self {
         Self {
             banner,
@@ -127,7 +838,13 @@ impl ConsoleRenderer {
                 }
                 AppServerNotification::SessionHistory { messages, .. } => {
                     for message in messages {
-                        render_history(message);
+                        let cell = render_history_entry(message);
+                        if !cell.is_empty() {
+                            let lines = cell.to_lines(120);
+                            for line in lines {
+                                println!("{}", line);
+                            }
+                        }
                     }
                 }
                 AppServerNotification::SubscriptionChanged {
@@ -144,17 +861,23 @@ impl ConsoleRenderer {
                         session_id
                     );
                 }
-                AppServerNotification::Info { message, .. } => {
-                    println!("session> {message}");
-                }
+                AppServerNotification::Info { message, .. } => println!("session> {message}"),
                 AppServerNotification::Error { message, .. } => {
-                    println!("session> error: {message}");
+                    println!("session> error: {message}")
                 }
-                AppServerNotification::TurnFinished { result, .. } => match &result.error {
-                    Some(error) => println!("turn> failed: {error}"),
-                    None => println!("agent> {}", result.final_response),
-                },
-                AppServerNotification::TurnEvent { event, .. } => render_turn_event(event),
+                AppServerNotification::TurnFinished { result, .. } => {
+                    if let Some(error) = &result.error {
+                        println!("turn> failed: {error}");
+                    }
+                }
+                AppServerNotification::TurnEvent { event, .. } => {
+                    let rendered = render_turn_event(event);
+                    if let Some(cell) = rendered.log {
+                        for line in cell.to_lines(120) {
+                            println!("{}", line);
+                        }
+                    }
+                }
             },
             AppServerMessage::Request(AppServerRequest::Approval { request, .. }) => {
                 println!(
@@ -170,64 +893,25 @@ impl ConsoleRenderer {
 
     async fn render_prompt(&mut self, mode: FrontendMode) -> Result<()> {
         let prompt = match mode {
-            FrontendMode::Idle => Some(self.banner.idle_prompt.as_str()),
-            FrontendMode::WaitingForApproval => Some(self.banner.approval_prompt.as_str()),
+            FrontendMode::Idle => Some("you> "),
+            FrontendMode::WaitingForApproval => Some("approve> "),
             FrontendMode::Running => None,
         };
-
         if let Some(prompt) = prompt {
-            self.stdout.write_all(prompt.as_bytes()).await?;
-            self.stdout.flush().await?;
+            self.stdout.write_all(prompt.as_bytes())?;
+            self.stdout.flush()?;
         }
         Ok(())
     }
 }
 
-pub async fn run_console(runtime: Arc<AgentRuntime>, config: ConsoleConfig) -> Result<()> {
-    let session_id = config.session_id.clone();
-    let mut client = InProcessAppServerClient::start(
-        runtime,
-        session_id.clone(),
-        config.auto_approve,
-        config.auto_approve_reason.clone(),
-    );
-
-    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<ParsedInput>();
-    let (mode_tx, mode_rx) = watch::channel(FrontendMode::Idle);
-    let mut state = ConsoleState::new();
-    let mut renderer = ConsoleRenderer::new(config.banner);
-
-    spawn_input_loop(session_id.clone(), input_tx, mode_rx);
-    renderer.render_banner().await?;
-
-    loop {
-        tokio::select! {
-            Some(message) = client.next_message() => {
-                state.update_from_message(&message);
-                renderer.render_message(&message).await?;
-                renderer.render_prompt(state.mode).await?;
-                let _ = mode_tx.send(state.mode);
-            }
-            Some(input) = input_rx.recv() => {
-                if handle_input(&session_id, &mut state, &mut renderer, &client, input).await? {
-                    break;
-                }
-                let _ = mode_tx.send(state.mode);
-            }
-            else => break,
-        }
-    }
-
-    client.shutdown().await
-}
-
-fn spawn_input_loop(
+fn spawn_line_input_loop(
     session_id: String,
     input_tx: mpsc::UnboundedSender<ParsedInput>,
     mode_rx: watch::Receiver<FrontendMode>,
 ) {
     tokio::spawn(async move {
-        let stdin = BufReader::new(io::stdin());
+        let stdin = BufReader::new(tokio::io::stdin());
         let mut lines = stdin.lines();
         let mode_rx = mode_rx;
 
@@ -239,18 +923,17 @@ fn spawn_input_loop(
                     break;
                 }
             };
-
             let mode = *mode_rx.borrow();
             let _ = input_tx.send(parse_line(&line, &session_id, mode));
         }
     });
 }
 
-async fn handle_input(
+async fn handle_line_input(
     session_id: &str,
     state: &mut ConsoleState,
-    renderer: &mut ConsoleRenderer,
-    client: &InProcessAppServerClient,
+    renderer: &mut LineRenderer,
+    client: &AppServerClient,
     input: ParsedInput,
 ) -> Result<bool> {
     match input {
@@ -266,22 +949,11 @@ async fn handle_input(
                 }
                 return Ok(true);
             }
-
             if matches!(command, AppClientCommand::SubmitTurn(_)) && !state.can_submit_turn() {
-                renderer
-                    .render_message(&AppServerMessage::Notification(
-                        AppServerNotification::Info {
-                            session_id: session_id.to_string(),
-                            message:
-                                "turn already running; wait, answer approval, or use /interrupt"
-                                    .to_string(),
-                        },
-                    ))
-                    .await?;
+                println!("session> turn already running; wait, answer approval, or use /interrupt");
                 renderer.render_prompt(state.mode).await?;
                 return Ok(false);
             }
-
             if let AppClientCommand::ApprovalResponse { .. } = &command {
                 state.mode = FrontendMode::Running;
                 state.pending_approval_request_id = None;
@@ -289,23 +961,14 @@ async fn handle_input(
             if let AppClientCommand::SubmitTurn(_) = &command {
                 state.mode = FrontendMode::Running;
             }
-
             client.send_command(command)?;
         }
         ParsedInput::ApprovalAnswer { approved, reason } => {
             let Some(request_id) = state.pending_approval_request_id.clone() else {
-                renderer
-                    .render_message(&AppServerMessage::Notification(
-                        AppServerNotification::Error {
-                            session_id: session_id.to_string(),
-                            message: "no pending approval request".to_string(),
-                        },
-                    ))
-                    .await?;
+                println!("session> error: no pending approval request");
                 renderer.render_prompt(state.mode).await?;
                 return Ok(false);
             };
-
             state.mode = FrontendMode::Running;
             state.pending_approval_request_id = None;
             client.send_command(AppClientCommand::ApprovalResponse {
@@ -316,7 +979,6 @@ async fn handle_input(
             })?;
         }
     }
-
     Ok(false)
 }
 
@@ -360,62 +1022,13 @@ fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
     ParsedInput::Command(command)
 }
 
-fn render_history(message: &HistoryEntry) {
-    match message {
-        HistoryEntry::System { content } => println!("system> {content}"),
-        HistoryEntry::User { content } => println!("you> {content}"),
-        HistoryEntry::Assistant { content, has_tool_calls } => {
-            if let Some(content) = content {
-                println!("agent> {content}");
-            } else if *has_tool_calls {
-                println!("agent> [tool call]");
-            } else {
-                println!("agent> ");
-            }
-        }
-        HistoryEntry::Tool { name, content, .. } => println!("tool:{name}> {content}"),
-    }
-}
-
-fn render_turn_event(event: &TurnEvent) {
-    match event {
-        TurnEvent::TurnStarted { turn_id, .. } => println!("turn> started {turn_id}"),
-        TurnEvent::ModelRequestStarted {
-            message_count,
-            tool_count,
-            ..
-        } => println!(
-            "model> requesting completion with {message_count} messages and {tool_count} tools"
-        ),
-        TurnEvent::ModelResponseReceived {
-            model_name,
-            tool_call_count,
-            ..
-        } => println!(
-            "model> responded from {} with {} tool calls",
-            model_name.as_deref().unwrap_or("unknown-model"),
-            tool_call_count
-        ),
-        TurnEvent::ToolCallRequested { call, .. } => println!("tool:{}> requested", call.name),
-        TurnEvent::ApprovalResolved {
-            tool_call_id,
-            approved,
-            ..
-        } => println!(
-            "approval> {} for {}",
-            if *approved { "approved" } else { "denied" },
-            tool_call_id
-        ),
-        TurnEvent::ToolCallCompleted { result, .. } => {
-            println!("tool:{}> {}", result.name, result.summary)
-        }
-        TurnEvent::ToolCallFailed {
-            tool_name, error, ..
-        } => println!("tool:{}> failed: {}", tool_name, error),
-        TurnEvent::TurnFailed { error, .. } => println!("turn> failed: {error}"),
-        TurnEvent::TurnCancelled { reason, .. } => println!("turn> cancelled: {reason}"),
-        TurnEvent::AssistantMessage { .. }
-        | TurnEvent::ApprovalRequested { .. }
-        | TurnEvent::TurnCompleted { .. } => {}
+fn centered_column(area: Rect, max_width: u16) -> Rect {
+    let width = area.width.min(max_width);
+    let horizontal_padding = area.width.saturating_sub(width) / 2;
+    Rect {
+        x: area.x + horizontal_padding,
+        y: area.y,
+        width,
+        height: area.height,
     }
 }

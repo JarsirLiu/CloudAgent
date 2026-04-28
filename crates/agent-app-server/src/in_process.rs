@@ -12,9 +12,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 #[derive(Debug)]
 enum ServerMessage {
     Command(AppClientCommand),
-    Shutdown {
-        done: oneshot::Sender<()>,
-    },
+    Shutdown { done: oneshot::Sender<()> },
 }
 
 struct ServerState {
@@ -193,7 +191,11 @@ async fn handle_command(
                 &state,
                 AppServerNotification::SessionHistory {
                     session_id,
-                    messages: snapshot.messages.iter().map(history_entry_from_message).collect(),
+                    messages: snapshot
+                        .messages
+                        .iter()
+                        .map(history_entry_from_message)
+                        .collect(),
                 },
             )
             .await;
@@ -288,10 +290,7 @@ fn spawn_turn(
                         send_notification(
                             &runtime_events,
                             &state,
-                            AppServerNotification::TurnEvent {
-                                session_id,
-                                event,
-                            },
+                            AppServerNotification::TurnEvent { session_id, event },
                         )
                         .await;
                     });
@@ -396,7 +395,10 @@ fn history_entry_from_message(message: &ConversationMessage) -> HistoryEntry {
         ConversationMessage::User { content } => HistoryEntry::User {
             content: content.clone(),
         },
-        ConversationMessage::Assistant { content, tool_calls } => HistoryEntry::Assistant {
+        ConversationMessage::Assistant {
+            content,
+            tool_calls,
+        } => HistoryEntry::Assistant {
             content: content.clone(),
             has_tool_calls: !tool_calls.is_empty(),
         },

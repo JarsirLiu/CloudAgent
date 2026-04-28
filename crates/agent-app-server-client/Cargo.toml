@@ -9,4 +9,5 @@ agent-app-server = { path = "../agent-app-server" }
 agent-protocol = { path = "../agent-protocol" }
 agent-runtime = { path = "../agent-runtime" }
 anyhow.workspace = true
+serde_json.workspace = true
 tokio.workspace = true

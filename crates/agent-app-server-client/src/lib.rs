@@ -1,37 +1,46 @@
-use agent_app_server::{
-    InProcessClientHandle, InProcessClientSender, start_in_process,
-};
-use agent_protocol::{AppClientCommand, AppServerMessage};
-use agent_runtime::AgentRuntime;
-use anyhow::Result;
-use std::sync::Arc;
+mod in_process;
+mod stdio;
 
-pub struct InProcessAppServerClient {
-    sender: InProcessClientSender,
-    handle: InProcessClientHandle,
+use agent_protocol::AppServerMessage;
+use anyhow::Result;
+
+pub use in_process::InProcessClientConfig;
+pub use stdio::StdioClientConfig;
+
+pub enum AppServerClient {
+    InProcess(in_process::InProcessAppServerClient),
+    Stdio(stdio::StdioAppServerClient),
 }
 
-impl InProcessAppServerClient {
-    pub fn start(
-        runtime: Arc<AgentRuntime>,
-        session_id: String,
-        auto_approve: bool,
-        auto_approve_reason: Option<String>,
-    ) -> Self {
-        let handle = start_in_process(runtime, session_id, auto_approve, auto_approve_reason);
-        let sender = handle.sender();
-        Self { sender, handle }
+impl AppServerClient {
+    pub fn in_process(config: InProcessClientConfig) -> Self {
+        Self::InProcess(in_process::InProcessAppServerClient::start(config))
     }
 
-    pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
-        self.sender.send_command(command)
+    pub async fn stdio(config: StdioClientConfig) -> Result<Self> {
+        Ok(Self::Stdio(
+            stdio::StdioAppServerClient::spawn(config).await?,
+        ))
+    }
+
+    pub fn send_command(&self, command: agent_protocol::AppClientCommand) -> Result<()> {
+        match self {
+            Self::InProcess(client) => client.send_command(command),
+            Self::Stdio(client) => client.send_command(command),
+        }
     }
 
     pub async fn next_message(&mut self) -> Option<AppServerMessage> {
-        self.handle.next_message().await
+        match self {
+            Self::InProcess(client) => client.next_message().await,
+            Self::Stdio(client) => client.next_message().await,
+        }
     }
 
     pub async fn shutdown(self) -> Result<()> {
-        self.handle.shutdown().await
+        match self {
+            Self::InProcess(client) => client.shutdown().await,
+            Self::Stdio(client) => client.shutdown().await,
+        }
     }
 }

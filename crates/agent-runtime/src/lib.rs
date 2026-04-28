@@ -12,10 +12,10 @@ use config::{AgentConfig, LlmConfig};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
 use state::RuntimeState;
-use storage::JsonSessionStore;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use storage::JsonSessionStore;
 use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
 use tokio_util::sync::CancellationToken;
 
@@ -252,18 +252,18 @@ impl AgentRuntime {
             })
         } else {
             RegularTurnTask
-            .run(
-                TaskContext {
-                    runtime: self,
-                    session_id,
-                    turn_id: &turn_id,
-                    cancellation_token: active_turn.cancellation_token.clone(),
-                    on_event,
-                },
-                session,
-                approval,
-            )
-            .await
+                .run(
+                    TaskContext {
+                        runtime: self,
+                        session_id,
+                        turn_id: &turn_id,
+                        cancellation_token: active_turn.cancellation_token.clone(),
+                        on_event,
+                    },
+                    session,
+                    approval,
+                )
+                .await
         };
 
         self.state.finish_turn(session_id).await;
@@ -289,10 +289,7 @@ impl AgentRuntime {
                     });
                 }
                 let mut session = self.load_session(session_id).await?;
-                session.push_assistant_message(
-                    Some(format!("Turn failed: {err:#}")),
-                    Vec::new(),
-                );
+                session.push_assistant_message(Some(format!("Turn failed: {err:#}")), Vec::new());
                 self.save_session(session.clone()).await?;
                 let error_text = format!("{err:#}");
                 Ok(TurnOutcome {
@@ -405,11 +402,7 @@ impl ChatModel for OpenAiCompatibleModel {
                 .iter()
                 .map(ChatApiMessage::from_message)
                 .collect::<Result<Vec<_>>>()?,
-            tools: request
-                .tools
-                .iter()
-                .map(ChatToolSpec::from_spec)
-                .collect(),
+            tools: request.tools.iter().map(ChatToolSpec::from_spec).collect(),
             tool_choice: "auto".to_string(),
             parallel_tool_calls: false,
             temperature: request.temperature,
@@ -502,7 +495,10 @@ impl ChatApiMessage {
                 tool_call_id: None,
                 name: None,
             }),
-            ConversationMessage::Assistant { content, tool_calls } => Ok(Self {
+            ConversationMessage::Assistant {
+                content,
+                tool_calls,
+            } => Ok(Self {
                 role: "assistant".to_string(),
                 content: content.clone(),
                 tool_calls: if tool_calls.is_empty() {
@@ -637,7 +633,8 @@ impl AgentRuntime {
 }
 
 pub(crate) fn summarize_arguments(arguments: &Value) -> String {
-    let rendered = serde_json::to_string(arguments).unwrap_or_else(|_| "<invalid-json>".to_string());
+    let rendered =
+        serde_json::to_string(arguments).unwrap_or_else(|_| "<invalid-json>".to_string());
     if rendered.chars().count() > 240 {
         let truncated = rendered.chars().take(240).collect::<String>();
         format!("{truncated}...")

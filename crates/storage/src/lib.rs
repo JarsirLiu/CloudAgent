@@ -52,12 +52,14 @@ impl JsonSessionStore {
     }
 
     fn session_path(&self, session_id: &str) -> PathBuf {
-        self.root.join(format!("{}.json", sanitize_session_id(session_id)))
+        self.root
+            .join(format!("{}.json", sanitize_session_id(session_id)))
     }
 }
 
 fn sanitize_session_id(value: &str) -> String {
-    value.chars()
+    value
+        .chars()
         .map(|ch| match ch {
             'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
             _ => '_',

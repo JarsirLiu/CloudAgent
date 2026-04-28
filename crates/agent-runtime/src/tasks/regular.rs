@@ -96,11 +96,14 @@ where
         );
 
         let response = runtime
-            .complete_model_request(&cancellation_token, ModelRequest {
-                messages: session.messages.clone(),
-                tools: tool_specs.clone(),
-                temperature: runtime.config.llm.temperature,
-            })
+            .complete_model_request(
+                &cancellation_token,
+                ModelRequest {
+                    messages: session.messages.clone(),
+                    tools: tool_specs.clone(),
+                    temperature: runtime.config.llm.temperature,
+                },
+            )
             .await?;
 
         last_model_name = response.model_name.clone();

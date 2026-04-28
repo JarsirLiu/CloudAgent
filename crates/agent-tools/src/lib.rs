@@ -1,5 +1,6 @@
 use agent_core::{
-    ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec, context::ToolExecutionContext as CtxAlias,
+    ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
+    context::ToolExecutionContext as CtxAlias,
 };
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -9,8 +10,8 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
@@ -124,7 +125,10 @@ impl LocalTool for ShellCommandTool {
     async fn invoke(&self, arguments: Value, ctx: &CtxAlias) -> Result<ToolInvocationOutput> {
         let args: ShellCommandArgs = serde_json::from_value(arguments)?;
         let workdir = resolve_workspace_path(&ctx.workspace_root, args.workdir.as_deref())?;
-        let timeout_ms = args.timeout_ms.unwrap_or(ctx.default_shell_timeout_ms).max(1_000);
+        let timeout_ms = args
+            .timeout_ms
+            .unwrap_or(ctx.default_shell_timeout_ms)
+            .max(1_000);
 
         let mut command = if cfg!(windows) {
             let mut cmd = Command::new("powershell");
@@ -274,7 +278,8 @@ impl LocalTool for ReadFileTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".to_string(),
-            description: "Read a text file from the workspace. Large outputs are truncated.".to_string(),
+            description: "Read a text file from the workspace. Large outputs are truncated."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {

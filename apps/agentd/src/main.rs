@@ -1,6 +1,7 @@
+use agent_app_server::run_stdio_server;
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
-use cli::{ConsoleBanner, ConsoleConfig, run_console};
+use cli::{ConsoleBanner, ConsoleConfig, ConsoleConnection, run_console};
 use config::AgentConfig;
 use std::sync::Arc;
 
@@ -13,9 +14,18 @@ async fn main() -> Result<()> {
     let runtime = Arc::new(AgentRuntime::from_config(config)?);
 
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).is_some_and(|arg| arg == "console") {
-        run_console_mode(runtime).await?;
-        return Ok(());
+    match args.get(1).map(String::as_str) {
+        Some("console") => {
+            run_console_mode(runtime).await?;
+            return Ok(());
+        }
+        Some("app-server-stdio") => {
+            let session_id =
+                parse_session_id(&args).unwrap_or_else(|| runtime.default_session_id().to_string());
+            run_stdio_server(runtime, session_id, false, None).await?;
+            return Ok(());
+        }
+        _ => {}
     }
 
     tracing::info!(
@@ -29,14 +39,18 @@ async fn main() -> Result<()> {
 
 async fn run_console_mode(runtime: Arc<AgentRuntime>) -> Result<()> {
     let session_id = runtime.default_session_id().to_string();
-    run_console(
-        runtime,
-        ConsoleConfig {
-            session_id: session_id.clone(),
-            banner: ConsoleBanner::daemon(&session_id),
-            auto_approve: true,
-            auto_approve_reason: Some("auto-approved in local daemon console".to_string()),
-        },
-    )
+    run_console(ConsoleConfig {
+        session_id: session_id.clone(),
+        banner: ConsoleBanner::daemon(&session_id),
+        auto_approve: true,
+        auto_approve_reason: Some("auto-approved in local daemon console".to_string()),
+        connection: ConsoleConnection::InProcess { runtime },
+    })
     .await
+}
+
+fn parse_session_id(args: &[String]) -> Option<String> {
+    args.windows(2)
+        .find(|pair| pair[0] == "--session")
+        .map(|pair| pair[1].clone())
 }
