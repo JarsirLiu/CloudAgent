@@ -141,6 +141,7 @@ where
             )
             .await?;
 
+        let had_streaming_assistant_item = streaming_assistant_item_id.is_some();
         if let Some(item_id) = streaming_assistant_item_id.take() {
             emit_event(
                 &mut events,
@@ -148,12 +149,25 @@ where
                 TurnEvent::ItemCompleted {
                     turn_id: turn_id.to_string(),
                     item_id,
+                    kind: TurnItemKind::AssistantMessage,
                 },
             );
         }
 
         last_model_name = response.model_name.clone();
         let tool_calls = response.tool_calls.clone();
+        if !had_streaming_assistant_item
+            && let Some(content) = response.content.clone()
+            && !content.trim().is_empty()
+        {
+            emit_assistant_item(
+                &mut events,
+                on_event,
+                turn_id,
+                &content,
+                &mut assistant_item_seq,
+            );
+        }
         emit_event(
             &mut events,
             on_event,
@@ -168,12 +182,11 @@ where
         session.push_assistant_message(response.content.clone(), tool_calls.clone());
 
         if tool_calls.is_empty() {
-            let has_content = response.content.is_some();
             let final_response = response
                 .content
                 .clone()
                 .unwrap_or_else(|| "The model returned an empty response.".to_string());
-            if !has_content {
+            if !had_streaming_assistant_item && response.content.is_none() {
                 emit_assistant_item(
                     &mut events,
                     on_event,
@@ -301,6 +314,7 @@ where
                         TurnEvent::ItemCompleted {
                             turn_id: turn_id.to_string(),
                             item_id: tool_item_id.clone(),
+                            kind: TurnItemKind::ToolCall,
                         },
                     );
                     session.push_tool_result(result);
@@ -358,6 +372,7 @@ where
                 TurnEvent::ItemCompleted {
                     turn_id: turn_id.to_string(),
                     item_id: tool_item_id,
+                    kind: TurnItemKind::ToolCall,
                 },
             );
             session.push_tool_result(result);
@@ -428,6 +443,7 @@ fn emit_assistant_item(
         TurnEvent::ItemCompleted {
             turn_id: turn_id.to_string(),
             item_id: assistant_item_id,
+            kind: TurnItemKind::AssistantMessage,
         },
     );
 }

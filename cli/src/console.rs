@@ -156,6 +156,8 @@ struct TuiApp {
     streaming_dirty: bool,
     tool_item_cells: HashMap<String, usize>,
     tool_item_buffers: HashMap<String, String>,
+    tool_item_has_output: HashMap<String, bool>,
+    pending_tool_output: HashMap<String, String>,
     item_kinds: HashMap<String, TurnItemKind>,
     last_copyable_output: Option<String>,
     input_pane: InputPane,
@@ -188,6 +190,8 @@ impl TuiApp {
             streaming_dirty: false,
             tool_item_cells: HashMap::new(),
             tool_item_buffers: HashMap::new(),
+            tool_item_has_output: HashMap::new(),
+            pending_tool_output: HashMap::new(),
             item_kinds: HashMap::new(),
             last_copyable_output: None,
             input_pane: InputPane::new(),
@@ -224,6 +228,8 @@ impl TuiApp {
         self.streaming_dirty = false;
         self.tool_item_cells.clear();
         self.tool_item_buffers.clear();
+        self.tool_item_has_output.clear();
+        self.pending_tool_output.clear();
         self.item_kinds.clear();
         self.last_copyable_output = None;
         self.input_pane.clear_views();
@@ -307,7 +313,6 @@ impl TuiApp {
                     self.status_text = "Working".to_string();
                 }
                 AppServerNotification::ItemStarted {
-                    turn_id,
                     item_id,
                     kind,
                     title,
@@ -315,11 +320,14 @@ impl TuiApp {
                 } => {
                     self.item_kinds.insert(item_id.clone(), kind.clone());
                     if *kind == TurnItemKind::AssistantMessage {
-                        self.handle_assistant_item_started(turn_id, item_id);
-                    } else if *kind == TurnItemKind::ToolCall {
-                        self.handle_tool_item_started(item_id, title.as_deref().unwrap_or("tool_call"));
+                        if let AppServerNotification::ItemStarted { turn_id, .. } = notification {
+                            self.handle_assistant_item_started(turn_id, item_id);
+                        }
                     } else if *kind == TurnItemKind::Reasoning {
-                        self.handle_tool_item_started(item_id, title.as_deref().unwrap_or("reasoning"));
+                        self.handle_tool_item_started(
+                            item_id,
+                            title.as_deref().unwrap_or("reasoning"),
+                        );
                     }
                 }
                 AppServerNotification::AgentMessageDelta { item_id, delta, .. } => {
@@ -334,16 +342,24 @@ impl TuiApp {
                         self.handle_tool_item_delta(item_id, delta);
                     }
                 }
-                AppServerNotification::ToolCallDelta { item_id, delta, .. } => {
-                    if self.item_kinds.get(item_id) == Some(&TurnItemKind::AssistantMessage) {
-                        self.handle_assistant_item_delta(item_id, delta);
-                    } else {
-                        self.handle_tool_item_delta(item_id, delta);
-                    }
+                AppServerNotification::ToolCallStarted {
+                    item_id, tool_name, ..
+                } => {
+                    self.handle_tool_item_started(item_id, tool_name);
                 }
-                AppServerNotification::ItemCompleted { item_id, .. } => {
-                    self.handle_assistant_item_completed(item_id);
+                AppServerNotification::ToolCallOutputDelta { item_id, delta, .. } => {
+                    self.handle_tool_item_delta(item_id, delta);
+                }
+                AppServerNotification::ToolCallCompleted { item_id, .. } => {
                     self.handle_tool_item_completed(item_id);
+                    self.item_kinds.remove(item_id);
+                }
+                AppServerNotification::ItemCompleted { item_id, kind, .. } => {
+                    if *kind == TurnItemKind::AssistantMessage {
+                        self.handle_assistant_item_completed(item_id);
+                    } else if *kind == TurnItemKind::Reasoning {
+                        self.handle_tool_item_completed(item_id);
+                    }
                     self.item_kinds.remove(item_id);
                     self.commit_streaming_delta();
                 }
@@ -820,13 +836,22 @@ impl TuiApp {
             this.tool_item_cells.insert(item_id.to_string(), idx);
             this.tool_item_buffers
                 .insert(item_id.to_string(), "Started".to_string());
+            this.tool_item_has_output.insert(item_id.to_string(), false);
             this.last_tool_name = Some(title.to_string());
             this.refresh_tool_focus();
         });
+        if let Some(pending) = self.pending_tool_output.remove(item_id) {
+            self.handle_tool_item_delta(item_id, &pending);
+        }
     }
 
     fn handle_tool_item_delta(&mut self, item_id: &str, delta: &str) {
         let Some(idx) = self.tool_item_cells.get(item_id).copied() else {
+            let pending = self
+                .pending_tool_output
+                .entry(item_id.to_string())
+                .or_default();
+            pending.push_str(delta);
             return;
         };
         self.preserve_scroll_on_content_change(|this| {
@@ -834,8 +859,13 @@ impl TuiApp {
                 .tool_item_buffers
                 .entry(item_id.to_string())
                 .or_default();
-            if !buffer.is_empty() {
-                buffer.push('\n');
+            let has_output = this
+                .tool_item_has_output
+                .entry(item_id.to_string())
+                .or_insert(false);
+            if !*has_output {
+                buffer.clear();
+                *has_output = true;
             }
             buffer.push_str(delta);
             let _ = this.transcript.update_cell_body(idx, buffer.clone());
@@ -844,8 +874,36 @@ impl TuiApp {
     }
 
     fn handle_tool_item_completed(&mut self, item_id: &str) {
+        if let Some(idx) = self.tool_item_cells.get(item_id).copied() {
+            let had_output = self
+                .tool_item_has_output
+                .get(item_id)
+                .copied()
+                .unwrap_or(false);
+            self.preserve_scroll_on_content_change(|this| {
+                let next_body = if had_output {
+                    let current = this
+                        .tool_item_buffers
+                        .get(item_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    if current.trim().is_empty() {
+                        "Completed".to_string()
+                    } else {
+                        format!("{current}\nCompleted")
+                    }
+                } else {
+                    "Completed".to_string()
+                };
+                this.tool_item_buffers
+                    .insert(item_id.to_string(), next_body.clone());
+                let _ = this.transcript.update_cell_body(idx, next_body);
+                this.refresh_tool_focus();
+            });
+        }
         self.tool_item_cells.remove(item_id);
         self.tool_item_buffers.remove(item_id);
+        self.tool_item_has_output.remove(item_id);
     }
 
     fn commit_streaming_delta(&mut self) {

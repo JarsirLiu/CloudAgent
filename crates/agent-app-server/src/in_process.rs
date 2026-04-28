@@ -395,13 +395,24 @@ fn project_turn_event(session_id: &str, event: &TurnEvent) -> Vec<AppServerNotif
             item_id,
             kind,
             title,
-        } => vec![AppServerNotification::ItemStarted {
-            session_id: session_id.to_string(),
-            turn_id: turn_id.clone(),
-            item_id: item_id.clone(),
-            kind: kind.clone(),
-            title: title.clone(),
-        }],
+        } => {
+            let mut notifications = vec![AppServerNotification::ItemStarted {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                kind: kind.clone(),
+                title: title.clone(),
+            }];
+            if kind == &agent_protocol::TurnItemKind::ToolCall {
+                notifications.push(AppServerNotification::ToolCallStarted {
+                    session_id: session_id.to_string(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    tool_name: title.clone().unwrap_or_else(|| "tool_call".to_string()),
+                });
+            }
+            notifications
+        }
         TurnEvent::ItemDelta {
             turn_id,
             item_id,
@@ -417,7 +428,7 @@ fn project_turn_event(session_id: &str, event: &TurnEvent) -> Vec<AppServerNotif
                 }]
             }
             agent_protocol::TurnItemDeltaKind::ToolOutput => {
-                vec![AppServerNotification::ToolCallDelta {
+                vec![AppServerNotification::ToolCallOutputDelta {
                     session_id: session_id.to_string(),
                     turn_id: turn_id.clone(),
                     item_id: item_id.clone(),
@@ -442,11 +453,26 @@ fn project_turn_event(session_id: &str, event: &TurnEvent) -> Vec<AppServerNotif
             }
             agent_protocol::TurnItemDeltaKind::JsonPatch => Vec::new(),
         },
-        TurnEvent::ItemCompleted { turn_id, item_id } => vec![AppServerNotification::ItemCompleted {
-            session_id: session_id.to_string(),
-            turn_id: turn_id.clone(),
-            item_id: item_id.clone(),
-        }],
+        TurnEvent::ItemCompleted {
+            turn_id,
+            item_id,
+            kind,
+        } => {
+            let mut notifications = vec![AppServerNotification::ItemCompleted {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                kind: kind.clone(),
+            }];
+            if kind == &agent_protocol::TurnItemKind::ToolCall {
+                notifications.push(AppServerNotification::ToolCallCompleted {
+                    session_id: session_id.to_string(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                });
+            }
+            notifications
+        }
         TurnEvent::TurnCompleted {
             turn_id,
             final_response,
