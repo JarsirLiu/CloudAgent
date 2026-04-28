@@ -134,6 +134,7 @@ enum ParsedInput {
 
 struct TuiApp {
     session_id: String,
+    connection_label: String,
     console_state: ConsoleState,
     transcript: Transcript,
     transcript_scroll: usize,
@@ -149,6 +150,7 @@ impl TuiApp {
     fn new(session_id: String, _banner: ConsoleBanner, connection_label: &str) -> Self {
         Self {
             session_id,
+            connection_label: connection_label.to_string(),
             console_state: ConsoleState::new(),
             transcript: Transcript::default(),
             transcript_scroll: 0,
@@ -164,6 +166,17 @@ impl TuiApp {
     fn push_cell(&mut self, cell: HistoryCell) {
         self.transcript.push(cell);
         self.transcript_scroll = 0;
+    }
+
+    fn reset_local_view(&mut self) {
+        self.console_state = ConsoleState::new();
+        self.transcript = Transcript::default();
+        self.transcript_scroll = 0;
+        self.history_loaded = true;
+        self.show_history_panel_on_next_response = false;
+        self.status_text = format!("Connected via {}", self.connection_label);
+        self.bottom_pane.clear_views();
+        self.approval_inline = None;
     }
 
     fn set_mode(&mut self, mode: FrontendMode) {
@@ -744,6 +757,11 @@ fn handle_tui_input(
                 app.console_state.mode = FrontendMode::Running;
                 app.console_state.pending_approval_request_id = None;
                 app.bottom_pane.clear_views();
+            }
+            if let AppClientCommand::ResetSession { .. } = &command {
+                app.reset_local_view();
+                client.send_command(command)?;
+                return Ok(false);
             }
             if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
                 app.console_state.mode = FrontendMode::Running;
