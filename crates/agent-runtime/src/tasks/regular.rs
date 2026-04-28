@@ -301,13 +301,13 @@ where
                     emit_event(
                         &mut events,
                         on_event,
-                    TurnEvent::ItemDelta {
-                        turn_id: turn_id.to_string(),
-                        item_id: tool_item_id.clone(),
-                        kind: TurnItemDeltaKind::ToolOutput,
-                        delta: format!("Tool execution skipped: {reason}"),
-                    },
-                );
+                        TurnEvent::ItemDelta {
+                            turn_id: turn_id.to_string(),
+                            item_id: tool_item_id.clone(),
+                            kind: TurnItemDeltaKind::ToolOutput,
+                            delta: format!("Tool execution skipped: {reason}"),
+                        },
+                    );
                     emit_event(
                         &mut events,
                         on_event,
@@ -318,7 +318,9 @@ where
                         },
                     );
                     session.push_tool_result(result);
-                    continue;
+                    // Stop processing the remaining tool calls from the same assistant output.
+                    // Let the model consume this denial result first in the next roundtrip.
+                    break;
                 }
             }
 

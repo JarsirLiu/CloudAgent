@@ -4,7 +4,7 @@ use crate::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::chat_composer::{ChatComposer, ComposerAction};
 use crate::footer::{divider_line, hint_line, status_line};
 use agent_protocol::FrontendMode;
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -37,6 +37,10 @@ impl InputPane {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
+            return Some(InputPaneAction::Composer(ComposerAction::Interrupt));
+        }
+
         if let Some(view) = self.view_stack.last_mut() {
             match view.handle_key_event(key) {
                 BottomPaneViewAction::None => {}

@@ -137,7 +137,7 @@ impl HistoryCell {
     fn render_user(&self, width: usize) -> Vec<Line<'static>> {
         let content_width = width.saturating_sub(4).max(8);
         let wrapped = wrap_text(&self.body, content_width);
-        let mut lines = vec![Line::raw("")];
+        let mut lines = Vec::new();
         for (idx, text) in wrapped.into_iter().enumerate() {
             let prefix = if idx == 0 { "› " } else { "  " };
             lines.push(Line::from(vec![
@@ -156,7 +156,7 @@ impl HistoryCell {
     fn render_agent(&self, width: usize) -> Vec<Line<'static>> {
         let inner = width.saturating_sub(6).max(8);
         let md_lines = render_markdown(&self.body, inner);
-        let mut out = vec![Line::raw("")];
+        let mut out = Vec::new();
         for (i, line) in md_lines.into_iter().enumerate() {
             let prefix = if i == 0 {
                 Span::styled(" ● ", Style::default().fg(Color::Rgb(100, 180, 255)))
@@ -200,30 +200,33 @@ impl HistoryCell {
         }
         let wrapped = wrap_text(&self.body, body_width);
         let max_lines = 6usize;
-        let display_count = wrapped.len().min(max_lines);
-        for line in wrapped.iter().take(display_count) {
+        let mut output_lines: Vec<String> = Vec::new();
+        if wrapped.len() <= max_lines {
+            output_lines.extend(wrapped);
+        } else {
+            let head = 3usize.min(max_lines);
+            let tail = max_lines.saturating_sub(head);
+            output_lines.extend(wrapped.iter().take(head).cloned());
+            output_lines.push(format!(
+                "… +{} lines",
+                wrapped.len().saturating_sub(head + tail)
+            ));
+            output_lines.extend(wrapped.iter().skip(wrapped.len().saturating_sub(tail)).cloned());
+        }
+        for line in output_lines {
             if !line.is_empty() {
                 lines.push(Line::from(vec![
                     Span::raw("    "),
-                    Span::styled(line.clone(), Style::default().fg(Color::Rgb(130, 130, 140))),
+                    Span::styled(line, Style::default().fg(Color::Rgb(130, 130, 140))),
                 ]));
             }
-        }
-        if wrapped.len() > max_lines {
-            lines.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled(
-                    format!("… +{} lines", wrapped.len() - max_lines),
-                    Style::default().fg(Color::Rgb(110, 110, 120)),
-                ),
-            ]));
         }
         lines
     }
 
     fn render_meta(&self, width: usize) -> Vec<Line<'static>> {
         let wrapped = wrap_text(&self.body, width.saturating_sub(4).max(8));
-        let mut lines = vec![Line::raw("")];
+        let mut lines = Vec::new();
         for (i, line) in wrapped.into_iter().enumerate() {
             let prefix = if i == 0 { "· " } else { "  " };
             lines.push(Line::from(vec![
@@ -262,35 +265,28 @@ impl Transcript {
     pub fn is_empty(&self) -> bool {
         self.cells.is_empty()
     }
-    pub fn render_lines(
+    pub fn render_lines_with_tail(
         &self,
         width: usize,
         height: usize,
         scroll: usize,
+        tail: Option<&HistoryCell>,
     ) -> Vec<Line<'static>> {
         let mut all_lines = Vec::new();
         for cell in &self.cells {
             let lines = cell.to_lines_with_mode(width);
             all_lines.extend(lines);
         }
+        if let Some(cell) = tail {
+            all_lines.extend(cell.to_lines_with_mode(width));
+        }
         let total = all_lines.len();
-
         if total == 0 {
             return vec![];
         }
-
-        // Bottom-aligned logic:
-        // We want the last 'height' lines when scroll is 0.
         let end = total.saturating_sub(scroll);
         let start = end.saturating_sub(height);
-
-        let result: Vec<Line<'static>> = all_lines
-            .into_iter()
-            .skip(start)
-            .take(end - start)
-            .collect();
-
-        result
+        all_lines.into_iter().skip(start).take(end - start).collect()
     }
 
     pub fn total_lines(&self, width: usize) -> usize {
@@ -301,25 +297,21 @@ impl Transcript {
             .sum()
     }
 
-    pub fn update_cell_body(&mut self, index: usize, body: String) -> bool {
-        let Some(cell) = self.cells.get_mut(index) else {
-            return false;
-        };
-        cell.body = body;
-        if let Ok(mut cache) = cell.cache.lock() {
-            *cache = None;
+    pub fn total_lines_with_tail(&self, width: usize, tail: Option<&HistoryCell>) -> usize {
+        let mut total = self.total_lines(width);
+        if let Some(cell) = tail {
+            total += cell.to_lines_with_mode(width).len();
         }
-        true
+        total
     }
+
 }
 
 // ── Event Helpers ─────────────────────────────────────────────────────────────
 
 pub fn render_history_entry(message: &HistoryEntry) -> HistoryCell {
     match message {
-        HistoryEntry::System { content } => {
-            HistoryCell::from_message("system", content.clone(), HistoryTone::Meta)
-        }
+        HistoryEntry::System { .. } => HistoryCell::from_message("", "", HistoryTone::Meta),
         HistoryEntry::User { content } => {
             HistoryCell::from_message("you", content.clone(), HistoryTone::User)
         }

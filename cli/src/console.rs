@@ -19,7 +19,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
 use std::sync::Arc;
@@ -141,14 +140,10 @@ struct TuiApp {
     status_text: String,
     last_message_count: usize,
     last_tool_name: Option<String>,
-    streaming_turn_id: Option<String>,
-    streaming_item_id: Option<String>,
-    streaming_buffer: String,
-    streaming_cell_index: Option<usize>,
-    streaming_dirty: bool,
-    tool_item_cells: HashMap<String, usize>,
-    tool_item_buffers: HashMap<String, String>,
-    tool_item_has_output: HashMap<String, bool>,
+    active_item_turn_id: Option<String>,
+    active_item_id: Option<String>,
+    active_item_kind: Option<TurnItemKind>,
+    active_cell: Option<HistoryCell>,
     last_copyable_output: Option<String>,
     input_pane: InputPane,
     should_exit: bool,
@@ -168,14 +163,10 @@ impl TuiApp {
             status_text: format!("Connected via {connection_label}"),
             last_message_count: 0,
             last_tool_name: None,
-            streaming_turn_id: None,
-            streaming_item_id: None,
-            streaming_buffer: String::new(),
-            streaming_cell_index: None,
-            streaming_dirty: false,
-            tool_item_cells: HashMap::new(),
-            tool_item_buffers: HashMap::new(),
-            tool_item_has_output: HashMap::new(),
+            active_item_turn_id: None,
+            active_item_id: None,
+            active_item_kind: None,
+            active_cell: None,
             last_copyable_output: None,
             input_pane: InputPane::new(),
             should_exit: false,
@@ -198,14 +189,10 @@ impl TuiApp {
         self.status_text = format!("Connected via {}", self.connection_label);
         self.last_message_count = 0;
         self.last_tool_name = None;
-        self.streaming_turn_id = None;
-        self.streaming_item_id = None;
-        self.streaming_buffer.clear();
-        self.streaming_cell_index = None;
-        self.streaming_dirty = false;
-        self.tool_item_cells.clear();
-        self.tool_item_buffers.clear();
-        self.tool_item_has_output.clear();
+        self.active_item_turn_id = None;
+        self.active_item_id = None;
+        self.active_item_kind = None;
+        self.active_cell = None;
         self.last_copyable_output = None;
         self.input_pane.clear_views();
     }
@@ -324,15 +311,15 @@ impl TuiApp {
                     } else if *kind == TurnItemKind::Reasoning || *kind == TurnItemKind::ToolCall {
                         self.handle_tool_item_completed(item_id);
                     }
-                    self.commit_streaming_delta();
                 }
                 AppServerNotification::TurnCompleted { .. } => {
-                    self.commit_streaming_delta();
+                    self.flush_active_cell_to_transcript();
                     self.input_pane.clear_approval();
                     self.status_text = "Turn completed".to_string();
+                    self.last_tool_name = None;
                 }
                 AppServerNotification::TurnFailed { error, .. } => {
-                    self.commit_streaming_delta();
+                    self.flush_active_cell_to_transcript();
                     self.input_pane.clear_approval();
                     self.status_text = "Turn failed".to_string();
                     self.push_cell(HistoryCell::from_message(
@@ -340,9 +327,10 @@ impl TuiApp {
                         format!("failed: {error}"),
                         HistoryTone::Error,
                     ));
+                    self.last_tool_name = None;
                 }
                 AppServerNotification::TurnCancelled { reason, .. } => {
-                    self.commit_streaming_delta();
+                    self.flush_active_cell_to_transcript();
                     self.input_pane.clear_approval();
                     self.status_text = "Turn cancelled".to_string();
                     self.push_cell(HistoryCell::from_message(
@@ -350,6 +338,7 @@ impl TuiApp {
                         reason.clone(),
                         HistoryTone::Warning,
                     ));
+                    self.last_tool_name = None;
                 }
             },
             AppServerMessage::Request(AppServerRequest::Approval {
@@ -460,7 +449,7 @@ impl TuiApp {
         let bottom_height = self
             .input_pane
             .desired_height(self.console_state.mode, content.width)
-            .min(content.height.saturating_sub(10).max(6));
+            .clamp(6, content.height.saturating_sub(10).max(6));
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -488,9 +477,9 @@ impl TuiApp {
         );
         frame.render_widget(bottom_widget, sections[2]);
 
-        let (x, y) =
-            self.input_pane
-                .cursor_position(sections[2], lines_before, self.console_state.mode);
+        let (x, y) = self
+            .input_pane
+            .cursor_position(sections[2], lines_before, self.console_state.mode);
         frame.set_cursor_position((x, y));
     }
 
@@ -633,10 +622,11 @@ impl TuiApp {
             vertical: 0,
             horizontal: 2,
         });
-        let lines = self.transcript.render_lines(
+        let lines = self.transcript.render_lines_with_tail(
             inner.width as usize,
             inner.height as usize,
             self.transcript_scroll,
+            self.active_cell.as_ref(),
         );
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
@@ -665,13 +655,15 @@ impl TuiApp {
 
     fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
         let content_width = self.transcript_viewport_width.max(20);
-        let total = self.transcript.total_lines(content_width);
+        let total = self
+            .transcript
+            .total_lines_with_tail(content_width, self.active_cell.as_ref());
         total.saturating_sub(viewport_height)
     }
 
     fn total_transcript_lines(&self) -> usize {
         self.transcript
-            .total_lines(self.transcript_viewport_width.max(20))
+            .total_lines_with_tail(self.transcript_viewport_width.max(20), self.active_cell.as_ref())
     }
 
     fn clamp_transcript_scroll(&mut self) {
@@ -719,117 +711,100 @@ impl TuiApp {
     }
 
     fn handle_assistant_item_started(&mut self, turn_id: &str, item_id: &str) {
-        self.streaming_turn_id = Some(turn_id.to_string());
-        self.streaming_item_id = Some(item_id.to_string());
-        self.streaming_buffer.clear();
-        self.preserve_scroll_on_content_change(|this| {
-            let idx = this.transcript.push(HistoryCell::from_message(
-                "cloudagent",
-                String::new(),
-                HistoryTone::Agent,
-            ));
-            this.streaming_cell_index = Some(idx);
-            this.streaming_dirty = true;
-        });
+        self.flush_active_cell_to_transcript();
+        self.active_item_turn_id = Some(turn_id.to_string());
+        self.active_item_id = Some(item_id.to_string());
+        self.active_item_kind = Some(TurnItemKind::AssistantMessage);
+        self.active_cell = Some(HistoryCell::from_message(
+            "cloudagent",
+            String::new(),
+            HistoryTone::Agent,
+        ));
     }
 
     fn handle_assistant_item_delta(&mut self, item_id: &str, delta: &str) {
-        if self.streaming_item_id.as_deref() != Some(item_id) {
+        if self.active_item_id.as_deref() != Some(item_id)
+            || self.active_item_kind != Some(TurnItemKind::AssistantMessage)
+        {
             return;
         }
-        self.streaming_buffer.push_str(delta);
-        self.streaming_dirty = true;
+        if let Some(cell) = self.active_cell.as_mut() {
+            cell.body.push_str(delta);
+        }
         self.status_text = "Streaming response".to_string();
-        self.commit_streaming_delta();
     }
 
     fn handle_assistant_item_completed(&mut self, item_id: &str) {
-        if self.streaming_item_id.as_deref() != Some(item_id) {
+        if self.active_item_id.as_deref() != Some(item_id)
+            || self.active_item_kind != Some(TurnItemKind::AssistantMessage)
+        {
             return;
         }
-        if !self.streaming_buffer.trim().is_empty() {
-            self.last_copyable_output = Some(self.streaming_buffer.clone());
+        let has_text = self
+            .active_cell
+            .as_ref()
+            .is_some_and(|cell| !cell.body.trim().is_empty());
+        if has_text {
+            self.last_copyable_output = self.active_cell.as_ref().map(|c| c.body.clone());
             self.last_message_count = self.last_message_count.saturating_add(1);
+            self.flush_active_cell_to_transcript();
+        } else {
+            self.clear_active_cell();
         }
-        self.streaming_turn_id = None;
-        self.streaming_item_id = None;
-        self.streaming_dirty = true;
         self.status_text = "Finalizing response".to_string();
     }
 
     fn handle_tool_item_started(&mut self, item_id: &str, title: &str) {
-        self.preserve_scroll_on_content_change(|this| {
-            let idx = this.transcript.push(HistoryCell::from_message(
-                title.to_string(),
-                "Running".to_string(),
-                HistoryTone::Tool,
-            ));
-            this.tool_item_cells.insert(item_id.to_string(), idx);
-            this.tool_item_buffers
-                .insert(item_id.to_string(), "Running".to_string());
-            this.tool_item_has_output.insert(item_id.to_string(), false);
-            this.last_tool_name = Some(title.to_string());
-        });
+        self.flush_active_cell_to_transcript();
+        self.active_item_id = Some(item_id.to_string());
+        self.active_item_kind = Some(TurnItemKind::ToolCall);
+        self.active_cell = Some(HistoryCell::from_message(
+            title.to_string(),
+            "Running".to_string(),
+            HistoryTone::Tool,
+        ));
+        self.last_tool_name = Some(title.to_string());
     }
 
     fn handle_tool_item_delta(&mut self, item_id: &str, delta: &str) {
-        let Some(idx) = self.tool_item_cells.get(item_id).copied() else {
+        if self.active_item_id.as_deref() != Some(item_id)
+            || (self.active_item_kind != Some(TurnItemKind::ToolCall)
+                && self.active_item_kind != Some(TurnItemKind::Reasoning))
+        {
             return;
-        };
-        self.preserve_scroll_on_content_change(|this| {
-            let buffer = this
-                .tool_item_buffers
-                .entry(item_id.to_string())
-                .or_default();
-            let has_output = this
-                .tool_item_has_output
-                .entry(item_id.to_string())
-                .or_insert(false);
-            if !*has_output {
-                buffer.clear();
-                *has_output = true;
-            }
-            buffer.push_str(delta);
-            let _ = this.transcript.update_cell_body(idx, buffer.clone());
-        });
+        }
+        let _ = delta;
+        // Intentionally do not stream raw tool/reasoning payload into transcript body.
     }
 
     fn handle_tool_item_completed(&mut self, item_id: &str) {
-        if let Some(idx) = self.tool_item_cells.get(item_id).copied() {
-            let had_output = self
-                .tool_item_has_output
-                .get(item_id)
-                .copied()
-                .unwrap_or(false);
-            self.preserve_scroll_on_content_change(|this| {
-                let next_body = if had_output {
-                    this.tool_item_buffers
-                        .get(item_id)
-                        .cloned()
-                        .unwrap_or_default()
-                } else {
-                    "Completed".to_string()
-                };
-                this.tool_item_buffers
-                    .insert(item_id.to_string(), next_body.clone());
-                let _ = this.transcript.update_cell_body(idx, next_body);
-            });
+        if self.active_item_id.as_deref() == Some(item_id) {
+            if let Some(cell) = self.active_cell.as_mut() && cell.body.trim().is_empty() {
+                cell.body = "Completed".to_string();
+            }
+            self.flush_active_cell_to_transcript();
         }
-        self.tool_item_cells.remove(item_id);
-        self.tool_item_buffers.remove(item_id);
-        self.tool_item_has_output.remove(item_id);
+        self.last_tool_name = None;
     }
 
-    fn commit_streaming_delta(&mut self) {
-        if !self.streaming_dirty {
+    fn clear_active_cell(&mut self) {
+        self.active_item_turn_id = None;
+        self.active_item_id = None;
+        self.active_item_kind = None;
+        self.active_cell = None;
+    }
+
+    fn flush_active_cell_to_transcript(&mut self) {
+        let Some(cell) = self.active_cell.take() else {
+            self.clear_active_cell();
             return;
+        };
+        if !cell.body.trim().is_empty() {
+            self.preserve_scroll_on_content_change(|this| {
+                this.transcript.push(cell);
+            });
         }
-        self.preserve_scroll_on_content_change(|this| {
-            if let Some(idx) = this.streaming_cell_index {
-                let _ = this.transcript.update_cell_body(idx, this.streaming_buffer.clone());
-            }
-        });
-        self.streaming_dirty = false;
+        self.clear_active_cell();
     }
 }
 
@@ -942,7 +917,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                         app.handle_mouse_scroll(up);
                     }
                     UiEvent::Tick => {
-                        app.commit_streaming_delta();
+                        // Active-cell rendering is event-driven; periodic ticks only keep UI responsive.
                     }
                 }
             }

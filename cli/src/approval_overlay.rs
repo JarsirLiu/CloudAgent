@@ -189,10 +189,22 @@ impl BottomPaneView for ApprovalOverlay {
 
     fn cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
         let prompt_width = 10usize;
-        let x = area.x
+        let mut x = area.x
             + prompt_width as u16
             + unicode_width::UnicodeWidthStr::width(self.reply.text()) as u16;
-        let y = area.y + 7;
+        let mut y = area.y + 8;
+        if area.height > 0 {
+            let max_y = area.y + area.height.saturating_sub(1);
+            if y > max_y {
+                y = max_y;
+            }
+        }
+        if area.width > 0 {
+            let max_x = area.x + area.width.saturating_sub(1);
+            if x > max_x {
+                x = max_x;
+            }
+        }
         Some((x, y))
     }
 
