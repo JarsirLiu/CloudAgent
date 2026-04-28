@@ -43,85 +43,87 @@ impl BottomPane {
         self.composer.handle_key(key)
     }
 
+    /// Renders the pane and returns (Widget, lines_before_input, total_lines)
     pub fn render(
         &self,
         mode: FrontendMode,
         status_text: &str,
         approval: Option<&ApprovalInlineState>,
         area_width: u16,
-    ) -> Paragraph<'static> {
+    ) -> (Paragraph<'static>, u16, u16) {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
-        // ── Divider ──────────────────────────────────────────────────────────
+        // 1. Divider
         lines.push(divider_line(area_width as usize));
 
-        // ── Status row ───────────────────────────────────────────────────────
-        lines.push(self.status_line(mode, status_text, approval.is_some()));
+        // 2. Status Line
+        lines.push(self.status_line(mode, status_text));
         lines.push(Line::raw(""));
 
-        // ── Body ─────────────────────────────────────────────────────────────
+        let mut lines_before_composer = 3u16;
+
+        // 3. Main Content
         if let Some(panel) = self.view_stack.last() {
             lines.push(Line::from(vec![
-                Span::styled("  ", Style::default()),
-                Span::styled(
-                    panel.title.clone(),
-                    Style::default()
-                        .fg(Color::Rgb(200, 200, 210))
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::raw("  "),
+                Span::styled(panel.title.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             ]));
             lines.push(Line::raw(""));
+            lines_before_composer += 2;
             for l in &panel.lines {
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(l.clone(), Style::default().fg(Color::Rgb(140, 140, 150))),
-                ]));
+                lines.push(Line::from(vec![Span::raw("  "), Span::styled(l.clone(), Style::default().fg(Color::Gray))]));
+                lines_before_composer += 1;
             }
+            lines.push(Line::raw(""));
+            lines_before_composer += 1;
         } else if let Some(approval) = approval {
+            let accent = Color::Rgb(255, 180, 50);
             lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    "Approval required",
-                    Style::default()
-                        .fg(Color::Rgb(255, 180, 50))
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled("  ┌─ ACTION REQUIRED ──────────────────────────────────────────", Style::default().fg(accent)),
             ]));
             lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(approval.title.clone(), Style::default().fg(Color::Rgb(220, 220, 220))),
+                Span::styled("  │ ", Style::default().fg(accent)),
+                Span::styled(approval.title.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             ]));
             lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(approval.detail.clone(), Style::default().fg(Color::Rgb(140, 140, 150))),
+                Span::styled("  │ ", Style::default().fg(accent)),
+                Span::styled(approval.detail.clone(), Style::default().fg(Color::Rgb(160, 160, 170))),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  │ ", Style::default().fg(accent)),
+                Span::styled("  [y] ", Style::default().fg(Color::Rgb(100, 255, 100)).add_modifier(Modifier::BOLD)),
+                Span::styled("Approve  ", Style::default().fg(Color::White)),
+                Span::styled("[n] ", Style::default().fg(Color::Rgb(255, 100, 100)).add_modifier(Modifier::BOLD)),
+                Span::styled("Reject", Style::default().fg(Color::White)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  └────────────────────────────────────────────────────────────", Style::default().fg(accent)),
             ]));
             lines.push(Line::raw(""));
-            lines.extend(
-                self.composer
-                    .render_lines(mode, area_width.saturating_sub(4) as usize),
-            );
-        } else {
-            lines.extend(
-                self.composer
-                    .render_lines(mode, area_width.saturating_sub(4) as usize),
-            );
+            lines_before_composer += 6;
         }
 
-        Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::NONE))
-            .wrap(Wrap { trim: false })
+        // 4. Composer
+        let composer_lines = self.composer.render_lines(mode, area_width.saturating_sub(4) as usize);
+        lines.extend(composer_lines);
+
+        let total_lines = lines.len() as u16;
+
+        (
+            Paragraph::new(Text::from(lines))
+                .block(Block::default().borders(Borders::NONE))
+                .wrap(Wrap { trim: false }),
+            lines_before_composer,
+            total_lines
+        )
     }
 
-    pub fn cursor_position(&self, area: Rect) -> (u16, u16) {
-        if !self.view_stack.is_empty() {
-            return (area.x + 2, area.y + 2);
-        }
-        // divider(1) + status(1) + blank(1) = 3 rows before composer
+    pub fn cursor_position(&self, area: Rect, lines_before: u16) -> (u16, u16) {
         let inner = Rect {
-            x: area.x + 2,
-            y: area.y + 3,
-            width: area.width.saturating_sub(4),
-            height: area.height.saturating_sub(5),
+            x: area.x,
+            y: area.y + lines_before,
+            width: area.width,
+            height: area.height.saturating_sub(lines_before),
         };
         self.composer.cursor_position(inner)
     }
@@ -141,7 +143,6 @@ impl BottomPane {
         &self,
         mode: FrontendMode,
         status_text: &str,
-        has_inline_approval: bool,
     ) -> Line<'static> {
         let (dot_color, mode_label) = match mode {
             FrontendMode::Idle => (Color::Rgb(80, 200, 120), "IDLE"),
@@ -149,53 +150,24 @@ impl BottomPane {
             FrontendMode::WaitingForApproval => (Color::Rgb(255, 180, 50), "APPROVAL"),
         };
 
-        let hint = if !self.view_stack.is_empty() {
-            "q / Esc  close".to_string()
-        } else {
-            match mode {
-                FrontendMode::Idle => "Enter  send  ·  Ctrl+K  interrupt  ·  F2  history".to_string(),
-                FrontendMode::Running => "Ctrl+K  interrupt".to_string(),
-                FrontendMode::WaitingForApproval if has_inline_approval => {
-                    "y  approve  ·  n  deny".to_string()
-                }
-                FrontendMode::WaitingForApproval => "Waiting for approval".to_string(),
-            }
-        };
-
-        let status_spans: Vec<Span<'static>> = if mode == FrontendMode::Running {
+        let status_spans = if mode == FrontendMode::Running {
             shimmer_spans(status_text)
         } else {
-            vec![Span::styled(
-                status_text.to_string(),
-                Style::default().fg(Color::Rgb(150, 150, 160)),
-            )]
+            vec![Span::styled(status_text.to_string(), Style::default().fg(Color::Rgb(150, 150, 160)))]
         };
 
         let mut spans = vec![
             Span::raw("  "),
             Span::styled("● ", Style::default().fg(dot_color)),
-            Span::styled(
-                format!("{mode_label} "),
-                Style::default()
-                    .fg(dot_color)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("Connected via in-process  ·  ", Style::default().fg(Color::Rgb(70, 70, 80))),
+            Span::styled(format!("{mode_label} "), Style::default().fg(dot_color).add_modifier(Modifier::BOLD)),
+            Span::styled(" · ", Style::default().fg(Color::Rgb(60, 60, 70))),
         ];
         spans.extend(status_spans);
-        spans.push(Span::raw("  "));
-
-        // Hint at right side (just appended — terminal will clip if too wide)
-        spans.push(Span::styled(hint, Style::default().fg(Color::Rgb(70, 70, 80))));
 
         Line::from(spans)
     }
 }
 
-/// A subtle full-width divider line.
 fn divider_line(width: usize) -> Line<'static> {
-    Line::from(Span::styled(
-        "─".repeat(width),
-        Style::default().fg(Color::Rgb(45, 45, 55)),
-    ))
+    Line::from(Span::styled("─".repeat(width), Style::default().fg(Color::Rgb(40, 40, 50))))
 }

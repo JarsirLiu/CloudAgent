@@ -1,8 +1,9 @@
 use crate::bottom_pane::{ApprovalInlineState, BottomPane, BottomPaneViewState};
 use crate::composer::ComposerAction;
 use crate::history_cell::{
-    HistoryCell, HistoryTone, Transcript, render_history_entry, render_turn_event, shimmer_spans,
+    HistoryCell, HistoryTone, Transcript, render_history_entry, render_turn_event,
 };
+use crate::welcome::WelcomeScreen;
 use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
@@ -21,11 +22,10 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use std::ffi::OsString;
-use std::io::{self, IsTerminal as _, Write as _};
+use std::io::{self, IsTerminal as _};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct ConsoleBanner {
@@ -39,7 +39,9 @@ impl ConsoleBanner {
     pub fn cli(session_id: &str) -> Self {
         Self {
             title: format!("cloudagent session `{session_id}`"),
-            commands: "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt  F2 history  F3 status  F4 reset".to_string(),
+            commands:
+                "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt  F2 history  F3 status  F4 reset"
+                    .to_string(),
             idle_prompt: "message".to_string(),
             approval_prompt: "approval".to_string(),
         }
@@ -84,12 +86,6 @@ impl ConsoleConnection {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum UiMode {
-    Tui,
-    Line,
-}
-
 #[derive(Clone, Debug)]
 struct ConsoleState {
     mode: FrontendMode,
@@ -129,7 +125,6 @@ impl ConsoleState {
 enum ParsedInput {
     Command(AppClientCommand),
     ApprovalAnswer { approved: bool, reason: String },
-    Empty,
 }
 
 struct TuiApp {
@@ -367,184 +362,148 @@ impl TuiApp {
 
     fn render(&self, frame: &mut Frame) {
         let area = frame.area();
-        // Claude-style: full width, no centering column
+        let content = centered_column(area, 112);
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // header bar
-                Constraint::Min(6),    // transcript / welcome
-                Constraint::Length(7), // input pane
+                Constraint::Length(1),
+                Constraint::Min(8),
+                Constraint::Length(6),
             ])
-            .split(area);
+            .split(content);
 
-        frame.render_widget(self.header_bar(area.width), sections[0]);
+        frame.render_widget(self.header_block(), sections[0]);
         if self.transcript.is_empty() {
             self.render_welcome(frame, sections[1]);
         } else {
             frame.render_widget(self.transcript_panel(sections[1]), sections[1]);
         }
-        frame.render_widget(
-            self.bottom_pane.render(
-                self.console_state.mode,
-                &self.status_text,
-                self.approval_inline.as_ref(),
-                sections[2].width,
-            ),
-            sections[2],
-        );
 
-        let (x, y) = self.bottom_pane.cursor_position(sections[2]);
+        let (bottom_widget, lines_before, _) = self.bottom_pane.render(
+            self.console_state.mode,
+            &self.status_text,
+            self.approval_inline.as_ref(),
+            sections[2].width,
+        );
+        frame.render_widget(bottom_widget, sections[2]);
+
+        let (x, y) = self.bottom_pane.cursor_position(sections[2], lines_before);
         frame.set_cursor_position((x, y));
     }
 
-    fn header_bar(&self, total_width: u16) -> Paragraph<'static> {
-        let (mode_color, mode_label) = match self.console_state.mode {
-            FrontendMode::Idle => (Color::Rgb(80, 200, 120), "IDLE"),
-            FrontendMode::Running => (Color::Rgb(100, 160, 255), "RUNNING"),
-            FrontendMode::WaitingForApproval => (Color::Rgb(255, 180, 50), "APPROVAL"),
+    fn header_block(&self) -> Paragraph<'static> {
+        let status = match self.console_state.mode {
+            FrontendMode::Idle => ("IDLE", Color::Green),
+            FrontendMode::Running => ("RUNNING", Color::Cyan),
+            FrontendMode::WaitingForApproval => ("APPROVAL", Color::Yellow),
         };
 
         let scroll_hint = if self.transcript_scroll > 0 {
-            format!(" ↑ scroll +{} ", self.transcript_scroll)
+            format!("scroll +{}", self.transcript_scroll)
         } else {
-            " live ".to_string()
+            "live".to_string()
         };
 
-        // Build: " cloudagent  session <id>  [MODE]  live "
-        // with full-width dark background
-        let mut spans: Vec<Span<'static>> = vec![
+        Paragraph::new(Text::from(vec![Line::from(vec![
             Span::styled(
-                " ❯ cloudagent ",
+                "── CloudAgent",
                 Style::default()
-                    .fg(Color::Rgb(220, 220, 230))
-                    .bg(Color::Rgb(25, 25, 35))
+                    .fg(Color::LightRed)
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::raw("  "),
             Span::styled(
-                format!(" session {} ", self.session_id),
-                Style::default()
-                    .fg(Color::Rgb(100, 100, 120))
-                    .bg(Color::Rgb(25, 25, 35)),
+                format!("session {}", self.session_id),
+                Style::default().fg(Color::White),
             ),
+            Span::raw("  "),
             Span::styled(
-                format!(" {} ", mode_label),
-                Style::default()
-                    .fg(mode_color)
-                    .bg(Color::Rgb(25, 25, 35))
-                    .add_modifier(Modifier::BOLD),
+                format!("[{}]", status.0),
+                Style::default().fg(status.1).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                scroll_hint,
-                Style::default()
-                    .fg(Color::Rgb(70, 70, 90))
-                    .bg(Color::Rgb(25, 25, 35)),
-            ),
-        ];
-
-        // Pad to full width with bg color
-        let used: usize = spans.iter().map(|s| s.content.len()).sum();
-        let pad = (total_width as usize).saturating_sub(used);
-        if pad > 0 {
-            spans.push(Span::styled(
-                " ".repeat(pad),
-                Style::default().bg(Color::Rgb(25, 25, 35)),
-            ));
-        }
-
-        Paragraph::new(Text::from(vec![Line::from(spans)]))
+            Span::raw("  "),
+            Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
+        ])]))
     }
 
     fn render_welcome(&self, frame: &mut Frame, area: Rect) {
-        let inner = area.inner(Margin { horizontal: 4, vertical: 2 });
+        let outer = area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
+            .split(outer);
 
-        // ── Logo / tagline ───────────────────────────────────────────────────
-        let logo_color = Color::Rgb(100, 120, 200);
-        let dim = Color::Rgb(70, 70, 90);
-        let accent = Color::Rgb(140, 160, 230);
+        let left_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::LightRed));
+        let right_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::LightRed));
 
-        let shimmer_title = if self.history_loaded {
-            shimmer_spans("CloudAgent")
-        } else {
-            vec![Span::styled(
-                "CloudAgent",
-                Style::default().fg(logo_color).add_modifier(Modifier::BOLD),
-            )]
-        };
+        let left_inner = left_block.inner(cols[0]);
+        let right_inner = right_block.inner(cols[1]);
 
-        let mut logo_line = vec![Span::raw("  ")];
-        logo_line.extend(shimmer_title);
-        logo_line.push(Span::styled(
-            "  ·  server ops assistant",
-            Style::default().fg(dim),
-        ));
+        frame.render_widget(left_block, cols[0]);
+        frame.render_widget(right_block, cols[1]);
 
-        let subtitle = if self.history_loaded {
-            self.status_text.clone()
-        } else {
-            "Loading session history…".to_string()
-        };
-
-        let mut welcome_lines = vec![
-            Line::raw(""),
-            Line::from(logo_line),
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(subtitle, Style::default().fg(dim)),
-            ]),
-            Line::raw(""),
-            Line::raw(""),
-            // ── Try asking ──────────────────────────────────────────────────
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled("Try asking", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::raw(""),
+        let recent = self.recent_activity_lines();
+        let mut tips = vec![
+            Line::from(Span::styled(
+                "Tips for getting started",
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Run /init to create an AGENTS guide later.",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Recent activity",
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD),
+            )),
         ];
-
-        for suggestion in &[
-            "check disk pressure on all nodes",
-            "inspect this repo and explain the architecture",
-            "write a safe nginx restart script with health check",
-            "tail the last 50 lines of the application log",
-        ] {
-            welcome_lines.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("❯ ", Style::default().fg(Color::Rgb(80, 80, 100))),
-                Span::styled(
-                    suggestion.to_string(),
-                    Style::default().fg(Color::Rgb(170, 170, 185)),
-                ),
-            ]));
-        }
-
-        welcome_lines.push(Line::raw(""));
-        welcome_lines.push(Line::raw(""));
-        welcome_lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                "Enter  ",
-                Style::default().fg(Color::Rgb(220, 220, 230)).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("send  ", Style::default().fg(dim)),
-            Span::styled("Ctrl+K  ", Style::default().fg(Color::Rgb(220, 220, 230)).add_modifier(Modifier::BOLD)),
-            Span::styled("interrupt  ", Style::default().fg(dim)),
-            Span::styled("F2  ", Style::default().fg(Color::Rgb(220, 220, 230)).add_modifier(Modifier::BOLD)),
-            Span::styled("history  ", Style::default().fg(dim)),
-            Span::styled("F4  ", Style::default().fg(Color::Rgb(220, 220, 230)).add_modifier(Modifier::BOLD)),
-            Span::styled("reset", Style::default().fg(dim)),
-        ]));
+        tips.extend(recent);
+        tips.push(Line::from(""));
+        tips.push(Line::from(Span::styled(
+            "Try asking:",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        )));
+        tips.push(Line::from(Span::styled(
+            "check disk pressure",
+            Style::default().fg(Color::White),
+        )));
+        tips.push(Line::from(Span::styled(
+            "inspect this repo and explain it",
+            Style::default().fg(Color::White),
+        )));
+        tips.push(Line::from(Span::styled(
+            "write a safe nginx restart script",
+            Style::default().fg(Color::White),
+        )));
 
         frame.render_widget(
-            Paragraph::new(Text::from(welcome_lines)).wrap(Wrap { trim: false }),
-            inner,
+            WelcomeScreen::new(self.history_loaded, self.status_text.clone()).render(left_inner),
+            left_inner,
+        );
+        frame.render_widget(
+            Paragraph::new(Text::from(tips)).wrap(Wrap { trim: false }),
+            right_inner,
         );
     }
 
     fn transcript_panel(&self, area: Rect) -> Paragraph<'static> {
-        // Claude style: small side margins only, no top/bottom, no border
         let inner = area.inner(Margin {
             vertical: 0,
-            horizontal: 3,
+            horizontal: 2,
         });
         let lines = self.transcript.render_lines(
             inner.width as usize,
@@ -553,10 +512,28 @@ impl TuiApp {
         );
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::NONE))
+            .block(Block::default())
     }
 
+    fn recent_activity_lines(&self) -> Vec<Line<'static>> {
+        if self.transcript.is_empty() {
+            return vec![Line::from(Span::styled(
+                "No recent activity",
+                Style::default().fg(Color::Gray),
+            ))];
+        }
 
+        vec![
+            Line::from(Span::styled(
+                "Session has recent conversation",
+                Style::default().fg(Color::Gray),
+            )),
+            Line::from(Span::styled(
+                "Use F2 to inspect transcript history",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]
+    }
 
     fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
         let content_width = 108usize;
@@ -593,16 +570,10 @@ enum UiEvent {
 }
 
 pub async fn run_console(config: ConsoleConfig) -> Result<()> {
-    let mode = if io::stdin().is_terminal() && io::stdout().is_terminal() {
-        UiMode::Tui
-    } else {
-        UiMode::Line
-    };
-
-    match mode {
-        UiMode::Tui => run_tui_console(config).await,
-        UiMode::Line => run_line_console(config).await,
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        anyhow::bail!("cloudagent cli requires an interactive terminal");
     }
+    run_tui_console(config).await
 }
 
 async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
@@ -669,8 +640,7 @@ fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
     let (tx, rx) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         loop {
-            // 50 ms tick for shimmer animation smoothness (~20 fps)
-            match event::poll(Duration::from_millis(50)) {
+            match event::poll(Duration::from_millis(120)) {
                 Ok(true) => match event::read() {
                     Ok(CEvent::Key(key)) => {
                         if tx.send(UiEvent::Key(key)).is_err() {
@@ -699,7 +669,6 @@ fn handle_tui_input(
     input: ParsedInput,
 ) -> Result<bool> {
     match input {
-        ParsedInput::Empty => {}
         ParsedInput::Command(command) => {
             if let AppClientCommand::Exit = command {
                 if app.console_state.mode != FrontendMode::Idle {
@@ -776,221 +745,12 @@ fn handle_tui_input(
     Ok(false)
 }
 
-async fn run_line_console(config: ConsoleConfig) -> Result<()> {
-    let session_id = config.session_id.clone();
-    let mut client = create_client(&config, session_id.clone()).await?;
-
-    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<ParsedInput>();
-    let (mode_tx, mode_rx) = watch::channel(FrontendMode::Idle);
-    let mut state = ConsoleState::new();
-    let mut renderer = LineRenderer::new(config.banner);
-
-    spawn_line_input_loop(session_id.clone(), input_tx, mode_rx);
-    renderer.render_banner().await?;
-
-    loop {
-        tokio::select! {
-            Some(message) = client.next_message() => {
-                state.update_from_message(&message);
-                renderer.render_message(&message).await?;
-                renderer.render_prompt(state.mode).await?;
-                let _ = mode_tx.send(state.mode);
-            }
-            Some(input) = input_rx.recv() => {
-                if handle_line_input(&session_id, &mut state, &mut renderer, &client, input).await? {
-                    break;
-                }
-                let _ = mode_tx.send(state.mode);
-            }
-            else => break,
-        }
-    }
-
-    client.shutdown().await
-}
-
-struct LineRenderer {
-    banner: ConsoleBanner,
-    stdout: io::Stdout,
-}
-
-impl LineRenderer {
-    fn new(banner: ConsoleBanner) -> Self {
-        Self {
-            banner,
-            stdout: io::stdout(),
-        }
-    }
-
-    async fn render_banner(&mut self) -> Result<()> {
-        println!("{}", self.banner.title);
-        println!("{}", self.banner.commands);
-        self.render_prompt(FrontendMode::Idle).await
-    }
-
-    async fn render_message(&mut self, message: &AppServerMessage) -> Result<()> {
-        match message {
-            AppServerMessage::Notification(notification) => match notification {
-                AppServerNotification::FrontendStateChanged { .. } => {}
-                AppServerNotification::SessionStatus { snapshot, .. } => {
-                    println!(
-                        "session> state={:?} active_turn={:?} turn_state={:?} messages={}",
-                        snapshot.session_state,
-                        snapshot.active_turn,
-                        snapshot.turn_state,
-                        snapshot.message_count
-                    );
-                }
-                AppServerNotification::SessionHistory { messages, .. } => {
-                    for message in messages {
-                        let cell = render_history_entry(message);
-                        if !cell.is_empty() {
-                            let lines = cell.to_lines(120);
-                            for line in lines {
-                                println!("{}", line);
-                            }
-                        }
-                    }
-                }
-                AppServerNotification::SubscriptionChanged {
-                    session_id,
-                    subscribed,
-                } => {
-                    println!(
-                        "session> {} {}",
-                        if *subscribed {
-                            "subscribed to"
-                        } else {
-                            "unsubscribed from"
-                        },
-                        session_id
-                    );
-                }
-                AppServerNotification::Info { message, .. } => println!("session> {message}"),
-                AppServerNotification::Error { message, .. } => {
-                    println!("session> error: {message}")
-                }
-                AppServerNotification::TurnFinished { result, .. } => {
-                    if let Some(error) = &result.error {
-                        println!("turn> failed: {error}");
-                    }
-                }
-                AppServerNotification::TurnEvent { event, .. } => {
-                    let rendered = render_turn_event(event);
-                    if let Some(cell) = rendered.log {
-                        for line in cell.to_lines(120) {
-                            println!("{}", line);
-                        }
-                    }
-                }
-            },
-            AppServerMessage::Request(AppServerRequest::Approval { request, .. }) => {
-                println!(
-                    "approval> tool `{}` wants to run with args {}",
-                    request.tool_name, request.arguments_preview
-                );
-                println!("approval> {}", request.reason);
-                println!("approval> respond with `y`/`n`, or use /interrupt");
-            }
-        }
-        Ok(())
-    }
-
-    async fn render_prompt(&mut self, mode: FrontendMode) -> Result<()> {
-        let prompt = match mode {
-            FrontendMode::Idle => Some("you> "),
-            FrontendMode::WaitingForApproval => Some("approve> "),
-            FrontendMode::Running => None,
-        };
-        if let Some(prompt) = prompt {
-            self.stdout.write_all(prompt.as_bytes())?;
-            self.stdout.flush()?;
-        }
-        Ok(())
-    }
-}
-
-fn spawn_line_input_loop(
-    session_id: String,
-    input_tx: mpsc::UnboundedSender<ParsedInput>,
-    mode_rx: watch::Receiver<FrontendMode>,
-) {
-    tokio::spawn(async move {
-        let stdin = BufReader::new(tokio::io::stdin());
-        let mut lines = stdin.lines();
-        let mode_rx = mode_rx;
-
-        loop {
-            let line = match lines.next_line().await {
-                Ok(Some(line)) => line,
-                Ok(None) | Err(_) => {
-                    let _ = input_tx.send(ParsedInput::Command(AppClientCommand::Exit));
-                    break;
-                }
-            };
-            let mode = *mode_rx.borrow();
-            let _ = input_tx.send(parse_line(&line, &session_id, mode));
-        }
-    });
-}
-
-async fn handle_line_input(
-    session_id: &str,
-    state: &mut ConsoleState,
-    renderer: &mut LineRenderer,
-    client: &AppServerClient,
-    input: ParsedInput,
-) -> Result<bool> {
-    match input {
-        ParsedInput::Empty => {
-            renderer.render_prompt(state.mode).await?;
-        }
-        ParsedInput::Command(command) => {
-            if let AppClientCommand::Exit = command {
-                if state.mode != FrontendMode::Idle {
-                    client.send_command(AppClientCommand::InterruptTurn {
-                        session_id: session_id.to_string(),
-                    })?;
-                }
-                return Ok(true);
-            }
-            if matches!(command, AppClientCommand::SubmitTurn(_)) && !state.can_submit_turn() {
-                println!("session> turn already running; wait, answer approval, or use /interrupt");
-                renderer.render_prompt(state.mode).await?;
-                return Ok(false);
-            }
-            if let AppClientCommand::ApprovalResponse { .. } = &command {
-                state.mode = FrontendMode::Running;
-                state.pending_approval_request_id = None;
-            }
-            if let AppClientCommand::SubmitTurn(_) = &command {
-                state.mode = FrontendMode::Running;
-            }
-            client.send_command(command)?;
-        }
-        ParsedInput::ApprovalAnswer { approved, reason } => {
-            let Some(request_id) = state.pending_approval_request_id.clone() else {
-                println!("session> error: no pending approval request");
-                renderer.render_prompt(state.mode).await?;
-                return Ok(false);
-            };
-            state.mode = FrontendMode::Running;
-            state.pending_approval_request_id = None;
-            client.send_command(AppClientCommand::ApprovalResponse {
-                session_id: session_id.to_string(),
-                request_id,
-                approved,
-                reason: Some(reason),
-            })?;
-        }
-    }
-    Ok(false)
-}
-
 fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
     let trimmed = line.trim();
     if trimmed.is_empty() {
-        return ParsedInput::Empty;
+        return ParsedInput::Command(AppClientCommand::RequestStatus {
+            session_id: session_id.to_string(),
+        });
     }
 
     let command = match trimmed {
@@ -1027,4 +787,13 @@ fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
     ParsedInput::Command(command)
 }
 
-
+fn centered_column(area: Rect, max_width: u16) -> Rect {
+    let width = area.width.min(max_width);
+    let horizontal_padding = area.width.saturating_sub(width) / 2;
+    Rect {
+        x: area.x + horizontal_padding,
+        y: area.y,
+        width,
+        height: area.height,
+    }
+}
