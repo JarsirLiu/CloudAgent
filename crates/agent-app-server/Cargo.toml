@@ -1,5 +1,5 @@
 [package]
-name = "agent-app"
+name = "agent-app-server"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -8,4 +8,6 @@ license.workspace = true
 anyhow.workspace = true
 agent-protocol = { path = "../agent-protocol" }
 agent-runtime = { path = "../agent-runtime" }
+serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true

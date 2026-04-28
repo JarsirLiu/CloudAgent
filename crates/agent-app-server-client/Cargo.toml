@@ -1,0 +1,12 @@
+[package]
+name = "agent-app-server-client"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+agent-app-server = { path = "../agent-app-server" }
+agent-protocol = { path = "../agent-protocol" }
+agent-runtime = { path = "../agent-runtime" }
+anyhow.workspace = true
+tokio.workspace = true

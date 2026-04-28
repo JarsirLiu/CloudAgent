@@ -1,3 +1,10 @@
+mod jsonrpc;
+
+pub use jsonrpc::{
+    JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
+    JsonRpcResponse, RequestId,
+};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -175,6 +182,7 @@ pub enum AppClientCommand {
     SubmitTurn(UserTurnInput),
     ApprovalResponse {
         session_id: String,
+        request_id: RequestId,
         approved: bool,
         reason: Option<String>,
     },
@@ -190,12 +198,34 @@ pub enum AppClientCommand {
     RequestHistory {
         session_id: String,
     },
+    SubscribeSession {
+        session_id: String,
+    },
+    UnsubscribeSession {
+        session_id: String,
+    },
     Exit,
+}
+
+impl AppClientCommand {
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::SubmitTurn(input) => Some(&input.session_id),
+            Self::ApprovalResponse { session_id, .. }
+            | Self::InterruptTurn { session_id }
+            | Self::ResetSession { session_id }
+            | Self::RequestStatus { session_id }
+            | Self::RequestHistory { session_id }
+            | Self::SubscribeSession { session_id }
+            | Self::UnsubscribeSession { session_id } => Some(session_id),
+            Self::Exit => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum AppServerEvent {
+pub enum AppServerNotification {
     FrontendStateChanged {
         session_id: String,
         mode: FrontendMode,
@@ -203,10 +233,6 @@ pub enum AppServerEvent {
     TurnEvent {
         session_id: String,
         event: TurnEvent,
-    },
-    ApprovalPrompt {
-        session_id: String,
-        request: ApprovalRequest,
     },
     SessionStatus {
         session_id: String,
@@ -220,6 +246,10 @@ pub enum AppServerEvent {
         session_id: String,
         result: TurnResultEnvelope,
     },
+    SubscriptionChanged {
+        session_id: String,
+        subscribed: bool,
+    },
     Info {
         session_id: String,
         message: String,
@@ -228,4 +258,311 @@ pub enum AppServerEvent {
         session_id: String,
         message: String,
     },
+}
+
+impl AppServerNotification {
+    pub fn session_id(&self) -> &str {
+        match self {
+            Self::FrontendStateChanged { session_id, .. }
+            | Self::TurnEvent { session_id, .. }
+            | Self::SessionStatus { session_id, .. }
+            | Self::SessionHistory { session_id, .. }
+            | Self::TurnFinished { session_id, .. }
+            | Self::SubscriptionChanged { session_id, .. }
+            | Self::Info { session_id, .. }
+            | Self::Error { session_id, .. } => session_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AppServerRequest {
+    Approval {
+        request_id: RequestId,
+        session_id: String,
+        request: ApprovalRequest,
+    },
+}
+
+impl AppServerRequest {
+    pub fn request_id(&self) -> &RequestId {
+        match self {
+            Self::Approval { request_id, .. } => request_id,
+        }
+    }
+
+    pub fn session_id(&self) -> &str {
+        match self {
+            Self::Approval { session_id, .. } => session_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AppServerMessage {
+    Notification(AppServerNotification),
+    Request(AppServerRequest),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppClientCommandEnvelope {
+    pub request_id: RequestId,
+    pub command: AppClientCommand,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppServerMessageEnvelope {
+    pub message: AppServerMessage,
+}
+
+impl TryFrom<JsonRpcMessage> for AppClientCommandEnvelope {
+    type Error = anyhow::Error;
+
+    fn try_from(message: JsonRpcMessage) -> Result<Self, Self::Error> {
+        match message {
+            JsonRpcMessage::Request(request) => command_from_request(request),
+            JsonRpcMessage::Notification(notification) => command_from_notification(notification),
+            JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
+                anyhow::bail!("client envelope expects a request or notification")
+            }
+        }
+    }
+}
+
+impl From<AppClientCommandEnvelope> for JsonRpcMessage {
+    fn from(envelope: AppClientCommandEnvelope) -> Self {
+        let (method, params) = command_method_and_params(&envelope.command);
+        JsonRpcMessage::Request(JsonRpcRequest {
+            id: envelope.request_id,
+            method: method.to_string(),
+            params: Some(params),
+        })
+    }
+}
+
+impl From<AppServerMessageEnvelope> for JsonRpcMessage {
+    fn from(envelope: AppServerMessageEnvelope) -> Self {
+        match envelope.message {
+            AppServerMessage::Notification(notification) => {
+                let (method, params) = notification_method_and_params(&notification);
+                JsonRpcMessage::Notification(JsonRpcNotification {
+                    method: method.to_string(),
+                    params: Some(params),
+                })
+            }
+            AppServerMessage::Request(request) => {
+                let (id, method, params) = request_method_and_params(&request);
+                JsonRpcMessage::Request(JsonRpcRequest {
+                    id,
+                    method: method.to_string(),
+                    params: Some(params),
+                })
+            }
+        }
+    }
+}
+
+fn command_from_request(request: JsonRpcRequest) -> anyhow::Result<AppClientCommandEnvelope> {
+    let command = parse_command(&request.method, request.params)?;
+    Ok(AppClientCommandEnvelope {
+        request_id: request.id,
+        command,
+    })
+}
+
+fn command_from_notification(
+    notification: JsonRpcNotification,
+) -> anyhow::Result<AppClientCommandEnvelope> {
+    let command = parse_command(&notification.method, notification.params)?;
+    Ok(AppClientCommandEnvelope {
+        request_id: RequestId::String("notification".to_string()),
+        command,
+    })
+}
+
+fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClientCommand> {
+    let params = params.unwrap_or(Value::Null);
+    match method {
+        "turn/start" => Ok(AppClientCommand::SubmitTurn(serde_json::from_value(params)?)),
+        "turn/interrupt" => Ok(AppClientCommand::InterruptTurn {
+            session_id: value_field(params, "session_id")?,
+        }),
+        "session/reset" => Ok(AppClientCommand::ResetSession {
+            session_id: value_field(params, "session_id")?,
+        }),
+        "session/status" => Ok(AppClientCommand::RequestStatus {
+            session_id: value_field(params, "session_id")?,
+        }),
+        "session/history" => Ok(AppClientCommand::RequestHistory {
+            session_id: value_field(params, "session_id")?,
+        }),
+        "session/subscribe" => Ok(AppClientCommand::SubscribeSession {
+            session_id: value_field(params, "session_id")?,
+        }),
+        "session/unsubscribe" => Ok(AppClientCommand::UnsubscribeSession {
+            session_id: value_field(params, "session_id")?,
+        }),
+        "approval/respond" => Ok(serde_json::from_value(params)?),
+        "app/exit" => Ok(AppClientCommand::Exit),
+        other => anyhow::bail!("unsupported request method: {other}"),
+    }
+}
+
+fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value) {
+    match command {
+        AppClientCommand::SubmitTurn(input) => (
+            "turn/start",
+            serde_json::to_value(input).unwrap_or(Value::Null),
+        ),
+        AppClientCommand::ApprovalResponse { .. } => (
+            "approval/respond",
+            serde_json::to_value(command).unwrap_or(Value::Null),
+        ),
+        AppClientCommand::InterruptTurn { session_id } => (
+            "turn/interrupt",
+            serde_json::json!({ "session_id": session_id }),
+        ),
+        AppClientCommand::ResetSession { session_id } => (
+            "session/reset",
+            serde_json::json!({ "session_id": session_id }),
+        ),
+        AppClientCommand::RequestStatus { session_id } => (
+            "session/status",
+            serde_json::json!({ "session_id": session_id }),
+        ),
+        AppClientCommand::RequestHistory { session_id } => (
+            "session/history",
+            serde_json::json!({ "session_id": session_id }),
+        ),
+        AppClientCommand::SubscribeSession { session_id } => (
+            "session/subscribe",
+            serde_json::json!({ "session_id": session_id }),
+        ),
+        AppClientCommand::UnsubscribeSession { session_id } => (
+            "session/unsubscribe",
+            serde_json::json!({ "session_id": session_id }),
+        ),
+        AppClientCommand::Exit => ("app/exit", Value::Null),
+    }
+}
+
+fn notification_method_and_params(notification: &AppServerNotification) -> (&'static str, Value) {
+    match notification {
+        AppServerNotification::FrontendStateChanged { .. } => (
+            "frontend/state_changed",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::TurnEvent { .. } => (
+            "turn/event",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::SessionStatus { .. } => (
+            "session/status",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::SessionHistory { .. } => (
+            "session/history",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::TurnFinished { .. } => (
+            "turn/finished",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::SubscriptionChanged { .. } => (
+            "session/subscription_changed",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::Info { .. } => (
+            "app/info",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::Error { .. } => (
+            "app/error",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+    }
+}
+
+fn request_method_and_params(request: &AppServerRequest) -> (RequestId, &'static str, Value) {
+    match request {
+        AppServerRequest::Approval {
+            request_id,
+            session_id,
+            request,
+        } => (
+            request_id.clone(),
+            "approval/request",
+            serde_json::json!({
+                "session_id": session_id,
+                "request": request,
+            }),
+        ),
+    }
+}
+
+fn value_field<T>(value: Value, field: &str) -> anyhow::Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("expected object params"))?;
+    let value = object
+        .get(field)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("missing `{field}` field"))?;
+    Ok(serde_json::from_value(value)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_request_roundtrips_through_jsonrpc() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Request(AppServerRequest::Approval {
+                request_id: RequestId::Integer(7),
+                session_id: "default".to_string(),
+                request: ApprovalRequest {
+                    turn_id: "turn-1".to_string(),
+                    tool_call_id: "call-1".to_string(),
+                    tool_name: "shell_command".to_string(),
+                    reason: "mutating tool".to_string(),
+                    arguments_preview: "{\"command\":\"echo hi\"}".to_string(),
+                },
+            }),
+        };
+
+        let JsonRpcMessage::Request(request) = JsonRpcMessage::from(message) else {
+            panic!("expected request");
+        };
+        assert_eq!(request.method, "approval/request");
+        assert_eq!(request.id, RequestId::Integer(7));
+    }
+
+    #[test]
+    fn submit_turn_roundtrips_from_jsonrpc_request() {
+        let envelope = AppClientCommandEnvelope {
+            request_id: RequestId::Integer(1),
+            command: AppClientCommand::SubmitTurn(UserTurnInput {
+                session_id: "default".to_string(),
+                content: "hello".to_string(),
+            }),
+        };
+
+        let rpc = JsonRpcMessage::from(envelope.clone());
+        let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");
+
+        assert_eq!(parsed.request_id, RequestId::Integer(1));
+        match parsed.command {
+            AppClientCommand::SubmitTurn(input) => {
+                assert_eq!(input.session_id, "default");
+                assert_eq!(input.content, "hello");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
 }

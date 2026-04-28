@@ -1,6 +1,6 @@
-use agent_app::{ConsoleBanner, ConsoleConfig, run_console};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
+use cli::{ConsoleBanner, ConsoleConfig, run_console};
 use config::AgentConfig;
 use std::sync::Arc;
 
