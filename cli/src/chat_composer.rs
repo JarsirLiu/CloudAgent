@@ -162,6 +162,7 @@ impl ChatComposer {
         } else {
             match text.as_str() {
                 "/clear" => ComposerAction::Reset,
+                "/copy" => ComposerAction::Submit("/copy".to_string()),
                 "/interrupt" => ComposerAction::Interrupt,
                 "/exit" | "/quit" => ComposerAction::Exit,
                 _ => ComposerAction::Submit(text),

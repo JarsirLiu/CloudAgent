@@ -20,3 +20,4 @@ unicode-segmentation = "1.12"
 unicode-width = "0.2"
 textwrap = "0.16"
 pulldown-cmark = { version = "0.11", default-features = false }
+arboard = "3.4"

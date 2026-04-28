@@ -14,7 +14,6 @@ use anyhow::Result;
 use crossterm::cursor::MoveTo;
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use crossterm::execute;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
@@ -134,6 +133,7 @@ impl ConsoleState {
 enum ParsedInput {
     Command(AppClientCommand),
     ApprovalAnswer { approved: bool, reason: String },
+    LocalCopy,
 }
 
 struct TuiApp {
@@ -161,6 +161,7 @@ struct TuiApp {
     tool_item_cells: HashMap<String, usize>,
     tool_item_buffers: HashMap<String, String>,
     item_kinds: HashMap<String, TurnItemKind>,
+    last_copyable_output: Option<String>,
     input_pane: InputPane,
     should_exit: bool,
 }
@@ -192,6 +193,7 @@ impl TuiApp {
             tool_item_cells: HashMap::new(),
             tool_item_buffers: HashMap::new(),
             item_kinds: HashMap::new(),
+            last_copyable_output: None,
             input_pane: InputPane::new(),
             should_exit: false,
         }
@@ -227,6 +229,7 @@ impl TuiApp {
         self.tool_item_cells.clear();
         self.tool_item_buffers.clear();
         self.item_kinds.clear();
+        self.last_copyable_output = None;
         self.input_pane.clear_views();
     }
 
@@ -352,6 +355,9 @@ impl TuiApp {
                 AppServerNotification::TurnCompleted { final_response, .. } => {
                     self.input_pane.clear_approval();
                     self.status_text = "Turn completed".to_string();
+                    if !final_response.trim().is_empty() {
+                        self.last_copyable_output = Some(final_response.clone());
+                    }
                     if self.streaming_item_id.is_none() && !final_response.trim().is_empty() {
                         self.push_cell(HistoryCell::from_message(
                             "cloudagent",
@@ -802,6 +808,9 @@ impl TuiApp {
         if self.streaming_item_id.as_deref() != Some(item_id) {
             return;
         }
+        if !self.streaming_buffer.trim().is_empty() {
+            self.last_copyable_output = Some(self.streaming_buffer.clone());
+        }
         self.streaming_turn_id = None;
         self.streaming_item_id = None;
         self.streaming_dirty = true;
@@ -864,11 +873,54 @@ struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnableAlternateScroll;
+
+impl crossterm::Command for EnableAlternateScroll {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        write!(f, "\x1b[?1007h")
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> Result<(), std::io::Error> {
+        Err(std::io::Error::other(
+            "EnableAlternateScroll requires ANSI execution",
+        ))
+    }
+
+    #[cfg(windows)]
+    fn is_ansi_code_supported(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DisableAlternateScroll;
+
+impl crossterm::Command for DisableAlternateScroll {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        write!(f, "\x1b[?1007l")
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> Result<(), std::io::Error> {
+        Err(std::io::Error::other(
+            "DisableAlternateScroll requires ANSI execution",
+        ))
+    }
+
+    #[cfg(windows)]
+    fn is_ansi_code_supported(&self) -> bool {
+        true
+    }
+}
+
 impl TerminalGuard {
     fn new() -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnableMouseCapture, Clear(ClearType::All), MoveTo(0, 0))?;
+        let _ = execute!(stdout, EnableAlternateScroll);
+        execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend)?;
         Ok(Self { terminal })
@@ -878,7 +930,7 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = self.terminal.show_cursor();
-        let _ = execute!(io::stdout(), DisableMouseCapture);
+        let _ = execute!(io::stdout(), DisableAlternateScroll);
         let _ = disable_raw_mode();
     }
 }
@@ -1006,6 +1058,28 @@ fn handle_tui_input(
     input: ParsedInput,
 ) -> Result<bool> {
     match input {
+        ParsedInput::LocalCopy => {
+            let Some(text) = app.last_copyable_output.as_deref() else {
+                app.push_cell(HistoryCell::from_message(
+                    "session",
+                    "`/copy` unavailable before first assistant output",
+                    HistoryTone::Warning,
+                ));
+                return Ok(false);
+            };
+            match copy_text_to_clipboard(text) {
+                Ok(()) => {
+                    app.status_text = "Copied latest assistant output".to_string();
+                }
+                Err(err) => {
+                    app.push_cell(HistoryCell::from_message(
+                        "error",
+                        format!("failed to copy: {err}"),
+                        HistoryTone::Error,
+                    ));
+                }
+            }
+        }
         ParsedInput::Command(command) => {
             if let AppClientCommand::Exit = command {
                 if app.console_state.mode != FrontendMode::Idle {
@@ -1092,6 +1166,7 @@ fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
     }
 
     let command = match trimmed {
+        "/copy" => return ParsedInput::LocalCopy,
         "/exit" | "/quit" => AppClientCommand::Exit,
         "/clear" => AppClientCommand::ResetSession {
             session_id: session_id.to_string(),
@@ -1117,6 +1192,15 @@ fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
     };
 
     ParsedInput::Command(command)
+}
+
+fn copy_text_to_clipboard(text: &str) -> Result<()> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|err| anyhow::anyhow!("clipboard unavailable: {err}"))?;
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|err| anyhow::anyhow!("clipboard write failed: {err}"))?;
+    Ok(())
 }
 
 fn centered_column(area: Rect, max_width: u16) -> Rect {

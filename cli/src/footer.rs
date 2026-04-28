@@ -76,7 +76,9 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str, width: usi
 
 pub fn hint_line(mode: FrontendMode) -> Line<'static> {
     let hint = match mode {
-        FrontendMode::Idle => "  Enter submit  ·  Ctrl+K interrupt  ·  /clear clear session",
+        FrontendMode::Idle => {
+            "  Enter submit  ·  Ctrl+K interrupt  ·  /clear clear session  ·  /copy copy last reply"
+        }
         FrontendMode::Running => "  Ctrl+K interrupt the current turn",
         FrontendMode::WaitingForApproval => "  Enter submit  ·  y approve  ·  n deny",
     };
