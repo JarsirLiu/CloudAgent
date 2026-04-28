@@ -3,6 +3,13 @@ use serde_json::Value;
 
 pub type TurnId = String;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum FrontendMode {
+    Idle,
+    Running,
+    WaitingForApproval,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserTurnInput {
     pub session_id: String,
@@ -76,6 +83,33 @@ pub struct ToolResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+pub enum HistoryEntry {
+    System {
+        content: String,
+    },
+    User {
+        content: String,
+    },
+    Assistant {
+        content: Option<String>,
+        has_tool_calls: bool,
+    },
+    Tool {
+        tool_call_id: String,
+        name: String,
+        content: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TurnResultEnvelope {
+    pub final_response: String,
+    pub state: TurnState,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum TurnEvent {
     TurnStarted {
         turn_id: TurnId,
@@ -132,5 +166,66 @@ pub enum TurnEvent {
     TurnCancelled {
         turn_id: TurnId,
         reason: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AppClientCommand {
+    SubmitTurn(UserTurnInput),
+    ApprovalResponse {
+        session_id: String,
+        approved: bool,
+        reason: Option<String>,
+    },
+    InterruptTurn {
+        session_id: String,
+    },
+    ResetSession {
+        session_id: String,
+    },
+    RequestStatus {
+        session_id: String,
+    },
+    RequestHistory {
+        session_id: String,
+    },
+    Exit,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AppServerEvent {
+    FrontendStateChanged {
+        session_id: String,
+        mode: FrontendMode,
+    },
+    TurnEvent {
+        session_id: String,
+        event: TurnEvent,
+    },
+    ApprovalPrompt {
+        session_id: String,
+        request: ApprovalRequest,
+    },
+    SessionStatus {
+        session_id: String,
+        snapshot: SessionSnapshot,
+    },
+    SessionHistory {
+        session_id: String,
+        messages: Vec<HistoryEntry>,
+    },
+    TurnFinished {
+        session_id: String,
+        result: TurnResultEnvelope,
+    },
+    Info {
+        session_id: String,
+        message: String,
+    },
+    Error {
+        session_id: String,
+        message: String,
     },
 }

@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "agent-app"
+version = "0.1.0"
+dependencies = [
+ "agent-protocol",
+ "agent-runtime",
+ "anyhow",
+ "tokio",
+]
+
+[[package]]
 name = "agent-core"
 version = "0.1.0"
 dependencies = [
@@ -87,6 +97,7 @@ dependencies = [
 name = "agentd"
 version = "0.1.0"
 dependencies = [
+ "agent-app",
  "agent-runtime",
  "anyhow",
  "config",
@@ -177,6 +188,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 name = "cli"
 version = "0.1.0"
 dependencies = [
+ "agent-app",
  "agent-runtime",
  "anyhow",
  "config",

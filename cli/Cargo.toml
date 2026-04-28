@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+agent-app = { path = "../crates/agent-app" }
 agent-runtime = { path = "../crates/agent-runtime" }
 config = { path = "../crates/config" }
 tokio.workspace = true

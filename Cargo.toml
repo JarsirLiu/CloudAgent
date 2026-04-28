@@ -3,6 +3,7 @@ members = [
     "cli",
     "apps/agentd",
     "apps/gatewayd",
+    "crates/agent-app",
     "crates/agent-core",
     "crates/agent-gateway",
     "crates/agent-memory",
