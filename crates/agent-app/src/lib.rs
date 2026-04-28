@@ -1,5 +1,6 @@
-mod controller;
-mod event;
+mod app;
+mod app_event;
+mod app_event_sender;
 mod input;
 mod render;
 mod state;
@@ -19,5 +20,5 @@ pub struct ConsoleConfig {
 }
 
 pub async fn run_console(runtime: Arc<AgentRuntime>, config: ConsoleConfig) -> Result<()> {
-    controller::run(runtime, config).await
+    app::run(runtime, config).await
 }

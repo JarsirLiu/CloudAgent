@@ -1,5 +1,6 @@
 use agent_protocol::{AppClientCommand, FrontendMode, UserTurnInput};
 
+#[derive(Debug)]
 pub(crate) enum ParsedInput {
     Command(AppClientCommand),
     Empty,

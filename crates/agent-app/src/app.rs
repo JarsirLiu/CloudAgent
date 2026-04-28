@@ -1,5 +1,6 @@
 use crate::ConsoleConfig;
-use crate::event::ControllerEvent;
+use crate::app_event::AppEvent;
+use crate::app_event_sender::AppEventSender;
 use crate::input::{ParsedInput, parse_line};
 use crate::render::ConsoleRenderer;
 use crate::state::ConsoleState;
@@ -17,44 +18,36 @@ pub(crate) async fn run(runtime: Arc<AgentRuntime>, config: ConsoleConfig) -> Re
     let auto_approve = config.auto_approve;
     let auto_approve_reason = config.auto_approve_reason.clone();
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<ControllerEvent>();
-    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<ParsedInput>();
+    let (app_event_tx, mut app_event_rx) = mpsc::unbounded_channel::<AppEvent>();
+    let app_event_tx = AppEventSender::new(app_event_tx);
     let (mode_tx, mode_rx) = watch::channel(FrontendMode::Idle);
     let mut state = ConsoleState::new();
     let mut renderer = ConsoleRenderer::new(config.banner);
 
-    spawn_input_loop(session_id.clone(), input_tx, mode_rx);
+    spawn_input_loop(session_id.clone(), app_event_tx.clone(), mode_rx);
     renderer.render_banner().await?;
 
     loop {
-        tokio::select! {
-            biased;
-            Some(message) = rx.recv() => {
-                handle_controller_event(&mut state, &mut renderer, message).await?;
-                let _ = mode_tx.send(state.mode());
-            }
-            Some(input) = input_rx.recv() => {
-                match input {
-                    ParsedInput::Empty => renderer.render_prompt(state.mode()).await?,
-                    ParsedInput::Command(command) => {
-                        if handle_command(
-                            &runtime,
-                            &session_id,
-                            &mut state,
-                            &mut renderer,
-                            command,
-                            tx.clone(),
-                            auto_approve,
-                            auto_approve_reason.clone(),
-                        ).await? {
-                            break;
-                        }
-                        let _ = mode_tx.send(state.mode());
-                    }
-                }
-            }
-            else => break,
+        let Some(event) = app_event_rx.recv().await else {
+            break;
+        };
+
+        if handle_app_event(
+            &runtime,
+            &session_id,
+            &mut state,
+            &mut renderer,
+            event,
+            app_event_tx.clone(),
+            auto_approve,
+            auto_approve_reason.clone(),
+        )
+        .await?
+        {
+            break;
         }
+
+        let _ = mode_tx.send(state.mode());
     }
 
     Ok(())
@@ -62,7 +55,7 @@ pub(crate) async fn run(runtime: Arc<AgentRuntime>, config: ConsoleConfig) -> Re
 
 fn spawn_input_loop(
     session_id: String,
-    input_tx: mpsc::UnboundedSender<ParsedInput>,
+    app_event_tx: AppEventSender,
     mode_rx: watch::Receiver<FrontendMode>,
 ) {
     tokio::spawn(async move {
@@ -73,17 +66,77 @@ fn spawn_input_loop(
             let line = match lines.next_line().await {
                 Ok(Some(line)) => line,
                 Ok(None) | Err(_) => {
-                    let _ = input_tx.send(ParsedInput::Command(AppClientCommand::Exit));
+                    app_event_tx.input(ParsedInput::Command(AppClientCommand::Exit));
                     break;
                 }
             };
 
             let mode = *mode_rx.borrow();
-            if input_tx.send(parse_line(&line, &session_id, mode)).is_err() {
-                break;
-            }
+            app_event_tx.input(parse_line(&line, &session_id, mode));
         }
     });
+}
+
+async fn handle_app_event(
+    runtime: &Arc<AgentRuntime>,
+    session_id: &str,
+    state: &mut ConsoleState,
+    renderer: &mut ConsoleRenderer,
+    event: AppEvent,
+    app_event_tx: AppEventSender,
+    auto_approve: bool,
+    auto_approve_reason: Option<String>,
+) -> Result<bool> {
+    match event {
+        AppEvent::Input(ParsedInput::Empty) => {
+            renderer.render_prompt(state.mode()).await?;
+        }
+        AppEvent::Input(ParsedInput::Command(command)) => {
+            if handle_command(
+                runtime,
+                session_id,
+                state,
+                renderer,
+                command,
+                app_event_tx,
+                auto_approve,
+                auto_approve_reason,
+            )
+            .await?
+            {
+                return Ok(true);
+            }
+        }
+        AppEvent::ProtocolEvent(event) => {
+            state.update_from_protocol(&event);
+            renderer.render_protocol_event(&event).await?;
+            renderer.render_prompt(state.mode()).await?;
+        }
+        AppEvent::RuntimeEvent(event) => {
+            renderer
+                .render_protocol_event(&AppServerEvent::TurnEvent {
+                    session_id: String::new(),
+                    event,
+                })
+                .await?;
+        }
+        AppEvent::ApprovalRequest { request, reply } => {
+            state.set_pending_approval(request.clone(), reply);
+            state.update_from_protocol(&AppServerEvent::FrontendStateChanged {
+                session_id: String::new(),
+                mode: FrontendMode::WaitingForApproval,
+            });
+            renderer
+                .render_protocol_event(&AppServerEvent::ApprovalPrompt {
+                    session_id: String::new(),
+                    request,
+                })
+                .await?;
+            renderer.render_prompt(state.mode()).await?;
+        }
+    }
+
+    Ok(false)
 }
 
 async fn handle_command(
@@ -92,7 +145,7 @@ async fn handle_command(
     state: &mut ConsoleState,
     renderer: &mut ConsoleRenderer,
     command: AppClientCommand,
-    tx: mpsc::UnboundedSender<ControllerEvent>,
+    app_event_tx: AppEventSender,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) -> Result<bool> {
@@ -134,7 +187,7 @@ async fn handle_command(
                     runtime.clone(),
                     input.session_id,
                     input.content,
-                    tx,
+                    app_event_tx,
                     auto_approve,
                     auto_approve_reason,
                 );
@@ -213,64 +266,24 @@ async fn handle_command(
     Ok(false)
 }
 
-async fn handle_controller_event(
-    state: &mut ConsoleState,
-    renderer: &mut ConsoleRenderer,
-    message: ControllerEvent,
-) -> Result<()> {
-    match message {
-        ControllerEvent::Protocol(event) => {
-            state.update_from_protocol(&event);
-            renderer.render_protocol_event(&event).await?;
-            renderer.render_prompt(state.mode()).await?;
-        }
-        ControllerEvent::Runtime(event) => {
-            renderer
-                .render_protocol_event(&AppServerEvent::TurnEvent {
-                    session_id: String::new(),
-                    event,
-                })
-                .await?;
-        }
-        ControllerEvent::ApprovalRequest { request, reply } => {
-            state.set_pending_approval(request.clone(), reply);
-            let mode_event = AppServerEvent::FrontendStateChanged {
-                session_id: String::new(),
-                mode: FrontendMode::WaitingForApproval,
-            };
-            state.update_from_protocol(&mode_event);
-            renderer
-                .render_protocol_event(&AppServerEvent::ApprovalPrompt {
-                    session_id: String::new(),
-                    request,
-                })
-                .await?;
-            renderer.render_prompt(state.mode()).await?;
-        }
-    }
-    Ok(())
-}
-
 fn spawn_turn(
     runtime: Arc<AgentRuntime>,
     session_id: String,
     user_input: String,
-    tx: mpsc::UnboundedSender<ControllerEvent>,
+    app_event_tx: AppEventSender,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) {
     tokio::spawn(async move {
-        let event_tx = tx.clone();
-        let approval_tx = tx.clone();
+        let runtime_events = app_event_tx.clone();
+        let approval_events = app_event_tx.clone();
         let result = runtime
             .chat_with_approval_and_events(
                 &session_id,
                 &user_input,
-                move |event| {
-                    let _ = event_tx.send(ControllerEvent::Runtime(event.clone()));
-                },
+                move |event| runtime_events.runtime_event(event.clone()),
                 move |request| {
-                    let approval_tx = approval_tx.clone();
+                    let approval_events = approval_events.clone();
                     let auto_approve_reason = auto_approve_reason.clone();
                     async move {
                         if auto_approve {
@@ -283,12 +296,7 @@ fn spawn_turn(
                         }
 
                         let (reply_tx, reply_rx) = oneshot::channel();
-                        approval_tx
-                            .send(ControllerEvent::ApprovalRequest {
-                                request,
-                                reply: reply_tx,
-                            })
-                            .map_err(|_| anyhow!("console controller is no longer available"))?;
+                        approval_events.approval_request(request, reply_tx);
                         reply_rx
                             .await
                             .map_err(|_| anyhow!("approval response channel closed"))
@@ -304,10 +312,7 @@ fn spawn_turn(
             .map_err(|error| format!("{error:#}"));
 
         let finish_event = match result {
-            Ok(result) => AppServerEvent::TurnFinished {
-                session_id,
-                result,
-            },
+            Ok(result) => AppServerEvent::TurnFinished { session_id, result },
             Err(error) => AppServerEvent::TurnFinished {
                 session_id,
                 result: TurnResultEnvelope {
@@ -317,8 +322,7 @@ fn spawn_turn(
                 },
             },
         };
-
-        let _ = tx.send(ControllerEvent::Protocol(finish_event));
+        app_event_tx.protocol_event(finish_event);
     });
 }
 
