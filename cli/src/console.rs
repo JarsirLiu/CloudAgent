@@ -152,7 +152,6 @@ struct TuiApp {
     streaming_turn_id: Option<String>,
     streaming_item_id: Option<String>,
     active_turn_id: Option<String>,
-    turn_has_assistant_output: bool,
     streaming_buffer: String,
     streaming_cell_index: Option<usize>,
     streaming_dirty: bool,
@@ -186,7 +185,6 @@ impl TuiApp {
             streaming_turn_id: None,
             streaming_item_id: None,
             active_turn_id: None,
-            turn_has_assistant_output: false,
             streaming_buffer: String::new(),
             streaming_cell_index: None,
             streaming_dirty: false,
@@ -224,7 +222,6 @@ impl TuiApp {
         self.streaming_turn_id = None;
         self.streaming_item_id = None;
         self.active_turn_id = None;
-        self.turn_has_assistant_output = false;
         self.streaming_buffer.clear();
         self.streaming_cell_index = None;
         self.streaming_dirty = false;
@@ -310,7 +307,6 @@ impl TuiApp {
                     if let AppServerNotification::TurnStarted { turn_id, .. } = notification {
                         self.active_turn_id = Some(turn_id.clone());
                     }
-                    self.turn_has_assistant_output = false;
                     self.status_text = "Working".to_string();
                 }
                 AppServerNotification::ItemStarted {
@@ -322,7 +318,6 @@ impl TuiApp {
                 } => {
                     self.item_kinds.insert(item_id.clone(), kind.clone());
                     if *kind == TurnItemKind::AssistantMessage {
-                        self.turn_has_assistant_output = true;
                         self.handle_assistant_item_started(turn_id, item_id);
                     } else if *kind == TurnItemKind::ToolCall {
                         self.handle_tool_item_started(item_id, title.as_deref().unwrap_or("tool_call"));
@@ -355,23 +350,11 @@ impl TuiApp {
                     self.item_kinds.remove(item_id);
                     self.commit_streaming_delta();
                 }
-                AppServerNotification::TurnCompleted { final_response, .. } => {
+                AppServerNotification::TurnCompleted { .. } => {
                     self.commit_streaming_delta();
                     self.input_pane.clear_approval();
                     self.status_text = "Turn completed".to_string();
-                    if !final_response.trim().is_empty() {
-                        self.last_copyable_output = Some(final_response.clone());
-                        self.last_message_count = self.last_message_count.saturating_add(1);
-                    }
-                    if !self.turn_has_assistant_output && !final_response.trim().is_empty() {
-                        self.push_cell(HistoryCell::from_message(
-                            "cloudagent",
-                            final_response.clone(),
-                            HistoryTone::Agent,
-                        ));
-                    }
                     self.active_turn_id = None;
-                    self.turn_has_assistant_output = false;
                 }
                 AppServerNotification::TurnFailed { error, .. } => {
                     self.commit_streaming_delta();
@@ -383,7 +366,6 @@ impl TuiApp {
                         HistoryTone::Error,
                     ));
                     self.active_turn_id = None;
-                    self.turn_has_assistant_output = false;
                 }
                 AppServerNotification::TurnCancelled { reason, .. } => {
                     self.commit_streaming_delta();
@@ -395,7 +377,6 @@ impl TuiApp {
                         HistoryTone::Warning,
                     ));
                     self.active_turn_id = None;
-                    self.turn_has_assistant_output = false;
                 }
             },
             AppServerMessage::Request(AppServerRequest::Approval {
@@ -824,6 +805,7 @@ impl TuiApp {
         }
         if !self.streaming_buffer.trim().is_empty() {
             self.last_copyable_output = Some(self.streaming_buffer.clone());
+            self.last_message_count = self.last_message_count.saturating_add(1);
         }
         self.streaming_turn_id = None;
         self.streaming_item_id = None;

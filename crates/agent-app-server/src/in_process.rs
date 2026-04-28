@@ -339,21 +339,29 @@ fn spawn_turn(
             .await;
 
         if let Err(error) = result {
-            let turn_id = active_turn_id
-                .lock()
-                .await
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-            send_notification(
-                &finish_events,
-                &state_for_finish,
-                AppServerNotification::TurnFailed {
-                    session_id: session_id.clone(),
-                    turn_id,
-                    error: format!("{error:#}"),
-                },
-            )
-            .await;
+            let maybe_turn_id = active_turn_id.lock().await.clone();
+            if let Some(turn_id) = maybe_turn_id {
+                send_notification(
+                    &finish_events,
+                    &state_for_finish,
+                    AppServerNotification::TurnFailed {
+                        session_id: session_id.clone(),
+                        turn_id,
+                        error: format!("{error:#}"),
+                    },
+                )
+                .await;
+            } else {
+                send_notification(
+                    &finish_events,
+                    &state_for_finish,
+                    AppServerNotification::Error {
+                        session_id: session_id.clone(),
+                        message: format!("turn failed before start: {error:#}"),
+                    },
+                )
+                .await;
+            }
             send_notification(
                 &finish_events,
                 &state_for_finish,
@@ -432,12 +440,7 @@ fn project_turn_event(session_id: &str, event: &TurnEvent) -> Vec<AppServerNotif
                     delta: delta.clone(),
                 }]
             }
-            agent_protocol::TurnItemDeltaKind::JsonPatch => vec![AppServerNotification::PlanDelta {
-                session_id: session_id.to_string(),
-                turn_id: turn_id.clone(),
-                item_id: item_id.clone(),
-                delta: delta.clone(),
-            }],
+            agent_protocol::TurnItemDeltaKind::JsonPatch => Vec::new(),
         },
         TurnEvent::ItemCompleted { turn_id, item_id } => vec![AppServerNotification::ItemCompleted {
             session_id: session_id.to_string(),
