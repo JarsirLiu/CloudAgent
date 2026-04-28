@@ -169,11 +169,7 @@ impl ChatComposer {
             0
         };
         let x = area.x + (prompt_width + cursor_col).saturating_sub(offset) as u16;
-        let popup_rows = self
-            .render_slash_popup(area.width.saturating_sub(4) as usize)
-            .map(|lines| lines.len() as u16)
-            .unwrap_or(0);
-        (x, area.y + popup_rows)
+        (x, area.y)
     }
 
     fn submit(&mut self) -> ComposerAction {
