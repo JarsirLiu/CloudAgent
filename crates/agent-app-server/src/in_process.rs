@@ -1,6 +1,6 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ApprovalDecision,
-    ApprovalRequest, HistoryEntry, RequestId, TurnEvent, TurnResultEnvelope,
+    ApprovalRequest, HistoryEntry, RequestId, TurnEvent,
 };
 use agent_runtime::{AgentRuntime, ConversationMessage};
 use anyhow::{Result, anyhow};
@@ -149,11 +149,13 @@ async fn handle_command(
                 runtime,
                 input.session_id,
                 input.content,
-                event_tx.clone(),
-                state,
-                request_counter,
-                auto_approve,
-                auto_approve_reason,
+                SpawnTurnContext {
+                    event_tx: event_tx.clone(),
+                    state,
+                    request_counter,
+                    auto_approve,
+                    auto_approve_reason,
+                },
             );
         }
         AppClientCommand::InterruptTurn { session_id } => {
@@ -263,19 +265,17 @@ fn spawn_turn(
     runtime: Arc<AgentRuntime>,
     session_id: String,
     user_input: String,
-    event_tx: mpsc::UnboundedSender<AppServerMessage>,
-    state: Arc<Mutex<ServerState>>,
-    request_counter: Arc<AtomicI64>,
-    auto_approve: bool,
-    auto_approve_reason: Option<String>,
+    ctx: SpawnTurnContext,
 ) {
     tokio::spawn(async move {
-        let runtime_events = event_tx.clone();
-        let finish_events = event_tx.clone();
-        let state_for_turn = state.clone();
-        let state_for_finish = state.clone();
+        let runtime_events = ctx.event_tx.clone();
+        let finish_events = ctx.event_tx.clone();
+        let state_for_turn = ctx.state.clone();
+        let state_for_finish = ctx.state.clone();
         let session_id_for_turn = session_id.clone();
         let session_id_for_approval = session_id.clone();
+        let active_turn_id = Arc::new(Mutex::new(None::<String>));
+        let active_turn_id_for_events = active_turn_id.clone();
 
         let result = runtime
             .chat_with_approval_and_events(
@@ -286,20 +286,25 @@ fn spawn_turn(
                     let state = state_for_turn.clone();
                     let session_id = session_id_for_turn.clone();
                     let event = event.clone();
+                    let active_turn_id = active_turn_id_for_events.clone();
                     tokio::spawn(async move {
+                        if let TurnEvent::TurnStarted { turn_id, .. } = &event {
+                            let mut active = active_turn_id.lock().await;
+                            *active = Some(turn_id.clone());
+                        }
                         for notification in project_turn_event(&session_id, &event) {
                             send_notification(&runtime_events, &state, notification).await;
                         }
                     });
                 },
                 move |request: ApprovalRequest| {
-                    let event_tx = event_tx.clone();
-                    let state = state.clone();
+                    let event_tx = ctx.event_tx.clone();
+                    let state = ctx.state.clone();
                     let session_id = session_id_for_approval.clone();
-                    let request_counter = request_counter.clone();
-                    let auto_approve_reason = auto_approve_reason.clone();
+                    let request_counter = ctx.request_counter.clone();
+                    let auto_approve_reason = ctx.auto_approve_reason.clone();
                     async move {
-                        if auto_approve {
+                        if ctx.auto_approve {
                             return Ok(ApprovalDecision {
                                 approved: true,
                                 reason: auto_approve_reason
@@ -333,27 +338,42 @@ fn spawn_turn(
             )
             .await;
 
-        let finish = match result {
-            Ok(output) => AppServerNotification::TurnFinished {
-                session_id,
-                result: TurnResultEnvelope {
-                    final_response: output.final_response,
-                    state: output.state,
-                    error: None,
+        if let Err(error) = result {
+            let turn_id = active_turn_id
+                .lock()
+                .await
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            send_notification(
+                &finish_events,
+                &state_for_finish,
+                AppServerNotification::TurnFailed {
+                    session_id: session_id.clone(),
+                    turn_id,
+                    error: format!("{error:#}"),
                 },
-            },
-            Err(error) => AppServerNotification::TurnFinished {
-                session_id,
-                result: TurnResultEnvelope {
-                    final_response: format!("Turn failed: {error:#}"),
-                    state: agent_protocol::TurnState::Failed,
-                    error: Some(format!("{error:#}")),
+            )
+            .await;
+            send_notification(
+                &finish_events,
+                &state_for_finish,
+                AppServerNotification::FrontendStateChanged {
+                    session_id,
+                    mode: agent_protocol::FrontendMode::Idle,
                 },
-            },
-        };
-
-        send_notification(&finish_events, &state_for_finish, finish).await;
+            )
+            .await;
+        }
     });
+}
+
+#[derive(Clone)]
+struct SpawnTurnContext {
+    event_tx: mpsc::UnboundedSender<AppServerMessage>,
+    state: Arc<Mutex<ServerState>>,
+    request_counter: Arc<AtomicI64>,
+    auto_approve: bool,
+    auto_approve_reason: Option<String>,
 }
 
 fn project_turn_event(session_id: &str, event: &TurnEvent) -> Vec<AppServerNotification> {

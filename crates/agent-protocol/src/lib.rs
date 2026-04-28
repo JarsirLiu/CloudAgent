@@ -108,13 +108,6 @@ pub enum HistoryEntry {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TurnResultEnvelope {
-    pub final_response: String,
-    pub state: TurnState,
-    pub error: Option<String>,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnItemKind {
@@ -318,10 +311,6 @@ pub enum AppServerNotification {
         session_id: String,
         messages: Vec<HistoryEntry>,
     },
-    TurnFinished {
-        session_id: String,
-        result: TurnResultEnvelope,
-    },
     SubscriptionChanged {
         session_id: String,
         subscribed: bool,
@@ -353,7 +342,6 @@ impl AppServerNotification {
             | Self::TurnCancelled { session_id, .. }
             | Self::SessionStatus { session_id, .. }
             | Self::SessionHistory { session_id, .. }
-            | Self::TurnFinished { session_id, .. }
             | Self::SubscriptionChanged { session_id, .. }
             | Self::Info { session_id, .. }
             | Self::Error { session_id, .. } => session_id,
@@ -619,10 +607,6 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "session/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::TurnFinished { .. } => (
-            "turn/finished",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
         AppServerNotification::SubscriptionChanged { .. } => (
             "session/subscription_changed",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -675,7 +659,6 @@ fn parse_server_notification(
         | "turn/cancelled"
         | "session/status"
         | "session/history"
-        | "turn/finished"
         | "session/subscription_changed"
         | "app/info"
         | "app/error" => Ok(serde_json::from_value(params)?),

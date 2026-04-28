@@ -39,14 +39,9 @@ pub async fn run_stdio_server(
         Ok::<(), anyhow::Error>(())
     });
 
-    let read_result = read_task.await??;
-    let forward_commands_result = forward_commands.await??;
-    let forward_events_result = forward_events.await??;
-    let write_result = write_task.await??;
-
-    let _ = read_result;
-    let _ = forward_commands_result;
-    let _ = forward_events_result;
-    let _ = write_result;
+    read_task.await??;
+    forward_commands.await??;
+    forward_events.await??;
+    write_task.await??;
     Ok(())
 }

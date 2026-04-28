@@ -110,10 +110,6 @@ impl ConsoleState {
         match message {
             AppServerMessage::Notification(notification) => match notification {
                 AppServerNotification::FrontendStateChanged { mode, .. } => self.mode = *mode,
-                AppServerNotification::TurnFinished { .. } => {
-                    self.mode = FrontendMode::Idle;
-                    self.pending_approval_request_id = None;
-                }
                 AppServerNotification::TurnCompleted { .. }
                 | AppServerNotification::TurnFailed { .. }
                 | AppServerNotification::TurnCancelled { .. } => {
@@ -304,19 +300,6 @@ impl TuiApp {
                         HistoryTone::Error,
                     ));
                 }
-                AppServerNotification::TurnFinished { result, .. } => {
-                    self.set_mode(FrontendMode::Idle);
-                    self.input_pane.clear_views();
-                    if let Some(error) = &result.error {
-                        self.push_cell(HistoryCell::from_message(
-                            "turn",
-                            format!("failed: {error}"),
-                            HistoryTone::Error,
-                        ));
-                    } else {
-                        self.status_text = "Turn completed".to_string();
-                    }
-                }
                 AppServerNotification::TurnStarted { .. } => {
                     self.status_text = "Working".to_string();
                 }
@@ -359,12 +342,15 @@ impl TuiApp {
                     self.handle_assistant_item_completed(item_id);
                     self.handle_tool_item_completed(item_id);
                     self.item_kinds.remove(item_id);
+                    self.commit_streaming_delta();
                 }
                 AppServerNotification::TurnCompleted { final_response, .. } => {
+                    self.commit_streaming_delta();
                     self.input_pane.clear_approval();
                     self.status_text = "Turn completed".to_string();
                     if !final_response.trim().is_empty() {
                         self.last_copyable_output = Some(final_response.clone());
+                        self.last_message_count = self.last_message_count.saturating_add(1);
                     }
                     if self.streaming_item_id.is_none() && !final_response.trim().is_empty() {
                         self.push_cell(HistoryCell::from_message(
@@ -375,6 +361,7 @@ impl TuiApp {
                     }
                 }
                 AppServerNotification::TurnFailed { error, .. } => {
+                    self.commit_streaming_delta();
                     self.input_pane.clear_approval();
                     self.status_text = "Turn failed".to_string();
                     self.push_cell(HistoryCell::from_message(
@@ -384,6 +371,7 @@ impl TuiApp {
                     ));
                 }
                 AppServerNotification::TurnCancelled { reason, .. } => {
+                    self.commit_streaming_delta();
                     self.input_pane.clear_approval();
                     self.status_text = "Turn cancelled".to_string();
                     self.push_cell(HistoryCell::from_message(
@@ -810,6 +798,7 @@ impl TuiApp {
         self.streaming_buffer.push_str(delta);
         self.streaming_dirty = true;
         self.status_text = "Streaming response".to_string();
+        self.commit_streaming_delta();
     }
 
     fn handle_assistant_item_completed(&mut self, item_id: &str) {
@@ -1129,6 +1118,7 @@ fn handle_tui_input(
                     content.clone(),
                     HistoryTone::User,
                 ));
+                app.last_message_count = app.last_message_count.saturating_add(1);
             }
             client.send_command(command)?;
         }
