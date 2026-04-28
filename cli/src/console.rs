@@ -337,15 +337,23 @@ impl TuiApp {
                     }
                 }
                 AppServerNotification::AgentMessageDelta { item_id, delta, .. } => {
-                    self.handle_assistant_item_delta(item_id, delta);
+                    if self.item_kinds.get(item_id) == Some(&TurnItemKind::AssistantMessage) {
+                        self.handle_assistant_item_delta(item_id, delta);
+                    }
                 }
                 AppServerNotification::PlanDelta { item_id, delta, .. }
                 | AppServerNotification::ReasoningSummaryDelta { item_id, delta, .. }
                 | AppServerNotification::ReasoningTextDelta { item_id, delta, .. } => {
-                    self.handle_tool_item_delta(item_id, delta);
+                    if self.item_kinds.get(item_id) != Some(&TurnItemKind::AssistantMessage) {
+                        self.handle_tool_item_delta(item_id, delta);
+                    }
                 }
                 AppServerNotification::ToolCallDelta { item_id, delta, .. } => {
-                    self.handle_tool_item_delta(item_id, delta);
+                    if self.item_kinds.get(item_id) == Some(&TurnItemKind::AssistantMessage) {
+                        self.handle_assistant_item_delta(item_id, delta);
+                    } else {
+                        self.handle_tool_item_delta(item_id, delta);
+                    }
                 }
                 AppServerNotification::ItemCompleted { item_id, .. } => {
                     self.handle_assistant_item_completed(item_id);
