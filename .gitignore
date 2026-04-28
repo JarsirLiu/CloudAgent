@@ -1,0 +1,21 @@
+target/
+
+# Local runtime data
+data/state/*
+data/cache/*
+data/logs/*
+data/sessions/*
+!data/**/.gitkeep
+
+# Local config and secrets
+configs/agent.toml
+*.local.toml
+.env
+.env.*
+!.env.example
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

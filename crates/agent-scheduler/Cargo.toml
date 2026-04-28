@@ -1,0 +1,10 @@
+[package]
+name = "agent-scheduler"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+shared = { path = "../shared" }
+tokio.workspace = true

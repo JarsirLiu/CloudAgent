@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "cli",
+    "apps/agentd",
+    "apps/gatewayd",
+    "crates/agent-core",
+    "crates/agent-gateway",
+    "crates/agent-memory",
+    "crates/agent-runtime",
+    "crates/agent-scheduler",
+    "crates/agent-tools",
+    "crates/config",
+    "crates/infra-http",
+    "crates/infra-shell",
+    "crates/infra-ssh",
+    "crates/infra-store",
+    "crates/shared",
+    "crates/storage",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+authors = ["Liu Felix"]
+repository = ""
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

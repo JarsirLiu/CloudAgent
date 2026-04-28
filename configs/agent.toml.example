@@ -1,0 +1,14 @@
+[llm]
+base_url = "https://api.openai.com/v1"
+api_key = "replace-with-your-api-key"
+model = "gpt-4.1-mini"
+temperature = 0.2
+
+[runtime]
+default_session_id = "default"
+max_tool_roundtrips = 8
+session_store_dir = "data/sessions"
+
+[tools]
+default_shell_timeout_ms = 120000
+max_read_chars = 20000

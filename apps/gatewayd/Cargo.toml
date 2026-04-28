@@ -1,0 +1,11 @@
+[package]
+name = "gatewayd"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+agent-gateway = { path = "../../crates/agent-gateway" }
+tracing.workspace = true
+tracing-subscriber.workspace = true

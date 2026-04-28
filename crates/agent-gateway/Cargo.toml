@@ -1,0 +1,9 @@
+[package]
+name = "agent-gateway"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+shared = { path = "../shared" }
