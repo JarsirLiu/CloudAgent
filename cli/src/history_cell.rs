@@ -67,20 +67,13 @@ impl HistoryCell {
     }
 
     fn render_agent(&self, width: usize) -> Vec<Line<'static>> {
-        let wrapped = wrap_text(&self.body, width.saturating_sub(4).max(8));
         let mut lines = vec![Line::raw("")];
-        for (index, line) in wrapped.into_iter().enumerate() {
-            if index == 0 {
-                lines.push(Line::from(vec![
-                    Span::styled("● ", Style::default().fg(Color::White)),
-                    Span::styled(line, Style::default().fg(Color::White)),
-                ]));
-            } else {
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(line, Style::default().fg(Color::White)),
-                ]));
-            }
+        let rendered = render_markdownish_blocks(&self.body, width.saturating_sub(4).max(8));
+        for (index, line) in rendered.into_iter().enumerate() {
+            let prefix = if index == 0 { "● " } else { "  " };
+            let mut spans = vec![Span::styled(prefix, Style::default().fg(Color::White))];
+            spans.extend(line.spans);
+            lines.push(Line::from(spans));
         }
         lines
     }
@@ -135,6 +128,16 @@ pub struct Transcript {
 }
 
 impl Transcript {
+    pub fn replace_with_history(&mut self, messages: &[HistoryEntry]) {
+        self.cells.clear();
+        for message in messages {
+            let cell = render_history_entry(message);
+            if !cell.is_empty() {
+                self.cells.push(cell);
+            }
+        }
+    }
+
     pub fn push(&mut self, cell: HistoryCell) {
         if cell.is_empty() {
             return;
@@ -387,4 +390,64 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+fn render_markdownish_blocks(text: &str, width: usize) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    let mut in_code = false;
+    for raw in text.lines() {
+        let trimmed = raw.trim_end();
+        if trimmed.starts_with("```") {
+            in_code = !in_code;
+            if in_code {
+                out.push(Line::from(Span::styled(
+                    "code",
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                )));
+            }
+            continue;
+        }
+
+        let style = if in_code {
+            Style::default()
+                .fg(Color::Rgb(210, 235, 255))
+                .bg(Color::Rgb(25, 34, 46))
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        let normalized = if !in_code && trimmed.starts_with("- ") {
+            format!("• {}", trimmed.trim_start_matches("- "))
+        } else {
+            trimmed.to_string()
+        };
+
+        let wrapped = if normalized.is_empty() {
+            vec![String::new()]
+        } else {
+            wrap_text(&normalized, width)
+        };
+
+        for line in wrapped {
+            if in_code {
+                let mut padded = format!("  {line}");
+                let visual = padded.chars().count();
+                if visual < width {
+                    padded.push_str(&" ".repeat(width - visual));
+                }
+                out.push(Line::from(Span::styled(padded, style)));
+            } else {
+                out.push(Line::from(Span::styled(line, style)));
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push(Line::from(Span::styled(
+            "",
+            Style::default().fg(Color::White),
+        )));
+    }
+    out
 }

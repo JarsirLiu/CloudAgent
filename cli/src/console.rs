@@ -137,6 +137,8 @@ struct TuiApp {
     console_state: ConsoleState,
     transcript: Transcript,
     transcript_scroll: usize,
+    history_loaded: bool,
+    show_history_panel_on_next_response: bool,
     status_text: String,
     bottom_pane: BottomPane,
     approval_inline: Option<ApprovalInlineState>,
@@ -150,6 +152,8 @@ impl TuiApp {
             console_state: ConsoleState::new(),
             transcript: Transcript::default(),
             transcript_scroll: 0,
+            history_loaded: false,
+            show_history_panel_on_next_response: false,
             status_text: format!("Connected via {connection_label}"),
             bottom_pane: BottomPane::new(),
             approval_inline: None,
@@ -197,30 +201,36 @@ impl TuiApp {
                 }
                 AppServerNotification::SessionHistory { messages, .. } => {
                     self.status_text = "Loaded history".to_string();
-                    let history_lines = messages
-                        .iter()
-                        .map(|message| {
-                            let cell = render_history_entry(message);
-                            cell.to_lines(96)
-                                .into_iter()
-                                .map(|line| line.to_string())
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        })
-                        .collect::<Vec<_>>();
-                    self.bottom_pane.set_panel(Some(BottomPaneViewState {
-                        title: "Session history".to_string(),
-                        lines: if history_lines.is_empty() {
-                            vec![
-                                "No history yet.".to_string(),
-                                "Esc closes this panel.".to_string(),
-                            ]
-                        } else {
-                            let mut lines = history_lines;
-                            lines.push("Esc closes this panel.".to_string());
-                            lines
-                        },
-                    }));
+                    self.transcript.replace_with_history(messages);
+                    self.transcript_scroll = 0;
+                    self.history_loaded = true;
+                    if self.show_history_panel_on_next_response {
+                        let history_lines = messages
+                            .iter()
+                            .map(|message| {
+                                let cell = render_history_entry(message);
+                                cell.to_lines(96)
+                                    .into_iter()
+                                    .map(|line| line.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            })
+                            .collect::<Vec<_>>();
+                        self.bottom_pane.set_panel(Some(BottomPaneViewState {
+                            title: "Session history".to_string(),
+                            lines: if history_lines.is_empty() {
+                                vec![
+                                    "No history yet.".to_string(),
+                                    "Esc closes this panel.".to_string(),
+                                ]
+                            } else {
+                                let mut lines = history_lines;
+                                lines.push("Esc closes this panel.".to_string());
+                                lines
+                            },
+                        }));
+                        self.show_history_panel_on_next_response = false;
+                    }
                 }
                 AppServerNotification::SubscriptionChanged {
                     session_id,
@@ -285,14 +295,6 @@ impl TuiApp {
                         request.reason, request.arguments_preview
                     ),
                 });
-                self.push_cell(HistoryCell::from_message(
-                    "approval",
-                    format!(
-                        "tool `{}` wants to run. reason: {} | args: {}",
-                        request.tool_name, request.reason, request.arguments_preview
-                    ),
-                    HistoryTone::Warning,
-                ));
                 self.status_text = format!("Approval for {}", request.tool_name);
             }
         }
@@ -301,12 +303,12 @@ impl TuiApp {
     fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
         if matches!(key.kind, KeyEventKind::Press) {
             match key.code {
-                KeyCode::PageUp => {
-                    self.transcript_scroll = self.transcript_scroll.saturating_add(8);
+                KeyCode::PageUp | KeyCode::Up => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_add(6);
                     return None;
                 }
-                KeyCode::PageDown => {
-                    self.transcript_scroll = self.transcript_scroll.saturating_sub(8);
+                KeyCode::PageDown | KeyCode::Down => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_sub(6);
                     return None;
                 }
                 KeyCode::Home => {
@@ -335,6 +337,7 @@ impl TuiApp {
                 Some(ParsedInput::Command(AppClientCommand::Exit))
             }
             ComposerAction::History => {
+                self.show_history_panel_on_next_response = true;
                 Some(ParsedInput::Command(AppClientCommand::RequestHistory {
                     session_id: self.session_id.clone(),
                 }))
@@ -388,6 +391,12 @@ impl TuiApp {
             FrontendMode::WaitingForApproval => ("APPROVAL", Color::Yellow),
         };
 
+        let scroll_hint = if self.transcript_scroll > 0 {
+            format!("scroll +{}", self.transcript_scroll)
+        } else {
+            "live".to_string()
+        };
+
         Paragraph::new(Text::from(vec![Line::from(vec![
             Span::styled(
                 "── CloudAgent",
@@ -405,6 +414,8 @@ impl TuiApp {
                 format!("[{}]", status.0),
                 Style::default().fg(status.1).add_modifier(Modifier::BOLD),
             ),
+            Span::raw("  "),
+            Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
         ])]))
     }
 
@@ -468,7 +479,11 @@ impl TuiApp {
             ))
             .alignment(ratatui::layout::Alignment::Center),
             Line::from(Span::styled(
-                self.status_text.clone(),
+                if self.history_loaded {
+                    self.status_text.clone()
+                } else {
+                    "Loading session history...".to_string()
+                },
                 Style::default().fg(Color::DarkGray),
             ))
             .alignment(ratatui::layout::Alignment::Center),
@@ -613,6 +628,9 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     let session_id = config.session_id.clone();
     let mut client = create_client(&config, session_id.clone()).await?;
     let mut app = TuiApp::new(session_id.clone(), config.banner, config.connection.label());
+    client.send_command(AppClientCommand::RequestHistory {
+        session_id: session_id.clone(),
+    })?;
     let mut terminal = TerminalGuard::new()?;
     let mut events = spawn_tui_event_loop();
 
@@ -1003,7 +1021,7 @@ fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
             session_id: session_id.to_string(),
         },
         _ if mode == FrontendMode::WaitingForApproval => {
-            let approved = matches!(trimmed, "y" | "Y" | "yes" | "YES");
+            let approved = matches!(trimmed, "1" | "y" | "Y" | "yes" | "YES");
             return ParsedInput::ApprovalAnswer {
                 approved,
                 reason: if approved {

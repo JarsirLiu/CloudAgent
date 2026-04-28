@@ -68,22 +68,39 @@ impl BottomPane {
                 )));
             }
         } else if let Some(approval) = approval {
+            lines.push(Line::from(Span::styled(
+                "Would you like to approve this action?",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )));
             lines.push(Line::from(vec![
                 Span::styled(
-                    "Approval  ",
+                    "approval  ",
                     Style::default()
                         .fg(Color::LightRed)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    approval.title.clone(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(approval.title.clone(), Style::default().fg(Color::White)),
             ]));
             lines.push(Line::from(Span::styled(
                 approval.detail.clone(),
                 Style::default().fg(Color::Gray),
             )));
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "1. Approve once",
+                Style::default().fg(Color::White),
+            )));
+            lines.push(Line::from(Span::styled(
+                "2. Deny",
+                Style::default().fg(Color::White),
+            )));
+            lines.push(Line::raw(""));
+            lines.extend(
+                self.composer
+                    .render_lines(mode, area_width.saturating_sub(4) as usize),
+            );
             lines.push(Line::raw(""));
             lines.push(Line::from(Span::styled(
                 "Approve with y or deny with n, then press Enter.",
@@ -102,7 +119,7 @@ impl BottomPane {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::DarkGray))
                     .title(if approval.is_some() {
-                        " Action "
+                        " Approval "
                     } else {
                         " Composer "
                     })
@@ -117,9 +134,11 @@ impl BottomPane {
         }
         let inner = Rect {
             x: area.x + 1,
-            y: area.y + 2,
+            y: area.y + if area.height > 6 { 6 } else { 3 },
             width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(4),
+            height: area
+                .height
+                .saturating_sub(if area.height > 6 { 8 } else { 5 }),
         };
         self.composer.cursor_position(inner)
     }
@@ -163,7 +182,9 @@ impl BottomPane {
             match mode {
                 FrontendMode::Idle => "Ready",
                 FrontendMode::Running => "Ctrl+K interrupt",
-                FrontendMode::WaitingForApproval if has_inline_approval => "Reply y / n",
+                FrontendMode::WaitingForApproval if has_inline_approval => {
+                    "Choose 1 / 2 or type y / n"
+                }
                 FrontendMode::WaitingForApproval => "Waiting",
             }
         };
