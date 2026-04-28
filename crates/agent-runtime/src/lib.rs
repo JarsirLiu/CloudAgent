@@ -21,7 +21,8 @@ use tokio_util::sync::CancellationToken;
 
 pub use agent_core::ConversationMessage;
 pub use agent_protocol::{
-    ApprovalDecision, ApprovalRequest, SessionSnapshot, SessionState, TurnEvent, TurnState,
+    ApprovalDecision, ApprovalRequest, SessionSnapshot, SessionState, TurnEvent, TurnItemKind,
+    TurnState,
 };
 
 const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
@@ -332,25 +333,47 @@ impl AgentRuntime {
     }
 
     fn outcome_to_output(&self, outcome: TurnOutcome) -> AgentTurnOutput {
-        let tool_events = outcome
-            .events
-            .iter()
-            .filter_map(|event| match event {
-                TurnEvent::ToolCallCompleted { result, .. } => Some(ToolEvent {
-                    name: result.name.clone(),
-                    summary: result.summary.clone(),
-                    is_error: false,
-                }),
-                TurnEvent::ToolCallFailed {
-                    tool_name, error, ..
-                } => Some(ToolEvent {
-                    name: tool_name.clone(),
-                    summary: error.clone(),
-                    is_error: true,
-                }),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        let mut active_tools: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        let mut tool_events = Vec::new();
+        for event in &outcome.events {
+            match event {
+                TurnEvent::ItemStarted {
+                    item_id,
+                    kind,
+                    title,
+                    ..
+                } if *kind == TurnItemKind::ToolCall => {
+                    active_tools.insert(
+                        item_id.clone(),
+                        (title.clone().unwrap_or_else(|| "tool_call".to_string()), String::new()),
+                    );
+                }
+                TurnEvent::ItemDelta { item_id, delta, .. } => {
+                    if let Some((_, summary)) = active_tools.get_mut(item_id) {
+                        if !summary.is_empty() {
+                            summary.push('\n');
+                        }
+                        summary.push_str(delta);
+                    }
+                }
+                TurnEvent::ItemCompleted { item_id, .. } => {
+                    if let Some((name, summary)) = active_tools.remove(item_id) {
+                        let lower = summary.to_lowercase();
+                        let is_error = lower.contains("error")
+                            || lower.contains("failed")
+                            || lower.contains("denied")
+                            || lower.contains("skipped");
+                        tool_events.push(ToolEvent {
+                            name,
+                            summary,
+                            is_error,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
 
         AgentTurnOutput {
             turn_id: outcome.turn_id,

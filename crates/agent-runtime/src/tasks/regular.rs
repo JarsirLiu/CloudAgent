@@ -1,7 +1,7 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{AgentSession, ModelRequest};
-use agent_protocol::{ApprovalDecision, ApprovalRequest, ToolResult, TurnEvent, TurnState};
+use agent_protocol::{ApprovalDecision, ApprovalRequest, ToolResult, TurnEvent, TurnItemKind, TurnState};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
@@ -120,12 +120,34 @@ where
         );
 
         if let Some(content) = response.content.clone() {
+            let assistant_item_id = format!("assistant:{turn_id}");
             emit_event(
                 &mut events,
                 on_event,
-                TurnEvent::AssistantMessage {
+                TurnEvent::ItemStarted {
                     turn_id: turn_id.to_string(),
-                    content: content.clone(),
+                    item_id: assistant_item_id.clone(),
+                    kind: TurnItemKind::AssistantMessage,
+                    title: Some("assistant_message".to_string()),
+                },
+            );
+            for delta in assistant_deltas(&content, 96) {
+                emit_event(
+                    &mut events,
+                    on_event,
+                    TurnEvent::ItemDelta {
+                        turn_id: turn_id.to_string(),
+                        item_id: assistant_item_id.clone(),
+                        delta: delta.clone(),
+                    },
+                );
+            }
+            emit_event(
+                &mut events,
+                on_event,
+                TurnEvent::ItemCompleted {
+                    turn_id: turn_id.to_string(),
+                    item_id: assistant_item_id,
                 },
             );
         }
@@ -177,12 +199,15 @@ where
                 });
             }
 
+            let tool_item_id = format!("tool:{}", call.id);
             emit_event(
                 &mut events,
                 on_event,
-                TurnEvent::ToolCallRequested {
+                TurnEvent::ItemStarted {
                     turn_id: turn_id.to_string(),
-                    call: call.clone(),
+                    item_id: tool_item_id.clone(),
+                    kind: TurnItemKind::ToolCall,
+                    title: Some(call.name.clone()),
                 },
             );
 
@@ -239,11 +264,18 @@ where
                     emit_event(
                         &mut events,
                         on_event,
-                        TurnEvent::ToolCallFailed {
+                        TurnEvent::ItemDelta {
                             turn_id: turn_id.to_string(),
-                            tool_call_id: call.id.clone(),
-                            tool_name: call.name.clone(),
-                            error: reason,
+                            item_id: tool_item_id.clone(),
+                            delta: format!("Tool execution skipped: {reason}"),
+                        },
+                    );
+                    emit_event(
+                        &mut events,
+                        on_event,
+                        TurnEvent::ItemCompleted {
+                            turn_id: turn_id.to_string(),
+                            item_id: tool_item_id.clone(),
                         },
                     );
                     session.push_tool_result(result);
@@ -276,23 +308,31 @@ where
                 emit_event(
                     &mut events,
                     on_event,
-                    TurnEvent::ToolCallFailed {
+                    TurnEvent::ItemDelta {
                         turn_id: turn_id.to_string(),
-                        tool_call_id: result.tool_call_id.clone(),
-                        tool_name: result.name.clone(),
-                        error: result.content.clone(),
+                        item_id: tool_item_id.clone(),
+                        delta: result.content.clone(),
                     },
                 );
             } else {
                 emit_event(
                     &mut events,
                     on_event,
-                    TurnEvent::ToolCallCompleted {
+                    TurnEvent::ItemDelta {
                         turn_id: turn_id.to_string(),
-                        result: result.clone(),
+                        item_id: tool_item_id.clone(),
+                        delta: result.summary.clone(),
                     },
                 );
             }
+            emit_event(
+                &mut events,
+                on_event,
+                TurnEvent::ItemCompleted {
+                    turn_id: turn_id.to_string(),
+                    item_id: tool_item_id,
+                },
+            );
             session.push_tool_result(result);
         }
     }
@@ -317,4 +357,20 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
+}
+
+fn assistant_deltas(content: &str, chunk_chars: usize) -> Vec<String> {
+    if content.is_empty() || chunk_chars == 0 {
+        return Vec::new();
+    }
+
+    let chars: Vec<char> = content.chars().collect();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let end = (start + chunk_chars).min(chars.len());
+        out.push(chars[start..end].iter().collect());
+        start = end;
+    }
+    out
 }

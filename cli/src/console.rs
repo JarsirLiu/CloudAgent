@@ -7,13 +7,14 @@ use crate::welcome::WelcomeScreen;
 use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    RequestId, UserTurnInput,
+    RequestId, TurnItemKind, UserTurnInput,
 };
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use crossterm::cursor::MoveTo;
-use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use crossterm::execute;
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
@@ -21,6 +22,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
@@ -135,6 +137,7 @@ struct TuiApp {
     transcript: Transcript,
     transcript_scroll: usize,
     transcript_viewport_height: usize,
+    transcript_viewport_width: usize,
     compact_tools: bool,
     expanded_tool_cells: HashSet<usize>,
     tool_cell_indices: Vec<usize>,
@@ -144,6 +147,13 @@ struct TuiApp {
     last_model_name: Option<String>,
     last_message_count: usize,
     last_tool_name: Option<String>,
+    streaming_turn_id: Option<String>,
+    streaming_item_id: Option<String>,
+    streaming_buffer: String,
+    streaming_cell_index: Option<usize>,
+    streaming_dirty: bool,
+    tool_item_cells: HashMap<String, usize>,
+    tool_item_buffers: HashMap<String, String>,
     input_pane: InputPane,
     should_exit: bool,
 }
@@ -157,6 +167,7 @@ impl TuiApp {
             transcript: Transcript::default(),
             transcript_scroll: 0,
             transcript_viewport_height: 0,
+            transcript_viewport_width: 108,
             compact_tools: false,
             expanded_tool_cells: HashSet::new(),
             tool_cell_indices: Vec::new(),
@@ -166,6 +177,13 @@ impl TuiApp {
             last_model_name: None,
             last_message_count: 0,
             last_tool_name: None,
+            streaming_turn_id: None,
+            streaming_item_id: None,
+            streaming_buffer: String::new(),
+            streaming_cell_index: None,
+            streaming_dirty: false,
+            tool_item_cells: HashMap::new(),
+            tool_item_buffers: HashMap::new(),
             input_pane: InputPane::new(),
             should_exit: false,
         }
@@ -182,6 +200,7 @@ impl TuiApp {
         self.transcript = Transcript::default();
         self.transcript_scroll = 0;
         self.transcript_viewport_height = 0;
+        self.transcript_viewport_width = 108;
         self.compact_tools = false;
         self.expanded_tool_cells.clear();
         self.tool_cell_indices.clear();
@@ -191,6 +210,13 @@ impl TuiApp {
         self.last_model_name = None;
         self.last_message_count = 0;
         self.last_tool_name = None;
+        self.streaming_turn_id = None;
+        self.streaming_item_id = None;
+        self.streaming_buffer.clear();
+        self.streaming_cell_index = None;
+        self.streaming_dirty = false;
+        self.tool_item_cells.clear();
+        self.tool_item_buffers.clear();
         self.input_pane.clear_views();
     }
 
@@ -231,11 +257,9 @@ impl TuiApp {
                 AppServerNotification::SessionHistory { messages, .. } => {
                     self.status_text = "Loaded history".to_string();
                     self.last_message_count = messages.len();
-                    if !self.history_loaded || self.transcript.is_empty() {
-                        self.transcript.replace_with_history(messages);
-                        self.refresh_tool_focus();
-                        self.transcript_scroll = 0;
-                    }
+                    self.transcript.replace_with_history(messages);
+                    self.refresh_tool_focus();
+                    self.transcript_scroll = 0;
                     self.history_loaded = true;
                 }
                 AppServerNotification::SubscriptionChanged {
@@ -291,6 +315,30 @@ impl TuiApp {
                         }
                         _ => {}
                     }
+                    if let agent_protocol::TurnEvent::ItemStarted {
+                        turn_id,
+                        item_id,
+                        kind,
+                        title,
+                    } = event
+                    {
+                        if *kind == TurnItemKind::AssistantMessage {
+                            self.handle_assistant_item_started(turn_id, item_id);
+                        } else if *kind == TurnItemKind::ToolCall {
+                            self.handle_tool_item_started(item_id, title.as_deref().unwrap_or("tool_call"));
+                        }
+                        return;
+                    }
+                    if let agent_protocol::TurnEvent::ItemDelta { item_id, delta, .. } = event {
+                        self.handle_assistant_item_delta(item_id, delta);
+                        self.handle_tool_item_delta(item_id, delta);
+                        return;
+                    }
+                    if let agent_protocol::TurnEvent::ItemCompleted { item_id, .. } = event {
+                        self.handle_assistant_item_completed(item_id);
+                        self.handle_tool_item_completed(item_id);
+                        return;
+                    }
                     let rendered = render_turn_event(event);
                     match event {
                         agent_protocol::TurnEvent::ModelRequestStarted {
@@ -300,15 +348,6 @@ impl TuiApp {
                         }
                         agent_protocol::TurnEvent::ModelResponseReceived { model_name, .. } => {
                             self.last_model_name = model_name.clone();
-                        }
-                        agent_protocol::TurnEvent::ToolCallRequested { call, .. } => {
-                            self.last_tool_name = Some(call.name.clone());
-                        }
-                        agent_protocol::TurnEvent::ToolCallCompleted { result, .. } => {
-                            self.last_tool_name = Some(result.name.clone());
-                        }
-                        agent_protocol::TurnEvent::ToolCallFailed { tool_name, .. } => {
-                            self.last_tool_name = Some(tool_name.clone());
                         }
                         _ => {}
                     }
@@ -340,11 +379,14 @@ impl TuiApp {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
-        if matches!(key.kind, KeyEventKind::Press) {
+        if matches!(key.kind, KeyEventKind::Press) && self.input_pane.composer_is_empty() {
             let page_step = self.page_scroll_step();
             match key.code {
                 KeyCode::PageUp => {
-                    self.transcript_scroll = self.transcript_scroll.saturating_add(page_step);
+                    self.transcript_scroll = self
+                        .transcript_scroll
+                        .saturating_add(page_step)
+                        .min(self.max_transcript_scroll(self.transcript_viewport_height));
                     return None;
                 }
                 KeyCode::PageDown => {
@@ -352,7 +394,10 @@ impl TuiApp {
                     return None;
                 }
                 KeyCode::Up => {
-                    self.transcript_scroll = self.transcript_scroll.saturating_add(1);
+                    self.transcript_scroll = self
+                        .transcript_scroll
+                        .saturating_add(1)
+                        .min(self.max_transcript_scroll(self.transcript_viewport_height));
                     return None;
                 }
                 KeyCode::Down => {
@@ -435,6 +480,18 @@ impl TuiApp {
         }
     }
 
+    fn handle_mouse_scroll(&mut self, up: bool) {
+        let step = 3usize;
+        if up {
+            self.transcript_scroll = self
+                .transcript_scroll
+                .saturating_add(step)
+                .min(self.max_transcript_scroll(self.transcript_viewport_height));
+        } else {
+            self.transcript_scroll = self.transcript_scroll.saturating_sub(step);
+        }
+    }
+
     fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let content = centered_column(area, 112);
@@ -456,6 +513,7 @@ impl TuiApp {
             self.render_welcome(frame, sections[1]);
         } else {
             self.transcript_viewport_height = sections[1].height.saturating_sub(0) as usize;
+            self.transcript_viewport_width = sections[1].width.saturating_sub(4) as usize;
             frame.render_widget(self.transcript_panel(sections[1]), sections[1]);
         }
 
@@ -653,7 +711,7 @@ impl TuiApp {
     }
 
     fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
-        let content_width = 108usize;
+        let content_width = self.transcript_viewport_width.max(20);
         let total = self
             .transcript
             .total_lines_with_state(content_width, &self.transcript_render_state());
@@ -714,7 +772,7 @@ impl TuiApp {
         if let Some(&cell_index) = self.tool_cell_indices.get(next) {
             self.transcript_scroll = self.transcript.scroll_for_cell_with_state(
                 cell_index,
-                108,
+                self.transcript_viewport_width.max(20),
                 self.transcript_viewport_height.max(1),
                 &self.transcript_render_state(),
             );
@@ -747,6 +805,86 @@ impl TuiApp {
             matched_cells: HashSet::new(),
         }
     }
+
+    fn handle_assistant_item_started(&mut self, turn_id: &str, item_id: &str) {
+        self.streaming_turn_id = Some(turn_id.to_string());
+        self.streaming_item_id = Some(item_id.to_string());
+        self.streaming_buffer.clear();
+        let idx = self.transcript.push(HistoryCell::from_message(
+            "cloudagent",
+            String::new(),
+            HistoryTone::Agent,
+        ));
+        self.streaming_cell_index = Some(idx);
+        self.streaming_dirty = true;
+    }
+
+    fn handle_assistant_item_delta(&mut self, item_id: &str, delta: &str) {
+        if self.streaming_item_id.as_deref() != Some(item_id) {
+            return;
+        }
+        self.streaming_buffer.push_str(delta);
+        self.streaming_dirty = true;
+        self.status_text = "Streaming response".to_string();
+    }
+
+    fn handle_assistant_item_completed(&mut self, item_id: &str) {
+        if self.streaming_item_id.as_deref() != Some(item_id) {
+            return;
+        }
+        self.streaming_turn_id = None;
+        self.streaming_item_id = None;
+        self.streaming_dirty = true;
+        self.status_text = "Finalizing response".to_string();
+    }
+
+    fn handle_tool_item_started(&mut self, item_id: &str, title: &str) {
+        let idx = self.transcript.push(HistoryCell::from_message(
+            title.to_string(),
+            "Started".to_string(),
+            HistoryTone::Tool,
+        ));
+        self.tool_item_cells.insert(item_id.to_string(), idx);
+        self.tool_item_buffers
+            .insert(item_id.to_string(), "Started".to_string());
+        self.last_tool_name = Some(title.to_string());
+        self.refresh_tool_focus();
+        self.transcript_scroll = 0;
+    }
+
+    fn handle_tool_item_delta(&mut self, item_id: &str, delta: &str) {
+        let Some(idx) = self.tool_item_cells.get(item_id).copied() else {
+            return;
+        };
+        let buffer = self
+            .tool_item_buffers
+            .entry(item_id.to_string())
+            .or_default();
+        if !buffer.is_empty() {
+            buffer.push('\n');
+        }
+        buffer.push_str(delta);
+        let _ = self.transcript.update_cell_body(idx, buffer.clone());
+        self.refresh_tool_focus();
+        self.transcript_scroll = 0;
+    }
+
+    fn handle_tool_item_completed(&mut self, item_id: &str) {
+        self.tool_item_cells.remove(item_id);
+        self.tool_item_buffers.remove(item_id);
+    }
+
+    fn commit_streaming_delta(&mut self) {
+        if !self.streaming_dirty {
+            return;
+        }
+        if let Some(idx) = self.streaming_cell_index {
+            let _ = self.transcript.update_cell_body(idx, self.streaming_buffer.clone());
+            self.refresh_tool_focus();
+            self.transcript_scroll = 0;
+        }
+        self.streaming_dirty = false;
+    }
 }
 
 struct TerminalGuard {
@@ -757,7 +895,7 @@ impl TerminalGuard {
     fn new() -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+        execute!(stdout, EnableMouseCapture, Clear(ClearType::All), MoveTo(0, 0))?;
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend)?;
         Ok(Self { terminal })
@@ -767,12 +905,14 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = self.terminal.show_cursor();
+        let _ = execute!(io::stdout(), DisableMouseCapture);
         let _ = disable_raw_mode();
     }
 }
 
 enum UiEvent {
     Key(KeyEvent),
+    MouseScroll { up: bool },
     Tick,
 }
 
@@ -809,7 +949,12 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                             }
                         }
                     }
-                    UiEvent::Tick => {}
+                    UiEvent::MouseScroll { up } => {
+                        app.handle_mouse_scroll(up);
+                    }
+                    UiEvent::Tick => {
+                        app.commit_streaming_delta();
+                    }
                 }
             }
             else => break,
@@ -852,6 +997,18 @@ fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
                     Ok(CEvent::Key(key)) => {
                         if tx.send(UiEvent::Key(key)).is_err() {
                             break;
+                        }
+                    }
+                    Ok(CEvent::Mouse(mouse)) => {
+                        let scroll = match mouse.kind {
+                            MouseEventKind::ScrollUp => Some(true),
+                            MouseEventKind::ScrollDown => Some(false),
+                            _ => None,
+                        };
+                        if let Some(up) = scroll {
+                            if tx.send(UiEvent::MouseScroll { up }).is_err() {
+                                break;
+                            }
                         }
                     }
                     Ok(_) => {}

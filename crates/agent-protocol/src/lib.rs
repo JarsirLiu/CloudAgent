@@ -115,6 +115,13 @@ pub struct TurnResultEnvelope {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnItemKind {
+    AssistantMessage,
+    ToolCall,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TurnEvent {
@@ -134,13 +141,20 @@ pub enum TurnEvent {
         has_content: bool,
         tool_call_count: usize,
     },
-    AssistantMessage {
+    ItemStarted {
         turn_id: TurnId,
-        content: String,
+        item_id: String,
+        kind: TurnItemKind,
+        title: Option<String>,
     },
-    ToolCallRequested {
+    ItemDelta {
         turn_id: TurnId,
-        call: ToolCall,
+        item_id: String,
+        delta: String,
+    },
+    ItemCompleted {
+        turn_id: TurnId,
+        item_id: String,
     },
     ApprovalRequested {
         turn_id: TurnId,
@@ -151,16 +165,6 @@ pub enum TurnEvent {
         tool_call_id: String,
         approved: bool,
         reason: Option<String>,
-    },
-    ToolCallCompleted {
-        turn_id: TurnId,
-        result: ToolResult,
-    },
-    ToolCallFailed {
-        turn_id: TurnId,
-        tool_call_id: String,
-        tool_name: String,
-        error: String,
     },
     TurnCompleted {
         turn_id: TurnId,

@@ -100,7 +100,7 @@ impl ChatComposer {
         let wrapped = self.textarea.wrapped_lines(body, content_width);
         let is_placeholder = self.textarea.is_empty();
         let mut lines = Vec::new();
-        let cursor_row = 0u16;
+        let cursor_row = wrapped.len().saturating_sub(1) as u16;
 
         for (index, wrapped_line) in wrapped.into_iter().enumerate() {
             let indent = if index == 0 {
@@ -138,21 +138,28 @@ impl ChatComposer {
         self.render(mode, width).lines.len() as u16
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.textarea.is_empty()
+    }
+
     pub fn cursor_position(&self, area: Rect, mode: FrontendMode) -> (u16, u16) {
         let prompt = match mode {
             FrontendMode::WaitingForApproval => "  reply   ",
             _ => "  message ",
         };
         let prompt_width = display_width(prompt);
-        let available = area.width.saturating_sub(prompt_width as u16 + 2) as usize;
+        let available = area.width.saturating_sub(prompt_width as u16 + 2).max(1) as usize;
         let cursor_col = self.textarea.display_width_before_cursor();
+        let cursor_row = (cursor_col / available) as u16;
+        let cursor_col_in_row = cursor_col % available;
         let offset = if cursor_col + prompt_width >= available + prompt_width {
             (cursor_col + prompt_width).saturating_sub(available + prompt_width - 1)
         } else {
             0
         };
-        let x = area.x + (prompt_width + cursor_col).saturating_sub(offset) as u16;
-        (x, area.y)
+        let x = area.x + (prompt_width + cursor_col_in_row).saturating_sub(offset) as u16;
+        let y = area.y + cursor_row;
+        (x, y)
     }
 
     fn submit(&mut self) -> ComposerAction {

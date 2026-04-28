@@ -151,6 +151,10 @@ impl InputPane {
         }
     }
 
+    pub fn composer_is_empty(&self) -> bool {
+        self.view_stack.is_empty() && self.composer.is_empty()
+    }
+
     fn clear_non_approval_views(&mut self) {
         if !self.approval_active {
             self.view_stack.clear();

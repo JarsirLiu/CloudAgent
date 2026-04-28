@@ -276,14 +276,15 @@ impl Transcript {
         }
     }
 
-    pub fn push(&mut self, cell: HistoryCell) {
+    pub fn push(&mut self, cell: HistoryCell) -> usize {
         if cell.is_empty() {
-            return;
+            return self.cells.len().saturating_sub(1);
         }
         self.cells.push(cell);
         if self.cells.len() > 500 {
             self.cells.drain(0..self.cells.len() - 500);
         }
+        self.cells.len().saturating_sub(1)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -385,6 +386,17 @@ impl Transcript {
             .filter_map(|(idx, cell)| (cell.tone == HistoryTone::Tool).then_some(idx))
             .collect()
     }
+
+    pub fn update_cell_body(&mut self, index: usize, body: String) -> bool {
+        let Some(cell) = self.cells.get_mut(index) else {
+            return false;
+        };
+        cell.body = body;
+        if let Ok(mut cache) = cell.cache.lock() {
+            *cache = None;
+        }
+        true
+    }
 }
 
 // ── Event Helpers ─────────────────────────────────────────────────────────────
@@ -441,30 +453,6 @@ pub fn render_turn_event(event: &TurnEvent) -> TurnRender {
                 "Responding".into()
             }),
         },
-        TurnEvent::AssistantMessage { content, .. } => TurnRender {
-            log: Some(HistoryCell::from_message(
-                "cloudagent",
-                content.clone(),
-                HistoryTone::Agent,
-            )),
-            status: Some("Done".into()),
-        },
-        TurnEvent::ToolCallRequested { call, .. } => TurnRender {
-            log: Some(HistoryCell::from_message(
-                format_tool_call_label(&call.name, &call.arguments.to_string()),
-                "Started",
-                HistoryTone::Tool,
-            )),
-            status: Some(format!("Running {}", call.name)),
-        },
-        TurnEvent::ToolCallCompleted { result, .. } => TurnRender {
-            log: Some(HistoryCell::from_message(
-                pretty_tool_title(&result.name),
-                result.summary.clone(),
-                HistoryTone::Tool,
-            )),
-            status: Some(format!("Finished {}", result.name)),
-        },
         TurnEvent::ApprovalRequested { request, .. } => TurnRender {
             log: Some(HistoryCell::from_message(
                 format!("Action: {}", request.tool_name),
@@ -472,6 +460,12 @@ pub fn render_turn_event(event: &TurnEvent) -> TurnRender {
                 HistoryTone::Warning,
             )),
             status: Some("Needs approval".into()),
+        },
+        TurnEvent::ItemStarted { .. }
+        | TurnEvent::ItemDelta { .. }
+        | TurnEvent::ItemCompleted { .. } => TurnRender {
+            log: None,
+            status: None,
         },
         _ => TurnRender {
             log: None,
@@ -767,14 +761,6 @@ fn display_width(s: &str) -> usize {
 
 fn pretty_tool_title(name: &str) -> String {
     name.replace('_', " ").to_uppercase()
-}
-
-fn format_tool_call_label(name: &str, args: &str) -> String {
-    format!(
-        "{}: {}",
-        pretty_tool_title(name),
-        args.chars().take(30).collect::<String>()
-    )
 }
 
 fn highlight_code_line(line: &str, _lang: &str) -> Vec<Span<'static>> {
