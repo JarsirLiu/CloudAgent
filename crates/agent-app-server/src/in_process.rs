@@ -5,6 +5,7 @@ use agent_protocol::{
 use agent_runtime::{AgentRuntime, ConversationMessage};
 use anyhow::{Result, anyhow};
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex as StdMutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -274,28 +275,37 @@ fn spawn_turn(
         let state_for_finish = ctx.state.clone();
         let session_id_for_turn = session_id.clone();
         let session_id_for_approval = session_id.clone();
-        let active_turn_id = Arc::new(Mutex::new(None::<String>));
+        let active_turn_id = Arc::new(StdMutex::new(None::<String>));
         let active_turn_id_for_events = active_turn_id.clone();
+        let (projected_tx, mut projected_rx) =
+            mpsc::unbounded_channel::<Vec<AppServerNotification>>();
+        let runtime_events_for_projected = runtime_events.clone();
+        let state_for_projected = state_for_turn.clone();
+        tokio::spawn(async move {
+            while let Some(notifications) = projected_rx.recv().await {
+                for notification in notifications {
+                    send_notification(&runtime_events_for_projected, &state_for_projected, notification)
+                        .await;
+                }
+            }
+        });
 
         let result = runtime
             .chat_with_approval_and_events(
                 &session_id,
                 &user_input,
                 move |event| {
-                    let runtime_events = runtime_events.clone();
-                    let state = state_for_turn.clone();
                     let session_id = session_id_for_turn.clone();
                     let event = event.clone();
                     let active_turn_id = active_turn_id_for_events.clone();
-                    tokio::spawn(async move {
-                        if let TurnEvent::TurnStarted { turn_id, .. } = &event {
-                            let mut active = active_turn_id.lock().await;
+                    let projected_tx = projected_tx.clone();
+                    if let TurnEvent::TurnStarted { turn_id, .. } = &event {
+                        if let Ok(mut active) = active_turn_id.lock() {
                             *active = Some(turn_id.clone());
                         }
-                        for notification in project_turn_event(&session_id, &event) {
-                            send_notification(&runtime_events, &state, notification).await;
-                        }
-                    });
+                    }
+                    let notifications = project_turn_event(&session_id, &event);
+                    let _ = projected_tx.send(notifications);
                 },
                 move |request: ApprovalRequest| {
                     let event_tx = ctx.event_tx.clone();
@@ -339,7 +349,7 @@ fn spawn_turn(
             .await;
 
         if let Err(error) = result {
-            let maybe_turn_id = active_turn_id.lock().await.clone();
+            let maybe_turn_id = active_turn_id.lock().ok().and_then(|guard| guard.clone());
             if let Some(turn_id) = maybe_turn_id {
                 send_notification(
                     &finish_events,
@@ -395,84 +405,41 @@ fn project_turn_event(session_id: &str, event: &TurnEvent) -> Vec<AppServerNotif
             item_id,
             kind,
             title,
-        } => {
-            let mut notifications = vec![AppServerNotification::ItemStarted {
-                session_id: session_id.to_string(),
-                turn_id: turn_id.clone(),
-                item_id: item_id.clone(),
-                kind: kind.clone(),
-                title: title.clone(),
-            }];
-            if kind == &agent_protocol::TurnItemKind::ToolCall {
-                notifications.push(AppServerNotification::ToolCallStarted {
-                    session_id: session_id.to_string(),
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    tool_name: title.clone().unwrap_or_else(|| "tool_call".to_string()),
-                });
-            }
-            notifications
-        }
+        } => vec![AppServerNotification::ItemStarted {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+            kind: kind.clone(),
+            title: title.clone(),
+        }],
         TurnEvent::ItemDelta {
             turn_id,
             item_id,
             kind,
             delta,
-        } => match kind {
-            agent_protocol::TurnItemDeltaKind::Text => {
-                vec![AppServerNotification::AgentMessageDelta {
+        } => {
+            if matches!(kind, agent_protocol::TurnItemDeltaKind::JsonPatch) {
+                Vec::new()
+            } else {
+                vec![AppServerNotification::ItemDelta {
                     session_id: session_id.to_string(),
                     turn_id: turn_id.clone(),
                     item_id: item_id.clone(),
+                    kind: kind.clone(),
                     delta: delta.clone(),
                 }]
             }
-            agent_protocol::TurnItemDeltaKind::ToolOutput => {
-                vec![AppServerNotification::ToolCallOutputDelta {
-                    session_id: session_id.to_string(),
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                }]
-            }
-            agent_protocol::TurnItemDeltaKind::ReasoningSummary => {
-                vec![AppServerNotification::ReasoningSummaryDelta {
-                    session_id: session_id.to_string(),
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                }]
-            }
-            agent_protocol::TurnItemDeltaKind::ReasoningText => {
-                vec![AppServerNotification::ReasoningTextDelta {
-                    session_id: session_id.to_string(),
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                }]
-            }
-            agent_protocol::TurnItemDeltaKind::JsonPatch => Vec::new(),
-        },
+        }
         TurnEvent::ItemCompleted {
             turn_id,
             item_id,
             kind,
-        } => {
-            let mut notifications = vec![AppServerNotification::ItemCompleted {
-                session_id: session_id.to_string(),
-                turn_id: turn_id.clone(),
-                item_id: item_id.clone(),
-                kind: kind.clone(),
-            }];
-            if kind == &agent_protocol::TurnItemKind::ToolCall {
-                notifications.push(AppServerNotification::ToolCallCompleted {
-                    session_id: session_id.to_string(),
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                });
-            }
-            notifications
-        }
+        } => vec![AppServerNotification::ItemCompleted {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+            kind: kind.clone(),
+        }],
         TurnEvent::TurnCompleted {
             turn_id,
             final_response,

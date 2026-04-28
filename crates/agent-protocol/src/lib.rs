@@ -254,46 +254,12 @@ pub enum AppServerNotification {
         kind: TurnItemKind,
         title: Option<String>,
     },
-    AgentMessageDelta {
+    ItemDelta {
         session_id: String,
         turn_id: TurnId,
         item_id: String,
+        kind: TurnItemDeltaKind,
         delta: String,
-    },
-    PlanDelta {
-        session_id: String,
-        turn_id: TurnId,
-        item_id: String,
-        delta: String,
-    },
-    ReasoningSummaryDelta {
-        session_id: String,
-        turn_id: TurnId,
-        item_id: String,
-        delta: String,
-    },
-    ReasoningTextDelta {
-        session_id: String,
-        turn_id: TurnId,
-        item_id: String,
-        delta: String,
-    },
-    ToolCallStarted {
-        session_id: String,
-        turn_id: TurnId,
-        item_id: String,
-        tool_name: String,
-    },
-    ToolCallOutputDelta {
-        session_id: String,
-        turn_id: TurnId,
-        item_id: String,
-        delta: String,
-    },
-    ToolCallCompleted {
-        session_id: String,
-        turn_id: TurnId,
-        item_id: String,
     },
     ItemCompleted {
         session_id: String,
@@ -344,13 +310,7 @@ impl AppServerNotification {
             Self::FrontendStateChanged { session_id, .. }
             | Self::TurnStarted { session_id, .. }
             | Self::ItemStarted { session_id, .. }
-            | Self::AgentMessageDelta { session_id, .. }
-            | Self::PlanDelta { session_id, .. }
-            | Self::ReasoningSummaryDelta { session_id, .. }
-            | Self::ReasoningTextDelta { session_id, .. }
-            | Self::ToolCallStarted { session_id, .. }
-            | Self::ToolCallOutputDelta { session_id, .. }
-            | Self::ToolCallCompleted { session_id, .. }
+            | Self::ItemDelta { session_id, .. }
             | Self::ItemCompleted { session_id, .. }
             | Self::TurnCompleted { session_id, .. }
             | Self::TurnFailed { session_id, .. }
@@ -578,32 +538,8 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "item/started",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::AgentMessageDelta { .. } => (
-            "item/agent_message/delta",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
-        AppServerNotification::PlanDelta { .. } => (
-            "item/plan/delta",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
-        AppServerNotification::ReasoningSummaryDelta { .. } => (
-            "item/reasoning/summary_text_delta",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
-        AppServerNotification::ReasoningTextDelta { .. } => (
-            "item/reasoning/text_delta",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
-        AppServerNotification::ToolCallStarted { .. } => (
-            "item/tool_call/started",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
-        AppServerNotification::ToolCallOutputDelta { .. } => (
-            "item/tool_call/output_delta",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
-        AppServerNotification::ToolCallCompleted { .. } => (
-            "item/tool_call/completed",
+        AppServerNotification::ItemDelta { .. } => (
+            "item/delta",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::ItemCompleted { .. } => (

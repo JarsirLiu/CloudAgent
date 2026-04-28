@@ -86,7 +86,7 @@ impl InputPane {
                 .render(mode, area_width.saturating_sub(4) as usize);
             lines_before_composer += composer.cursor_row;
             lines.extend(composer.lines);
-            lines.push(hint_line(mode));
+            lines.push(hint_line(mode, area_width as usize));
         }
 
         let total_lines = lines.len() as u16;

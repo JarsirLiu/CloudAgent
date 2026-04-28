@@ -74,7 +74,7 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str, width: usi
     Line::from(spans)
 }
 
-pub fn hint_line(mode: FrontendMode) -> Line<'static> {
+pub fn hint_line(mode: FrontendMode, width: usize) -> Line<'static> {
     let hint = match mode {
         FrontendMode::Idle => {
             "  Enter submit  ·  Ctrl+K interrupt  ·  /clear clear session  ·  /copy copy last reply"
@@ -82,8 +82,27 @@ pub fn hint_line(mode: FrontendMode) -> Line<'static> {
         FrontendMode::Running => "  Ctrl+K interrupt the current turn",
         FrontendMode::WaitingForApproval => "  Enter submit  ·  y approve  ·  n deny",
     };
+    let hint = truncate_single_line(hint, width.saturating_sub(1));
     Line::from(Span::styled(
         hint,
         Style::default().fg(Color::Rgb(62, 62, 78)),
     ))
+}
+
+fn truncate_single_line(input: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in input.chars() {
+        let w = UnicodeWidthStr::width(ch.encode_utf8(&mut [0; 4]));
+        if used + w > max_width.saturating_sub(1) {
+            out.push('…');
+            return out;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out
 }

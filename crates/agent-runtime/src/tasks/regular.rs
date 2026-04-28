@@ -343,29 +343,16 @@ where
                     state: TurnState::Cancelled,
                 });
             }
-            if result.is_error {
-                emit_event(
-                    &mut events,
-                    on_event,
-                    TurnEvent::ItemDelta {
-                        turn_id: turn_id.to_string(),
-                        item_id: tool_item_id.clone(),
-                        kind: TurnItemDeltaKind::ToolOutput,
-                        delta: result.content.clone(),
-                    },
-                );
-            } else {
-                emit_event(
-                    &mut events,
-                    on_event,
-                    TurnEvent::ItemDelta {
-                        turn_id: turn_id.to_string(),
-                        item_id: tool_item_id.clone(),
-                        kind: TurnItemDeltaKind::ToolOutput,
-                        delta: result.summary.clone(),
-                    },
-                );
-            }
+            emit_event(
+                &mut events,
+                on_event,
+                TurnEvent::ItemDelta {
+                    turn_id: turn_id.to_string(),
+                    item_id: tool_item_id.clone(),
+                    kind: TurnItemDeltaKind::ToolOutput,
+                    delta: result.summary.clone(),
+                },
+            );
             emit_event(
                 &mut events,
                 on_event,

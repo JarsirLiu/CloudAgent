@@ -25,10 +25,7 @@ impl WelcomeScreen {
         let soft = Color::Rgb(120, 120, 145);
 
         let subtitle = if self.history_loaded {
-            match self.status_text.as_str() {
-                "Loaded history" => "Workspace context ready".to_string(),
-                other => other.to_string(),
-            }
+            self.status_text.clone()
         } else {
             "Loading your workspace context...".to_string()
         };

@@ -2,11 +2,11 @@ use agent_protocol::HistoryEntry;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use textwrap::{Options as WrapOptions, WordSplitter, wrap};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+use serde_json::Value;
 
 // ── Shimmer animation ─────────────────────────────────────────────────────────
 
@@ -77,14 +77,6 @@ pub enum HistoryTone {
     Meta,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct TranscriptRenderState {
-    pub compact_tools: bool,
-    pub expanded_tool_cells: HashSet<usize>,
-    pub selected_cell: Option<usize>,
-    pub matched_cells: HashSet<usize>,
-}
-
 #[derive(Clone, Debug)]
 pub struct HistoryCell {
     pub label: String,
@@ -116,20 +108,15 @@ impl HistoryCell {
         self.body.trim().is_empty()
     }
 
-    pub fn to_lines_with_mode(&self, width: usize, compact_tools: bool) -> Vec<Line<'static>> {
-        if compact_tools && self.tone == HistoryTone::Tool {
-            return self.render_tool_compact(width, Color::Rgb(80, 200, 120), "◆");
-        }
+    pub fn to_lines_with_mode(&self, width: usize) -> Vec<Line<'static>> {
         if let Ok(mut cache) = self.cache.lock() {
             if let Some((w, lines)) = &*cache {
-                if *w == width && !compact_tools {
+                if *w == width {
                     return lines.clone();
                 }
             }
             let lines = self.render_now(width);
-            if !compact_tools {
-                *cache = Some((width, lines.clone()));
-            }
+            *cache = Some((width, lines.clone()));
             lines
         } else {
             self.render_now(width)
@@ -184,7 +171,7 @@ impl HistoryCell {
     }
 
     fn render_tool_like(&self, width: usize, accent: Color, dot: &str) -> Vec<Line<'static>> {
-        let mut lines = vec![Line::raw("")];
+        let mut lines = Vec::new();
         let title = pretty_tool_title(&self.label);
         lines.push(Line::from(vec![
             Span::raw("  "),
@@ -201,39 +188,37 @@ impl HistoryCell {
             ),
         ]));
         let body_width = width.saturating_sub(8).max(8);
-        for line in wrap_text(&self.body, body_width) {
+        if self.body.trim() == "Running" || self.body.trim() == "Completed" {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    self.body.trim().to_string(),
+                    Style::default().fg(Color::Rgb(110, 110, 120)),
+                ),
+            ]));
+            return lines;
+        }
+        let wrapped = wrap_text(&self.body, body_width);
+        let max_lines = 6usize;
+        let display_count = wrapped.len().min(max_lines);
+        for line in wrapped.iter().take(display_count) {
             if !line.is_empty() {
                 lines.push(Line::from(vec![
                     Span::raw("    "),
-                    Span::styled(line, Style::default().fg(Color::Rgb(130, 130, 140))),
+                    Span::styled(line.clone(), Style::default().fg(Color::Rgb(130, 130, 140))),
                 ]));
             }
         }
+        if wrapped.len() > max_lines {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    format!("… +{} lines", wrapped.len() - max_lines),
+                    Style::default().fg(Color::Rgb(110, 110, 120)),
+                ),
+            ]));
+        }
         lines
-    }
-
-    fn render_tool_compact(&self, width: usize, accent: Color, dot: &str) -> Vec<Line<'static>> {
-        let title = pretty_tool_title(&self.label);
-        let summary = summarize_tool_body(&self.body, width.saturating_sub(24).max(12));
-        vec![
-            Line::raw(""),
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    format!(" {dot} "),
-                    Style::default().fg(accent).bg(Color::Rgb(30, 35, 45)),
-                ),
-                Span::styled(
-                    format!(" {} ", title),
-                    Style::default()
-                        .fg(Color::Rgb(200, 200, 210))
-                        .bg(Color::Rgb(30, 35, 45))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(summary, Style::default().fg(Color::Rgb(130, 130, 145))),
-            ]),
-        ]
     }
 
     fn render_meta(&self, width: usize) -> Vec<Line<'static>> {
@@ -249,12 +234,6 @@ impl HistoryCell {
         lines
     }
 
-    pub fn is_tool_like(&self) -> bool {
-        matches!(
-            self.tone,
-            HistoryTone::Tool | HistoryTone::Warning | HistoryTone::Error
-        )
-    }
 }
 
 // ── Transcript ────────────────────────────────────────────────────────────────
@@ -288,20 +267,10 @@ impl Transcript {
         width: usize,
         height: usize,
         scroll: usize,
-        render_state: &TranscriptRenderState,
     ) -> Vec<Line<'static>> {
         let mut all_lines = Vec::new();
-        for (idx, cell) in self.cells.iter().enumerate() {
-            let compact_tools = render_state.compact_tools
-                && cell.tone == HistoryTone::Tool
-                && !render_state.expanded_tool_cells.contains(&idx);
-            let mut lines = cell.to_lines_with_mode(width, compact_tools);
-            decorate_cell_lines(
-                &mut lines,
-                render_state.selected_cell == Some(idx),
-                render_state.matched_cells.contains(&idx),
-                cell.is_tool_like(),
-            );
+        for cell in &self.cells {
+            let lines = cell.to_lines_with_mode(width);
             all_lines.extend(lines);
         }
         let total = all_lines.len();
@@ -324,29 +293,12 @@ impl Transcript {
         result
     }
 
-    pub fn total_lines_with_state(
-        &self,
-        width: usize,
-        render_state: &TranscriptRenderState,
-    ) -> usize {
+    pub fn total_lines(&self, width: usize) -> usize {
         self.cells
             .iter()
             .enumerate()
-            .map(|(idx, cell)| {
-                let compact = render_state.compact_tools
-                    && cell.tone == HistoryTone::Tool
-                    && !render_state.expanded_tool_cells.contains(&idx);
-                cell.to_lines_with_mode(width, compact).len()
-            })
+            .map(|(_, cell)| cell.to_lines_with_mode(width).len())
             .sum()
-    }
-
-    pub fn tool_cell_indices(&self) -> Vec<usize> {
-        self.cells
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, cell)| (cell.tone == HistoryTone::Tool).then_some(idx))
-            .collect()
     }
 
     pub fn update_cell_body(&mut self, index: usize, body: String) -> bool {
@@ -385,19 +337,102 @@ pub fn render_history_entry(message: &HistoryEntry) -> HistoryCell {
             HistoryCell::from_message("cloudagent", body, HistoryTone::Agent)
         }
         HistoryEntry::Tool { name, content, .. } => {
-            HistoryCell::from_message(name.clone(), content.clone(), HistoryTone::Tool)
+            HistoryCell::from_message(
+                name.clone(),
+                summarize_tool_content(name, content),
+                HistoryTone::Tool,
+            )
         }
+    }
+}
+
+fn summarize_tool_content(name: &str, content: &str) -> String {
+    match name {
+        "shell_command" => summarize_shell_tool_content(content),
+        "list_dir" => {
+            if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(content) {
+                format!("listed {} entries", items.len())
+            } else {
+                "listed entries".to_string()
+            }
+        }
+        "read_file" => "read file".to_string(),
+        "write_file" => content.lines().next().unwrap_or("wrote file").to_string(),
+        _ => content.lines().next().unwrap_or(content).to_string(),
+    }
+}
+
+fn summarize_shell_tool_content(content: &str) -> String {
+    let mut command = "";
+    let mut cwd = "";
+    let mut exit_code: Option<i32> = None;
+    let mut in_stdout = false;
+    let mut stdout_first_non_empty = None::<String>;
+
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("command: ") {
+            command = rest.trim();
+            in_stdout = false;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("current_directory: ") {
+            cwd = rest.trim();
+            in_stdout = false;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("exit_code: ") {
+            exit_code = rest.trim().parse::<i32>().ok();
+            in_stdout = false;
+            continue;
+        }
+        if line.trim() == "stdout:" {
+            in_stdout = true;
+            continue;
+        }
+        if line.trim() == "stderr:" {
+            in_stdout = false;
+            continue;
+        }
+        if in_stdout && stdout_first_non_empty.is_none() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && trimmed != "(empty)" {
+                stdout_first_non_empty = Some(trimmed.to_string());
+            }
+        }
+    }
+
+    if command.eq_ignore_ascii_case("pwd")
+        || command.eq_ignore_ascii_case("Get-Location")
+        || command.eq_ignore_ascii_case("Get-Location | Select-Object -ExpandProperty Path")
+    {
+        let shown = stdout_first_non_empty
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(cwd);
+        if shown.is_empty() {
+            return "current directory is (unknown)".to_string();
+        }
+        return format!("current directory is {shown}");
+    }
+
+    match exit_code {
+        Some(code) => format!("shell command finished with exit code {code}"),
+        None => "shell command finished".to_string(),
     }
 }
 
 // ── Markdown ──────────────────────────────────────────────────────────────────
 
 fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
+    let input = normalize_markdown_indentation(input);
+    // Keep Windows-style paths readable in markdown paragraphs (e.g. D:\foo\bar).
+    // pulldown-cmark treats backslash as an escape prefix in plain text.
+    let input = input.replace('\\', "\\\\");
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_TASKLISTS);
-    let parser = Parser::new_ext(input, opts);
+    let parser = Parser::new_ext(&input, opts);
 
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut current: Vec<Span<'static>> = Vec::new();
@@ -596,6 +631,33 @@ fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     out
 }
 
+fn normalize_markdown_indentation(input: &str) -> String {
+    let mut min_indent = usize::MAX;
+    let mut has_non_empty = false;
+    for line in input.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        has_non_empty = true;
+        let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+        min_indent = min_indent.min(indent);
+    }
+    if !has_non_empty || min_indent == 0 || min_indent == usize::MAX {
+        return input.to_string();
+    }
+    input
+        .lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                line.chars().skip(min_indent).collect::<String>()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn push_wrapped_spans(
     spans: &[Span<'static>],
     out: &mut Vec<Line<'static>>,
@@ -676,7 +738,7 @@ fn display_width(s: &str) -> usize {
 }
 
 fn pretty_tool_title(name: &str) -> String {
-    name.replace('_', " ").to_uppercase()
+    name.replace('_', " ")
 }
 
 fn highlight_code_line(line: &str, _lang: &str) -> Vec<Span<'static>> {
@@ -684,78 +746,4 @@ fn highlight_code_line(line: &str, _lang: &str) -> Vec<Span<'static>> {
         line.to_string(),
         Style::default().fg(Color::Rgb(160, 200, 255)),
     )]
-}
-
-fn decorate_cell_lines(
-    lines: &mut [Line<'static>],
-    selected: bool,
-    matched: bool,
-    tool_like: bool,
-) {
-    if !selected && !matched {
-        return;
-    }
-
-    let bg = if selected {
-        Color::Rgb(36, 42, 58)
-    } else {
-        Color::Rgb(28, 32, 42)
-    };
-    let border = if selected {
-        Color::Rgb(120, 170, 255)
-    } else if tool_like {
-        Color::Rgb(110, 150, 110)
-    } else {
-        Color::Rgb(170, 150, 90)
-    };
-
-    let mut marker_set = false;
-    for line in lines.iter_mut() {
-        line.style = line.style.bg(bg);
-        for span in &mut line.spans {
-            span.style = span.style.bg(bg);
-        }
-        if !marker_set && !line.spans.is_empty() {
-            line.spans.insert(
-                0,
-                Span::styled(
-                    if selected { "▎" } else { "▏" },
-                    Style::default().fg(border).bg(bg),
-                ),
-            );
-            marker_set = true;
-        }
-    }
-}
-
-fn summarize_tool_body(body: &str, width: usize) -> String {
-    let first = body
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("Done");
-    truncate_display_width(first.trim(), width)
-}
-
-fn truncate_display_width(text: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-
-    let mut out = String::new();
-    let mut used = 0usize;
-    for grapheme in text.graphemes(true) {
-        let grapheme_width = display_width(grapheme);
-        if used + grapheme_width > width.saturating_sub(1) {
-            out.push('…');
-            break;
-        }
-        out.push_str(grapheme);
-        used += grapheme_width;
-    }
-
-    if out.is_empty() {
-        text.chars().take(width).collect()
-    } else {
-        out
-    }
 }
