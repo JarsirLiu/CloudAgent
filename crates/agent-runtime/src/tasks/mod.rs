@@ -4,6 +4,7 @@ use crate::AgentRuntime;
 use agent_core::AgentSession;
 use agent_protocol::{ApprovalDecision, ApprovalRequest, TurnEvent};
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
 
 pub(crate) use regular::{RegularTurnTask, TurnOutcome};
 
@@ -19,6 +20,7 @@ pub(crate) struct TaskContext<'a, E> {
     pub(crate) runtime: &'a AgentRuntime,
     pub(crate) session_id: &'a str,
     pub(crate) turn_id: &'a str,
+    pub(crate) cancellation_token: CancellationToken,
     pub(crate) on_event: &'a mut E,
 }
 

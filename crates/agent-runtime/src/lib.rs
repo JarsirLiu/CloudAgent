@@ -17,11 +17,14 @@ use state::RuntimeState;
 use storage::JsonSessionStore;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
+use tokio_util::sync::CancellationToken;
 
 pub use agent_core::ConversationMessage;
 pub use agent_protocol::{
     ApprovalDecision, ApprovalRequest, SessionSnapshot, SessionState, TurnEvent, TurnState,
 };
+
+const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
 
 pub fn crate_name() -> &'static str {
     "agent-runtime"
@@ -155,6 +158,49 @@ impl AgentRuntime {
         self.state.interrupt_session(session_id).await
     }
 
+    pub(crate) async fn complete_model_request(
+        &self,
+        cancellation_token: &CancellationToken,
+        request: ModelRequest,
+    ) -> Result<ModelResponse> {
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                bail!(TURN_INTERRUPTED_ERROR);
+            }
+            response = self.model.complete(request) => response,
+        }
+    }
+
+    pub(crate) async fn await_approval<Fut>(
+        &self,
+        cancellation_token: &CancellationToken,
+        approval_future: Fut,
+    ) -> Result<ApprovalDecision>
+    where
+        Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
+    {
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                bail!(TURN_INTERRUPTED_ERROR);
+            }
+            response = approval_future => response,
+        }
+    }
+
+    pub(crate) async fn execute_tool_call(
+        &self,
+        cancellation_token: &CancellationToken,
+        call: ToolCall,
+        ctx: &agent_core::ToolExecutionContext,
+    ) -> Result<agent_core::ToolResult> {
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                bail!(TURN_INTERRUPTED_ERROR);
+            }
+            response = self.tools.execute(call, ctx) => response,
+        }
+    }
+
     async fn run_turn_with_approval<E, F, Fut>(
         &self,
         session_id: &str,
@@ -177,6 +223,7 @@ impl AgentRuntime {
         session.push_user_message(user_input);
 
         let mut events = Vec::new();
+        let session_for_interrupt = session.clone();
         emit_event(
             &mut events,
             on_event,
@@ -210,6 +257,7 @@ impl AgentRuntime {
                     runtime: self,
                     session_id,
                     turn_id: &turn_id,
+                    cancellation_token: active_turn.cancellation_token.clone(),
                     on_event,
                 },
                 session,
@@ -226,6 +274,20 @@ impl AgentRuntime {
                 Ok(outcome)
             }
             Err(err) => {
+                if is_turn_interrupted_error(&err) {
+                    self.save_session(session_for_interrupt.clone()).await?;
+                    return Ok(TurnOutcome {
+                        turn_id: turn_id.clone(),
+                        final_response: "Turn cancelled.".to_string(),
+                        events: vec![TurnEvent::TurnCancelled {
+                            turn_id,
+                            reason: "interrupted by client".to_string(),
+                        }],
+                        session: session_for_interrupt,
+                        model_name: None,
+                        state: TurnState::Cancelled,
+                    });
+                }
                 let mut session = self.load_session(session_id).await?;
                 session.push_assistant_message(
                     Some(format!("Turn failed: {err:#}")),
@@ -303,6 +365,12 @@ impl AgentRuntime {
             state: outcome.state,
         }
     }
+}
+
+fn is_turn_interrupted_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string() == TURN_INTERRUPTED_ERROR)
 }
 
 struct OpenAiCompatibleModel {

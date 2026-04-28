@@ -3,6 +3,7 @@ use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{AgentSession, ModelRequest};
 use agent_protocol::{ApprovalDecision, ApprovalRequest, ToolResult, TurnEvent, TurnState};
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TurnOutcome {
@@ -32,8 +33,16 @@ where
         session: AgentSession,
         approval: F,
     ) -> Result<TurnOutcome> {
-        execute_regular_turn(ctx.runtime, ctx.session_id, ctx.turn_id, session, ctx.on_event, approval)
-            .await
+        execute_regular_turn(
+            ctx.runtime,
+            ctx.session_id,
+            ctx.turn_id,
+            ctx.cancellation_token,
+            session,
+            ctx.on_event,
+            approval,
+        )
+        .await
     }
 }
 
@@ -41,6 +50,7 @@ pub(crate) async fn execute_regular_turn<E, F, Fut>(
     runtime: &AgentRuntime,
     session_id: &str,
     turn_id: &str,
+    cancellation_token: CancellationToken,
     session: AgentSession,
     on_event: &mut E,
     approval: F,
@@ -56,7 +66,7 @@ where
     let tool_specs = runtime.tools.specs();
 
     for _ in 0..runtime.policy.max_tool_roundtrips {
-        if runtime.is_turn_cancelled(session_id).await {
+        if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(session_id).await {
             emit_event(
                 &mut events,
                 on_event,
@@ -86,8 +96,7 @@ where
         );
 
         let response = runtime
-            .model
-            .complete(ModelRequest {
+            .complete_model_request(&cancellation_token, ModelRequest {
                 messages: session.messages.clone(),
                 tools: tool_specs.clone(),
                 temperature: runtime.config.llm.temperature,
@@ -142,9 +151,11 @@ where
             });
         }
 
-        let tool_ctx = runtime.context.tool_context(session_id.to_string());
+        let tool_ctx = runtime
+            .context
+            .tool_context(session_id.to_string(), cancellation_token.clone());
         for call in tool_calls {
-            if runtime.is_turn_cancelled(session_id).await {
+            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(session_id).await {
                 emit_event(
                     &mut events,
                     on_event,
@@ -194,7 +205,9 @@ where
                         request: request.clone(),
                     },
                 );
-                let decision = approval(request).await?;
+                let decision = runtime
+                    .await_approval(&cancellation_token, approval(request))
+                    .await?;
                 runtime
                     .state
                     .update_turn_state(session_id, turn_id, TurnState::Running)
@@ -235,7 +248,27 @@ where
                 }
             }
 
-            let result = runtime.tools.execute(call.clone(), &tool_ctx).await?;
+            let result = runtime
+                .execute_tool_call(&cancellation_token, call.clone(), &tool_ctx)
+                .await?;
+            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(session_id).await {
+                emit_event(
+                    &mut events,
+                    on_event,
+                    TurnEvent::TurnCancelled {
+                        turn_id: turn_id.to_string(),
+                        reason: "interrupted by client".to_string(),
+                    },
+                );
+                return Ok(TurnOutcome {
+                    turn_id: turn_id.to_string(),
+                    final_response: "Turn cancelled.".to_string(),
+                    events,
+                    session,
+                    model_name: last_model_name,
+                    state: TurnState::Cancelled,
+                });
+            }
             if result.is_error {
                 emit_event(
                     &mut events,

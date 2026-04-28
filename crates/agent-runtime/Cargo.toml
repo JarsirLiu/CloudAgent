@@ -17,4 +17,5 @@ serde_json.workspace = true
 shared = { path = "../shared" }
 storage = { path = "../storage" }
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true

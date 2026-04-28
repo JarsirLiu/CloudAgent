@@ -9,5 +9,6 @@ agent-protocol = { path = "../agent-protocol" }
 anyhow.workspace = true
 async-trait.workspace = true
 serde.workspace = true
+tokio-util.workspace = true
 serde_json.workspace = true
 shared = { path = "../shared" }

@@ -1,15 +1,14 @@
 use agent_core::AgentSession;
 use agent_protocol::TurnState;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub(crate) struct ActiveTurnHandle {
     pub(crate) turn_id: String,
     pub(crate) turn_state: TurnState,
-    pub(crate) cancelled: Arc<AtomicBool>,
+    pub(crate) cancellation_token: CancellationToken,
 }
 
 impl ActiveTurnHandle {
@@ -17,16 +16,16 @@ impl ActiveTurnHandle {
         Self {
             turn_id,
             turn_state: TurnState::Running,
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancellation_token: CancellationToken::new(),
         }
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::SeqCst)
+        self.cancellation_token.is_cancelled()
     }
 
     pub(crate) fn request_cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
+        self.cancellation_token.cancel();
     }
 }
 

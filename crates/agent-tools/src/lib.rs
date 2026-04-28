@@ -7,7 +7,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio::fs;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
@@ -136,22 +138,60 @@ impl LocalTool for ShellCommandTool {
             cmd.arg("-lc").arg(&args.command);
             cmd
         };
+        command
+            .current_dir(&workdir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-        let output = timeout(
-            Duration::from_millis(timeout_ms),
-            command.current_dir(&workdir).output(),
-        )
-        .await
-        .map_err(|_| anyhow!("command timed out after {timeout_ms}ms"))??;
+        let mut child = command.spawn()?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture command stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture command stderr"))?;
+        let stdout_task = tokio::spawn(async move {
+            let mut reader = stdout;
+            let mut buffer = Vec::new();
+            reader.read_to_end(&mut buffer).await?;
+            Result::<Vec<u8>>::Ok(buffer)
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut reader = stderr;
+            let mut buffer = Vec::new();
+            reader.read_to_end(&mut buffer).await?;
+            Result::<Vec<u8>>::Ok(buffer)
+        });
 
-        let exit_code = output.status.code().unwrap_or(-1);
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let status = tokio::select! {
+            _ = ctx.cancellation_token.cancelled() => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                bail!("command aborted by user");
+            }
+            waited = timeout(Duration::from_millis(timeout_ms), child.wait()) => {
+                match waited {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+                        bail!("command timed out after {timeout_ms}ms");
+                    }
+                }
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&stdout_task.await??).to_string();
+        let stderr = String::from_utf8_lossy(&stderr_task.await??).to_string();
+
+        let exit_code = status.code().unwrap_or(-1);
         let content = serde_json::to_string_pretty(&json!({
             "command": args.command,
             "workdir": workdir.display().to_string(),
             "exit_code": exit_code,
-            "success": output.status.success(),
+            "success": status.success(),
             "stdout": stdout,
             "stderr": stderr,
         }))?;

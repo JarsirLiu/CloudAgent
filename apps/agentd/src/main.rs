@@ -1,8 +1,15 @@
-use agent_runtime::AgentRuntime;
+use agent_runtime::{AgentRuntime, TurnEvent};
 use anyhow::Result;
 use config::AgentConfig;
+use std::sync::Arc;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
-use agent_runtime::{ApprovalDecision, TurnEvent};
+use tokio::sync::mpsc;
+
+#[derive(Debug)]
+enum ConsoleMessage {
+    Event(TurnEvent),
+    TurnFinished(Result<String, String>),
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -10,7 +17,7 @@ async fn main() -> Result<()> {
 
     let workspace_root = std::env::current_dir()?;
     let config = AgentConfig::load(workspace_root)?;
-    let runtime = AgentRuntime::from_config(config)?;
+    let runtime = Arc::new(AgentRuntime::from_config(config)?);
 
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "console") {
@@ -27,57 +34,119 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_console(runtime: AgentRuntime) -> Result<()> {
+async fn run_console(runtime: Arc<AgentRuntime>) -> Result<()> {
     let session_id = runtime.default_session_id().to_string();
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
     let mut stdout = io::stdout();
+    let (tx, mut rx) = mpsc::unbounded_channel::<ConsoleMessage>();
+    let mut turn_in_progress = false;
 
     println!("agentd console attached to session `{session_id}`");
+    stdout.write_all(b"daemon-you> ").await?;
+    stdout.flush().await?;
 
     loop {
-        stdout.write_all(b"daemon-you> ").await?;
-        stdout.flush().await?;
-
-        let Some(line) = lines.next_line().await? else {
-            break;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if matches!(trimmed, "/exit" | "/quit") {
-            break;
-        }
-        if trimmed == "/interrupt" {
-            let interrupted = runtime.interrupt_session(&session_id).await;
-            println!(
-                "session> {}",
-                if interrupted {
-                    "interrupt requested"
-                } else {
-                    "no active turn"
+        tokio::select! {
+            line = lines.next_line() => {
+                let Some(line) = line? else {
+                    break;
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    if !turn_in_progress {
+                        stdout.write_all(b"daemon-you> ").await?;
+                        stdout.flush().await?;
+                    }
+                    continue;
                 }
-            );
-            continue;
+                match trimmed {
+                    "/exit" | "/quit" => {
+                        if turn_in_progress {
+                            let interrupted = runtime.interrupt_session(&session_id).await;
+                            if interrupted {
+                                println!("session> interrupt requested before exit");
+                            }
+                        }
+                        break;
+                    }
+                    "/interrupt" => {
+                        let interrupted = runtime.interrupt_session(&session_id).await;
+                        println!(
+                            "session> {}",
+                            if interrupted {
+                                "interrupt requested"
+                            } else {
+                                "no active turn"
+                            }
+                        );
+                        if !turn_in_progress {
+                            stdout.write_all(b"daemon-you> ").await?;
+                            stdout.flush().await?;
+                        }
+                    }
+                    _ => {
+                        if turn_in_progress {
+                            println!("session> turn already running; wait or use /interrupt");
+                            if !turn_in_progress {
+                                stdout.write_all(b"daemon-you> ").await?;
+                                stdout.flush().await?;
+                            }
+                            continue;
+                        }
+                        turn_in_progress = true;
+                        spawn_turn(runtime.clone(), session_id.clone(), trimmed.to_string(), tx.clone());
+                    }
+                }
+            }
+            Some(message) = rx.recv() => {
+                match message {
+                    ConsoleMessage::Event(event) => render_event(&event),
+                    ConsoleMessage::TurnFinished(result) => {
+                        turn_in_progress = false;
+                        match result {
+                            Ok(final_response) => println!("agent> {final_response}"),
+                            Err(error) => println!("turn> failed: {error}"),
+                        }
+                        stdout.write_all(b"daemon-you> ").await?;
+                        stdout.flush().await?;
+                    }
+                }
+            }
         }
-        let output = runtime
+    }
+
+    Ok(())
+}
+
+fn spawn_turn(
+    runtime: Arc<AgentRuntime>,
+    session_id: String,
+    user_input: String,
+    tx: mpsc::UnboundedSender<ConsoleMessage>,
+) {
+    tokio::spawn(async move {
+        let event_tx = tx.clone();
+        let result = runtime
             .chat_with_approval_and_events(
                 &session_id,
-                trimmed,
-                |event| render_event(event),
+                &user_input,
+                move |event| {
+                    let _ = event_tx.send(ConsoleMessage::Event(event.clone()));
+                },
                 |_request| async move {
-                    Ok(ApprovalDecision {
+                    Ok(agent_runtime::ApprovalDecision {
                         approved: true,
                         reason: Some("auto-approved in local daemon console".to_string()),
                     })
                 },
             )
-            .await?;
-        println!("agent> {}", output.final_response);
-    }
+            .await
+            .map(|output| output.final_response)
+            .map_err(|error| format!("{error:#}"));
 
-    Ok(())
+        let _ = tx.send(ConsoleMessage::TurnFinished(result));
+    });
 }
 
 fn render_event(event: &TurnEvent) {
