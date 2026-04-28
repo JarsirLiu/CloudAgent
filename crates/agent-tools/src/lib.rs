@@ -125,6 +125,7 @@ impl LocalTool for ShellCommandTool {
     async fn invoke(&self, arguments: Value, ctx: &CtxAlias) -> Result<ToolInvocationOutput> {
         let args: ShellCommandArgs = serde_json::from_value(arguments)?;
         let workdir = resolve_workspace_path(&ctx.workspace_root, args.workdir.as_deref())?;
+        let normalized_command = normalize_shell_command(&args.command);
         let timeout_ms = args
             .timeout_ms
             .unwrap_or(ctx.default_shell_timeout_ms)
@@ -135,11 +136,11 @@ impl LocalTool for ShellCommandTool {
             cmd.arg("-NoLogo")
                 .arg("-NoProfile")
                 .arg("-Command")
-                .arg(&args.command);
+                .arg(&normalized_command);
             cmd
         } else {
             let mut cmd = Command::new("sh");
-            cmd.arg("-lc").arg(&args.command);
+            cmd.arg("-lc").arg(&normalized_command);
             cmd
         };
         command
@@ -187,24 +188,82 @@ impl LocalTool for ShellCommandTool {
             }
         };
 
-        let stdout = String::from_utf8_lossy(&stdout_task.await??).to_string();
-        let stderr = String::from_utf8_lossy(&stderr_task.await??).to_string();
+        let stdout = String::from_utf8_lossy(&stdout_task.await??).trim().to_string();
+        let stderr = String::from_utf8_lossy(&stderr_task.await??).trim().to_string();
 
         let exit_code = status.code().unwrap_or(-1);
-        let content = serde_json::to_string_pretty(&json!({
-            "command": args.command,
-            "workdir": workdir.display().to_string(),
-            "exit_code": exit_code,
-            "success": status.success(),
-            "stdout": stdout,
-            "stderr": stderr,
-        }))?;
+        let current_directory = workdir.display().to_string();
+        let content = format_shell_output(
+            &args.command,
+            &current_directory,
+            exit_code,
+            status.success(),
+            &stdout,
+            &stderr,
+        );
+        let summary = shell_summary(
+            &args.command,
+            &current_directory,
+            exit_code,
+            status.success(),
+            &stdout,
+        );
 
         Ok(ToolInvocationOutput {
             content,
-            summary: format!("shell command finished with exit code {exit_code}"),
+            summary,
         })
     }
+}
+
+fn normalize_shell_command(command: &str) -> String {
+    if cfg!(windows) {
+        let trimmed = command.trim();
+        if trimmed.eq_ignore_ascii_case("pwd") {
+            return "Get-Location | Select-Object -ExpandProperty Path".to_string();
+        }
+    }
+    command.to_string()
+}
+
+fn format_shell_output(
+    command: &str,
+    current_directory: &str,
+    exit_code: i32,
+    success: bool,
+    stdout: &str,
+    stderr: &str,
+) -> String {
+    let stdout_block = if stdout.is_empty() { "(empty)" } else { stdout };
+    let stderr_block = if stderr.is_empty() { "(empty)" } else { stderr };
+
+    format!(
+        "command: {command}\ncurrent_directory: {current_directory}\nexit_code: {exit_code}\nsuccess: {success}\n\nstdout:\n{stdout_block}\n\nstderr:\n{stderr_block}"
+    )
+}
+
+fn shell_summary(
+    command: &str,
+    current_directory: &str,
+    exit_code: i32,
+    success: bool,
+    stdout: &str,
+) -> String {
+    let trimmed = command.trim();
+    if success
+        && (trimmed.eq_ignore_ascii_case("pwd")
+            || trimmed.eq_ignore_ascii_case("Get-Location")
+            || trimmed.eq_ignore_ascii_case("Get-Location | Select-Object -ExpandProperty Path"))
+    {
+        let shown = if stdout.is_empty() {
+            current_directory
+        } else {
+            stdout
+        };
+        return format!("current directory is {shown}");
+    }
+
+    format!("shell command finished with exit code {exit_code}")
 }
 
 struct ListDirTool;

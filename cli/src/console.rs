@@ -1,8 +1,8 @@
-use crate::bottom_pane::{ApprovalInlineState, BottomPane, BottomPaneViewState};
-use crate::composer::ComposerAction;
+use crate::chat_composer::ComposerAction;
 use crate::history_cell::{
     HistoryCell, HistoryTone, Transcript, render_history_entry, render_turn_event,
 };
+use crate::input_pane::{ApprovalInlineState, InputPane, InputPaneAction, InputPaneViewState};
 use crate::welcome::WelcomeScreen;
 use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
 use agent_protocol::{
@@ -136,8 +136,7 @@ struct TuiApp {
     history_loaded: bool,
     show_history_panel_on_next_response: bool,
     status_text: String,
-    bottom_pane: BottomPane,
-    approval_inline: Option<ApprovalInlineState>,
+    input_pane: InputPane,
     should_exit: bool,
 }
 
@@ -152,8 +151,7 @@ impl TuiApp {
             history_loaded: false,
             show_history_panel_on_next_response: false,
             status_text: format!("Connected via {connection_label}"),
-            bottom_pane: BottomPane::new(),
-            approval_inline: None,
+            input_pane: InputPane::new(),
             should_exit: false,
         }
     }
@@ -170,14 +168,13 @@ impl TuiApp {
         self.history_loaded = true;
         self.show_history_panel_on_next_response = false;
         self.status_text = format!("Connected via {}", self.connection_label);
-        self.bottom_pane.clear_views();
-        self.approval_inline = None;
+        self.input_pane.clear_views();
     }
 
     fn set_mode(&mut self, mode: FrontendMode) {
         self.console_state.mode = mode;
         if mode != FrontendMode::WaitingForApproval {
-            self.approval_inline = None;
+            self.input_pane.clear_approval();
         }
         self.status_text = match mode {
             FrontendMode::Idle => "Idle".to_string(),
@@ -196,7 +193,7 @@ impl TuiApp {
                         "{:?}  turn={:?}  messages={}",
                         snapshot.session_state, snapshot.turn_state, snapshot.message_count
                     );
-                    self.bottom_pane.set_panel(Some(BottomPaneViewState {
+                    self.input_pane.set_panel(Some(InputPaneViewState {
                         title: "Session status".to_string(),
                         lines: vec![
                             format!("state: {:?}", snapshot.session_state),
@@ -209,8 +206,10 @@ impl TuiApp {
                 }
                 AppServerNotification::SessionHistory { messages, .. } => {
                     self.status_text = "Loaded history".to_string();
-                    self.transcript.replace_with_history(messages);
-                    self.transcript_scroll = 0;
+                    if !self.history_loaded || self.transcript.is_empty() {
+                        self.transcript.replace_with_history(messages);
+                        self.transcript_scroll = 0;
+                    }
                     self.history_loaded = true;
                     if self.show_history_panel_on_next_response {
                         let history_lines = messages
@@ -224,7 +223,7 @@ impl TuiApp {
                                     .join(" ")
                             })
                             .collect::<Vec<_>>();
-                        self.bottom_pane.set_panel(Some(BottomPaneViewState {
+                        self.input_pane.set_panel(Some(InputPaneViewState {
                             title: "Session history".to_string(),
                             lines: if history_lines.is_empty() {
                                 vec![
@@ -261,7 +260,7 @@ impl TuiApp {
                 }
                 AppServerNotification::Error { message, .. } => {
                     self.status_text = message.clone();
-                    self.bottom_pane.clear_views();
+                    self.input_pane.clear_views();
                     self.push_cell(HistoryCell::from_message(
                         "error",
                         message.clone(),
@@ -269,6 +268,8 @@ impl TuiApp {
                     ));
                 }
                 AppServerNotification::TurnFinished { result, .. } => {
+                    self.set_mode(FrontendMode::Idle);
+                    self.input_pane.clear_views();
                     if let Some(error) = &result.error {
                         self.push_cell(HistoryCell::from_message(
                             "turn",
@@ -280,6 +281,17 @@ impl TuiApp {
                     }
                 }
                 AppServerNotification::TurnEvent { event, .. } => {
+                    match event {
+                        agent_protocol::TurnEvent::ApprovalResolved { .. } => {
+                            self.input_pane.clear_approval();
+                        }
+                        agent_protocol::TurnEvent::TurnCompleted { .. }
+                        | agent_protocol::TurnEvent::TurnCancelled { .. }
+                        | agent_protocol::TurnEvent::TurnFailed { .. } => {
+                            self.input_pane.clear_approval();
+                        }
+                        _ => {}
+                    }
                     let rendered = render_turn_event(event);
                     if let Some(status) = rendered.status {
                         self.status_text = status;
@@ -296,7 +308,7 @@ impl TuiApp {
             }) => {
                 self.console_state.pending_approval_request_id = Some(request_id.clone());
                 self.set_mode(FrontendMode::WaitingForApproval);
-                self.approval_inline = Some(ApprovalInlineState {
+                self.input_pane.set_approval(ApprovalInlineState {
                     title: format!("tool `{}` wants to run", request.tool_name),
                     detail: format!(
                         "reason: {}  args: {}",
@@ -331,44 +343,49 @@ impl TuiApp {
             }
         }
 
-        match self.bottom_pane.handle_key(key)? {
-            ComposerAction::Submit(text) => {
+        match self.input_pane.handle_key(key)? {
+            InputPaneAction::Composer(ComposerAction::Submit(text)) => {
                 Some(parse_line(&text, &self.session_id, self.console_state.mode))
             }
-            ComposerAction::Interrupt => {
+            InputPaneAction::Composer(ComposerAction::Interrupt) => {
                 Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
                     session_id: self.session_id.clone(),
                 }))
             }
-            ComposerAction::Exit => {
+            InputPaneAction::Composer(ComposerAction::Exit) => {
                 self.should_exit = true;
                 Some(ParsedInput::Command(AppClientCommand::Exit))
             }
-            ComposerAction::History => {
+            InputPaneAction::Composer(ComposerAction::History) => {
                 self.show_history_panel_on_next_response = true;
                 Some(ParsedInput::Command(AppClientCommand::RequestHistory {
                     session_id: self.session_id.clone(),
                 }))
             }
-            ComposerAction::Status => Some(ParsedInput::Command(AppClientCommand::RequestStatus {
+            InputPaneAction::Composer(ComposerAction::Status) => Some(ParsedInput::Command(AppClientCommand::RequestStatus {
                 session_id: self.session_id.clone(),
             })),
-            ComposerAction::Reset => Some(ParsedInput::Command(AppClientCommand::ResetSession {
+            InputPaneAction::Composer(ComposerAction::Reset) => Some(ParsedInput::Command(AppClientCommand::ResetSession {
                 session_id: self.session_id.clone(),
             })),
-            ComposerAction::None => None,
+            InputPaneAction::Composer(ComposerAction::None) => None,
+            InputPaneAction::ApprovalSubmit { approved, reason } => Some(ParsedInput::ApprovalAnswer { approved, reason }),
         }
     }
 
     fn render(&self, frame: &mut Frame) {
         let area = frame.area();
         let content = centered_column(area, 112);
+        let bottom_height = self
+            .input_pane
+            .desired_height(self.console_state.mode, content.width)
+            .min(content.height.saturating_sub(10).max(6));
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
                 Constraint::Min(8),
-                Constraint::Length(6),
+                Constraint::Length(bottom_height),
             ])
             .split(content);
 
@@ -379,15 +396,18 @@ impl TuiApp {
             frame.render_widget(self.transcript_panel(sections[1]), sections[1]);
         }
 
-        let (bottom_widget, lines_before, _) = self.bottom_pane.render(
+        let (bottom_widget, lines_before, _) = self.input_pane.render(
             self.console_state.mode,
             &self.status_text,
-            self.approval_inline.as_ref(),
             sections[2].width,
         );
         frame.render_widget(bottom_widget, sections[2]);
 
-        let (x, y) = self.bottom_pane.cursor_position(sections[2], lines_before);
+        let (x, y) = self.input_pane.cursor_position(
+            sections[2],
+            lines_before,
+            self.console_state.mode,
+        );
         frame.set_cursor_position((x, y));
     }
 
@@ -458,8 +478,8 @@ impl TuiApp {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
-                "Run /init to create an AGENTS guide later.",
-                Style::default().fg(Color::White),
+                "Run /init when you want a local AGENTS guide.",
+                Style::default().fg(Color::Gray),
             )),
             Line::from(""),
             Line::from(Span::styled(
@@ -479,15 +499,15 @@ impl TuiApp {
         )));
         tips.push(Line::from(Span::styled(
             "check disk pressure",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Gray),
         )));
         tips.push(Line::from(Span::styled(
             "inspect this repo and explain it",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Gray),
         )));
         tips.push(Line::from(Span::styled(
             "write a safe nginx restart script",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Gray),
         )));
 
         frame.render_widget(
@@ -694,7 +714,7 @@ fn handle_tui_input(
             if let AppClientCommand::ApprovalResponse { .. } = &command {
                 app.console_state.mode = FrontendMode::Running;
                 app.console_state.pending_approval_request_id = None;
-                app.bottom_pane.clear_views();
+                app.input_pane.clear_views();
             }
             if let AppClientCommand::ResetSession { .. } = &command {
                 app.reset_local_view();
@@ -704,7 +724,7 @@ fn handle_tui_input(
             if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
                 app.console_state.mode = FrontendMode::Running;
                 app.status_text = "Submitting turn".to_string();
-                app.bottom_pane.clear_views();
+                app.input_pane.clear_views();
                 app.push_cell(HistoryCell::from_message(
                     "you",
                     content.clone(),
@@ -724,7 +744,7 @@ fn handle_tui_input(
             };
             app.console_state.mode = FrontendMode::Running;
             app.console_state.pending_approval_request_id = None;
-            app.bottom_pane.clear_views();
+            app.input_pane.clear_views();
             app.push_cell(HistoryCell::from_message(
                 "approval",
                 if approved { "approved" } else { "denied" },

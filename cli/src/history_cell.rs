@@ -3,6 +3,7 @@ use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::time::{Duration, Instant};
+use textwrap::{Options as WrapOptions, WordSplitter, wrap};
 use unicode_width::UnicodeWidthStr;
 
 // ── Shimmer animation ─────────────────────────────────────────────────────────
@@ -299,6 +300,8 @@ pub fn render_turn_event(event: &TurnEvent) -> TurnRender {
 fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_TASKLISTS);
     let parser = Parser::new_ext(input, opts);
 
     let mut out: Vec<Line<'static>> = Vec::new();
@@ -307,12 +310,31 @@ fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let mut in_code_block = false;
     let mut code_lang = String::new();
     let mut code_buf = String::new();
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
+    let mut line_prefix = String::new();
+    let mut heading_prefix = String::new();
+    let mut in_heading = false;
 
-    let flush = |current: &mut Vec<Span<'static>>, out: &mut Vec<Line<'static>>, w: usize| {
+    let flush =
+        |current: &mut Vec<Span<'static>>,
+         out: &mut Vec<Line<'static>>,
+         w: usize,
+         prefix: &str| {
         if !current.is_empty() {
             let flat: String = current.iter().map(|s| s.content.as_ref()).collect();
-            for wl in textwrap::wrap(&flat, w) {
-                out.push(Line::from(Span::styled(wl.into_owned(), current[0].style)));
+            let wrapped = wrap_text_with_options(&flat, w);
+            for (idx, wl) in wrapped.into_iter().enumerate() {
+                let mut spans = Vec::new();
+                if idx == 0 && !prefix.is_empty() {
+                    spans.push(Span::styled(
+                        prefix.to_string(),
+                        Style::default().fg(Color::Rgb(120, 130, 170)),
+                    ));
+                } else if !prefix.is_empty() {
+                    spans.push(Span::raw(" ".repeat(display_width(prefix))));
+                }
+                spans.push(Span::styled(wl, current[0].style));
+                out.push(Line::from(spans));
             }
             current.clear();
         }
@@ -321,7 +343,7 @@ fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     for event in parser {
         match event {
             Event::Start(Tag::CodeBlock(kind)) => {
-                flush(&mut current, &mut out, width);
+                flush(&mut current, &mut out, width, &line_prefix);
                 in_code_block = true;
                 code_lang = match &kind { CodeBlockKind::Fenced(l) => l.to_string(), _ => "".into() };
                 code_buf.clear();
@@ -338,6 +360,71 @@ fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 }
                 out.push(Line::raw(""));
             }
+            Event::Start(Tag::Heading { level, .. }) => {
+                flush(&mut current, &mut out, width, &line_prefix);
+                in_heading = true;
+                heading_prefix = match level {
+                    pulldown_cmark::HeadingLevel::H1 => "# ".to_string(),
+                    pulldown_cmark::HeadingLevel::H2 => "## ".to_string(),
+                    pulldown_cmark::HeadingLevel::H3 => "### ".to_string(),
+                    _ => "• ".to_string(),
+                };
+                let heading_style = Style::default()
+                    .fg(Color::Rgb(170, 190, 255))
+                    .add_modifier(Modifier::BOLD);
+                style_stack.push(heading_style);
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                flush(&mut current, &mut out, width, &heading_prefix);
+                current.clear();
+                out.push(Line::raw(""));
+                heading_prefix.clear();
+                in_heading = false;
+                style_stack.pop();
+            }
+            Event::Start(Tag::List(start)) => {
+                flush(&mut current, &mut out, width, &line_prefix);
+                list_stack.push(start);
+            }
+            Event::End(TagEnd::List(_)) => {
+                flush(&mut current, &mut out, width, &line_prefix);
+                list_stack.pop();
+                line_prefix.clear();
+                out.push(Line::raw(""));
+            }
+            Event::Start(Tag::Item) => {
+                flush(&mut current, &mut out, width, &line_prefix);
+                let indent = "  ".repeat(list_stack.len().saturating_sub(1));
+                line_prefix = match list_stack.last_mut() {
+                    Some(Some(number)) => {
+                        let prefix = format!("{indent}{number}. ");
+                        *number += 1;
+                        prefix
+                    }
+                    Some(None) => format!("{indent}• "),
+                    None => "• ".to_string(),
+                };
+            }
+            Event::End(TagEnd::Item) => {
+                let prefix = if in_heading {
+                    heading_prefix.as_str()
+                } else {
+                    line_prefix.as_str()
+                };
+                flush(&mut current, &mut out, width, prefix);
+                line_prefix.clear();
+            }
+            Event::Start(Tag::Emphasis) => {
+                let style = style_stack
+                    .last()
+                    .copied()
+                    .unwrap_or_default()
+                    .add_modifier(Modifier::ITALIC);
+                style_stack.push(style);
+            }
+            Event::End(TagEnd::Emphasis) => {
+                style_stack.pop();
+            }
             Event::Text(text) => {
                 if in_code_block { code_buf.push_str(&text); }
                 else {
@@ -345,19 +432,63 @@ fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                     current.push(Span::styled(text.to_string(), style));
                 }
             }
+            Event::Code(text) => {
+                let inline_style = Style::default()
+                    .fg(Color::Rgb(140, 220, 255))
+                    .bg(Color::Rgb(30, 35, 45));
+                current.push(Span::styled(format!(" {text} "), inline_style));
+            }
             Event::Start(Tag::Strong) => { style_stack.push(style_stack.last().unwrap().add_modifier(Modifier::BOLD)); }
             Event::End(TagEnd::Strong) => { style_stack.pop(); }
-            Event::Start(Tag::Paragraph) => { flush(&mut current, &mut out, width); }
-            Event::End(TagEnd::Paragraph) => { flush(&mut current, &mut out, width); out.push(Line::raw("")); }
+            Event::Start(Tag::Paragraph) => {
+                let prefix = if in_heading {
+                    heading_prefix.as_str()
+                } else {
+                    line_prefix.as_str()
+                };
+                flush(&mut current, &mut out, width, prefix);
+            }
+            Event::End(TagEnd::Paragraph) => {
+                let prefix = if in_heading {
+                    heading_prefix.as_str()
+                } else {
+                    line_prefix.as_str()
+                };
+                flush(&mut current, &mut out, width, prefix);
+                out.push(Line::raw(""));
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                let prefix = if in_heading {
+                    heading_prefix.as_str()
+                } else {
+                    line_prefix.as_str()
+                };
+                flush(&mut current, &mut out, width, prefix);
+            }
             _ => {}
         }
     }
-    flush(&mut current, &mut out, width);
+    let prefix = if in_heading {
+        heading_prefix.as_str()
+    } else {
+        line_prefix.as_str()
+    };
+    flush(&mut current, &mut out, width, prefix);
     out
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    textwrap::wrap(text, width).into_iter().map(|s| s.into_owned()).collect()
+    wrap_text_with_options(text, width)
+}
+
+fn wrap_text_with_options(text: &str, width: usize) -> Vec<String> {
+    let options = WrapOptions::new(width)
+        .break_words(false)
+        .word_splitter(WordSplitter::NoHyphenation);
+    wrap(text, &options)
+        .into_iter()
+        .map(|s| s.into_owned())
+        .collect()
 }
 
 fn display_width(s: &str) -> usize { UnicodeWidthStr::width(s) }

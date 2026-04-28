@@ -22,9 +22,18 @@ impl WelcomeScreen {
         let dim = Color::Rgb(70, 70, 90);
         let accent = Color::Rgb(140, 160, 230);
         let mascot_color = Color::Rgb(120, 130, 200);
+        let soft = Color::Rgb(120, 120, 145);
+
+        let subtitle = if self.history_loaded {
+            match self.status_text.as_str() {
+                "Loaded history" => "Workspace context ready".to_string(),
+                other => other.to_string(),
+            }
+        } else {
+            "Loading your workspace context...".to_string()
+        };
 
         let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::raw(""));
         lines.push(Line::raw(""));
 
         lines.push(Line::from(vec![
@@ -72,12 +81,6 @@ impl WelcomeScreen {
         let mut title_line = vec![Span::raw("  > ")];
         title_line.extend(title_spans);
         lines.push(Line::from(title_line));
-
-        let subtitle = if self.history_loaded {
-            self.status_text.clone()
-        } else {
-            "Loading your workspace context...".to_string()
-        };
         lines.push(Line::from(vec![
             Span::raw("    "),
             Span::styled(subtitle, Style::default().fg(dim)),
@@ -103,15 +106,14 @@ impl WelcomeScreen {
         for suggestion in suggestions {
             lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled("-> ", Style::default().fg(Color::Rgb(80, 80, 100))),
+                Span::styled("→ ", Style::default().fg(Color::Rgb(90, 100, 135))),
                 Span::styled(
                     suggestion.to_string(),
-                    Style::default().fg(Color::Rgb(160, 160, 180)),
+                    Style::default().fg(soft),
                 ),
             ]));
         }
 
-        lines.push(Line::raw(""));
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![
             Span::raw("  "),
