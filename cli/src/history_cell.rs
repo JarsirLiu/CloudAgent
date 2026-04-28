@@ -1,6 +1,7 @@
 use agent_protocol::{HistoryEntry, TurnEvent};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryTone {
@@ -324,7 +325,7 @@ pub fn render_turn_event(event: &TurnEvent) -> TurnRender {
 
 fn padded_bg_line(text: String, width: usize, style: Style) -> Line<'static> {
     let mut content = text;
-    let visual = content.chars().count();
+    let visual: usize = content.chars().map(|c| c.width().unwrap_or(0)).sum();
     if visual < width {
         content.push_str(&" ".repeat(width - visual));
     }
@@ -373,13 +374,15 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
         let mut current = String::new();
         let mut current_width = 0usize;
         for ch in paragraph.chars() {
-            if current_width >= width {
+            let ch_width = ch.width().unwrap_or(0);
+            // 如果加上这个字符会超出宽度，先换行
+            if current_width + ch_width > width && !current.is_empty() {
                 lines.push(current);
                 current = String::new();
                 current_width = 0;
             }
             current.push(ch);
-            current_width += 1;
+            current_width += ch_width;
         }
         if !current.is_empty() {
             lines.push(current);
@@ -433,7 +436,7 @@ fn render_markdownish_blocks(text: &str, width: usize) -> Vec<Line<'static>> {
         for line in wrapped {
             if in_code {
                 let mut padded = format!("  {line}");
-                let visual = padded.chars().count();
+                let visual: usize = padded.chars().map(|c| c.width().unwrap_or(0)).sum();
                 if visual < width {
                     padded.push_str(&" ".repeat(width - visual));
                 }
