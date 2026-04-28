@@ -8,7 +8,7 @@ use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 #[derive(Clone, Debug, Default)]
 pub struct InputPaneViewState {
@@ -69,7 +69,7 @@ impl InputPane {
     ) -> (Paragraph<'static>, u16, u16) {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(divider_line(area_width as usize));
-        lines.push(status_line(mode, status_text, status_meta));
+        lines.push(status_line(mode, status_text, status_meta, area_width as usize));
         lines.push(Line::raw(""));
 
         let mut lines_before_composer = 3u16;
@@ -92,8 +92,7 @@ impl InputPane {
         let total_lines = lines.len() as u16;
         (
             Paragraph::new(Text::from(lines))
-                .block(Block::default().borders(Borders::NONE))
-                .wrap(Wrap { trim: false }),
+                .block(Block::default().borders(Borders::NONE)),
             lines_before_composer,
             total_lines,
         )

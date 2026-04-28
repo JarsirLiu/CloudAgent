@@ -1,6 +1,6 @@
 use crate::chat_composer::ComposerAction;
 use crate::history_cell::{
-    HistoryCell, HistoryTone, Transcript, TranscriptRenderState, render_turn_event,
+    HistoryCell, HistoryTone, Transcript, TranscriptRenderState,
 };
 use crate::input_pane::{ApprovalInlineState, InputPane, InputPaneAction, InputPaneViewState};
 use crate::welcome::WelcomeScreen;
@@ -43,7 +43,7 @@ impl ConsoleBanner {
         Self {
             title: format!("cloudagent session `{session_id}`"),
             commands:
-                "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt  F2 history  F3 status  F4 clear"
+                "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt  /clear clear session"
                     .to_string(),
             idle_prompt: "message".to_string(),
             approval_prompt: "approval".to_string(),
@@ -115,6 +115,12 @@ impl ConsoleState {
                     self.mode = FrontendMode::Idle;
                     self.pending_approval_request_id = None;
                 }
+                AppServerNotification::TurnCompleted { .. }
+                | AppServerNotification::TurnFailed { .. }
+                | AppServerNotification::TurnCancelled { .. } => {
+                    self.mode = FrontendMode::Idle;
+                    self.pending_approval_request_id = None;
+                }
                 _ => {}
             },
             AppServerMessage::Request(AppServerRequest::Approval { request_id, .. }) => {
@@ -154,6 +160,7 @@ struct TuiApp {
     streaming_dirty: bool,
     tool_item_cells: HashMap<String, usize>,
     tool_item_buffers: HashMap<String, String>,
+    item_kinds: HashMap<String, TurnItemKind>,
     input_pane: InputPane,
     should_exit: bool,
 }
@@ -167,7 +174,7 @@ impl TuiApp {
             transcript: Transcript::default(),
             transcript_scroll: 0,
             transcript_viewport_height: 0,
-            transcript_viewport_width: 108,
+            transcript_viewport_width: 0,
             compact_tools: false,
             expanded_tool_cells: HashSet::new(),
             tool_cell_indices: Vec::new(),
@@ -184,15 +191,17 @@ impl TuiApp {
             streaming_dirty: false,
             tool_item_cells: HashMap::new(),
             tool_item_buffers: HashMap::new(),
+            item_kinds: HashMap::new(),
             input_pane: InputPane::new(),
             should_exit: false,
         }
     }
 
     fn push_cell(&mut self, cell: HistoryCell) {
-        self.transcript.push(cell);
-        self.refresh_tool_focus();
-        self.transcript_scroll = 0;
+        self.preserve_scroll_on_content_change(|this| {
+            this.transcript.push(cell);
+            this.refresh_tool_focus();
+        });
     }
 
     fn reset_local_view(&mut self) {
@@ -200,7 +209,7 @@ impl TuiApp {
         self.transcript = Transcript::default();
         self.transcript_scroll = 0;
         self.transcript_viewport_height = 0;
-        self.transcript_viewport_width = 108;
+        self.transcript_viewport_width = 0;
         self.compact_tools = false;
         self.expanded_tool_cells.clear();
         self.tool_cell_indices.clear();
@@ -217,6 +226,7 @@ impl TuiApp {
         self.streaming_dirty = false;
         self.tool_item_cells.clear();
         self.tool_item_buffers.clear();
+        self.item_kinds.clear();
         self.input_pane.clear_views();
     }
 
@@ -260,6 +270,7 @@ impl TuiApp {
                     self.transcript.replace_with_history(messages);
                     self.refresh_tool_focus();
                     self.transcript_scroll = 0;
+                    self.clamp_transcript_scroll();
                     self.history_loaded = true;
                 }
                 AppServerNotification::SubscriptionChanged {
@@ -303,60 +314,69 @@ impl TuiApp {
                         self.status_text = "Turn completed".to_string();
                     }
                 }
-                AppServerNotification::TurnEvent { event, .. } => {
-                    match event {
-                        agent_protocol::TurnEvent::ApprovalResolved { .. } => {
-                            self.input_pane.clear_approval();
-                        }
-                        agent_protocol::TurnEvent::TurnCompleted { .. }
-                        | agent_protocol::TurnEvent::TurnCancelled { .. }
-                        | agent_protocol::TurnEvent::TurnFailed { .. } => {
-                            self.input_pane.clear_approval();
-                        }
-                        _ => {}
+                AppServerNotification::TurnStarted { .. } => {
+                    self.status_text = "Working".to_string();
+                }
+                AppServerNotification::ItemStarted {
+                    turn_id,
+                    item_id,
+                    kind,
+                    title,
+                    ..
+                } => {
+                    self.item_kinds.insert(item_id.clone(), kind.clone());
+                    if *kind == TurnItemKind::AssistantMessage {
+                        self.handle_assistant_item_started(turn_id, item_id);
+                    } else if *kind == TurnItemKind::ToolCall {
+                        self.handle_tool_item_started(item_id, title.as_deref().unwrap_or("tool_call"));
+                    } else if *kind == TurnItemKind::Reasoning {
+                        self.handle_tool_item_started(item_id, title.as_deref().unwrap_or("reasoning"));
                     }
-                    if let agent_protocol::TurnEvent::ItemStarted {
-                        turn_id,
-                        item_id,
-                        kind,
-                        title,
-                    } = event
-                    {
-                        if *kind == TurnItemKind::AssistantMessage {
-                            self.handle_assistant_item_started(turn_id, item_id);
-                        } else if *kind == TurnItemKind::ToolCall {
-                            self.handle_tool_item_started(item_id, title.as_deref().unwrap_or("tool_call"));
-                        }
-                        return;
+                }
+                AppServerNotification::AgentMessageDelta { item_id, delta, .. } => {
+                    self.handle_assistant_item_delta(item_id, delta);
+                }
+                AppServerNotification::PlanDelta { item_id, delta, .. }
+                | AppServerNotification::ReasoningSummaryDelta { item_id, delta, .. }
+                | AppServerNotification::ReasoningTextDelta { item_id, delta, .. } => {
+                    self.handle_tool_item_delta(item_id, delta);
+                }
+                AppServerNotification::ToolCallDelta { item_id, delta, .. } => {
+                    self.handle_tool_item_delta(item_id, delta);
+                }
+                AppServerNotification::ItemCompleted { item_id, .. } => {
+                    self.handle_assistant_item_completed(item_id);
+                    self.handle_tool_item_completed(item_id);
+                    self.item_kinds.remove(item_id);
+                }
+                AppServerNotification::TurnCompleted { final_response, .. } => {
+                    self.input_pane.clear_approval();
+                    self.status_text = "Turn completed".to_string();
+                    if self.streaming_item_id.is_none() && !final_response.trim().is_empty() {
+                        self.push_cell(HistoryCell::from_message(
+                            "cloudagent",
+                            final_response.clone(),
+                            HistoryTone::Agent,
+                        ));
                     }
-                    if let agent_protocol::TurnEvent::ItemDelta { item_id, delta, .. } = event {
-                        self.handle_assistant_item_delta(item_id, delta);
-                        self.handle_tool_item_delta(item_id, delta);
-                        return;
-                    }
-                    if let agent_protocol::TurnEvent::ItemCompleted { item_id, .. } = event {
-                        self.handle_assistant_item_completed(item_id);
-                        self.handle_tool_item_completed(item_id);
-                        return;
-                    }
-                    let rendered = render_turn_event(event);
-                    match event {
-                        agent_protocol::TurnEvent::ModelRequestStarted {
-                            message_count, ..
-                        } => {
-                            self.last_message_count = *message_count;
-                        }
-                        agent_protocol::TurnEvent::ModelResponseReceived { model_name, .. } => {
-                            self.last_model_name = model_name.clone();
-                        }
-                        _ => {}
-                    }
-                    if let Some(status) = rendered.status {
-                        self.status_text = status;
-                    }
-                    if let Some(cell) = rendered.log {
-                        self.push_cell(cell);
-                    }
+                }
+                AppServerNotification::TurnFailed { error, .. } => {
+                    self.input_pane.clear_approval();
+                    self.status_text = "Turn failed".to_string();
+                    self.push_cell(HistoryCell::from_message(
+                        "turn",
+                        format!("failed: {error}"),
+                        HistoryTone::Error,
+                    ));
+                }
+                AppServerNotification::TurnCancelled { reason, .. } => {
+                    self.input_pane.clear_approval();
+                    self.status_text = "Turn cancelled".to_string();
+                    self.push_cell(HistoryCell::from_message(
+                        "turn",
+                        reason.clone(),
+                        HistoryTone::Warning,
+                    ));
                 }
             },
             AppServerMessage::Request(AppServerRequest::Approval {
@@ -379,7 +399,7 @@ impl TuiApp {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
-        if matches!(key.kind, KeyEventKind::Press) && self.input_pane.composer_is_empty() {
+        if matches!(key.kind, KeyEventKind::Press) {
             let page_step = self.page_scroll_step();
             match key.code {
                 KeyCode::PageUp => {
@@ -393,17 +413,6 @@ impl TuiApp {
                     self.transcript_scroll = self.transcript_scroll.saturating_sub(page_step);
                     return None;
                 }
-                KeyCode::Up => {
-                    self.transcript_scroll = self
-                        .transcript_scroll
-                        .saturating_add(1)
-                        .min(self.max_transcript_scroll(self.transcript_viewport_height));
-                    return None;
-                }
-                KeyCode::Down => {
-                    self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
-                    return None;
-                }
                 KeyCode::Home => {
                     self.transcript_scroll =
                         self.max_transcript_scroll(self.transcript_viewport_height);
@@ -413,32 +422,21 @@ impl TuiApp {
                     self.transcript_scroll = 0;
                     return None;
                 }
-                KeyCode::Char('g') => {
-                    self.transcript_scroll =
-                        self.max_transcript_scroll(self.transcript_viewport_height);
+                _ => {}
+            }
+        }
+
+        if matches!(key.kind, KeyEventKind::Press) && self.input_pane.composer_is_empty() {
+            match key.code {
+                KeyCode::Up => {
+                    self.transcript_scroll = self
+                        .transcript_scroll
+                        .saturating_add(1)
+                        .min(self.max_transcript_scroll(self.transcript_viewport_height));
                     return None;
                 }
-                KeyCode::Char('G') => {
-                    self.transcript_scroll = 0;
-                    return None;
-                }
-                KeyCode::Char('o') => {
-                    self.toggle_selected_tool();
-                    return None;
-                }
-                KeyCode::Char('O') => {
-                    self.compact_tools = !self.compact_tools;
-                    if self.compact_tools {
-                        self.expanded_tool_cells.clear();
-                    }
-                    return None;
-                }
-                KeyCode::Char(']') => {
-                    self.move_tool_focus(1);
-                    return None;
-                }
-                KeyCode::Char('[') => {
-                    self.move_tool_focus(-1);
+                KeyCode::Down => {
+                    self.transcript_scroll = self.transcript_scroll.saturating_sub(1);
                     return None;
                 }
                 _ => {}
@@ -457,16 +455,6 @@ impl TuiApp {
             InputPaneAction::Composer(ComposerAction::Exit) => {
                 self.should_exit = true;
                 Some(ParsedInput::Command(AppClientCommand::Exit))
-            }
-            InputPaneAction::Composer(ComposerAction::History) => {
-                Some(ParsedInput::Command(AppClientCommand::RequestHistory {
-                    session_id: self.session_id.clone(),
-                }))
-            }
-            InputPaneAction::Composer(ComposerAction::Status) => {
-                Some(ParsedInput::Command(AppClientCommand::RequestStatus {
-                    session_id: self.session_id.clone(),
-                }))
             }
             InputPaneAction::Composer(ComposerAction::Reset) => {
                 Some(ParsedInput::Command(AppClientCommand::ResetSession {
@@ -490,6 +478,7 @@ impl TuiApp {
         } else {
             self.transcript_scroll = self.transcript_scroll.saturating_sub(step);
         }
+        self.clamp_transcript_scroll();
     }
 
     fn render(&mut self, frame: &mut Frame) {
@@ -514,6 +503,7 @@ impl TuiApp {
         } else {
             self.transcript_viewport_height = sections[1].height.saturating_sub(0) as usize;
             self.transcript_viewport_width = sections[1].width.saturating_sub(4) as usize;
+            self.clamp_transcript_scroll();
             frame.render_widget(self.transcript_panel(sections[1]), sections[1]);
         }
 
@@ -543,13 +533,6 @@ impl TuiApp {
         } else {
             "live".to_string()
         };
-        let tool_view = if self.compact_tools {
-            "tools compact"
-        } else {
-            "tools expanded"
-        };
-        let tool_focus = self.tool_focus_summary();
-
         let model = self.last_model_name.as_deref().unwrap_or("pending");
         let last_tool = self.last_tool_name.as_deref().unwrap_or("none");
 
@@ -590,10 +573,6 @@ impl TuiApp {
                 self.connection_label.clone(),
                 Style::default().fg(Color::Rgb(90, 110, 140)),
             ),
-            Span::raw("  "),
-            Span::styled(tool_view, Style::default().fg(Color::Rgb(90, 110, 140))),
-            Span::raw("  "),
-            Span::styled(tool_focus, Style::default().fg(Color::Rgb(120, 150, 130))),
             Span::raw("  "),
             Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
         ])]))
@@ -718,6 +697,38 @@ impl TuiApp {
         total.saturating_sub(viewport_height)
     }
 
+    fn total_transcript_lines(&self) -> usize {
+        self.transcript
+            .total_lines_with_state(self.transcript_viewport_width.max(20), &self.transcript_render_state())
+    }
+
+    fn clamp_transcript_scroll(&mut self) {
+        self.transcript_scroll = self
+            .transcript_scroll
+            .min(self.max_transcript_scroll(self.transcript_viewport_height));
+    }
+
+    fn preserve_scroll_on_content_change<F>(&mut self, mutate: F)
+    where
+        F: FnOnce(&mut Self),
+    {
+        let was_scrolling_history = self.transcript_scroll > 0;
+        let before_lines = if was_scrolling_history {
+            self.total_transcript_lines()
+        } else {
+            0
+        };
+        mutate(self);
+        if was_scrolling_history {
+            let after_lines = self.total_transcript_lines();
+            let appended_lines = after_lines.saturating_sub(before_lines);
+            self.transcript_scroll = self.transcript_scroll.saturating_add(appended_lines);
+        } else {
+            self.transcript_scroll = 0;
+        }
+        self.clamp_transcript_scroll();
+    }
+
     fn page_scroll_step(&self) -> usize {
         self.transcript_viewport_height
             .saturating_sub(2)
@@ -739,14 +750,6 @@ impl TuiApp {
         parts.join("  ·  ")
     }
 
-    fn tool_focus_summary(&self) -> String {
-        match (self.selected_tool_index, self.tool_cell_indices.is_empty()) {
-            (_, true) => "tool focus off".to_string(),
-            (Some(idx), false) => format!("tool {}/{}", idx + 1, self.tool_cell_indices.len()),
-            (None, false) => format!("tool 0/{}", self.tool_cell_indices.len()),
-        }
-    }
-
     fn refresh_tool_focus(&mut self) {
         self.tool_cell_indices = self.transcript.tool_cell_indices();
         self.selected_tool_index =
@@ -757,41 +760,6 @@ impl TuiApp {
             };
         self.expanded_tool_cells
             .retain(|idx| self.tool_cell_indices.contains(idx));
-    }
-
-    fn move_tool_focus(&mut self, delta: isize) {
-        if self.tool_cell_indices.is_empty() {
-            return;
-        }
-        let len = self.tool_cell_indices.len() as isize;
-        let next = match self.selected_tool_index {
-            Some(current) => (current as isize + delta).rem_euclid(len) as usize,
-            None => 0,
-        };
-        self.selected_tool_index = Some(next);
-        if let Some(&cell_index) = self.tool_cell_indices.get(next) {
-            self.transcript_scroll = self.transcript.scroll_for_cell_with_state(
-                cell_index,
-                self.transcript_viewport_width.max(20),
-                self.transcript_viewport_height.max(1),
-                &self.transcript_render_state(),
-            );
-        }
-    }
-
-    fn toggle_selected_tool(&mut self) {
-        let Some(tool_index) = self.selected_tool_index else {
-            return;
-        };
-        let Some(&cell_index) = self.tool_cell_indices.get(tool_index) else {
-            return;
-        };
-        if !self.compact_tools {
-            self.compact_tools = true;
-        }
-        if !self.expanded_tool_cells.insert(cell_index) {
-            self.expanded_tool_cells.remove(&cell_index);
-        }
     }
 
     fn transcript_render_state(&self) -> TranscriptRenderState {
@@ -810,13 +778,15 @@ impl TuiApp {
         self.streaming_turn_id = Some(turn_id.to_string());
         self.streaming_item_id = Some(item_id.to_string());
         self.streaming_buffer.clear();
-        let idx = self.transcript.push(HistoryCell::from_message(
-            "cloudagent",
-            String::new(),
-            HistoryTone::Agent,
-        ));
-        self.streaming_cell_index = Some(idx);
-        self.streaming_dirty = true;
+        self.preserve_scroll_on_content_change(|this| {
+            let idx = this.transcript.push(HistoryCell::from_message(
+                "cloudagent",
+                String::new(),
+                HistoryTone::Agent,
+            ));
+            this.streaming_cell_index = Some(idx);
+            this.streaming_dirty = true;
+        });
     }
 
     fn handle_assistant_item_delta(&mut self, item_id: &str, delta: &str) {
@@ -839,34 +809,36 @@ impl TuiApp {
     }
 
     fn handle_tool_item_started(&mut self, item_id: &str, title: &str) {
-        let idx = self.transcript.push(HistoryCell::from_message(
-            title.to_string(),
-            "Started".to_string(),
-            HistoryTone::Tool,
-        ));
-        self.tool_item_cells.insert(item_id.to_string(), idx);
-        self.tool_item_buffers
-            .insert(item_id.to_string(), "Started".to_string());
-        self.last_tool_name = Some(title.to_string());
-        self.refresh_tool_focus();
-        self.transcript_scroll = 0;
+        self.preserve_scroll_on_content_change(|this| {
+            let idx = this.transcript.push(HistoryCell::from_message(
+                title.to_string(),
+                "Started".to_string(),
+                HistoryTone::Tool,
+            ));
+            this.tool_item_cells.insert(item_id.to_string(), idx);
+            this.tool_item_buffers
+                .insert(item_id.to_string(), "Started".to_string());
+            this.last_tool_name = Some(title.to_string());
+            this.refresh_tool_focus();
+        });
     }
 
     fn handle_tool_item_delta(&mut self, item_id: &str, delta: &str) {
         let Some(idx) = self.tool_item_cells.get(item_id).copied() else {
             return;
         };
-        let buffer = self
-            .tool_item_buffers
-            .entry(item_id.to_string())
-            .or_default();
-        if !buffer.is_empty() {
-            buffer.push('\n');
-        }
-        buffer.push_str(delta);
-        let _ = self.transcript.update_cell_body(idx, buffer.clone());
-        self.refresh_tool_focus();
-        self.transcript_scroll = 0;
+        self.preserve_scroll_on_content_change(|this| {
+            let buffer = this
+                .tool_item_buffers
+                .entry(item_id.to_string())
+                .or_default();
+            if !buffer.is_empty() {
+                buffer.push('\n');
+            }
+            buffer.push_str(delta);
+            let _ = this.transcript.update_cell_body(idx, buffer.clone());
+            this.refresh_tool_focus();
+        });
     }
 
     fn handle_tool_item_completed(&mut self, item_id: &str) {
@@ -878,11 +850,12 @@ impl TuiApp {
         if !self.streaming_dirty {
             return;
         }
-        if let Some(idx) = self.streaming_cell_index {
-            let _ = self.transcript.update_cell_body(idx, self.streaming_buffer.clone());
-            self.refresh_tool_focus();
-            self.transcript_scroll = 0;
-        }
+        self.preserve_scroll_on_content_change(|this| {
+            if let Some(idx) = this.streaming_cell_index {
+                let _ = this.transcript.update_cell_body(idx, this.streaming_buffer.clone());
+                this.refresh_tool_focus();
+            }
+        });
         self.streaming_dirty = false;
     }
 }
@@ -1112,20 +1085,15 @@ fn handle_tui_input(
 fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
     let trimmed = line.trim();
     if trimmed.is_empty() {
-        return ParsedInput::Command(AppClientCommand::RequestStatus {
+        return ParsedInput::Command(AppClientCommand::SubmitTurn(UserTurnInput {
             session_id: session_id.to_string(),
-        });
+            content: String::new(),
+        }));
     }
 
     let command = match trimmed {
         "/exit" | "/quit" => AppClientCommand::Exit,
         "/clear" => AppClientCommand::ResetSession {
-            session_id: session_id.to_string(),
-        },
-        "/history" => AppClientCommand::RequestHistory {
-            session_id: session_id.to_string(),
-        },
-        "/status" => AppClientCommand::RequestStatus {
             session_id: session_id.to_string(),
         },
         "/interrupt" => AppClientCommand::InterruptTurn {

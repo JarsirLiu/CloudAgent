@@ -1,6 +1,6 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ApprovalDecision,
-    ApprovalRequest, HistoryEntry, RequestId, TurnResultEnvelope,
+    ApprovalRequest, HistoryEntry, RequestId, TurnEvent, TurnResultEnvelope,
 };
 use agent_runtime::{AgentRuntime, ConversationMessage};
 use anyhow::{Result, anyhow};
@@ -287,12 +287,9 @@ fn spawn_turn(
                     let session_id = session_id_for_turn.clone();
                     let event = event.clone();
                     tokio::spawn(async move {
-                        send_notification(
-                            &runtime_events,
-                            &state,
-                            AppServerNotification::TurnEvent { session_id, event },
-                        )
-                        .await;
+                        for notification in project_turn_event(&session_id, &event) {
+                            send_notification(&runtime_events, &state, notification).await;
+                        }
                     });
                 },
                 move |request: ApprovalRequest| {
@@ -357,6 +354,99 @@ fn spawn_turn(
 
         send_notification(&finish_events, &state_for_finish, finish).await;
     });
+}
+
+fn project_turn_event(session_id: &str, event: &TurnEvent) -> Vec<AppServerNotification> {
+    match event {
+        TurnEvent::TurnStarted { turn_id, .. } => vec![AppServerNotification::TurnStarted {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+        }],
+        TurnEvent::ItemStarted {
+            turn_id,
+            item_id,
+            kind,
+            title,
+        } => vec![AppServerNotification::ItemStarted {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+            kind: kind.clone(),
+            title: title.clone(),
+        }],
+        TurnEvent::ItemDelta {
+            turn_id,
+            item_id,
+            kind,
+            delta,
+        } => match kind {
+            agent_protocol::TurnItemDeltaKind::Text => {
+                vec![AppServerNotification::AgentMessageDelta {
+                    session_id: session_id.to_string(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                }]
+            }
+            agent_protocol::TurnItemDeltaKind::ToolOutput => {
+                vec![AppServerNotification::ToolCallDelta {
+                    session_id: session_id.to_string(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                }]
+            }
+            agent_protocol::TurnItemDeltaKind::ReasoningSummary => {
+                vec![AppServerNotification::ReasoningSummaryDelta {
+                    session_id: session_id.to_string(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                }]
+            }
+            agent_protocol::TurnItemDeltaKind::ReasoningText => {
+                vec![AppServerNotification::ReasoningTextDelta {
+                    session_id: session_id.to_string(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                }]
+            }
+            agent_protocol::TurnItemDeltaKind::JsonPatch => vec![AppServerNotification::PlanDelta {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                delta: delta.clone(),
+            }],
+        },
+        TurnEvent::ItemCompleted { turn_id, item_id } => vec![AppServerNotification::ItemCompleted {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+        }],
+        TurnEvent::TurnCompleted {
+            turn_id,
+            final_response,
+        } => vec![AppServerNotification::TurnCompleted {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            final_response: final_response.clone(),
+        }],
+        TurnEvent::TurnFailed { turn_id, error } => vec![AppServerNotification::TurnFailed {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            error: error.clone(),
+        }],
+        TurnEvent::TurnCancelled { turn_id, reason } => vec![AppServerNotification::TurnCancelled {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            reason: reason.clone(),
+        }],
+        TurnEvent::ModelRequestStarted { .. }
+        | TurnEvent::ModelResponseReceived { .. }
+        | TurnEvent::ApprovalRequested { .. }
+        | TurnEvent::ApprovalResolved { .. } => Vec::new(),
+    }
 }
 
 async fn send_notification(

@@ -1,4 +1,4 @@
-use agent_protocol::{HistoryEntry, TurnEvent};
+use agent_protocol::HistoryEntry;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -148,14 +148,13 @@ impl HistoryCell {
     }
 
     fn render_user(&self, width: usize) -> Vec<Line<'static>> {
-        let content_width = width.saturating_sub(6).max(8);
+        let content_width = width.saturating_sub(4).max(8);
         let wrapped = wrap_text(&self.body, content_width);
         let mut lines = vec![Line::raw("")];
-        for text in wrapped {
-            let padding = " ".repeat(width.saturating_sub(display_width(&text) + 4));
+        for (idx, text) in wrapped.into_iter().enumerate() {
+            let prefix = if idx == 0 { "› " } else { "  " };
             lines.push(Line::from(vec![
-                Span::raw(padding),
-                Span::styled("▌ ", Style::default().fg(Color::Rgb(100, 120, 200))),
+                Span::styled(prefix, Style::default().fg(Color::Rgb(140, 150, 170))),
                 Span::styled(
                     text,
                     Style::default()
@@ -277,13 +276,7 @@ impl Transcript {
     }
 
     pub fn push(&mut self, cell: HistoryCell) -> usize {
-        if cell.is_empty() {
-            return self.cells.len().saturating_sub(1);
-        }
         self.cells.push(cell);
-        if self.cells.len() > 500 {
-            self.cells.drain(0..self.cells.len() - 500);
-        }
         self.cells.len().saturating_sub(1)
     }
 
@@ -356,29 +349,6 @@ impl Transcript {
             .sum()
     }
 
-    pub fn scroll_for_cell_with_state(
-        &self,
-        cell_index: usize,
-        width: usize,
-        viewport_height: usize,
-        render_state: &TranscriptRenderState,
-    ) -> usize {
-        let total = self.total_lines_with_state(width, render_state);
-        let lines_before = self
-            .cells
-            .iter()
-            .enumerate()
-            .take(cell_index)
-            .map(|(idx, cell)| {
-                let compact = render_state.compact_tools
-                    && cell.tone == HistoryTone::Tool
-                    && !render_state.expanded_tool_cells.contains(&idx);
-                cell.to_lines_with_mode(width, compact).len()
-            })
-            .sum::<usize>();
-        total.saturating_sub(lines_before + viewport_height)
-    }
-
     pub fn tool_cell_indices(&self) -> Vec<usize> {
         self.cells
             .iter()
@@ -400,11 +370,6 @@ impl Transcript {
 }
 
 // ── Event Helpers ─────────────────────────────────────────────────────────────
-
-pub struct TurnRender {
-    pub log: Option<HistoryCell>,
-    pub status: Option<String>,
-}
 
 pub fn render_history_entry(message: &HistoryEntry) -> HistoryCell {
     match message {
@@ -430,47 +395,6 @@ pub fn render_history_entry(message: &HistoryEntry) -> HistoryCell {
         HistoryEntry::Tool { name, content, .. } => {
             HistoryCell::from_message(name.clone(), content.clone(), HistoryTone::Tool)
         }
-    }
-}
-
-pub fn render_turn_event(event: &TurnEvent) -> TurnRender {
-    match event {
-        TurnEvent::TurnStarted { .. } => TurnRender {
-            log: None,
-            status: Some("Working".into()),
-        },
-        TurnEvent::ModelRequestStarted { .. } => TurnRender {
-            log: None,
-            status: Some("Thinking".into()),
-        },
-        TurnEvent::ModelResponseReceived {
-            tool_call_count, ..
-        } => TurnRender {
-            log: None,
-            status: Some(if *tool_call_count > 0 {
-                "Planning tools".into()
-            } else {
-                "Responding".into()
-            }),
-        },
-        TurnEvent::ApprovalRequested { request, .. } => TurnRender {
-            log: Some(HistoryCell::from_message(
-                format!("Action: {}", request.tool_name),
-                format!("{} | {}", request.reason, request.arguments_preview),
-                HistoryTone::Warning,
-            )),
-            status: Some("Needs approval".into()),
-        },
-        TurnEvent::ItemStarted { .. }
-        | TurnEvent::ItemDelta { .. }
-        | TurnEvent::ItemCompleted { .. } => TurnRender {
-            log: None,
-            status: None,
-        },
-        _ => TurnRender {
-            log: None,
-            status: None,
-        },
     }
 }
 

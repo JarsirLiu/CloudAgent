@@ -118,8 +118,22 @@ pub struct TurnResultEnvelope {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnItemKind {
+    UserMessage,
     AssistantMessage,
     ToolCall,
+    ToolResult,
+    Reasoning,
+    SystemNote,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnItemDeltaKind {
+    Text,
+    ToolOutput,
+    ReasoningText,
+    ReasoningSummary,
+    JsonPatch,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -150,6 +164,7 @@ pub enum TurnEvent {
     ItemDelta {
         turn_id: TurnId,
         item_id: String,
+        kind: TurnItemDeltaKind,
         delta: String,
     },
     ItemCompleted {
@@ -234,9 +249,66 @@ pub enum AppServerNotification {
         session_id: String,
         mode: FrontendMode,
     },
-    TurnEvent {
+    TurnStarted {
         session_id: String,
-        event: TurnEvent,
+        turn_id: TurnId,
+    },
+    ItemStarted {
+        session_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        kind: TurnItemKind,
+        title: Option<String>,
+    },
+    AgentMessageDelta {
+        session_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    PlanDelta {
+        session_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    ReasoningSummaryDelta {
+        session_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    ReasoningTextDelta {
+        session_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    ToolCallDelta {
+        session_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    ItemCompleted {
+        session_id: String,
+        turn_id: TurnId,
+        item_id: String,
+    },
+    TurnCompleted {
+        session_id: String,
+        turn_id: TurnId,
+        final_response: String,
+    },
+    TurnFailed {
+        session_id: String,
+        turn_id: TurnId,
+        error: String,
+    },
+    TurnCancelled {
+        session_id: String,
+        turn_id: TurnId,
+        reason: String,
     },
     SessionStatus {
         session_id: String,
@@ -268,7 +340,17 @@ impl AppServerNotification {
     pub fn session_id(&self) -> &str {
         match self {
             Self::FrontendStateChanged { session_id, .. }
-            | Self::TurnEvent { session_id, .. }
+            | Self::TurnStarted { session_id, .. }
+            | Self::ItemStarted { session_id, .. }
+            | Self::AgentMessageDelta { session_id, .. }
+            | Self::PlanDelta { session_id, .. }
+            | Self::ReasoningSummaryDelta { session_id, .. }
+            | Self::ReasoningTextDelta { session_id, .. }
+            | Self::ToolCallDelta { session_id, .. }
+            | Self::ItemCompleted { session_id, .. }
+            | Self::TurnCompleted { session_id, .. }
+            | Self::TurnFailed { session_id, .. }
+            | Self::TurnCancelled { session_id, .. }
             | Self::SessionStatus { session_id, .. }
             | Self::SessionHistory { session_id, .. }
             | Self::TurnFinished { session_id, .. }
@@ -485,8 +567,48 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "frontend/state_changed",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::TurnEvent { .. } => (
-            "turn/event",
+        AppServerNotification::TurnStarted { .. } => (
+            "turn/started",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ItemStarted { .. } => (
+            "item/started",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::AgentMessageDelta { .. } => (
+            "item/agent_message/delta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::PlanDelta { .. } => (
+            "item/plan/delta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ReasoningSummaryDelta { .. } => (
+            "item/reasoning/summary_text_delta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ReasoningTextDelta { .. } => (
+            "item/reasoning/text_delta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ToolCallDelta { .. } => (
+            "item/tool_call/delta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ItemCompleted { .. } => (
+            "item/completed",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::TurnCompleted { .. } => (
+            "turn/completed",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::TurnFailed { .. } => (
+            "turn/failed",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::TurnCancelled { .. } => (
+            "turn/cancelled",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::SessionStatus { .. } => (
@@ -540,7 +662,17 @@ fn parse_server_notification(
     let params = params.unwrap_or(Value::Null);
     match method {
         "frontend/state_changed"
-        | "turn/event"
+        | "turn/started"
+        | "item/started"
+        | "item/agent_message/delta"
+        | "item/plan/delta"
+        | "item/reasoning/summary_text_delta"
+        | "item/reasoning/text_delta"
+        | "item/tool_call/delta"
+        | "item/completed"
+        | "turn/completed"
+        | "turn/failed"
+        | "turn/cancelled"
         | "session/status"
         | "session/history"
         | "turn/finished"
