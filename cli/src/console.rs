@@ -146,7 +146,6 @@ struct TuiApp {
     selected_tool_index: Option<usize>,
     history_loaded: bool,
     status_text: String,
-    last_model_name: Option<String>,
     last_message_count: usize,
     last_tool_name: Option<String>,
     streaming_turn_id: Option<String>,
@@ -179,7 +178,6 @@ impl TuiApp {
             selected_tool_index: None,
             history_loaded: false,
             status_text: format!("Connected via {connection_label}"),
-            last_model_name: None,
             last_message_count: 0,
             last_tool_name: None,
             streaming_turn_id: None,
@@ -216,7 +214,6 @@ impl TuiApp {
         self.selected_tool_index = None;
         self.history_loaded = true;
         self.status_text = format!("Connected via {}", self.connection_label);
-        self.last_model_name = None;
         self.last_message_count = 0;
         self.last_tool_name = None;
         self.streaming_turn_id = None;
@@ -533,10 +530,12 @@ impl TuiApp {
         } else {
             "live".to_string()
         };
-        let model = self.last_model_name.as_deref().unwrap_or("pending");
-        let last_tool = self.last_tool_name.as_deref().unwrap_or("none");
+        let tool_text = self
+            .last_tool_name
+            .as_ref()
+            .map(|tool| format!("tool {tool}"));
 
-        Paragraph::new(Text::from(vec![Line::from(vec![
+        let mut spans = vec![
             Span::styled(
                 "── CloudAgent",
                 Style::default()
@@ -555,17 +554,7 @@ impl TuiApp {
             ),
             Span::raw("  "),
             Span::styled(
-                format!("model {model}"),
-                Style::default().fg(Color::Rgb(170, 180, 200)),
-            ),
-            Span::raw("  "),
-            Span::styled(
                 format!("msgs {}", self.last_message_count),
-                Style::default().fg(Color::Rgb(130, 140, 160)),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!("tool {last_tool}"),
                 Style::default().fg(Color::Rgb(130, 140, 160)),
             ),
             Span::raw("  "),
@@ -575,7 +564,18 @@ impl TuiApp {
             ),
             Span::raw("  "),
             Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
-        ])]))
+        ];
+        if let Some(tool_text) = tool_text {
+            spans.splice(
+                10..10,
+                [
+                    Span::raw("  "),
+                    Span::styled(tool_text, Style::default().fg(Color::Rgb(130, 140, 160))),
+                ],
+            );
+        }
+
+        Paragraph::new(Text::from(vec![Line::from(spans)]))
     }
 
     fn render_welcome(&self, frame: &mut Frame, area: Rect) {
@@ -740,9 +740,6 @@ impl TuiApp {
             format!("session {}", self.session_id),
             format!("messages {}", self.last_message_count),
         ];
-        if let Some(model) = &self.last_model_name {
-            parts.push(format!("model {model}"));
-        }
         if let Some(tool) = &self.last_tool_name {
             parts.push(format!("tool {tool}"));
         }
