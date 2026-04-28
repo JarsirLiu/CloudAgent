@@ -1,6 +1,5 @@
-use crate::session::AgentSession;
-use crate::tool::{ToolCall, ToolResult};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub type TurnId = String;
 
@@ -46,7 +45,33 @@ pub struct SessionSnapshot {
     pub session_id: String,
     pub session_state: SessionState,
     pub active_turn: Option<TurnId>,
+    pub turn_state: Option<TurnState>,
     pub message_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+    pub mutating: bool,
+    pub requires_approval: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub tool_call_id: String,
+    pub name: String,
+    pub content: String,
+    pub summary: String,
+    pub is_error: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -104,14 +129,8 @@ pub enum TurnEvent {
         turn_id: TurnId,
         error: String,
     },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TurnOutcome {
-    pub turn_id: TurnId,
-    pub final_response: String,
-    pub events: Vec<TurnEvent>,
-    pub session: AgentSession,
-    pub model_name: Option<String>,
-    pub state: TurnState,
+    TurnCancelled {
+        turn_id: TurnId,
+        reason: String,
+    },
 }

@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 agent-core = { path = "../agent-core" }
+agent-protocol = { path = "../agent-protocol" }
 agent-tools = { path = "../agent-tools" }
 async-trait.workspace = true
 config = { path = "../config" }

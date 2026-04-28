@@ -1,4 +1,4 @@
-use crate::protocol::{TurnEvent, TurnId, TurnState};
+use agent_protocol::{TurnEvent, TurnId, TurnState};
 use crate::tool::ToolEvent;
 
 #[derive(Clone, Debug)]

@@ -49,52 +49,67 @@ async fn run_console(runtime: AgentRuntime) -> Result<()> {
         if matches!(trimmed, "/exit" | "/quit") {
             break;
         }
+        if trimmed == "/interrupt" {
+            let interrupted = runtime.interrupt_session(&session_id).await;
+            println!(
+                "session> {}",
+                if interrupted {
+                    "interrupt requested"
+                } else {
+                    "no active turn"
+                }
+            );
+            continue;
+        }
         let output = runtime
-            .chat_with_approval(&session_id, trimmed, |_request| async move {
-                Ok(ApprovalDecision {
-                    approved: true,
-                    reason: Some("auto-approved in local daemon console".to_string()),
-                })
-            })
+            .chat_with_approval_and_events(
+                &session_id,
+                trimmed,
+                |event| render_event(event),
+                |_request| async move {
+                    Ok(ApprovalDecision {
+                        approved: true,
+                        reason: Some("auto-approved in local daemon console".to_string()),
+                    })
+                },
+            )
             .await?;
-        render_events(&output.events);
         println!("agent> {}", output.final_response);
     }
 
     Ok(())
 }
 
-fn render_events(events: &[TurnEvent]) {
-    for event in events {
-        match event {
-            TurnEvent::TurnStarted { turn_id, .. } => println!("turn> started {turn_id}"),
-            TurnEvent::ModelRequestStarted { .. } => println!("model> request started"),
-            TurnEvent::ModelResponseReceived {
-                model_name,
-                tool_call_count,
-                ..
-            } => println!(
-                "model> {} returned {} tool calls",
-                model_name.as_deref().unwrap_or("unknown-model"),
-                tool_call_count
-            ),
-            TurnEvent::ToolCallRequested { call, .. } => {
-                println!("tool:{}> requested", call.name)
-            }
-            TurnEvent::ApprovalResolved { approved, .. } => println!(
-                "approval> {}",
-                if *approved { "approved" } else { "denied" }
-            ),
-            TurnEvent::ToolCallCompleted { result, .. } => {
-                println!("tool:{}> {}", result.name, result.summary)
-            }
-            TurnEvent::ToolCallFailed {
-                tool_name, error, ..
-            } => println!("tool:{}> failed: {}", tool_name, error),
-            TurnEvent::TurnFailed { error, .. } => println!("turn> failed: {error}"),
-            TurnEvent::AssistantMessage { .. }
-            | TurnEvent::ApprovalRequested { .. }
-            | TurnEvent::TurnCompleted { .. } => {}
+fn render_event(event: &TurnEvent) {
+    match event {
+        TurnEvent::TurnStarted { turn_id, .. } => println!("turn> started {turn_id}"),
+        TurnEvent::ModelRequestStarted { .. } => println!("model> request started"),
+        TurnEvent::ModelResponseReceived {
+            model_name,
+            tool_call_count,
+            ..
+        } => println!(
+            "model> {} returned {} tool calls",
+            model_name.as_deref().unwrap_or("unknown-model"),
+            tool_call_count
+        ),
+        TurnEvent::ToolCallRequested { call, .. } => {
+            println!("tool:{}> requested", call.name)
         }
+        TurnEvent::ApprovalResolved { approved, .. } => println!(
+            "approval> {}",
+            if *approved { "approved" } else { "denied" }
+        ),
+        TurnEvent::ToolCallCompleted { result, .. } => {
+            println!("tool:{}> {}", result.name, result.summary)
+        }
+        TurnEvent::ToolCallFailed {
+            tool_name, error, ..
+        } => println!("tool:{}> failed: {}", tool_name, error),
+        TurnEvent::TurnFailed { error, .. } => println!("turn> failed: {error}"),
+        TurnEvent::TurnCancelled { reason, .. } => println!("turn> cancelled: {reason}"),
+        TurnEvent::AssistantMessage { .. }
+        | TurnEvent::ApprovalRequested { .. }
+        | TurnEvent::TurnCompleted { .. } => {}
     }
 }

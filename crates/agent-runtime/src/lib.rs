@@ -1,3 +1,6 @@
+mod state;
+mod tasks;
+
 use agent_core::{
     AgentContext, AgentSession, AgentTurnOutput, ChatModel, ExecutionPolicy, ModelRequest,
     ModelResponse, ToolCall, ToolEvent, ToolExecutor, ToolSpec,
@@ -9,15 +12,15 @@ use config::{AgentConfig, LlmConfig};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
+use state::RuntimeState;
 use storage::JsonSessionStore;
-use tokio::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
 
-pub use agent_core::{
-    ApprovalDecision, ApprovalRequest, ConversationMessage, SessionSnapshot, SessionState,
-    TurnEvent, TurnOutcome, TurnState,
+pub use agent_core::ConversationMessage;
+pub use agent_protocol::{
+    ApprovalDecision, ApprovalRequest, SessionSnapshot, SessionState, TurnEvent, TurnState,
 };
 
 pub fn crate_name() -> &'static str {
@@ -30,9 +33,8 @@ pub struct AgentRuntime {
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
     tools: Arc<dyn ToolExecutor>,
-    sessions: Mutex<HashMap<String, AgentSession>>,
+    state: RuntimeState,
     store: JsonSessionStore,
-    active_turns: Mutex<HashMap<String, String>>,
 }
 
 impl AgentRuntime {
@@ -53,25 +55,29 @@ impl AgentRuntime {
             policy,
             model,
             tools,
-            sessions: Mutex::new(HashMap::new()),
+            state: RuntimeState::new(),
             store,
-            active_turns: Mutex::new(HashMap::new()),
         })
     }
 
     pub async fn chat(&self, session_id: &str, user_input: &str) -> Result<AgentTurnOutput> {
         let outcome = self
-            .run_turn_with_approval(session_id, user_input, |_request| async move {
-                Ok(ApprovalDecision {
-                    approved: false,
-                    reason: Some(
-                        "Mutating tools require an approval-capable client. Use the interactive cli."
-                            .to_string(),
-                    ),
-                })
-            })
+            .chat_with_approval_and_events(
+                session_id,
+                user_input,
+                |_event| {},
+                |_request| async move {
+                    Ok(ApprovalDecision {
+                        approved: false,
+                        reason: Some(
+                            "Mutating tools require an approval-capable client. Use the interactive cli."
+                                .to_string(),
+                        ),
+                    })
+                },
+            )
             .await?;
-        Ok(self.outcome_to_output(outcome))
+        Ok(outcome)
     }
 
     pub async fn chat_with_approval<F, Fut>(
@@ -84,20 +90,35 @@ impl AgentRuntime {
         F: Fn(ApprovalRequest) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
     {
+        self.chat_with_approval_and_events(session_id, user_input, |_event| {}, approval)
+            .await
+    }
+
+    pub async fn chat_with_approval_and_events<E, F, Fut>(
+        &self,
+        session_id: &str,
+        user_input: &str,
+        mut on_event: E,
+        approval: F,
+    ) -> Result<AgentTurnOutput>
+    where
+        E: FnMut(&TurnEvent) + Send,
+        F: Fn(ApprovalRequest) -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
+    {
         let outcome = self
-            .run_turn_with_approval(session_id, user_input, approval)
+            .run_turn_with_approval(session_id, user_input, &mut on_event, approval)
             .await?;
         Ok(self.outcome_to_output(outcome))
     }
 
     pub async fn reset_session(&self, session_id: &str) -> Result<()> {
-        self.sessions.lock().await.remove(session_id);
-        self.active_turns.lock().await.remove(session_id);
+        self.state.remove_session(session_id).await;
         self.store.delete_session(session_id).await
     }
 
     pub async fn session_snapshot(&self, session_id: &str) -> Result<AgentSession> {
-        if let Some(session) = self.sessions.lock().await.get(session_id).cloned() {
+        if let Some(session) = self.state.session(session_id).await {
             return Ok(session);
         }
         if let Some(mut session) = self.store.load_session(session_id).await? {
@@ -116,7 +137,7 @@ impl AgentRuntime {
 
     pub async fn session_state(&self, session_id: &str) -> Result<SessionSnapshot> {
         let session = self.session_snapshot(session_id).await?;
-        let active_turn = self.active_turns.lock().await.get(session_id).cloned();
+        let active_turn = self.state.active_turn(session_id).await;
         Ok(SessionSnapshot {
             session_id: session_id.to_string(),
             session_state: if active_turn.is_some() {
@@ -124,182 +145,80 @@ impl AgentRuntime {
             } else {
                 SessionState::Idle
             },
-            active_turn,
+            active_turn: active_turn.as_ref().map(|turn| turn.turn_id.clone()),
+            turn_state: active_turn.as_ref().map(|turn| turn.turn_state.clone()),
             message_count: session.messages.len(),
         })
     }
 
-    async fn run_turn_with_approval<F, Fut>(
+    pub async fn interrupt_session(&self, session_id: &str) -> bool {
+        self.state.interrupt_session(session_id).await
+    }
+
+    async fn run_turn_with_approval<E, F, Fut>(
         &self,
         session_id: &str,
         user_input: &str,
+        on_event: &mut E,
         approval: F,
     ) -> Result<TurnOutcome>
     where
+        E: FnMut(&TurnEvent) + Send,
         F: Fn(ApprovalRequest) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
     {
         let turn_id = next_turn_id();
-        self.active_turns
-            .lock()
-            .await
-            .insert(session_id.to_string(), turn_id.clone());
+        let active_turn = self
+            .state
+            .start_turn(session_id.to_string(), turn_id.clone())
+            .await;
 
         let mut session = self.load_session(session_id).await?;
         session.push_user_message(user_input);
 
-        let mut events = vec![TurnEvent::TurnStarted {
-            turn_id: turn_id.clone(),
-            session_id: session_id.to_string(),
-            user_input: user_input.to_string(),
-        }];
-        let mut last_model_name = None;
-        let tool_specs = self.tools.specs();
-
-        let result: Result<TurnOutcome> = async {
-            for _ in 0..self.policy.max_tool_roundtrips {
-                events.push(TurnEvent::ModelRequestStarted {
-                    turn_id: turn_id.clone(),
-                    message_count: session.messages.len(),
-                    tool_count: tool_specs.len(),
-                });
-
-                let response = self
-                    .model
-                    .complete(ModelRequest {
-                        messages: session.messages.clone(),
-                        tools: tool_specs.clone(),
-                        temperature: self.config.llm.temperature,
-                    })
-                    .await?;
-
-                last_model_name = response.model_name.clone();
-                let tool_calls = response.tool_calls.clone();
-                events.push(TurnEvent::ModelResponseReceived {
-                    turn_id: turn_id.clone(),
-                    model_name: response.model_name.clone(),
-                    has_content: response.content.is_some(),
-                    tool_call_count: tool_calls.len(),
-                });
-
-                if let Some(content) = response.content.clone() {
-                    events.push(TurnEvent::AssistantMessage {
-                        turn_id: turn_id.clone(),
-                        content: content.clone(),
-                    });
-                }
-
-                session.push_assistant_message(response.content.clone(), tool_calls.clone());
-
-                if tool_calls.is_empty() {
-                    let final_response = response
-                        .content
-                        .unwrap_or_else(|| "The model returned an empty response.".to_string());
-                    events.push(TurnEvent::TurnCompleted {
-                        turn_id: turn_id.clone(),
-                        final_response: final_response.clone(),
-                    });
-                    return Ok(TurnOutcome {
-                        turn_id: turn_id.clone(),
-                        final_response,
-                        events: events.clone(),
-                        session,
-                        model_name: last_model_name.clone(),
-                        state: TurnState::Completed,
-                    });
-                }
-
-                let tool_ctx = self.context.tool_context(session_id.to_string());
-                for call in tool_calls {
-                    events.push(TurnEvent::ToolCallRequested {
-                        turn_id: turn_id.clone(),
-                        call: call.clone(),
-                    });
-
-                    if let Some(spec) = tool_specs.iter().find(|spec| spec.name == call.name)
-                        && spec.requires_approval
-                    {
-                        let request = ApprovalRequest {
-                            turn_id: turn_id.clone(),
-                            tool_call_id: call.id.clone(),
-                            tool_name: call.name.clone(),
-                            reason: format!(
-                                "Tool `{}` can modify files or execute commands.",
-                                call.name
-                            ),
-                            arguments_preview: summarize_arguments(&call.arguments),
-                        };
-                        events.push(TurnEvent::ApprovalRequested {
-                            turn_id: turn_id.clone(),
-                            request: request.clone(),
-                        });
-                        let decision = approval(request).await?;
-                        events.push(TurnEvent::ApprovalResolved {
-                            turn_id: turn_id.clone(),
-                            tool_call_id: call.id.clone(),
-                            approved: decision.approved,
-                            reason: decision.reason.clone(),
-                        });
-                        if !decision.approved {
-                            let reason = decision
-                                .reason
-                                .unwrap_or_else(|| "approval denied".to_string());
-                            let result = agent_core::ToolResult {
-                                tool_call_id: call.id.clone(),
-                                name: call.name.clone(),
-                                content: format!("Tool execution skipped: {reason}"),
-                                summary: "tool execution skipped".to_string(),
-                                is_error: true,
-                            };
-                            events.push(TurnEvent::ToolCallFailed {
-                                turn_id: turn_id.clone(),
-                                tool_call_id: call.id.clone(),
-                                tool_name: call.name.clone(),
-                                error: reason.clone(),
-                            });
-                            session.push_tool_result(result);
-                            continue;
-                        }
-                    }
-
-                    let result = self.tools.execute(call.clone(), &tool_ctx).await?;
-                    if result.is_error {
-                        events.push(TurnEvent::ToolCallFailed {
-                            turn_id: turn_id.clone(),
-                            tool_call_id: result.tool_call_id.clone(),
-                            tool_name: result.name.clone(),
-                            error: result.content.clone(),
-                        });
-                    } else {
-                        events.push(TurnEvent::ToolCallCompleted {
-                            turn_id: turn_id.clone(),
-                            result: result.clone(),
-                        });
-                    }
-                    session.push_tool_result(result);
-                }
-            }
-
-            let final_response =
-                "Reached the configured tool roundtrip limit before the model produced a final answer."
-                    .to_string();
-            session.push_assistant_message(Some(final_response.clone()), Vec::new());
-            events.push(TurnEvent::TurnCompleted {
+        let mut events = Vec::new();
+        emit_event(
+            &mut events,
+            on_event,
+            TurnEvent::TurnStarted {
                 turn_id: turn_id.clone(),
-                final_response: final_response.clone(),
-            });
+                session_id: session_id.to_string(),
+                user_input: user_input.to_string(),
+            },
+        );
+        let result = if active_turn.is_cancelled() {
+            emit_event(
+                &mut events,
+                on_event,
+                TurnEvent::TurnCancelled {
+                    turn_id: turn_id.clone(),
+                    reason: "interrupted by client".to_string(),
+                },
+            );
             Ok(TurnOutcome {
                 turn_id: turn_id.clone(),
-                final_response,
-                events: events.clone(),
+                final_response: "Turn cancelled.".to_string(),
+                events,
                 session,
-                model_name: last_model_name.clone(),
-                state: TurnState::Completed,
+                model_name: None,
+                state: TurnState::Cancelled,
             })
-        }
-        .await;
+        } else {
+            RegularTurnTask
+            .run(
+                TaskContext {
+                    runtime: self,
+                    session_id,
+                    turn_id: &turn_id,
+                    on_event,
+                },
+                session,
+                approval,
+            )
+            .await
+        };
 
-        self.active_turns.lock().await.remove(session_id);
+        self.state.finish_turn(session_id).await;
 
         match result {
             Ok(outcome) => {
@@ -314,16 +233,15 @@ impl AgentRuntime {
                 );
                 self.save_session(session.clone()).await?;
                 let error_text = format!("{err:#}");
-                events.push(TurnEvent::TurnFailed {
-                    turn_id: turn_id.clone(),
-                    error: error_text.clone(),
-                });
                 Ok(TurnOutcome {
-                    turn_id,
+                    turn_id: turn_id.clone(),
                     final_response: format!("Turn failed: {error_text}"),
-                    events,
+                    events: vec![TurnEvent::TurnFailed {
+                        turn_id,
+                        error: error_text,
+                    }],
                     session,
-                    model_name: last_model_name,
+                    model_name: None,
                     state: TurnState::Failed,
                 })
             }
@@ -331,7 +249,7 @@ impl AgentRuntime {
     }
 
     async fn load_session(&self, session_id: &str) -> Result<AgentSession> {
-        if let Some(session) = self.sessions.lock().await.get(session_id).cloned() {
+        if let Some(session) = self.state.session(session_id).await {
             return Ok(session);
         }
 
@@ -344,19 +262,13 @@ impl AgentRuntime {
             )
         };
         session.ensure_system_prompt(self.config.runtime.system_prompt.clone());
-        self.sessions
-            .lock()
-            .await
-            .insert(session_id.to_string(), session.clone());
+        self.state.save_session(session.clone()).await;
         Ok(session)
     }
 
     async fn save_session(&self, session: AgentSession) -> Result<()> {
         self.store.save_session(&session).await?;
-        self.sessions
-            .lock()
-            .await
-            .insert(session.id.clone(), session);
+        self.state.save_session(session).await;
         Ok(())
     }
 
@@ -631,7 +543,32 @@ struct ChatResponseToolCall {
     function: ChatToolFunctionCall,
 }
 
-fn summarize_arguments(arguments: &Value) -> String {
+fn next_turn_id() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("turn-{now}")
+}
+
+pub(crate) fn emit_event<E>(events: &mut Vec<TurnEvent>, on_event: &mut E, event: TurnEvent)
+where
+    E: FnMut(&TurnEvent),
+{
+    events.push(event.clone());
+    on_event(&event);
+}
+
+impl AgentRuntime {
+    pub(crate) async fn is_turn_cancelled(&self, session_id: &str) -> bool {
+        self.state
+            .active_turn(session_id)
+            .await
+            .is_some_and(|turn| turn.is_cancelled())
+    }
+}
+
+pub(crate) fn summarize_arguments(arguments: &Value) -> String {
     let rendered = serde_json::to_string(arguments).unwrap_or_else(|_| "<invalid-json>".to_string());
     if rendered.chars().count() > 240 {
         let truncated = rendered.chars().take(240).collect::<String>();
@@ -639,12 +576,4 @@ fn summarize_arguments(arguments: &Value) -> String {
     } else {
         rendered
     }
-}
-
-fn next_turn_id() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    format!("turn-{now}")
 }

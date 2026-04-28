@@ -6,6 +6,7 @@ members = [
     "crates/agent-core",
     "crates/agent-gateway",
     "crates/agent-memory",
+    "crates/agent-protocol",
     "crates/agent-runtime",
     "crates/agent-scheduler",
     "crates/agent-tools",

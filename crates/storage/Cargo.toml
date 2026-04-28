@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agent-core = { path = "../agent-core" }
+agent-protocol = { path = "../agent-protocol" }
 anyhow.workspace = true
 shared = { path = "../shared" }
 serde.workspace = true

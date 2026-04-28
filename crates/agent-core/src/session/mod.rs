@@ -1,4 +1,4 @@
-use crate::tool::{ToolCall, ToolResult};
+use agent_protocol::{ToolCall, ToolResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
