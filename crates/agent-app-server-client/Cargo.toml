@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 agent-app-server = { path = "../agent-app-server" }
-agent-core = { path = "../agent-core" }
 agent-protocol = { path = "../agent-protocol" }
 agent-runtime = { path = "../agent-runtime" }
 anyhow.workspace = true

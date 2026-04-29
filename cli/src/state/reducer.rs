@@ -1,6 +1,6 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    HistoryEntry, RequestId, ServerRequest, ThreadItem, TurnItemDeltaKind, TurnItemKind,
+    HistoryEntry, RequestId, ServerRequest, ThreadItem, TurnItemKind,
     UserTurnInput,
 };
 
@@ -222,21 +222,29 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
                 title: title.clone().unwrap_or_default(),
             })
         }
-        AppServerNotification::ItemDelta {
+        AppServerNotification::AgentMessageDelta {
             item_id,
-            kind,
             delta,
             ..
-        } if *kind == TurnItemDeltaKind::Text => Some(ItemDispatch::AssistantDelta {
+        } => Some(ItemDispatch::AssistantDelta {
             item_id: item_id.clone(),
             delta: delta.clone(),
         }),
-        AppServerNotification::ItemDelta {
+        AppServerNotification::ReasoningSummaryTextDelta {
             item_id,
-            kind,
             delta,
             ..
-        } if *kind == TurnItemDeltaKind::ToolOutput => Some(ItemDispatch::ToolLikeDelta {
+        }
+        | AppServerNotification::ReasoningTextDelta {
+            item_id,
+            delta,
+            ..
+        }
+        | AppServerNotification::CommandExecutionOutputDelta {
+            item_id,
+            delta,
+            ..
+        } => Some(ItemDispatch::ToolLikeDelta {
             item_id: item_id.clone(),
             delta: delta.clone(),
         }),

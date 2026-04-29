@@ -4,11 +4,14 @@ pub use jsonrpc::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, RequestId,
 };
+pub use agent_core::{
+    CommandExecutionStatus, HistoryEntry, ServerRequest, ServerRequestDecision,
+    StructuredToolResult, ThreadItem, ToolApprovalRequest, ToolCall, ToolResult, ToolSpec,
+    TurnEvent, TurnId, TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-pub type TurnId = String;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum FrontendMode {
@@ -24,31 +27,6 @@ pub struct UserTurnInput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolApprovalRequest {
-    pub turn_id: TurnId,
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub reason: String,
-    pub arguments_preview: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ServerRequestDecision {
-    pub approved: bool,
-    pub reason: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum TurnState {
-    Idle,
-    Running,
-    WaitingForServerRequest,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ConversationStatus {
     Idle,
     Busy,
@@ -61,213 +39,6 @@ pub struct ConversationSnapshot {
     pub active_turn: Option<TurnId>,
     pub turn_state: Option<TurnState>,
     pub message_count: usize,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolSpec {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
-    pub mutating: bool,
-    pub requires_approval: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub tool_call_id: String,
-    pub name: String,
-    pub content: String,
-    pub summary: String,
-    pub is_error: bool,
-    pub structured: Option<StructuredToolResult>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum StructuredToolResult {
-    CommandExecution {
-        command: String,
-        current_directory: String,
-        status: CommandExecutionStatus,
-        exit_code: Option<i32>,
-        success: Option<bool>,
-        stdout: Option<String>,
-        stderr: Option<String>,
-    },
-    ListDirectory {
-        path: String,
-        entry_count: usize,
-    },
-    ReadFile {
-        path: String,
-        truncated: bool,
-        char_count: usize,
-    },
-    WriteFile {
-        path: String,
-        bytes_written: usize,
-        status: WriteFileStatus,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum CommandExecutionStatus {
-    Completed,
-    Failed,
-    Declined,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum WriteFileStatus {
-    Completed,
-    Declined,
-    Failed,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HistoryEntry {
-    System {
-        content: String,
-    },
-    User {
-        content: String,
-    },
-    Assistant {
-        content: Option<String>,
-        has_tool_calls: bool,
-    },
-    Tool {
-        tool_call_id: String,
-        name: String,
-        content: String,
-        structured: Option<StructuredToolResult>,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ThreadItem {
-    UserMessage {
-        id: String,
-        text: String,
-    },
-    AgentMessage {
-        id: String,
-        text: String,
-    },
-    CommandExecution {
-        id: String,
-        tool_name: String,
-        command: String,
-        current_directory: String,
-        status: CommandExecutionStatus,
-        exit_code: Option<i32>,
-        stdout: Option<String>,
-        stderr: Option<String>,
-        summary: String,
-    },
-    ToolResult {
-        id: String,
-        tool_name: String,
-        summary: String,
-        structured: Option<StructuredToolResult>,
-    },
-    Reasoning {
-        id: String,
-        title: String,
-        text: String,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnItemKind {
-    UserMessage,
-    AssistantMessage,
-    CommandExecution,
-    ToolCall,
-    ToolResult,
-    Reasoning,
-    SystemNote,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnItemDeltaKind {
-    Text,
-    ToolOutput,
-    ReasoningText,
-    ReasoningSummary,
-    JsonPatch,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum TurnEvent {
-    TurnStarted {
-        turn_id: TurnId,
-        conversation_id: String,
-        user_input: String,
-    },
-    ModelRequestStarted {
-        turn_id: TurnId,
-        message_count: usize,
-        tool_count: usize,
-    },
-    ModelResponseReceived {
-        turn_id: TurnId,
-        model_name: Option<String>,
-        has_content: bool,
-        tool_call_count: usize,
-    },
-    ItemStarted {
-        turn_id: TurnId,
-        item_id: String,
-        kind: TurnItemKind,
-        title: Option<String>,
-    },
-    ItemDelta {
-        turn_id: TurnId,
-        item_id: String,
-        kind: TurnItemDeltaKind,
-        delta: String,
-    },
-    ItemCompleted {
-        turn_id: TurnId,
-        item_id: String,
-        item: ThreadItem,
-    },
-    ServerRequestRequested {
-        turn_id: TurnId,
-        request: ServerRequest,
-    },
-    ServerRequestResolved {
-        turn_id: TurnId,
-        request: ServerRequest,
-        decision: ServerRequestDecision,
-    },
-    TurnCompleted {
-        turn_id: TurnId,
-        final_response: String,
-    },
-    TurnFailed {
-        turn_id: TurnId,
-        error: String,
-    },
-    TurnCancelled {
-        turn_id: TurnId,
-        reason: String,
-    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -335,11 +106,34 @@ pub enum AppServerNotification {
         kind: TurnItemKind,
         title: Option<String>,
     },
-    ItemDelta {
+    AgentMessageDelta {
         conversation_id: String,
         turn_id: TurnId,
         item_id: String,
-        kind: TurnItemDeltaKind,
+        delta: String,
+    },
+    PlanDelta {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    ReasoningSummaryTextDelta {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    ReasoningTextDelta {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    CommandExecutionOutputDelta {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
         delta: String,
     },
     ItemCompleted {
@@ -401,7 +195,11 @@ impl AppServerNotification {
             Self::FrontendStateChanged { conversation_id, .. }
             | Self::TurnStarted { conversation_id, .. }
             | Self::ItemStarted { conversation_id, .. }
-            | Self::ItemDelta { conversation_id, .. }
+            | Self::AgentMessageDelta { conversation_id, .. }
+            | Self::PlanDelta { conversation_id, .. }
+            | Self::ReasoningSummaryTextDelta { conversation_id, .. }
+            | Self::ReasoningTextDelta { conversation_id, .. }
+            | Self::CommandExecutionOutputDelta { conversation_id, .. }
             | Self::ItemCompleted { conversation_id, .. }
             | Self::ServerRequestRequested { conversation_id, .. }
             | Self::ServerRequestResolved { conversation_id, .. }
@@ -439,14 +237,6 @@ impl AppServerRequest {
             Self::ServerRequest { conversation_id, .. } => conversation_id,
         }
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "request_type", rename_all = "snake_case")]
-pub enum ServerRequest {
-    ToolApproval {
-        request: ToolApprovalRequest,
-    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -644,14 +434,24 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "item/started",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ItemDelta { kind, .. } => (
-            match kind {
-                TurnItemDeltaKind::Text => "item/agentMessage/delta",
-                TurnItemDeltaKind::ToolOutput => "item/commandExecution/outputDelta",
-                TurnItemDeltaKind::ReasoningSummary => "item/reasoning/summaryTextDelta",
-                TurnItemDeltaKind::ReasoningText => "item/reasoning/textDelta",
-                TurnItemDeltaKind::JsonPatch => "item/jsonPatch/delta",
-            },
+        AppServerNotification::AgentMessageDelta { .. } => (
+            "item/agentMessage/delta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::PlanDelta { .. } => (
+            "item/plan/delta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ReasoningSummaryTextDelta { .. } => (
+            "item/reasoning/summaryTextDelta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ReasoningTextDelta { .. } => (
+            "item/reasoning/textDelta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::CommandExecutionOutputDelta { .. } => (
+            "item/commandExecution/outputDelta",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::ItemCompleted { .. } => (

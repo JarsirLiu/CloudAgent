@@ -1,6 +1,6 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
-use agent_core::{ConversationHistory, ModelRequest};
+use agent_core::ConversationHistory;
 use agent_protocol::{
     CommandExecutionStatus, ServerRequest, ServerRequestDecision, StructuredToolResult,
     ThreadItem, ToolApprovalRequest, ToolResult, TurnEvent, TurnItemDeltaKind, TurnItemKind,
@@ -104,11 +104,11 @@ where
         let response = runtime
             .complete_model_request_streaming(
                 &cancellation_token,
-                ModelRequest {
-                    messages: history.messages.clone(),
-                    tools: tool_specs.clone(),
-                    temperature: runtime.config.llm.temperature,
-                },
+                runtime.context_manager.build_model_request(
+                    &history,
+                    tool_specs.clone(),
+                    runtime.config.llm.temperature,
+                ),
                 &mut |delta: String| {
                     if delta.is_empty() {
                         return;

@@ -1,5 +1,4 @@
-use crate::conversation::ConversationMessage;
-use agent_protocol::HistoryEntry;
+use crate::conversation::{ConversationMessage, HistoryEntry};
 
 pub fn history_entry_from_message(message: &ConversationMessage) -> HistoryEntry {
     match message {

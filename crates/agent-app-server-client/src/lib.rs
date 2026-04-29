@@ -1,7 +1,6 @@
 mod in_process;
 mod stdio;
 
-use agent_core::{classify_notification, EventDelivery};
 use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -66,15 +65,27 @@ pub(crate) fn event_requires_delivery(event: &AppServerEvent) -> bool {
 fn app_server_message_requires_delivery(message: &AppServerMessage) -> bool {
     match message {
         AppServerMessage::Request(_) => true,
-        AppServerMessage::Notification(notification) => {
-            matches!(classify_notification(notification), (_, EventDelivery::Lossless))
-                || matches!(
-                    notification,
-                    AppServerNotification::TurnFailed { .. }
-                        | AppServerNotification::TurnCancelled { .. }
-                )
-        }
+        AppServerMessage::Notification(notification) => notification_requires_delivery(notification),
     }
+}
+
+fn notification_requires_delivery(notification: &AppServerNotification) -> bool {
+    matches!(
+        notification,
+        AppServerNotification::ItemStarted { .. }
+            | AppServerNotification::ServerRequestRequested { .. }
+            | AppServerNotification::ServerRequestResolved { .. }
+            | AppServerNotification::ItemCompleted { .. }
+            | AppServerNotification::TurnCompleted { .. }
+            | AppServerNotification::TurnFailed { .. }
+            | AppServerNotification::TurnCancelled { .. }
+    ) || matches!(
+        notification,
+        AppServerNotification::AgentMessageDelta { .. }
+            | AppServerNotification::PlanDelta { .. }
+            | AppServerNotification::ReasoningSummaryTextDelta { .. }
+            | AppServerNotification::ReasoningTextDelta { .. }
+    )
 }
 
 pub(crate) async fn forward_event(
@@ -124,7 +135,7 @@ mod tests {
     use super::*;
     use agent_protocol::{
         AppServerNotification, CommandExecutionStatus, RequestId, ServerRequest, ThreadItem,
-        ToolApprovalRequest, TurnItemDeltaKind, TurnItemKind,
+        ToolApprovalRequest, TurnItemKind,
     };
 
     fn info_event(message: &str) -> AppServerEvent {
@@ -135,11 +146,11 @@ mod tests {
     }
 
     fn text_delta_event(delta: &str) -> AppServerEvent {
-        AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::ItemDelta {
+        AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::AgentMessageDelta {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "assistant:1".to_string(),
-            kind: TurnItemDeltaKind::Text,
             delta: delta.to_string(),
         }))
     }

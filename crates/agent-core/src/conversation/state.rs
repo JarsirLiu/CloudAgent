@@ -1,5 +1,6 @@
 use crate::conversation::ConversationHistory;
-use agent_protocol::{RequestId, ServerRequest, TurnEvent, TurnState};
+use crate::protocol::RequestId;
+use crate::turn::{ServerRequest, TurnEvent, TurnState};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

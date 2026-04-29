@@ -2,7 +2,7 @@ mod state;
 mod tasks;
 
 use agent_core::{
-    AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
+    AgentContext, AgentTurnOutput, ChatModel, ContextManager, ConversationHistory, ConversationState,
     ExecutionPolicy, ModelRequest, ModelResponse, ToolCall, ToolEvent, ToolExecutor, ToolSpec,
 };
 use agent_tools::ToolRegistry;
@@ -35,6 +35,7 @@ pub fn crate_name() -> &'static str {
 pub struct AgentRuntime {
     config: AgentConfig,
     context: AgentContext,
+    context_manager: ContextManager,
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
     tools: Arc<dyn ToolExecutor>,
@@ -59,6 +60,7 @@ impl AgentRuntime {
         Ok(Self {
             config,
             context,
+            context_manager: ContextManager::new(),
             policy,
             model,
             tools,

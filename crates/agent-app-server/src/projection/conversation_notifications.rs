@@ -36,19 +36,39 @@ impl ConversationNotificationProjector {
                 item_id,
                 kind,
                 delta,
-            } => {
-                if matches!(kind, TurnItemDeltaKind::JsonPatch) {
-                    Vec::new()
-                } else {
-                    vec![AppServerNotification::ItemDelta {
+            } => match kind {
+                TurnItemDeltaKind::Text => vec![AppServerNotification::AgentMessageDelta {
+                    conversation_id: self.conversation_id.clone(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                }],
+                TurnItemDeltaKind::ReasoningSummary => {
+                    vec![AppServerNotification::ReasoningSummaryTextDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         item_id: item_id.clone(),
-                        kind: kind.clone(),
                         delta: delta.clone(),
                     }]
                 }
-            }
+                TurnItemDeltaKind::ReasoningText => {
+                    vec![AppServerNotification::ReasoningTextDelta {
+                        conversation_id: self.conversation_id.clone(),
+                        turn_id: turn_id.clone(),
+                        item_id: item_id.clone(),
+                        delta: delta.clone(),
+                    }]
+                }
+                TurnItemDeltaKind::ToolOutput => {
+                    vec![AppServerNotification::CommandExecutionOutputDelta {
+                        conversation_id: self.conversation_id.clone(),
+                        turn_id: turn_id.clone(),
+                        item_id: item_id.clone(),
+                        delta: delta.clone(),
+                    }]
+                }
+                TurnItemDeltaKind::JsonPatch => Vec::new(),
+            },
             TurnEvent::ItemCompleted { turn_id, item, .. } => {
                 vec![AppServerNotification::ItemCompleted {
                     conversation_id: self.conversation_id.clone(),

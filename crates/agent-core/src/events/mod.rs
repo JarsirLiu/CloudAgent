@@ -1,4 +1,4 @@
-use agent_protocol::{AppServerNotification, TurnEvent, TurnItemDeltaKind};
+use crate::turn::{TurnEvent, TurnItemDeltaKind};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EventDelivery {
@@ -35,35 +35,6 @@ pub fn classify_turn_event(event: &TurnEvent) -> (EventStream, EventDelivery) {
         TurnEvent::ModelRequestStarted { .. } | TurnEvent::ModelResponseReceived { .. } => {
             (EventStream::Diagnostic, EventDelivery::BestEffort)
         }
-    }
-}
-
-pub fn classify_notification(notification: &AppServerNotification) -> (EventStream, EventDelivery) {
-    match notification {
-        AppServerNotification::ItemDelta { kind, .. } => match kind {
-            TurnItemDeltaKind::Text
-            | TurnItemDeltaKind::ReasoningSummary
-            | TurnItemDeltaKind::ReasoningText => (EventStream::Transcript, EventDelivery::Lossless),
-            TurnItemDeltaKind::ToolOutput => (EventStream::Control, EventDelivery::BestEffort),
-            TurnItemDeltaKind::JsonPatch => (EventStream::Diagnostic, EventDelivery::InternalOnly),
-        },
-        AppServerNotification::ItemCompleted { .. } | AppServerNotification::TurnCompleted { .. } => {
-            (EventStream::Transcript, EventDelivery::Lossless)
-        }
-        AppServerNotification::ItemStarted { .. }
-        | AppServerNotification::ServerRequestRequested { .. }
-        | AppServerNotification::ServerRequestResolved { .. }
-        | AppServerNotification::TurnStarted { .. }
-        | AppServerNotification::TurnFailed { .. }
-        | AppServerNotification::TurnCancelled { .. } => {
-            (EventStream::Control, EventDelivery::Lossless)
-        }
-        AppServerNotification::FrontendStateChanged { .. }
-        | AppServerNotification::ConversationStatus { .. }
-        | AppServerNotification::ConversationHistory { .. }
-        | AppServerNotification::ConversationSubscriptionChanged { .. }
-        | AppServerNotification::Info { .. }
-        | AppServerNotification::Error { .. } => (EventStream::Diagnostic, EventDelivery::BestEffort),
     }
 }
 
