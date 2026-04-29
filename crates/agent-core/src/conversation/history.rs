@@ -19,27 +19,37 @@ impl ConversationHistory {
         }
     }
 
-    pub fn push_user_message(&mut self, content: impl Into<String>) {
+    pub fn push_user_message(&mut self, content: impl Into<String>) -> ResponseItem {
         self.turn_count += 1;
-        self.messages.push(ResponseItem::User {
+        let item = ResponseItem::User {
             content: content.into(),
-        });
+        };
+        self.messages.push(item.clone());
+        item
     }
 
-    pub fn push_assistant_message(&mut self, content: Option<String>, tool_calls: Vec<ToolCall>) {
-        self.messages.push(ResponseItem::Assistant {
+    pub fn push_assistant_message(
+        &mut self,
+        content: Option<String>,
+        tool_calls: Vec<ToolCall>,
+    ) -> ResponseItem {
+        let item = ResponseItem::Assistant {
             content,
             tool_calls,
-        });
+        };
+        self.messages.push(item.clone());
+        item
     }
 
-    pub fn push_tool_result(&mut self, result: ToolResult) {
-        self.messages.push(ResponseItem::Tool {
+    pub fn push_tool_result(&mut self, result: ToolResult) -> ResponseItem {
+        let item = ResponseItem::Tool {
             tool_call_id: result.tool_call_id,
             name: result.name,
             content: result.content,
             structured: result.structured,
-        });
+        };
+        self.messages.push(item.clone());
+        item
     }
 
     pub fn ensure_system_prompt(&mut self, system_prompt: impl Into<String>) {

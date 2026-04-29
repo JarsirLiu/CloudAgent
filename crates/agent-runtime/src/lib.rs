@@ -3,7 +3,7 @@ mod tasks;
 
 use agent_core::{
     AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
-    ExecutionPolicy, ModelRequest, ModelResponse, ToolCall, ToolExecutor, ToolSpec,
+    ExecutionPolicy, ModelRequest, ModelResponse, RolloutItem, ToolCall, ToolExecutor, ToolSpec,
     agent_turn_output_from_events,
 };
 use agent_tools::ToolRegistry;
@@ -275,8 +275,10 @@ impl AgentRuntime {
             .await;
 
         let mut history = self.load_history(conversation_id).await?;
-        history.push_user_message(user_input);
+        let user_item = history.push_user_message(user_input);
         self.state.save_history(history.clone()).await;
+        self.append_response_item_to_rollout(conversation_id, user_item)
+            .await?;
 
         let mut events = Vec::new();
         let history_for_interrupt = history.clone();
@@ -358,7 +360,10 @@ impl AgentRuntime {
                     return Ok(outcome);
                 }
                 let mut history = self.load_history(conversation_id).await?;
-                history.push_assistant_message(Some(format!("Turn failed: {err:#}")), Vec::new());
+                let failed_item = history
+                    .push_assistant_message(Some(format!("Turn failed: {err:#}")), Vec::new());
+                self.append_response_item_to_rollout(conversation_id, failed_item)
+                    .await?;
                 let error_text = format!("{err:#}");
                 let mut events = Vec::new();
                 emit_event(
@@ -415,6 +420,16 @@ impl AgentRuntime {
             self.store.save_conversation(&conversation).await?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn append_response_item_to_rollout(
+        &self,
+        conversation_id: &str,
+        item: ResponseItem,
+    ) -> Result<()> {
+        self.store
+            .append_rollout_items(conversation_id, &[RolloutItem::from(item)])
+            .await
     }
 
     fn outcome_to_output(&self, outcome: TurnOutcome) -> AgentTurnOutput {

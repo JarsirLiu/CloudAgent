@@ -859,6 +859,17 @@ mod tests {
         }
         client.shutdown().await.expect("shutdown client");
 
+        let rollout_log = std::fs::read_to_string(fixture.store.join("default.rollout.jsonl"))
+            .expect("read rollout log");
+        assert!(
+            rollout_log.contains("\"type\":\"event_msg\""),
+            "rollout should persist EventMsg entries"
+        );
+        assert!(
+            rollout_log.contains("\"type\":\"response_item\""),
+            "rollout should persist ResponseItem entries"
+        );
+
         let history = history.expect("history snapshot");
         assert!(history.iter().any(|entry| matches!(
             entry,

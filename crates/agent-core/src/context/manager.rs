@@ -56,16 +56,20 @@ impl ContextManager {
         self.history.ensure_system_prompt(system_prompt);
     }
 
-    pub fn record_user_message(&mut self, content: impl Into<String>) {
-        self.history.push_user_message(content);
+    pub fn record_user_message(&mut self, content: impl Into<String>) -> ResponseItem {
+        self.history.push_user_message(content)
     }
 
-    pub fn record_assistant_message(&mut self, content: Option<String>, tool_calls: Vec<ToolCall>) {
-        self.history.push_assistant_message(content, tool_calls);
+    pub fn record_assistant_message(
+        &mut self,
+        content: Option<String>,
+        tool_calls: Vec<ToolCall>,
+    ) -> ResponseItem {
+        self.history.push_assistant_message(content, tool_calls)
     }
 
-    pub fn record_tool_result(&mut self, result: ToolResult) {
-        self.history.push_tool_result(result);
+    pub fn record_tool_result(&mut self, result: ToolResult) -> ResponseItem {
+        self.history.push_tool_result(result)
     }
 
     pub fn build_model_context(&self, history: &ConversationHistory) -> ModelContext {

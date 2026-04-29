@@ -182,7 +182,11 @@ where
             },
         );
 
-        context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());
+        let assistant_response_item =
+            context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());
+        runtime
+            .append_response_item_to_rollout(conversation_id, assistant_response_item)
+            .await?;
         runtime
             .state
             .save_history(context_manager.history().clone())
@@ -340,7 +344,10 @@ where
                             ),
                         },
                     );
-                    context_manager.record_tool_result(result);
+                    let tool_response_item = context_manager.record_tool_result(result);
+                    runtime
+                        .append_response_item_to_rollout(conversation_id, tool_response_item)
+                        .await?;
                     runtime
                         .state
                         .save_history(context_manager.history().clone())
@@ -392,7 +399,10 @@ where
                     item: thread_item_from_tool_result(&tool_item_id, &call.name, &result),
                 },
             );
-            context_manager.record_tool_result(result);
+            let tool_response_item = context_manager.record_tool_result(result);
+            runtime
+                .append_response_item_to_rollout(conversation_id, tool_response_item)
+                .await?;
             runtime
                 .state
                 .save_history(context_manager.history().clone())
@@ -410,7 +420,11 @@ where
         &final_response,
         &mut assistant_item_seq,
     );
-    context_manager.record_assistant_message(Some(final_response.clone()), Vec::new());
+    let final_response_item =
+        context_manager.record_assistant_message(Some(final_response.clone()), Vec::new());
+    runtime
+        .append_response_item_to_rollout(conversation_id, final_response_item)
+        .await?;
     runtime
         .state
         .save_history(context_manager.history().clone())
