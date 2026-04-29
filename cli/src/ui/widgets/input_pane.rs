@@ -1,8 +1,8 @@
-pub use crate::approval_overlay::ApprovalInlineState;
-use crate::approval_overlay::ApprovalOverlay;
-use crate::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
-use crate::chat_composer::{ChatComposer, ComposerAction};
-use crate::footer::{divider_line, hint_line, status_line};
+pub use crate::ui::widgets::approval_overlay::ApprovalInlineState;
+use crate::ui::widgets::approval_overlay::ApprovalOverlay;
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::widgets::chat_composer::{ChatComposer, ComposerAction};
+use crate::ui::widgets::footer::{divider_line, hint_line, status_line};
 use agent_protocol::FrontendMode;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;

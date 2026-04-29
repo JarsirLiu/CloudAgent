@@ -3,7 +3,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
-use crate::history_cell::shimmer_spans;
+use crate::ui::widgets::history_cell::shimmer_spans;
 
 pub fn divider_line(width: usize) -> Line<'static> {
     Line::from(Span::styled(

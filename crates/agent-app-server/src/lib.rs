@@ -1,4 +1,8 @@
+mod approval_coordinator;
+mod command_router;
 mod in_process;
+mod session_subscriptions;
+mod turn_bridge;
 pub mod transport;
 
 use agent_protocol::{AppClientCommandEnvelope, AppServerMessageEnvelope};

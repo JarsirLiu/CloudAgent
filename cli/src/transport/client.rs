@@ -1,4 +1,4 @@
-use crate::console::{ConsoleConfig, ConsoleConnection};
+use crate::app::{ConsoleConfig, ConsoleConnection};
 use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
 use anyhow::Result;
 
@@ -24,4 +24,3 @@ pub(crate) async fn create_client(
         }
     }
 }
-

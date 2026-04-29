@@ -1,18 +1,8 @@
-mod approval_overlay;
-mod bottom_pane_view;
-mod chat_composer;
-mod console;
-mod console_client;
-mod console_events;
-mod console_parse;
-mod console_state;
-mod console_status;
-mod footer;
-mod history_cell;
-mod input_pane;
-mod terminal_runtime;
-mod textarea;
-mod welcome;
+pub mod app;
+pub mod state;
+pub mod terminal;
+pub mod transport;
+pub mod ui;
 
-pub use console::ConsoleConnection;
-pub use console::{ConsoleConfig, run_console};
+pub use app::{ConsoleConfig, ConsoleConnection, run_console};
+

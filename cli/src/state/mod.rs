@@ -1,0 +1,83 @@
+pub mod reducer;
+pub mod selectors;
+
+use crate::ui::widgets::history_cell::{HistoryCell, Transcript};
+use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode, RequestId};
+
+#[derive(Clone, Debug)]
+pub struct ConsoleState {
+    pub mode: FrontendMode,
+}
+
+impl ConsoleState {
+    pub fn new() -> Self {
+        Self {
+            mode: FrontendMode::Idle,
+        }
+    }
+
+    pub fn can_submit_turn(&self) -> bool {
+        self.mode == FrontendMode::Idle
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ApprovalState {
+    pub pending_request_id: Option<RequestId>,
+}
+
+#[derive(Default)]
+pub struct TranscriptState {
+    pub transcript: Transcript,
+    pub scroll: usize,
+    pub viewport_height: usize,
+    pub viewport_width: usize,
+    pub active_item_id: Option<String>,
+    pub active_item_kind: Option<agent_protocol::TurnItemKind>,
+    pub active_cell: Option<HistoryCell>,
+    pub last_copyable_output: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RunState {
+    pub history_loaded: bool,
+    pub status_notice: Option<String>,
+    pub last_message_count: usize,
+    pub last_tool_name: Option<String>,
+    pub should_exit: bool,
+}
+
+impl RunState {
+    pub fn new(connection_label: &str) -> Self {
+        Self {
+            history_loaded: false,
+            status_notice: Some(format!("Connected via {connection_label}")),
+            last_message_count: 0,
+            last_tool_name: None,
+            should_exit: false,
+        }
+    }
+}
+
+pub fn update_core_state_from_message(
+    console: &mut ConsoleState,
+    approval: &mut ApprovalState,
+    message: &AppServerMessage,
+) {
+    match message {
+        AppServerMessage::Notification(notification) => match notification {
+            AppServerNotification::FrontendStateChanged { mode, .. } => console.mode = *mode,
+            AppServerNotification::TurnCompleted { .. }
+            | AppServerNotification::TurnFailed { .. }
+            | AppServerNotification::TurnCancelled { .. } => {
+                console.mode = FrontendMode::Idle;
+                approval.pending_request_id = None;
+            }
+            _ => {}
+        },
+        AppServerMessage::Request(AppServerRequest::Approval { request_id, .. }) => {
+            console.mode = FrontendMode::WaitingForApproval;
+            approval.pending_request_id = Some(request_id.clone());
+        }
+    }
+}

@@ -1,4 +1,4 @@
-use crate::history_cell::shimmer_spans;
+use crate::ui::widgets::history_cell::shimmer_spans;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};

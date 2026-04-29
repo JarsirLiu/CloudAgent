@@ -4,7 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::textarea::{TextArea, display_width};
+use crate::ui::widgets::textarea::{TextArea, display_width};
 
 #[derive(Debug)]
 pub enum ComposerAction {

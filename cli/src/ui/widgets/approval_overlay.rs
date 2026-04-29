@@ -3,8 +3,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
-use crate::textarea::TextArea;
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::widgets::textarea::TextArea;
 
 #[derive(Clone, Debug, Default)]
 pub struct ApprovalInlineState {
