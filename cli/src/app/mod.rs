@@ -110,7 +110,11 @@ impl TuiApp {
                     Some(format!("UI skipped {skipped} non-critical events while catching up"));
             }
             AppServerEvent::Disconnected { message } => {
-                self.push_cell(HistoryCell::from_message("session", message, HistoryTone::Error));
+                self.push_cell(HistoryCell::from_message(
+                    "conversation",
+                    message,
+                    HistoryTone::Error,
+                ));
                 self.run_state.should_exit = true;
             }
         }
@@ -1269,9 +1273,9 @@ mod tests {
                 .as_nanos();
             let root = std::env::temp_dir().join(format!("cloudagent-cli-test-{unique}"));
             let workspace = root.join("workspace");
-            let store = root.join("sessions");
+            let store = root.join("conversations");
             std::fs::create_dir_all(&workspace).expect("create workspace");
-            std::fs::create_dir_all(&store).expect("create session store");
+            std::fs::create_dir_all(&store).expect("create conversation store");
             Self {
                 root,
                 workspace,

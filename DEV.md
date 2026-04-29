@@ -58,7 +58,7 @@ Owns the core agent concepts and orchestration contracts.
 
 Typical responsibility:
 
-- session model
+- conversation model
 - messages and turns
 - task and plan model
 - context assembly
@@ -74,7 +74,7 @@ Owns the execution lifecycle of the agent.
 
 Typical responsibility:
 
-- running agent sessions
+- running agent conversations
 - driving execution loops
 - handling cancellation and timeout
 - bridging scheduled wakeups into active execution
@@ -109,7 +109,7 @@ Typical responsibility:
 
 - inbound/outbound remote messages
 - conversation routing
-- session mapping between remote clients and local agent execution
+- conversation mapping between remote clients and local agent execution
 
 ### `agent-scheduler`
 

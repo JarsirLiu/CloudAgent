@@ -6,6 +6,7 @@ data/state/*
 data/cache/*
 data/logs/*
 data/sessions/*
+data/conversations/*
 !data/**/.gitkeep
 
 # Local config and secrets

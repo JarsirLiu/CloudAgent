@@ -17,7 +17,7 @@ pub(crate) fn handle_tui_input(
         ParsedInput::LocalCopy => {
             let Some(text) = app.transcript_state.last_copyable_output.as_deref() else {
                 app.push_cell(HistoryCell::from_message(
-                    "session",
+                    "conversation",
                     "`/copy` unavailable before first assistant output",
                     HistoryTone::Warning,
                 ));
@@ -51,7 +51,7 @@ pub(crate) fn handle_tui_input(
                 && !app.console_state.can_submit_turn()
             {
                 app.push_cell(HistoryCell::from_message(
-                    "session",
+                    "conversation",
                     "turn already running; wait, answer the pending request, or interrupt first",
                     HistoryTone::Warning,
                 ));

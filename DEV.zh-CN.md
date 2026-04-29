@@ -56,7 +56,7 @@ data/      本地开发运行数据
 
 典型职责：
 
-- session 模型
+- conversation 模型
 - message / turn 模型
 - task / plan 模型
 - context 拼装
@@ -71,7 +71,7 @@ data/      本地开发运行数据
 
 典型职责：
 
-- 运行 agent session
+- 运行 agent conversation
 - 驱动执行循环
 - 处理中断、取消、超时
 - 把 scheduler 的唤醒事件转成一次真正的 agent 执行
