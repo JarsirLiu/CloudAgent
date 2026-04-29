@@ -16,10 +16,15 @@ pub use conversation::{
 };
 pub use context::{AgentContext, ContextManager, ModelContext, ToolExecutionContext};
 pub use core::{ChatModel, ModelRequest, ModelResponse};
-pub use events::{classify_turn_event, EventDelivery, EventStream};
+pub use events::{
+    classify_turn_event, core_transcript_event_from_turn_event, CoreTranscriptEvent,
+    EventDelivery, EventStream,
+};
 pub use policy::ExecutionPolicy;
 pub use protocol::RequestId;
-pub use projection::history_entry_from_message;
+pub use projection::{
+    agent_turn_output_from_events, history_entry_from_message, tool_events_from_turn_events,
+};
 pub use tool::{
     CommandExecutionStatus, StructuredToolResult, ToolCall, ToolEvent, ToolExecutor, ToolResult,
     ToolSpec, WriteFileStatus,

@@ -2,8 +2,9 @@ mod state;
 mod tasks;
 
 use agent_core::{
-    AgentContext, AgentTurnOutput, ChatModel, ContextManager, ConversationHistory, ConversationState,
-    ExecutionPolicy, ModelRequest, ModelResponse, ToolCall, ToolEvent, ToolExecutor, ToolSpec,
+    agent_turn_output_from_events, AgentContext, AgentTurnOutput, ChatModel, ContextManager,
+    ConversationHistory, ConversationState, ExecutionPolicy, ModelRequest, ModelResponse, ToolCall,
+    ToolExecutor, ToolSpec,
 };
 use agent_tools::ToolRegistry;
 use anyhow::{Context, Result, bail};
@@ -411,103 +412,14 @@ impl AgentRuntime {
     }
 
     fn outcome_to_output(&self, outcome: TurnOutcome) -> AgentTurnOutput {
-        let mut active_tools: std::collections::HashMap<String, (String, String)> =
-            std::collections::HashMap::new();
-        let mut tool_events = Vec::new();
-        for event in &outcome.events {
-            match event {
-                TurnEvent::ItemStarted {
-                    item_id,
-                    kind,
-                    title,
-                    ..
-                } if *kind == TurnItemKind::ToolCall || *kind == TurnItemKind::CommandExecution => {
-                    active_tools.insert(
-                        item_id.clone(),
-                        (title.clone().unwrap_or_else(|| "tool_call".to_string()), String::new()),
-                    );
-                }
-                TurnEvent::ItemDelta { item_id, delta, .. } => {
-                    if let Some((_, summary)) = active_tools.get_mut(item_id) {
-                        if !summary.is_empty() {
-                            summary.push('\n');
-                        }
-                        summary.push_str(delta);
-                    }
-                }
-                TurnEvent::ItemCompleted { item, .. } => {
-                    match item {
-                        ThreadItem::CommandExecution {
-                            id,
-                            tool_name,
-                            status,
-                            summary,
-                            ..
-                        } => {
-                            if let Some((fallback_name, streamed_summary)) = active_tools.remove(id) {
-                                let final_summary = if summary.trim().is_empty() {
-                                    streamed_summary
-                                } else {
-                                    summary.clone()
-                                };
-                                let name = if tool_name.is_empty() {
-                                    fallback_name
-                                } else {
-                                    tool_name.clone()
-                                };
-                                let is_error = *status != agent_protocol::CommandExecutionStatus::Completed;
-                                tool_events.push(ToolEvent {
-                                    name,
-                                    summary: final_summary,
-                                    is_error,
-                                });
-                            }
-                        }
-                        ThreadItem::ToolResult {
-                            id,
-                            tool_name,
-                            summary,
-                            ..
-                        } => {
-                            if let Some((fallback_name, streamed_summary)) = active_tools.remove(id) {
-                                let final_summary = if summary.trim().is_empty() {
-                                    streamed_summary
-                                } else {
-                                    summary.clone()
-                                };
-                                let name = if tool_name.is_empty() {
-                                    fallback_name
-                                } else {
-                                    tool_name.clone()
-                                };
-                                let lower = final_summary.to_lowercase();
-                                let is_error = lower.contains("error")
-                                    || lower.contains("failed")
-                                    || lower.contains("denied")
-                                    || lower.contains("skipped");
-                                tool_events.push(ToolEvent {
-                                    name,
-                                    summary: final_summary,
-                                    is_error,
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        AgentTurnOutput {
-            turn_id: outcome.turn_id,
-            final_response: outcome.final_response,
-            tool_events,
-            events: outcome.events,
-            model_name: outcome.model_name,
-            total_messages: outcome.history.messages.len(),
-            state: outcome.state,
-        }
+        agent_turn_output_from_events(
+            outcome.turn_id,
+            outcome.final_response,
+            outcome.events,
+            &outcome.history,
+            outcome.model_name,
+            outcome.state,
+        )
     }
 }
 

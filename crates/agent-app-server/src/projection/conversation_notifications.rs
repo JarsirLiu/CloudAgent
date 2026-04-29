@@ -1,3 +1,4 @@
+use agent_core::{core_transcript_event_from_turn_event, CoreTranscriptEvent};
 use agent_protocol::{AppServerNotification, FrontendMode, TurnEvent, TurnItemDeltaKind, TurnState};
 
 pub(crate) struct ConversationNotificationProjector {
@@ -14,6 +15,10 @@ impl ConversationNotificationProjector {
     }
 
     pub(crate) fn project_turn_event(&mut self, event: &TurnEvent) -> Vec<AppServerNotification> {
+        if let Some(core_event) = core_transcript_event_from_turn_event(event) {
+            return self.project_core_transcript_event(core_event);
+        }
+
         match event {
             TurnEvent::TurnStarted { turn_id, .. } => vec![AppServerNotification::TurnStarted {
                 conversation_id: self.conversation_id.clone(),
@@ -37,28 +42,9 @@ impl ConversationNotificationProjector {
                 kind,
                 delta,
             } => match kind {
-                TurnItemDeltaKind::Text => vec![AppServerNotification::AgentMessageDelta {
-                    conversation_id: self.conversation_id.clone(),
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                }],
-                TurnItemDeltaKind::ReasoningSummary => {
-                    vec![AppServerNotification::ReasoningSummaryTextDelta {
-                        conversation_id: self.conversation_id.clone(),
-                        turn_id: turn_id.clone(),
-                        item_id: item_id.clone(),
-                        delta: delta.clone(),
-                    }]
-                }
-                TurnItemDeltaKind::ReasoningText => {
-                    vec![AppServerNotification::ReasoningTextDelta {
-                        conversation_id: self.conversation_id.clone(),
-                        turn_id: turn_id.clone(),
-                        item_id: item_id.clone(),
-                        delta: delta.clone(),
-                    }]
-                }
+                TurnItemDeltaKind::Text
+                | TurnItemDeltaKind::ReasoningSummary
+                | TurnItemDeltaKind::ReasoningText => Vec::new(),
                 TurnItemDeltaKind::ToolOutput => {
                     vec![AppServerNotification::CommandExecutionOutputDelta {
                         conversation_id: self.conversation_id.clone(),
@@ -69,13 +55,7 @@ impl ConversationNotificationProjector {
                 }
                 TurnItemDeltaKind::JsonPatch => Vec::new(),
             },
-            TurnEvent::ItemCompleted { turn_id, item, .. } => {
-                vec![AppServerNotification::ItemCompleted {
-                    conversation_id: self.conversation_id.clone(),
-                    turn_id: turn_id.clone(),
-                    item: item.clone(),
-                }]
-            }
+            TurnEvent::ItemCompleted { .. } => Vec::new(),
             TurnEvent::ServerRequestRequested { turn_id, request } => {
                 vec![AppServerNotification::ServerRequestRequested {
                     conversation_id: self.conversation_id.clone(),
@@ -83,14 +63,7 @@ impl ConversationNotificationProjector {
                     request: request.clone(),
                 }]
             }
-            TurnEvent::TurnCompleted { turn_id, .. } => {
-                self.deferred_terminal_notifications
-                    .push(AppServerNotification::TurnCompleted {
-                        conversation_id: self.conversation_id.clone(),
-                        turn_id: turn_id.clone(),
-                    });
-                Vec::new()
-            }
+            TurnEvent::TurnCompleted { .. } => Vec::new(),
             TurnEvent::TurnFailed { turn_id, error } => {
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnFailed {
@@ -112,6 +85,69 @@ impl ConversationNotificationProjector {
             TurnEvent::ServerRequestResolved { .. }
             | TurnEvent::ModelRequestStarted { .. }
             | TurnEvent::ModelResponseReceived { .. } => Vec::new(),
+        }
+    }
+
+    fn project_core_transcript_event(
+        &mut self,
+        event: CoreTranscriptEvent,
+    ) -> Vec<AppServerNotification> {
+        match event {
+            CoreTranscriptEvent::TurnCompleted { turn_id } => {
+                self.deferred_terminal_notifications
+                    .push(AppServerNotification::TurnCompleted {
+                        conversation_id: self.conversation_id.clone(),
+                        turn_id,
+                    });
+                Vec::new()
+            }
+            CoreTranscriptEvent::ItemCompleted { turn_id, item } => {
+                vec![AppServerNotification::ItemCompleted {
+                    conversation_id: self.conversation_id.clone(),
+                    turn_id,
+                    item,
+                }]
+            }
+            CoreTranscriptEvent::AgentMessageDelta {
+                turn_id,
+                item_id,
+                delta,
+            } => vec![AppServerNotification::AgentMessageDelta {
+                conversation_id: self.conversation_id.clone(),
+                turn_id,
+                item_id,
+                delta,
+            }],
+            CoreTranscriptEvent::PlanDelta {
+                turn_id,
+                item_id,
+                delta,
+            } => vec![AppServerNotification::PlanDelta {
+                conversation_id: self.conversation_id.clone(),
+                turn_id,
+                item_id,
+                delta,
+            }],
+            CoreTranscriptEvent::ReasoningSummaryTextDelta {
+                turn_id,
+                item_id,
+                delta,
+            } => vec![AppServerNotification::ReasoningSummaryTextDelta {
+                conversation_id: self.conversation_id.clone(),
+                turn_id,
+                item_id,
+                delta,
+            }],
+            CoreTranscriptEvent::ReasoningTextDelta {
+                turn_id,
+                item_id,
+                delta,
+            } => vec![AppServerNotification::ReasoningTextDelta {
+                conversation_id: self.conversation_id.clone(),
+                turn_id,
+                item_id,
+                delta,
+            }],
         }
     }
 
