@@ -186,6 +186,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 ThreadItem::UserMessage { .. }
                 | ThreadItem::AgentMessage { .. }
                 | ThreadItem::CommandExecution { .. }
+                | ThreadItem::FileChange { .. }
                 | ThreadItem::ToolResult { .. } => {}
             },
             ItemDispatch::ControlCompleted { item } => match item {
@@ -205,6 +206,16 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                         &id,
                         TurnItemKind::CommandExecution,
                         title,
+                        &summary,
+                    );
+                }
+                ThreadItem::FileChange {
+                    id, path, summary, ..
+                } => {
+                    app.handle_control_item_completed(
+                        &id,
+                        TurnItemKind::FileChange,
+                        &path,
                         &summary,
                     );
                 }

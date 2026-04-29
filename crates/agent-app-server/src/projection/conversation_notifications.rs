@@ -53,6 +53,14 @@ impl ConversationNotificationProjector {
                         delta: delta.clone(),
                     }]
                 }
+                TurnItemDeltaKind::FileChangeOutput => {
+                    vec![AppServerNotification::FileChangeOutputDelta {
+                        conversation_id: self.conversation_id.clone(),
+                        turn_id: turn_id.clone(),
+                        item_id: item_id.clone(),
+                        delta: delta.clone(),
+                    }]
+                }
                 TurnItemDeltaKind::JsonPatch => Vec::new(),
             },
             EventMsg::ItemCompleted { .. } => Vec::new(),
@@ -169,7 +177,9 @@ impl ConversationNotificationProjector {
 #[cfg(test)]
 mod tests {
     use super::ConversationNotificationProjector;
-    use agent_protocol::{AppServerNotification, EventMsg, FrontendMode, TurnState};
+    use agent_protocol::{
+        AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnState,
+    };
 
     #[test]
     fn terminal_notifications_are_deferred_until_finish() {
@@ -193,6 +203,25 @@ mod tests {
                 mode: FrontendMode::Idle,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn file_change_output_delta_projects_to_file_change_notification() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:write".to_string(),
+            kind: TurnItemDeltaKind::FileChangeOutput,
+            delta: "wrote note.txt".to_string(),
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::FileChangeOutputDelta { item_id, delta, .. }
+                if item_id == "tool:write" && delta == "wrote note.txt"
         ));
     }
 }

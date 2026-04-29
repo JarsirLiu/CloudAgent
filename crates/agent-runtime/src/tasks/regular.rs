@@ -245,11 +245,7 @@ where
             }
 
             let tool_item_id = format!("tool:{}", call.id);
-            let tool_item_kind = if call.name == "shell_command" {
-                TurnItemKind::CommandExecution
-            } else {
-                TurnItemKind::ToolCall
-            };
+            let tool_item_kind = tool_item_kind(&call.name);
             emit_event(
                 &mut events,
                 on_event,
@@ -326,7 +322,7 @@ where
                         EventMsg::ItemDelta {
                             turn_id: turn_id.to_string(),
                             item_id: tool_item_id.clone(),
-                            kind: TurnItemDeltaKind::ToolOutput,
+                            kind: tool_delta_kind(&call.name),
                             delta: format!("Tool execution skipped: {reason}"),
                         },
                     );
@@ -383,7 +379,7 @@ where
                 EventMsg::ItemDelta {
                     turn_id: turn_id.to_string(),
                     item_id: tool_item_id.clone(),
-                    kind: TurnItemDeltaKind::ToolOutput,
+                    kind: tool_delta_kind(&call.name),
                     delta: result.summary.clone(),
                 },
             );
@@ -458,6 +454,18 @@ fn thread_item_from_tool_result(item_id: &str, tool_name: &str, result: &ToolRes
             stderr: stderr.clone(),
             summary: result.summary.clone(),
         },
+        Some(StructuredToolResult::WriteFile {
+            path,
+            bytes_written,
+            status,
+        }) => ThreadItem::FileChange {
+            id: item_id.to_string(),
+            tool_name: tool_name.to_string(),
+            path: path.clone(),
+            status: status.clone(),
+            bytes_written: *bytes_written,
+            summary: result.summary.clone(),
+        },
         _ => ThreadItem::ToolResult {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
@@ -493,12 +501,39 @@ fn denied_thread_item(
             stderr,
             summary: "tool execution skipped".to_string(),
         },
+        Some(StructuredToolResult::WriteFile {
+            path,
+            bytes_written,
+            status,
+        }) => ThreadItem::FileChange {
+            id: item_id.to_string(),
+            tool_name: tool_name.to_string(),
+            path,
+            status,
+            bytes_written,
+            summary: "tool execution skipped".to_string(),
+        },
         structured => ThreadItem::ToolResult {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
             summary: "tool execution skipped".to_string(),
             structured,
         },
+    }
+}
+
+fn tool_item_kind(tool_name: &str) -> TurnItemKind {
+    match tool_name {
+        "shell_command" => TurnItemKind::CommandExecution,
+        "write_file" => TurnItemKind::FileChange,
+        _ => TurnItemKind::ToolCall,
+    }
+}
+
+fn tool_delta_kind(tool_name: &str) -> TurnItemDeltaKind {
+    match tool_name {
+        "write_file" => TurnItemDeltaKind::FileChangeOutput,
+        _ => TurnItemDeltaKind::ToolOutput,
     }
 }
 

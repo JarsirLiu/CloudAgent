@@ -42,6 +42,7 @@ pub enum TurnItemKind {
     UserMessage,
     AssistantMessage,
     CommandExecution,
+    FileChange,
     ToolCall,
     ToolResult,
     Reasoning,
@@ -53,6 +54,7 @@ pub enum TurnItemKind {
 pub enum TurnItemDeltaKind {
     Text,
     ToolOutput,
+    FileChangeOutput,
     ReasoningText,
     ReasoningSummary,
     JsonPatch,

@@ -1,5 +1,5 @@
 use crate::conversation::{ConversationHistory, ThreadItem};
-use crate::tool::{CommandExecutionStatus, ToolEvent};
+use crate::tool::{CommandExecutionStatus, ToolEvent, WriteFileStatus};
 use crate::turn::{AgentTurnOutput, EventMsg, TurnItemKind, TurnState};
 use std::collections::HashMap;
 
@@ -34,7 +34,10 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
                 kind,
                 title,
                 ..
-            } if *kind == TurnItemKind::ToolCall || *kind == TurnItemKind::CommandExecution => {
+            } if *kind == TurnItemKind::ToolCall
+                || *kind == TurnItemKind::CommandExecution
+                || *kind == TurnItemKind::FileChange =>
+            {
                 active_tools.insert(
                     item_id.clone(),
                     (
@@ -103,6 +106,31 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
                             name,
                             summary: final_summary,
                             is_error,
+                        });
+                    }
+                }
+                ThreadItem::FileChange {
+                    id,
+                    tool_name,
+                    status,
+                    summary,
+                    ..
+                } => {
+                    if let Some((fallback_name, streamed_summary)) = active_tools.remove(id) {
+                        let final_summary = if summary.trim().is_empty() {
+                            streamed_summary
+                        } else {
+                            summary.clone()
+                        };
+                        let name = if tool_name.is_empty() {
+                            fallback_name
+                        } else {
+                            tool_name.clone()
+                        };
+                        tool_events.push(ToolEvent {
+                            name,
+                            summary: final_summary,
+                            is_error: *status != WriteFileStatus::Completed,
                         });
                     }
                 }

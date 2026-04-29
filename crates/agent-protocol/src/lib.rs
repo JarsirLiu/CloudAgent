@@ -138,6 +138,12 @@ pub enum AppServerNotification {
         item_id: String,
         delta: String,
     },
+    FileChangeOutputDelta {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
     ItemCompleted {
         conversation_id: String,
         turn_id: TurnId,
@@ -216,6 +222,9 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::CommandExecutionOutputDelta {
+                conversation_id, ..
+            }
+            | Self::FileChangeOutputDelta {
                 conversation_id, ..
             }
             | Self::ItemCompleted {
@@ -326,7 +335,8 @@ pub fn classify_notification(
         | AppServerNotification::FrontendStateChanged { .. } => {
             (NotificationStream::Control, NotificationDelivery::Lossless)
         }
-        AppServerNotification::CommandExecutionOutputDelta { .. } => (
+        AppServerNotification::CommandExecutionOutputDelta { .. }
+        | AppServerNotification::FileChangeOutputDelta { .. } => (
             NotificationStream::Control,
             NotificationDelivery::BestEffort,
         ),
@@ -545,6 +555,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "item/commandExecution/outputDelta",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::FileChangeOutputDelta { .. } => (
+            "item/fileChange/outputDelta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ItemCompleted { .. } => (
             "item/completed",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -625,6 +639,7 @@ fn parse_server_notification(
         | "item/reasoning/summaryTextDelta"
         | "item/reasoning/textDelta"
         | "item/commandExecution/outputDelta"
+        | "item/fileChange/outputDelta"
         | "item/jsonPatch/delta"
         | "item/completed"
         | "serverRequest/requested"
@@ -747,20 +762,60 @@ mod tests {
 
     #[test]
     fn command_execution_output_is_control_not_core_transcript() {
-        let notification = AppServerNotification::CommandExecutionOutputDelta {
-            conversation_id: "default".to_string(),
-            turn_id: "turn-1".to_string(),
-            item_id: "tool:1".to_string(),
-            delta: "D:\\work".to_string(),
+        for notification in [
+            AppServerNotification::CommandExecutionOutputDelta {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:1".to_string(),
+                delta: "D:\\work".to_string(),
+            },
+            AppServerNotification::FileChangeOutputDelta {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:2".to_string(),
+                delta: "wrote D:\\work\\note.txt".to_string(),
+            },
+        ] {
+            assert_eq!(
+                classify_notification(&notification),
+                (
+                    NotificationStream::Control,
+                    NotificationDelivery::BestEffort
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn file_change_output_roundtrips_through_jsonrpc_notification() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:write".to_string(),
+                delta: "wrote note.txt".to_string(),
+            }),
         };
 
-        assert_eq!(
-            classify_notification(&notification),
-            (
-                NotificationStream::Control,
-                NotificationDelivery::BestEffort
-            )
-        );
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+        assert_eq!(notification.method, "item/fileChange/outputDelta");
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
+                item_id,
+                delta,
+                ..
+            }) => {
+                assert_eq!(item_id, "tool:write");
+                assert_eq!(delta, "wrote note.txt");
+            }
+            other => panic!("unexpected notification: {other:?}"),
+        }
     }
 
     #[test]

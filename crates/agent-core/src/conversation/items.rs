@@ -1,4 +1,4 @@
-use crate::tool::{CommandExecutionStatus, StructuredToolResult};
+use crate::tool::{CommandExecutionStatus, StructuredToolResult, WriteFileStatus};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,6 +42,14 @@ pub enum ThreadItem {
         exit_code: Option<i32>,
         stdout: Option<String>,
         stderr: Option<String>,
+        summary: String,
+    },
+    FileChange {
+        id: String,
+        tool_name: String,
+        path: String,
+        status: WriteFileStatus,
+        bytes_written: usize,
         summary: String,
     },
     ToolResult {

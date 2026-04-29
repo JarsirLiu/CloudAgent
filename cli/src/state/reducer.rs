@@ -297,6 +297,12 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
                 delta: delta.clone(),
             })
         }
+        AppServerNotification::FileChangeOutputDelta { item_id, delta, .. } => {
+            Some(ItemDispatch::ControlDelta {
+                item_id: item_id.clone(),
+                delta: delta.clone(),
+            })
+        }
         AppServerNotification::ItemCompleted { item, .. } => match item {
             ThreadItem::AgentMessage { .. } => {
                 Some(ItemDispatch::AssistantCompleted { item: item.clone() })
@@ -304,7 +310,9 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             ThreadItem::Reasoning { .. } => {
                 Some(ItemDispatch::ReasoningCompleted { item: item.clone() })
             }
-            ThreadItem::CommandExecution { .. } | ThreadItem::ToolResult { .. } => {
+            ThreadItem::CommandExecution { .. }
+            | ThreadItem::FileChange { .. }
+            | ThreadItem::ToolResult { .. } => {
                 Some(ItemDispatch::ControlCompleted { item: item.clone() })
             }
             ThreadItem::UserMessage { .. } => None,
