@@ -1,6 +1,6 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
-use agent_core::{ContextManager, ConversationHistory};
+use agent_core::{ContextManager, ConversationHistory, RolloutItem};
 use agent_protocol::{
     CommandExecutionStatus, EventMsg, ServerRequest, ServerRequestDecision, StructuredToolResult,
     ToolApprovalRequest, ToolResult, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState,
@@ -185,7 +185,10 @@ where
         let assistant_response_item =
             context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());
         runtime
-            .append_response_item_to_rollout(conversation_id, assistant_response_item)
+            .persist_rollout_items(
+                conversation_id,
+                &[RolloutItem::from(assistant_response_item)],
+            )
             .await?;
         runtime
             .state
@@ -346,7 +349,10 @@ where
                     );
                     let tool_response_item = context_manager.record_tool_result(result);
                     runtime
-                        .append_response_item_to_rollout(conversation_id, tool_response_item)
+                        .persist_rollout_items(
+                            conversation_id,
+                            &[RolloutItem::from(tool_response_item)],
+                        )
                         .await?;
                     runtime
                         .state
@@ -401,7 +407,7 @@ where
             );
             let tool_response_item = context_manager.record_tool_result(result);
             runtime
-                .append_response_item_to_rollout(conversation_id, tool_response_item)
+                .persist_rollout_items(conversation_id, &[RolloutItem::from(tool_response_item)])
                 .await?;
             runtime
                 .state
@@ -423,7 +429,7 @@ where
     let final_response_item =
         context_manager.record_assistant_message(Some(final_response.clone()), Vec::new());
     runtime
-        .append_response_item_to_rollout(conversation_id, final_response_item)
+        .persist_rollout_items(conversation_id, &[RolloutItem::from(final_response_item)])
         .await?;
     runtime
         .state

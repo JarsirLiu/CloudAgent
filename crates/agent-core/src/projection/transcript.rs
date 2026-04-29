@@ -209,7 +209,7 @@ impl TranscriptBuilder {
     }
 }
 
-pub fn conversation_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<ConversationTurn> {
+pub fn build_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<ConversationTurn> {
     let mut builder = ConversationHistoryBuilder::new();
     for item in items {
         builder.push_rollout_item(item);
@@ -218,7 +218,7 @@ pub fn conversation_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<Conve
 }
 
 pub fn transcript_items_from_rollout_items(items: &[RolloutItem]) -> Vec<TranscriptItem> {
-    flatten_conversation_turns(&conversation_turns_from_rollout_items(items))
+    flatten_conversation_turns(&build_turns_from_rollout_items(items))
 }
 
 pub fn transcript_items_from_response_items(items: &[ResponseItem]) -> Vec<TranscriptItem> {
@@ -492,7 +492,7 @@ mod tests {
             }),
         ];
 
-        let turns = conversation_turns_from_rollout_items(&items);
+        let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].id, "turn-1");

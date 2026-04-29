@@ -1,16 +1,19 @@
+mod rollout_recorder;
 mod state;
 mod tasks;
 
 use agent_core::{
     AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
-    ExecutionPolicy, ModelRequest, ModelResponse, RolloutItem, ToolCall, ToolExecutor, ToolSpec,
-    agent_turn_output_from_events, transcript_items_from_rollout_items,
+    ConversationTurn, ExecutionPolicy, ModelRequest, ModelResponse, RolloutItem, ToolCall,
+    ToolExecutor, ToolSpec, agent_turn_output_from_events, build_turns_from_rollout_items,
+    flatten_conversation_turns,
 };
 use agent_tools::ToolRegistry;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use config::{AgentConfig, LlmConfig};
 use reqwest::Client;
+use rollout_recorder::RolloutRecorder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use state::RuntimeState;
@@ -18,7 +21,6 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage::JsonConversationStore;
 use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub use agent_core::ResponseItem;
@@ -41,6 +43,7 @@ pub struct AgentRuntime {
     tools: Arc<dyn ToolExecutor>,
     state: RuntimeState,
     store: JsonConversationStore,
+    rollout_recorder: RolloutRecorder,
 }
 
 impl AgentRuntime {
@@ -54,6 +57,7 @@ impl AgentRuntime {
         let model = Arc::new(OpenAiCompatibleModel::new(config.llm.clone())?);
         let tools = Arc::new(ToolRegistry::new(config.tools.max_read_chars));
         let store = JsonConversationStore::new(config.runtime.conversation_store_dir.clone());
+        let rollout_recorder = RolloutRecorder::new(store.clone());
 
         let system_prompt = config.runtime.system_prompt.clone();
 
@@ -65,6 +69,7 @@ impl AgentRuntime {
             tools,
             state: RuntimeState::new(system_prompt),
             store,
+            rollout_recorder,
         })
     }
 
@@ -121,6 +126,7 @@ impl AgentRuntime {
     }
 
     pub async fn reset_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.rollout_recorder.flush().await?;
         self.state.remove_conversation(conversation_id).await;
         self.store.delete_conversation(conversation_id).await?;
         self.store.delete_events(conversation_id).await
@@ -141,8 +147,18 @@ impl AgentRuntime {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<TranscriptItem>> {
+        Ok(flatten_conversation_turns(
+            &self.build_turns_from_rollout(conversation_id).await?,
+        ))
+    }
+
+    pub async fn build_turns_from_rollout(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<ConversationTurn>> {
+        self.rollout_recorder.flush().await?;
         let rollout_items = self.store.load_rollout_items(conversation_id).await?;
-        Ok(transcript_items_from_rollout_items(&rollout_items))
+        Ok(build_turns_from_rollout_items(&rollout_items))
     }
 
     pub async fn conversation_snapshot(&self, conversation_id: &str) -> Result<ConversationState> {
@@ -258,21 +274,14 @@ impl AgentRuntime {
         F: Fn(ServerRequest) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
-        let (persist_tx, mut persist_rx) = mpsc::unbounded_channel::<EventMsg>();
-        let store = self.store.clone();
-        let persisted_conversation_id = conversation_id.to_string();
-        let persist_task = tokio::spawn(async move {
-            while let Some(event) = persist_rx.recv().await {
-                store
-                    .append_event(&persisted_conversation_id, &event)
-                    .await?;
-            }
-            Result::<()>::Ok(())
-        });
         let mut event_sink = |event: &EventMsg| {
             self.state
                 .append_conversation_event(conversation_id, event.clone());
-            let _ = persist_tx.send(event.clone());
+            if let Err(err) =
+                self.record_rollout_items(conversation_id, &[RolloutItem::from(event.clone())])
+            {
+                tracing::error!("failed to queue rollout event: {err:#}");
+            }
             on_event(event);
         };
 
@@ -285,7 +294,7 @@ impl AgentRuntime {
         let mut history = self.load_history(conversation_id).await?;
         let user_item = history.push_user_message(user_input);
         self.state.save_history(history.clone()).await;
-        self.append_response_item_to_rollout(conversation_id, user_item)
+        self.persist_rollout_items(conversation_id, &[RolloutItem::from(user_item)])
             .await?;
 
         let mut events = Vec::new();
@@ -337,9 +346,8 @@ impl AgentRuntime {
         match result {
             Ok(outcome) => {
                 drop(event_sink);
-                drop(persist_tx);
                 self.save_history(outcome.history.clone()).await?;
-                persist_task.await??;
+                self.rollout_recorder.flush().await?;
                 Ok(outcome)
             }
             Err(err) => {
@@ -354,9 +362,8 @@ impl AgentRuntime {
                         },
                     );
                     drop(event_sink);
-                    drop(persist_tx);
                     self.save_history(history_for_interrupt.clone()).await?;
-                    persist_task.await??;
+                    self.rollout_recorder.flush().await?;
                     let outcome = TurnOutcome {
                         turn_id: turn_id.clone(),
                         final_response: "Turn cancelled.".to_string(),
@@ -370,7 +377,7 @@ impl AgentRuntime {
                 let mut history = self.load_history(conversation_id).await?;
                 let failed_item = history
                     .push_assistant_message(Some(format!("Turn failed: {err:#}")), Vec::new());
-                self.append_response_item_to_rollout(conversation_id, failed_item)
+                self.persist_rollout_items(conversation_id, &[RolloutItem::from(failed_item)])
                     .await?;
                 let error_text = format!("{err:#}");
                 let mut events = Vec::new();
@@ -383,9 +390,8 @@ impl AgentRuntime {
                     },
                 );
                 drop(event_sink);
-                drop(persist_tx);
                 self.save_history(history.clone()).await?;
-                persist_task.await??;
+                self.rollout_recorder.flush().await?;
                 let outcome = TurnOutcome {
                     turn_id: turn_id.clone(),
                     final_response: format!("Turn failed: {error_text}"),
@@ -430,14 +436,16 @@ impl AgentRuntime {
         Ok(())
     }
 
-    pub(crate) async fn append_response_item_to_rollout(
+    pub(crate) async fn persist_rollout_items(
         &self,
         conversation_id: &str,
-        item: ResponseItem,
+        items: &[RolloutItem],
     ) -> Result<()> {
-        self.store
-            .append_rollout_items(conversation_id, &[RolloutItem::from(item)])
-            .await
+        self.record_rollout_items(conversation_id, items)
+    }
+
+    fn record_rollout_items(&self, conversation_id: &str, items: &[RolloutItem]) -> Result<()> {
+        self.rollout_recorder.record_items(conversation_id, items)
     }
 
     fn outcome_to_output(&self, outcome: TurnOutcome) -> AgentTurnOutput {
