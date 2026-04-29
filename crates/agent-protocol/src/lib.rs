@@ -246,6 +246,52 @@ pub enum AppServerMessage {
     Request(AppServerRequest),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NotificationDelivery {
+    Lossless,
+    BestEffort,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NotificationStream {
+    CoreTranscript,
+    Control,
+    Diagnostic,
+}
+
+pub fn classify_notification(
+    notification: &AppServerNotification,
+) -> (NotificationStream, NotificationDelivery) {
+    match notification {
+        AppServerNotification::AgentMessageDelta { .. }
+        | AppServerNotification::PlanDelta { .. }
+        | AppServerNotification::ReasoningSummaryTextDelta { .. }
+        | AppServerNotification::ReasoningTextDelta { .. }
+        | AppServerNotification::ItemCompleted { .. }
+        | AppServerNotification::TurnCompleted { .. } => {
+            (NotificationStream::CoreTranscript, NotificationDelivery::Lossless)
+        }
+        AppServerNotification::TurnStarted { .. }
+        | AppServerNotification::ItemStarted { .. }
+        | AppServerNotification::ServerRequestRequested { .. }
+        | AppServerNotification::ServerRequestResolved { .. }
+        | AppServerNotification::TurnFailed { .. }
+        | AppServerNotification::TurnCancelled { .. }
+        | AppServerNotification::ConversationStatus { .. }
+        | AppServerNotification::ConversationHistory { .. }
+        | AppServerNotification::ConversationSubscriptionChanged { .. }
+        | AppServerNotification::FrontendStateChanged { .. } => {
+            (NotificationStream::Control, NotificationDelivery::Lossless)
+        }
+        AppServerNotification::CommandExecutionOutputDelta { .. } => {
+            (NotificationStream::Control, NotificationDelivery::BestEffort)
+        }
+        AppServerNotification::Info { .. } | AppServerNotification::Error { .. } => {
+            (NotificationStream::Diagnostic, NotificationDelivery::BestEffort)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppClientCommandEnvelope {
     pub request_id: RequestId,
@@ -596,6 +642,78 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_core_transcript_notifications_matches_codex_core_set() {
+        let agent_delta = AppServerNotification::AgentMessageDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            delta: "hello".to_string(),
+        };
+        let reasoning_summary = AppServerNotification::ReasoningSummaryTextDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            delta: "summary".to_string(),
+        };
+        let reasoning_text = AppServerNotification::ReasoningTextDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            delta: "detail".to_string(),
+        };
+        let plan_delta = AppServerNotification::PlanDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "plan:1".to_string(),
+            delta: "step 1".to_string(),
+        };
+        let item_completed = AppServerNotification::ItemCompleted {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item: ThreadItem::AgentMessage {
+                id: "assistant:1".to_string(),
+                text: "done".to_string(),
+            },
+        };
+        let turn_completed = AppServerNotification::TurnCompleted {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+        };
+
+        for notification in [
+            agent_delta,
+            reasoning_summary,
+            reasoning_text,
+            plan_delta,
+            item_completed,
+            turn_completed,
+        ] {
+            assert_eq!(
+                classify_notification(&notification),
+                (
+                    NotificationStream::CoreTranscript,
+                    NotificationDelivery::Lossless
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn command_execution_output_is_control_not_core_transcript() {
+        let notification = AppServerNotification::CommandExecutionOutputDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:1".to_string(),
+            delta: "D:\\work".to_string(),
+        };
+
+        assert_eq!(
+            classify_notification(&notification),
+            (NotificationStream::Control, NotificationDelivery::BestEffort)
+        );
+    }
 
     #[test]
     fn approval_request_roundtrips_through_jsonrpc() {

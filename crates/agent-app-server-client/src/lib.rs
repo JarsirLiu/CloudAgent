@@ -1,7 +1,9 @@
 mod in_process;
 mod stdio;
 
-use agent_protocol::{AppServerMessage, AppServerNotification};
+use agent_protocol::{
+    classify_notification, AppServerMessage, AppServerNotification, NotificationDelivery,
+};
 use anyhow::Result;
 use tokio::sync::mpsc;
 
@@ -71,20 +73,8 @@ fn app_server_message_requires_delivery(message: &AppServerMessage) -> bool {
 
 fn notification_requires_delivery(notification: &AppServerNotification) -> bool {
     matches!(
-        notification,
-        AppServerNotification::ItemStarted { .. }
-            | AppServerNotification::ServerRequestRequested { .. }
-            | AppServerNotification::ServerRequestResolved { .. }
-            | AppServerNotification::ItemCompleted { .. }
-            | AppServerNotification::TurnCompleted { .. }
-            | AppServerNotification::TurnFailed { .. }
-            | AppServerNotification::TurnCancelled { .. }
-    ) || matches!(
-        notification,
-        AppServerNotification::AgentMessageDelta { .. }
-            | AppServerNotification::PlanDelta { .. }
-            | AppServerNotification::ReasoningSummaryTextDelta { .. }
-            | AppServerNotification::ReasoningTextDelta { .. }
+        classify_notification(notification),
+        (_, NotificationDelivery::Lossless)
     )
 }
 
@@ -148,11 +138,23 @@ mod tests {
     fn text_delta_event(delta: &str) -> AppServerEvent {
         AppServerEvent::Message(AppServerMessage::Notification(
             AppServerNotification::AgentMessageDelta {
-            conversation_id: "default".to_string(),
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:1".to_string(),
-            delta: delta.to_string(),
-        }))
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:1".to_string(),
+                delta: delta.to_string(),
+            },
+        ))
+    }
+
+    fn command_output_event(delta: &str) -> AppServerEvent {
+        AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::CommandExecutionOutputDelta {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:1".to_string(),
+                delta: delta.to_string(),
+            },
+        ))
     }
 
     fn item_started_event() -> AppServerEvent {
@@ -267,6 +269,7 @@ mod tests {
         assert!(event_requires_delivery(&item_completed_event()));
         assert!(event_requires_delivery(&text_delta_event("hello")));
         assert!(event_requires_delivery(&server_request_event()));
+        assert!(!event_requires_delivery(&command_output_event("D:\\work")));
         assert!(!event_requires_delivery(&info_event("cosmetic")));
         assert!(!event_requires_delivery(&AppServerEvent::Lagged { skipped: 1 }));
         assert!(!event_requires_delivery(&AppServerEvent::Disconnected {

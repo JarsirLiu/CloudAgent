@@ -9,7 +9,7 @@ pub enum EventDelivery {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EventStream {
-    Transcript,
+    CoreTranscript,
     Control,
     Diagnostic,
 }
@@ -19,12 +19,14 @@ pub fn classify_turn_event(event: &TurnEvent) -> (EventStream, EventDelivery) {
         TurnEvent::ItemDelta { kind, .. } => match kind {
             TurnItemDeltaKind::Text
             | TurnItemDeltaKind::ReasoningSummary
-            | TurnItemDeltaKind::ReasoningText => (EventStream::Transcript, EventDelivery::Lossless),
+            | TurnItemDeltaKind::ReasoningText => {
+                (EventStream::CoreTranscript, EventDelivery::Lossless)
+            }
             TurnItemDeltaKind::ToolOutput => (EventStream::Control, EventDelivery::BestEffort),
             TurnItemDeltaKind::JsonPatch => (EventStream::Diagnostic, EventDelivery::InternalOnly),
         },
         TurnEvent::ItemCompleted { .. } | TurnEvent::TurnCompleted { .. } => {
-            (EventStream::Transcript, EventDelivery::Lossless)
+            (EventStream::CoreTranscript, EventDelivery::Lossless)
         }
         TurnEvent::ItemStarted { .. }
         | TurnEvent::ServerRequestRequested { .. }
