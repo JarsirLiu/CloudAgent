@@ -1,7 +1,6 @@
 use crate::conversation_subscriptions::ConversationSubscriptions;
 use crate::projection::ConversationNotificationProjector;
 use crate::server_request_coordinator::ServerRequestCoordinator;
-use agent_core::history_entry_from_message;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest,
     ServerRequestDecision,
@@ -118,19 +117,15 @@ pub(crate) async fn handle_command(
             .await;
         }
         AppClientCommand::RequestConversationHistory { conversation_id } => {
-            let snapshot = runtime
-                .conversation_history_snapshot(&conversation_id)
+            let messages = runtime
+                .conversation_transcript_snapshot(&conversation_id)
                 .await?;
             send_notification(
                 event_tx,
                 &state,
                 AppServerNotification::ConversationHistory {
                     conversation_id,
-                    messages: snapshot
-                        .messages
-                        .iter()
-                        .map(history_entry_from_message)
-                        .collect(),
+                    messages,
                 },
             )
             .await;

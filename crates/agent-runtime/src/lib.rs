@@ -4,7 +4,7 @@ mod tasks;
 use agent_core::{
     AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
     ExecutionPolicy, ModelRequest, ModelResponse, RolloutItem, ToolCall, ToolExecutor, ToolSpec,
-    agent_turn_output_from_events,
+    agent_turn_output_from_events, transcript_items_from_rollout_items,
 };
 use agent_tools::ToolRegistry;
 use anyhow::{Context, Result, bail};
@@ -135,6 +135,14 @@ impl AgentRuntime {
             .await?
             .history()
             .clone())
+    }
+
+    pub async fn conversation_transcript_snapshot(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<TranscriptItem>> {
+        let rollout_items = self.store.load_rollout_items(conversation_id).await?;
+        Ok(transcript_items_from_rollout_items(&rollout_items))
     }
 
     pub async fn conversation_snapshot(&self, conversation_id: &str) -> Result<ConversationState> {

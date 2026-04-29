@@ -877,9 +877,9 @@ mod tests {
         )));
         assert!(history.iter().any(|entry| matches!(
             entry,
-            TranscriptItem::ToolResult {
+            TranscriptItem::CommandExecution {
                 tool_name,
-                structured: Some(StructuredToolResult::CommandExecution { command, .. }),
+                command,
                 ..
             } if tool_name == "shell_command" && command == "pwd"
         )));

@@ -353,13 +353,40 @@ pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
             summarize_tool_content(tool_name, content, structured.as_ref()),
             HistoryTone::Control,
         ),
-        TranscriptItem::CommandExecution { summary, .. }
-        | TranscriptItem::FileChange { summary, .. } => {
+        TranscriptItem::CommandExecution {
+            command,
+            current_directory,
+            status,
+            exit_code,
+            ..
+        } => HistoryCell::from_message(
+            "tool",
+            summarize_command_execution(command, current_directory, status, *exit_code),
+            HistoryTone::Control,
+        ),
+        TranscriptItem::FileChange { summary, .. } => {
             HistoryCell::from_message("tool", summary.clone(), HistoryTone::Control)
         }
         TranscriptItem::Reasoning { text, .. } => {
             HistoryCell::from_message("reasoning", text.clone(), HistoryTone::Reasoning)
         }
+    }
+}
+
+fn summarize_command_execution(
+    command: &str,
+    current_directory: &str,
+    status: &CommandExecutionStatus,
+    exit_code: Option<i32>,
+) -> String {
+    let status_text = match status {
+        CommandExecutionStatus::Completed => "completed",
+        CommandExecutionStatus::Failed => "failed",
+        CommandExecutionStatus::Declined => "declined",
+    };
+    match exit_code {
+        Some(code) => format!("{status_text}: {command} (exit {code}) @ {current_directory}"),
+        None => format!("{status_text}: {command} @ {current_directory}"),
     }
 }
 

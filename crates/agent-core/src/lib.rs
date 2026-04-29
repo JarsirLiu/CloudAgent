@@ -23,7 +23,9 @@ pub use events::{
 };
 pub use policy::ExecutionPolicy;
 pub use projection::{
-    agent_turn_output_from_events, history_entry_from_message, tool_events_from_turn_events,
+    TranscriptBuilder, agent_turn_output_from_events, tool_events_from_turn_events,
+    transcript_item_from_response_item, transcript_items_from_response_items,
+    transcript_items_from_rollout_items,
 };
 pub use protocol::RequestId;
 pub use rollout::RolloutItem;
