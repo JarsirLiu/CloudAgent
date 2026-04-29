@@ -1,4 +1,4 @@
-use crate::conversation::ThreadItem;
+use crate::conversation::TranscriptItem;
 use crate::turn::{EventMsg, TurnId, TurnItemDeltaKind};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,7 +22,7 @@ pub enum CoreTranscriptEvent {
     },
     ItemCompleted {
         turn_id: TurnId,
-        item: ThreadItem,
+        item: TranscriptItem,
     },
     AgentMessageDelta {
         turn_id: TurnId,

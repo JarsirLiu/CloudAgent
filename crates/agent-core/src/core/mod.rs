@@ -1,11 +1,11 @@
-use crate::conversation::ConversationMessage;
+use crate::conversation::ResponseItem;
 use crate::tool::{ToolCall, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
 
 #[derive(Clone, Debug)]
 pub struct ModelRequest {
-    pub messages: Vec<ConversationMessage>,
+    pub messages: Vec<ResponseItem>,
     pub tools: Vec<ToolSpec>,
     pub temperature: f32,
 }

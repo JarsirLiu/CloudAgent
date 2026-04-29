@@ -126,8 +126,8 @@ pub(crate) async fn forward_event(
 mod tests {
     use super::*;
     use agent_protocol::{
-        AppServerNotification, CommandExecutionStatus, RequestId, ServerRequest, ThreadItem,
-        ToolApprovalRequest, TurnItemKind,
+        AppServerNotification, CommandExecutionStatus, RequestId, ServerRequest,
+        ToolApprovalRequest, TranscriptItem, TurnItemKind,
     };
 
     fn info_event(message: &str) -> AppServerEvent {
@@ -178,7 +178,7 @@ mod tests {
             AppServerNotification::ItemCompleted {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
-                item: ThreadItem::CommandExecution {
+                item: TranscriptItem::CommandExecution {
                     id: "tool:1".to_string(),
                     tool_name: "shell_command".to_string(),
                     command: "pwd".to_string(),

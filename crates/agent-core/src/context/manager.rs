@@ -1,11 +1,11 @@
-use crate::conversation::{ConversationHistory, ConversationMessage};
+use crate::conversation::{ConversationHistory, ResponseItem};
 use crate::core::ModelRequest;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 pub struct ModelContext {
-    messages: Vec<ConversationMessage>,
+    messages: Vec<ResponseItem>,
 }
 
 impl ModelContext {
@@ -15,11 +15,11 @@ impl ModelContext {
         }
     }
 
-    pub fn messages(&self) -> &[ConversationMessage] {
+    pub fn messages(&self) -> &[ResponseItem] {
         &self.messages
     }
 
-    pub fn into_messages(self) -> Vec<ConversationMessage> {
+    pub fn into_messages(self) -> Vec<ResponseItem> {
         self.messages
     }
 }

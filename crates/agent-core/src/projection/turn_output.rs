@@ -1,4 +1,4 @@
-use crate::conversation::{ConversationHistory, ThreadItem};
+use crate::conversation::{ConversationHistory, TranscriptItem};
 use crate::tool::{CommandExecutionStatus, ToolEvent, WriteFileStatus};
 use crate::turn::{AgentTurnOutput, EventMsg, TurnItemKind, TurnState};
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
                 }
             }
             EventMsg::ItemCompleted { item, .. } => match item {
-                ThreadItem::CommandExecution {
+                TranscriptItem::CommandExecution {
                     id,
                     tool_name,
                     status,
@@ -80,7 +80,7 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
                         });
                     }
                 }
-                ThreadItem::ToolResult {
+                TranscriptItem::ToolResult {
                     id,
                     tool_name,
                     summary,
@@ -109,7 +109,7 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
                         });
                     }
                 }
-                ThreadItem::FileChange {
+                TranscriptItem::FileChange {
                     id,
                     tool_name,
                     status,
@@ -134,9 +134,10 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
                         });
                     }
                 }
-                ThreadItem::UserMessage { .. }
-                | ThreadItem::AgentMessage { .. }
-                | ThreadItem::Reasoning { .. } => {}
+                TranscriptItem::UserMessage { .. }
+                | TranscriptItem::SystemMessage { .. }
+                | TranscriptItem::AgentMessage { .. }
+                | TranscriptItem::Reasoning { .. } => {}
             },
             EventMsg::TurnStarted { .. }
             | EventMsg::ModelRequestStarted { .. }

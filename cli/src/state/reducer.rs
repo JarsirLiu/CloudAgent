@@ -1,6 +1,6 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    HistoryEntry, RequestId, ServerRequest, ThreadItem, TurnItemKind, UserTurnInput,
+    RequestId, ServerRequest, TranscriptItem, TurnItemKind, UserTurnInput,
 };
 
 #[derive(Debug, Clone)]
@@ -31,13 +31,13 @@ pub(crate) enum ItemDispatch {
         delta: String,
     },
     AssistantCompleted {
-        item: ThreadItem,
+        item: TranscriptItem,
     },
     ReasoningCompleted {
-        item: ThreadItem,
+        item: TranscriptItem,
     },
     ControlCompleted {
-        item: ThreadItem,
+        item: TranscriptItem,
     },
 }
 
@@ -69,7 +69,7 @@ pub(crate) enum ServerAction {
     SetHistoryLoaded(bool),
     ClearServerRequestView,
     ClearLastToolName,
-    ReplaceHistory(Vec<HistoryEntry>),
+    ReplaceHistory(Vec<TranscriptItem>),
     PushErrorCell(String),
     ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
@@ -304,18 +304,18 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             })
         }
         AppServerNotification::ItemCompleted { item, .. } => match item {
-            ThreadItem::AgentMessage { .. } => {
+            TranscriptItem::AgentMessage { .. } => {
                 Some(ItemDispatch::AssistantCompleted { item: item.clone() })
             }
-            ThreadItem::Reasoning { .. } => {
+            TranscriptItem::Reasoning { .. } => {
                 Some(ItemDispatch::ReasoningCompleted { item: item.clone() })
             }
-            ThreadItem::CommandExecution { .. }
-            | ThreadItem::FileChange { .. }
-            | ThreadItem::ToolResult { .. } => {
+            TranscriptItem::CommandExecution { .. }
+            | TranscriptItem::FileChange { .. }
+            | TranscriptItem::ToolResult { .. } => {
                 Some(ItemDispatch::ControlCompleted { item: item.clone() })
             }
-            ThreadItem::UserMessage { .. } => None,
+            TranscriptItem::UserMessage { .. } | TranscriptItem::SystemMessage { .. } => None,
         },
         _ => None,
     }

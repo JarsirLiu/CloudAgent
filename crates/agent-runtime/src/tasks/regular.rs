@@ -3,7 +3,7 @@ use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{ContextManager, ConversationHistory};
 use agent_protocol::{
     CommandExecutionStatus, EventMsg, ServerRequest, ServerRequestDecision, StructuredToolResult,
-    ThreadItem, ToolApprovalRequest, ToolResult, TurnItemDeltaKind, TurnItemKind, TurnState,
+    ToolApprovalRequest, ToolResult, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState,
     WriteFileStatus,
 };
 use anyhow::Result;
@@ -149,7 +149,7 @@ where
                 EventMsg::ItemCompleted {
                     turn_id: turn_id.to_string(),
                     item_id: item_id.clone(),
-                    item: ThreadItem::AgentMessage {
+                    item: TranscriptItem::AgentMessage {
                         id: item_id,
                         text: response.content.clone().unwrap_or_default(),
                     },
@@ -433,7 +433,11 @@ where
     })
 }
 
-fn thread_item_from_tool_result(item_id: &str, tool_name: &str, result: &ToolResult) -> ThreadItem {
+fn thread_item_from_tool_result(
+    item_id: &str,
+    tool_name: &str,
+    result: &ToolResult,
+) -> TranscriptItem {
     match &result.structured {
         Some(StructuredToolResult::CommandExecution {
             command,
@@ -443,7 +447,7 @@ fn thread_item_from_tool_result(item_id: &str, tool_name: &str, result: &ToolRes
             stdout,
             stderr,
             ..
-        }) => ThreadItem::CommandExecution {
+        }) => TranscriptItem::CommandExecution {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
             command: command.clone(),
@@ -458,7 +462,7 @@ fn thread_item_from_tool_result(item_id: &str, tool_name: &str, result: &ToolRes
             path,
             bytes_written,
             status,
-        }) => ThreadItem::FileChange {
+        }) => TranscriptItem::FileChange {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
             path: path.clone(),
@@ -466,9 +470,10 @@ fn thread_item_from_tool_result(item_id: &str, tool_name: &str, result: &ToolRes
             bytes_written: *bytes_written,
             summary: result.summary.clone(),
         },
-        _ => ThreadItem::ToolResult {
+        _ => TranscriptItem::ToolResult {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
+            content: result.content.clone(),
             summary: result.summary.clone(),
             structured: result.structured.clone(),
         },
@@ -480,7 +485,7 @@ fn denied_thread_item(
     tool_name: &str,
     arguments: &serde_json::Value,
     reason: &str,
-) -> ThreadItem {
+) -> TranscriptItem {
     match denied_tool_result(tool_name, arguments, reason.to_string()) {
         Some(StructuredToolResult::CommandExecution {
             command,
@@ -490,7 +495,7 @@ fn denied_thread_item(
             stdout,
             stderr,
             ..
-        }) => ThreadItem::CommandExecution {
+        }) => TranscriptItem::CommandExecution {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
             command,
@@ -505,7 +510,7 @@ fn denied_thread_item(
             path,
             bytes_written,
             status,
-        }) => ThreadItem::FileChange {
+        }) => TranscriptItem::FileChange {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
             path,
@@ -513,9 +518,10 @@ fn denied_thread_item(
             bytes_written,
             summary: "tool execution skipped".to_string(),
         },
-        structured => ThreadItem::ToolResult {
+        structured => TranscriptItem::ToolResult {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
+            content: "tool execution skipped".to_string(),
             summary: "tool execution skipped".to_string(),
             structured,
         },
@@ -572,7 +578,7 @@ fn emit_assistant_item(
         EventMsg::ItemCompleted {
             turn_id: turn_id.to_string(),
             item_id: assistant_item_id.clone(),
-            item: ThreadItem::AgentMessage {
+            item: TranscriptItem::AgentMessage {
                 id: assistant_item_id,
                 text: content.to_string(),
             },

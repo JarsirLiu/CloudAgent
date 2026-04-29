@@ -1,29 +1,32 @@
-use crate::conversation::{ConversationMessage, HistoryEntry};
+use crate::conversation::{ResponseItem, TranscriptItem};
 
-pub fn history_entry_from_message(message: &ConversationMessage) -> HistoryEntry {
+pub fn history_entry_from_message(message: &ResponseItem) -> TranscriptItem {
     match message {
-        ConversationMessage::System { content } => HistoryEntry::System {
-            content: content.clone(),
+        ResponseItem::System { content } => TranscriptItem::SystemMessage {
+            id: "system".to_string(),
+            text: content.clone(),
         },
-        ConversationMessage::User { content } => HistoryEntry::User {
-            content: content.clone(),
+        ResponseItem::User { content } => TranscriptItem::UserMessage {
+            id: String::new(),
+            text: content.clone(),
         },
-        ConversationMessage::Assistant {
+        ResponseItem::Assistant {
             content,
-            tool_calls,
-        } => HistoryEntry::Assistant {
-            content: content.clone(),
-            has_tool_calls: !tool_calls.is_empty(),
+            tool_calls: _,
+        } => TranscriptItem::AgentMessage {
+            id: String::new(),
+            text: content.clone().unwrap_or_default(),
         },
-        ConversationMessage::Tool {
+        ResponseItem::Tool {
             tool_call_id,
             name,
             content,
             structured,
-        } => HistoryEntry::Tool {
-            tool_call_id: tool_call_id.clone(),
-            name: name.clone(),
+        } => TranscriptItem::ToolResult {
+            id: tool_call_id.clone(),
+            tool_name: name.clone(),
             content: content.clone(),
+            summary: content.clone(),
             structured: structured.clone(),
         },
     }

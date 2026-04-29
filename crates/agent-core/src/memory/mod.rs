@@ -1,4 +1,4 @@
-use crate::conversation::{ConversationHistory, ConversationMessage};
+use crate::conversation::{ConversationHistory, ResponseItem};
 
 #[derive(Clone, Debug, Default)]
 pub struct ConversationMemory {
@@ -11,15 +11,15 @@ impl ConversationMemory {
         let mut memory = Self::default();
         for message in &history.messages {
             match message {
-                ConversationMessage::User { content } => {
+                ResponseItem::User { content } => {
                     memory.last_user_message = Some(content.clone());
                 }
-                ConversationMessage::Assistant { content, .. } => {
+                ResponseItem::Assistant { content, .. } => {
                     if let Some(content) = content {
                         memory.last_assistant_message = Some(content.clone());
                     }
                 }
-                ConversationMessage::System { .. } | ConversationMessage::Tool { .. } => {}
+                ResponseItem::System { .. } | ResponseItem::Tool { .. } => {}
             }
         }
         memory

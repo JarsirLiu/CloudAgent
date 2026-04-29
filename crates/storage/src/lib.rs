@@ -1,4 +1,4 @@
-use agent_core::{ConversationState, PersistedConversation};
+use agent_core::{ConversationState, PersistedConversation, RolloutItem};
 use agent_protocol::EventMsg;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -60,27 +60,55 @@ impl JsonConversationStore {
     }
 
     pub async fn load_events(&self, conversation_id: &str) -> Result<Vec<EventMsg>> {
-        let path = self.event_path(conversation_id);
-        self.load_events_from_path(&path).await
+        Ok(self
+            .load_rollout_items(conversation_id)
+            .await?
+            .into_iter()
+            .filter_map(|item| match item {
+                RolloutItem::EventMsg { event } => Some(event),
+                RolloutItem::ResponseItem { .. }
+                | RolloutItem::Compacted { .. }
+                | RolloutItem::TurnContext { .. }
+                | RolloutItem::SessionMeta { .. } => None,
+            })
+            .collect())
     }
 
     pub async fn append_events(&self, conversation_id: &str, events: &[EventMsg]) -> Result<()> {
-        if events.is_empty() {
+        let items = events
+            .iter()
+            .cloned()
+            .map(RolloutItem::from)
+            .collect::<Vec<_>>();
+        self.append_rollout_items(conversation_id, &items).await
+    }
+
+    pub async fn load_rollout_items(&self, conversation_id: &str) -> Result<Vec<RolloutItem>> {
+        let path = self.rollout_path(conversation_id);
+        self.load_rollout_items_from_path(&path).await
+    }
+
+    pub async fn append_rollout_items(
+        &self,
+        conversation_id: &str,
+        items: &[RolloutItem],
+    ) -> Result<()> {
+        if items.is_empty() {
             return Ok(());
         }
         let _guard = self.io_lock.lock().await;
         fs::create_dir_all(&self.root)
             .await
             .with_context(|| format!("failed to create {}", self.root.display()))?;
-        let path = self.event_path(conversation_id);
+        let path = self.rollout_path(conversation_id);
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
             .await
             .with_context(|| format!("failed to open {}", path.display()))?;
-        for event in events {
-            let line = serde_json::to_string(event)?;
+        for item in items {
+            let line = serde_json::to_string(item)?;
             file.write_all(line.as_bytes())
                 .await
                 .with_context(|| format!("failed to append {}", path.display()))?;
@@ -112,20 +140,24 @@ impl JsonConversationStore {
     }
 
     fn event_path(&self, conversation_id: &str) -> PathBuf {
+        self.rollout_path(conversation_id)
+    }
+
+    fn rollout_path(&self, conversation_id: &str) -> PathBuf {
         self.root.join(format!(
-            "{}.events.json",
+            "{}.rollout.jsonl",
             sanitize_conversation_id(conversation_id)
         ))
     }
 
-    async fn load_events_from_path(&self, path: &Path) -> Result<Vec<EventMsg>> {
-        match self.read_event_log_text(path).await? {
-            Some(text) => self.parse_event_log_text(path, &text),
+    async fn load_rollout_items_from_path(&self, path: &Path) -> Result<Vec<RolloutItem>> {
+        match self.read_rollout_log_text(path).await? {
+            Some(text) => self.parse_rollout_log_text(path, &text),
             None => Ok(Vec::new()),
         }
     }
 
-    async fn read_event_log_text(&self, path: &Path) -> Result<Option<String>> {
+    async fn read_rollout_log_text(&self, path: &Path) -> Result<Option<String>> {
         match fs::read_to_string(path).await {
             Ok(text) => Ok(Some(text)),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -133,28 +165,28 @@ impl JsonConversationStore {
         }
     }
 
-    fn parse_event_log_text(&self, path: &Path, text: &str) -> Result<Vec<EventMsg>> {
+    fn parse_rollout_log_text(&self, path: &Path, text: &str) -> Result<Vec<RolloutItem>> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut events = Vec::new();
+        let mut items = Vec::new();
         for (line_no, line) in text.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
-            let event = serde_json::from_str::<EventMsg>(line).with_context(|| {
+            let item = serde_json::from_str::<RolloutItem>(line).with_context(|| {
                 format!(
-                    "failed to parse event file {} at line {}",
+                    "failed to parse rollout file {} at line {}",
                     path.display(),
                     line_no + 1
                 )
             })?;
-            events.push(event);
+            items.push(item);
         }
-        Ok(events)
+        Ok(items)
     }
 
     async fn delete_file_if_exists(&self, path: &Path) -> Result<()> {

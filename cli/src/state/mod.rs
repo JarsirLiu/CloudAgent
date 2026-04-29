@@ -3,8 +3,8 @@ pub mod selectors;
 
 use crate::ui::widgets::history_cell::{HistoryCell, Transcript};
 use agent_protocol::{
-    AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode, HistoryEntry,
-    RequestId,
+    AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode, RequestId,
+    TranscriptItem,
 };
 
 #[derive(Clone, Debug)]
@@ -44,7 +44,7 @@ pub struct TranscriptState {
 #[derive(Clone, Debug)]
 pub struct RunState {
     pub history_loaded: bool,
-    pub history_snapshot: Option<Vec<HistoryEntry>>,
+    pub history_snapshot: Option<Vec<TranscriptItem>>,
     pub status_notice: Option<String>,
     pub last_message_count: usize,
     pub last_tool_name: Option<String>,

@@ -7,13 +7,14 @@ pub mod plan;
 pub mod policy;
 pub mod projection;
 pub mod protocol;
+pub mod rollout;
 pub mod tool;
 pub mod turn;
 
 pub use context::{AgentContext, ContextManager, ModelContext, ToolExecutionContext};
 pub use conversation::{
-    ActiveConversationTurn, ConversationHistory, ConversationMessage, ConversationState,
-    HistoryEntry, PendingConversationRequest, PersistedConversation, ThreadItem,
+    ActiveConversationTurn, ConversationHistory, ConversationState, PendingConversationRequest,
+    PersistedConversation, ResponseItem, TranscriptItem,
 };
 pub use core::{ChatModel, ModelRequest, ModelResponse};
 pub use events::{
@@ -25,6 +26,7 @@ pub use projection::{
     agent_turn_output_from_events, history_entry_from_message, tool_events_from_turn_events,
 };
 pub use protocol::RequestId;
+pub use rollout::RolloutItem;
 pub use tool::{
     CommandExecutionStatus, StructuredToolResult, ToolCall, ToolEvent, ToolExecutor, ToolResult,
     ToolSpec, WriteFileStatus,

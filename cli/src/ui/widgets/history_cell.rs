@@ -1,4 +1,6 @@
-use agent_protocol::{CommandExecutionStatus, HistoryEntry, StructuredToolResult, WriteFileStatus};
+use agent_protocol::{
+    CommandExecutionStatus, StructuredToolResult, TranscriptItem, WriteFileStatus,
+};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -260,7 +262,7 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    pub fn replace_with_history(&mut self, messages: &[HistoryEntry]) {
+    pub fn replace_with_history(&mut self, messages: &[TranscriptItem]) {
         self.cells.clear();
         for message in messages {
             let cell = render_history_entry(message);
@@ -330,29 +332,34 @@ impl Transcript {
 
 // ── Event Helpers ─────────────────────────────────────────────────────────────
 
-pub fn render_history_entry(message: &HistoryEntry) -> HistoryCell {
+pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
     match message {
-        HistoryEntry::System { .. } => HistoryCell::from_message("", "", HistoryTone::Meta),
-        HistoryEntry::User { content } => {
-            HistoryCell::from_message("you", content.clone(), HistoryTone::User)
+        TranscriptItem::SystemMessage { .. } => {
+            HistoryCell::from_message("", "", HistoryTone::Meta)
         }
-        HistoryEntry::Assistant {
-            content,
-            has_tool_calls: _,
-        } => {
-            let body = content.clone().unwrap_or_default();
-            HistoryCell::from_message("cloudagent", body, HistoryTone::Agent)
+        TranscriptItem::UserMessage { text, .. } => {
+            HistoryCell::from_message("you", text.clone(), HistoryTone::User)
         }
-        HistoryEntry::Tool {
-            name,
+        TranscriptItem::AgentMessage { text, .. } => {
+            HistoryCell::from_message("cloudagent", text.clone(), HistoryTone::Agent)
+        }
+        TranscriptItem::ToolResult {
+            tool_name,
             content,
             structured,
             ..
         } => HistoryCell::from_message(
-            name.clone(),
-            summarize_tool_content(name, content, structured.as_ref()),
+            tool_name.clone(),
+            summarize_tool_content(tool_name, content, structured.as_ref()),
             HistoryTone::Control,
         ),
+        TranscriptItem::CommandExecution { summary, .. }
+        | TranscriptItem::FileChange { summary, .. } => {
+            HistoryCell::from_message("tool", summary.clone(), HistoryTone::Control)
+        }
+        TranscriptItem::Reasoning { text, .. } => {
+            HistoryCell::from_message("reasoning", text.clone(), HistoryTone::Reasoning)
+        }
     }
 }
 

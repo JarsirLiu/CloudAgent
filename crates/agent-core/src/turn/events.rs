@@ -1,4 +1,4 @@
-use crate::conversation::ThreadItem;
+use crate::conversation::TranscriptItem;
 use crate::protocol::RequestId;
 use serde::{Deserialize, Serialize};
 
@@ -94,7 +94,7 @@ pub enum EventMsg {
     ItemCompleted {
         turn_id: TurnId,
         item_id: String,
-        item: ThreadItem,
+        item: TranscriptItem,
     },
     ServerRequestRequested {
         turn_id: TurnId,

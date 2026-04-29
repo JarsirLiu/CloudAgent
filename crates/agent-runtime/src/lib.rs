@@ -21,10 +21,10 @@ use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-pub use agent_core::ConversationMessage;
+pub use agent_core::ResponseItem;
 pub use agent_protocol::{
     ConversationSnapshot, ConversationStatus, EventMsg, RequestId, ServerRequest,
-    ServerRequestDecision, ThreadItem, TurnItemKind, TurnState,
+    ServerRequestDecision, TranscriptItem, TurnItemKind, TurnState,
 };
 
 const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
@@ -668,23 +668,23 @@ struct ChatApiMessage {
 }
 
 impl ChatApiMessage {
-    fn from_message(message: &ConversationMessage) -> Result<Self> {
+    fn from_message(message: &ResponseItem) -> Result<Self> {
         match message {
-            ConversationMessage::System { content } => Ok(Self {
+            ResponseItem::System { content } => Ok(Self {
                 role: "system".to_string(),
                 content: Some(content.clone()),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
             }),
-            ConversationMessage::User { content } => Ok(Self {
+            ResponseItem::User { content } => Ok(Self {
                 role: "user".to_string(),
                 content: Some(content.clone()),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
             }),
-            ConversationMessage::Assistant {
+            ResponseItem::Assistant {
                 content,
                 tool_calls,
             } => Ok(Self {
@@ -703,7 +703,7 @@ impl ChatApiMessage {
                 tool_call_id: None,
                 name: None,
             }),
-            ConversationMessage::Tool {
+            ResponseItem::Tool {
                 tool_call_id,
                 name,
                 content,

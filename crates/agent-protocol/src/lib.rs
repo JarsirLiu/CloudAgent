@@ -1,9 +1,9 @@
 mod jsonrpc;
 
 pub use agent_core::{
-    CommandExecutionStatus, EventMsg, HistoryEntry, ServerRequest, ServerRequestDecision,
-    StructuredToolResult, ThreadItem, ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TurnId,
-    TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
+    CommandExecutionStatus, EventMsg, ServerRequest, ServerRequestDecision, StructuredToolResult,
+    ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TranscriptItem, TurnId, TurnItemDeltaKind,
+    TurnItemKind, TurnState, WriteFileStatus,
 };
 pub use jsonrpc::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
@@ -147,7 +147,7 @@ pub enum AppServerNotification {
     ItemCompleted {
         conversation_id: String,
         turn_id: TurnId,
-        item: ThreadItem,
+        item: TranscriptItem,
     },
     ServerRequestRequested {
         conversation_id: String,
@@ -181,7 +181,7 @@ pub enum AppServerNotification {
     },
     ConversationHistory {
         conversation_id: String,
-        messages: Vec<HistoryEntry>,
+        messages: Vec<TranscriptItem>,
     },
     ConversationSubscriptionChanged {
         conversation_id: String,
@@ -732,7 +732,7 @@ mod tests {
         let item_completed = AppServerNotification::ItemCompleted {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
-            item: ThreadItem::AgentMessage {
+            item: TranscriptItem::AgentMessage {
                 id: "assistant:1".to_string(),
                 text: "done".to_string(),
             },

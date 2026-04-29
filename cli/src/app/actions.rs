@@ -4,7 +4,7 @@ use crate::app::parse::ParsedInput;
 use crate::state::reducer::{ItemDispatch, ServerAction};
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerClient;
-use agent_protocol::{AppClientCommand, FrontendMode, ThreadItem, TurnItemKind, UserTurnInput};
+use agent_protocol::{AppClientCommand, FrontendMode, TranscriptItem, TurnItemKind, UserTurnInput};
 use anyhow::Result;
 
 pub(crate) fn handle_tui_input(
@@ -175,22 +175,23 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 app.handle_control_item_delta(&item_id, &delta);
             }
             ItemDispatch::AssistantCompleted { item } => {
-                if let ThreadItem::AgentMessage { id, text } = item {
+                if let TranscriptItem::AgentMessage { id, text } = item {
                     app.handle_assistant_item_completed(&id, &text);
                 }
             }
             ItemDispatch::ReasoningCompleted { item } => match item {
-                ThreadItem::Reasoning { id, text, .. } => {
+                TranscriptItem::Reasoning { id, text, .. } => {
                     app.handle_reasoning_item_completed(&id, "reasoning", &text);
                 }
-                ThreadItem::UserMessage { .. }
-                | ThreadItem::AgentMessage { .. }
-                | ThreadItem::CommandExecution { .. }
-                | ThreadItem::FileChange { .. }
-                | ThreadItem::ToolResult { .. } => {}
+                TranscriptItem::UserMessage { .. }
+                | TranscriptItem::SystemMessage { .. }
+                | TranscriptItem::AgentMessage { .. }
+                | TranscriptItem::CommandExecution { .. }
+                | TranscriptItem::FileChange { .. }
+                | TranscriptItem::ToolResult { .. } => {}
             },
             ItemDispatch::ControlCompleted { item } => match item {
-                ThreadItem::CommandExecution {
+                TranscriptItem::CommandExecution {
                     id,
                     command,
                     tool_name,
@@ -209,7 +210,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                         &summary,
                     );
                 }
-                ThreadItem::FileChange {
+                TranscriptItem::FileChange {
                     id, path, summary, ..
                 } => {
                     app.handle_control_item_completed(
@@ -219,7 +220,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                         &summary,
                     );
                 }
-                ThreadItem::ToolResult {
+                TranscriptItem::ToolResult {
                     id,
                     tool_name,
                     summary,
@@ -232,9 +233,10 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                         &summary,
                     );
                 }
-                ThreadItem::UserMessage { .. }
-                | ThreadItem::AgentMessage { .. }
-                | ThreadItem::Reasoning { .. } => {}
+                TranscriptItem::UserMessage { .. }
+                | TranscriptItem::SystemMessage { .. }
+                | TranscriptItem::AgentMessage { .. }
+                | TranscriptItem::Reasoning { .. } => {}
             },
         },
         ServerAction::TurnDispatch(dispatch) => app.apply_turn_dispatch(dispatch),
@@ -262,8 +264,8 @@ fn rebuild_transcript_from_history(app: &mut TuiApp) {
             .replace_with_history(&history_snapshot);
         app.transcript_state.last_copyable_output =
             history_snapshot.iter().rev().find_map(|entry| {
-                if let agent_protocol::HistoryEntry::Assistant { content, .. } = entry {
-                    content.clone().filter(|text| !text.trim().is_empty())
+                if let agent_protocol::TranscriptItem::AgentMessage { text, .. } = entry {
+                    (!text.trim().is_empty()).then(|| text.clone())
                 } else {
                     None
                 }

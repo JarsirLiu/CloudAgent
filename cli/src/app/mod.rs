@@ -569,8 +569,7 @@ mod tests {
     use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
     use agent_protocol::{
         AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus,
-        ConversationStatus, HistoryEntry, HistoryEntry::Assistant, HistoryEntry::Tool,
-        HistoryEntry::User, StructuredToolResult, TurnItemKind,
+        ConversationStatus, StructuredToolResult, TranscriptItem, TurnItemKind,
     };
     use agent_runtime::AgentRuntime;
     use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
@@ -652,20 +651,23 @@ mod tests {
         execute_server_action(
             &mut app,
             ServerAction::ReplaceHistory(vec![
-                HistoryEntry::User {
-                    content: "old question".to_string(),
+                TranscriptItem::UserMessage {
+                    id: "user:old".to_string(),
+                    text: "old question".to_string(),
                 },
-                HistoryEntry::Assistant {
-                    content: Some("old answer".to_string()),
-                    has_tool_calls: false,
+                TranscriptItem::AgentMessage {
+                    id: "assistant:old".to_string(),
+                    text: "old answer".to_string(),
                 },
-                HistoryEntry::User {
-                    content: "where am i".to_string(),
+                TranscriptItem::UserMessage {
+                    id: "user:where".to_string(),
+                    text: "where am i".to_string(),
                 },
-                HistoryEntry::Tool {
-                    tool_call_id: "call-1".to_string(),
-                    name: "shell_command".to_string(),
+                TranscriptItem::ToolResult {
+                    id: "call-1".to_string(),
+                    tool_name: "shell_command".to_string(),
                     content: "D:\\learn\\gifti\\cloudagent".to_string(),
+                    summary: "D:\\learn\\gifti\\cloudagent".to_string(),
                     structured: Some(StructuredToolResult::CommandExecution {
                         command: "pwd".to_string(),
                         current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
@@ -676,9 +678,9 @@ mod tests {
                         stderr: Some(String::new()),
                     }),
                 },
-                HistoryEntry::Assistant {
-                    content: Some("current directory is D:\\learn\\gifti\\cloudagent".to_string()),
-                    has_tool_calls: false,
+                TranscriptItem::AgentMessage {
+                    id: "assistant:cwd".to_string(),
+                    text: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
                 },
             ]),
         );
@@ -860,17 +862,20 @@ mod tests {
         let history = history.expect("history snapshot");
         assert!(history.iter().any(|entry| matches!(
             entry,
-            User { content } if content == "可以看到当前在哪个目录下吗"
+            TranscriptItem::UserMessage { text, .. } if text == "可以看到当前在哪个目录下吗"
         )));
         assert!(history.iter().any(|entry| matches!(
             entry,
-            Tool { name, structured: Some(StructuredToolResult::CommandExecution { command, .. }), .. }
-            if name == "shell_command" && command == "pwd"
+            TranscriptItem::ToolResult {
+                tool_name,
+                structured: Some(StructuredToolResult::CommandExecution { command, .. }),
+                ..
+            } if tool_name == "shell_command" && command == "pwd"
         )));
         assert!(history.iter().any(|entry| matches!(
             entry,
-            Assistant { content: Some(content), .. }
-            if content.starts_with("current directory is ") && content.ends_with("\\workspace")
+            TranscriptItem::AgentMessage { text, .. }
+            if text.starts_with("current directory is ") && text.ends_with("\\workspace")
         )));
 
         let runtime_after_restart =
@@ -1035,7 +1040,7 @@ mod tests {
 
         assert!(history.iter().any(|entry| matches!(
             entry,
-            User { content } if content == "帮我看看当前目录"
+            TranscriptItem::UserMessage { text, .. } if text == "帮我看看当前目录"
         )));
 
         let runtime_after_restart =
@@ -1272,19 +1277,19 @@ mod tests {
         assert_eq!(restarted_history.len(), live_history.len());
         assert!(restarted_history.iter().any(|entry| matches!(
             entry,
-            User { content } if content == "第一轮看看目录"
+            TranscriptItem::UserMessage { text, .. } if text == "第一轮看看目录"
         )));
         assert!(restarted_history.iter().any(|entry| matches!(
             entry,
-            User { content } if content == "第二轮再看一次目录"
+            TranscriptItem::UserMessage { text, .. } if text == "第二轮再看一次目录"
         )));
         assert!(restarted_history.iter().filter(|entry| matches!(
             entry,
-            Assistant { content: Some(body), .. } if body.starts_with("current directory is ")
+            TranscriptItem::AgentMessage { text, .. } if text.starts_with("current directory is ")
         )).count() >= 1);
         assert!(restarted_history.iter().filter(|entry| matches!(
             entry,
-            Assistant { content: Some(body), .. } if body.starts_with("again current directory is ")
+            TranscriptItem::AgentMessage { text, .. } if text.starts_with("again current directory is ")
         )).count() >= 1);
 
         let recorded_requests = server_thread
