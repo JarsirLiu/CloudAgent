@@ -92,13 +92,17 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     actions.push(ServerAction::SetLastMessageCount(snapshot.message_count));
                     actions.push(ServerAction::SetStatusNotice(None));
                 }
-                AppServerNotification::ConversationHistory { messages, .. } => {
+                AppServerNotification::ConversationHistory { turns, .. } => {
+                    let messages = turns
+                        .iter()
+                        .flat_map(|turn| turn.items.iter().cloned())
+                        .collect::<Vec<_>>();
                     actions.push(ServerAction::SetLastMessageCount(messages.len()));
                     actions.push(ServerAction::SetStatusNotice(Some(
                         "Workspace context ready".to_string(),
                     )));
                     actions.push(ServerAction::SetHistoryLoaded(true));
-                    actions.push(ServerAction::ReplaceHistory(messages.clone()));
+                    actions.push(ServerAction::ReplaceHistory(messages));
                 }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
@@ -292,6 +296,12 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             })
         }
         AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. } => {
+            Some(ItemDispatch::ControlDelta {
+                item_id: item_id.clone(),
+                delta: delta.clone(),
+            })
+        }
+        AppServerNotification::ToolOutputDelta { item_id, delta, .. } => {
             Some(ItemDispatch::ControlDelta {
                 item_id: item_id.clone(),
                 delta: delta.clone(),

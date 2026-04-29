@@ -1,9 +1,9 @@
 mod jsonrpc;
 
 pub use agent_core::{
-    CommandExecutionStatus, EventMsg, ServerRequest, ServerRequestDecision, StructuredToolResult,
-    ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TranscriptItem, TurnId, TurnItemDeltaKind,
-    TurnItemKind, TurnState, WriteFileStatus,
+    CommandExecutionStatus, ConversationTurn, EventMsg, ServerRequest, ServerRequestDecision,
+    StructuredToolResult, ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TranscriptItem,
+    TurnId, TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
 };
 pub use jsonrpc::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
@@ -138,6 +138,12 @@ pub enum AppServerNotification {
         item_id: String,
         delta: String,
     },
+    ToolOutputDelta {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
     FileChangeOutputDelta {
         conversation_id: String,
         turn_id: TurnId,
@@ -181,7 +187,7 @@ pub enum AppServerNotification {
     },
     ConversationHistory {
         conversation_id: String,
-        messages: Vec<TranscriptItem>,
+        turns: Vec<ConversationTurn>,
     },
     ConversationSubscriptionChanged {
         conversation_id: String,
@@ -222,6 +228,9 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::CommandExecutionOutputDelta {
+                conversation_id, ..
+            }
+            | Self::ToolOutputDelta {
                 conversation_id, ..
             }
             | Self::FileChangeOutputDelta {
@@ -336,6 +345,7 @@ pub fn classify_notification(
             (NotificationStream::Control, NotificationDelivery::Lossless)
         }
         AppServerNotification::CommandExecutionOutputDelta { .. }
+        | AppServerNotification::ToolOutputDelta { .. }
         | AppServerNotification::FileChangeOutputDelta { .. } => (
             NotificationStream::Control,
             NotificationDelivery::BestEffort,
@@ -555,6 +565,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "item/commandExecution/outputDelta",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::ToolOutputDelta { .. } => (
+            "item/tool/outputDelta",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::FileChangeOutputDelta { .. } => (
             "item/fileChange/outputDelta",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -639,6 +653,7 @@ fn parse_server_notification(
         | "item/reasoning/summaryTextDelta"
         | "item/reasoning/textDelta"
         | "item/commandExecution/outputDelta"
+        | "item/tool/outputDelta"
         | "item/fileChange/outputDelta"
         | "item/jsonPatch/delta"
         | "item/completed"
@@ -775,6 +790,12 @@ mod tests {
                 item_id: "tool:2".to_string(),
                 delta: "wrote D:\\work\\note.txt".to_string(),
             },
+            AppServerNotification::ToolOutputDelta {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:3".to_string(),
+                delta: "generic tool output".to_string(),
+            },
         ] {
             assert_eq!(
                 classify_notification(&notification),
@@ -783,6 +804,38 @@ mod tests {
                     NotificationDelivery::BestEffort
                 )
             );
+        }
+    }
+
+    #[test]
+    fn tool_output_roundtrips_through_jsonrpc_notification() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::ToolOutputDelta {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:custom".to_string(),
+                delta: "custom output".to_string(),
+            }),
+        };
+
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+        assert_eq!(notification.method, "item/tool/outputDelta");
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::ToolOutputDelta {
+                item_id,
+                delta,
+                ..
+            }) => {
+                assert_eq!(item_id, "tool:custom");
+                assert_eq!(delta, "custom output");
+            }
+            other => panic!("unexpected notification: {other:?}"),
         }
     }
 

@@ -2,7 +2,7 @@ use crate::conversation_listener::ConversationListenerHandle;
 use crate::conversation_listener::start_conversation_listener;
 use crate::conversation_subscriptions::ConversationSubscriptions;
 use crate::server_request_coordinator::ServerRequestCoordinator;
-use agent_core::{ConversationTurn, flatten_conversation_turns};
+use agent_core::ConversationTurn;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest,
     ServerRequestDecision,
@@ -151,13 +151,12 @@ pub(crate) async fn handle_command(
             };
             let mut turns = runtime.build_turns_from_rollout(&conversation_id).await?;
             merge_active_turn(&mut turns, active_turn);
-            let messages = flatten_conversation_turns(&turns);
             send_notification(
                 event_tx,
                 &state,
                 AppServerNotification::ConversationHistory {
                     conversation_id,
-                    messages,
+                    turns,
                 },
             )
             .await;

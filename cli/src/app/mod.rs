@@ -306,14 +306,7 @@ impl TuiApp {
         if self.transcript_state.active_item_id.as_deref() != Some(item_id)
             || self.transcript_state.active_item_kind != Some(TurnItemKind::AssistantMessage)
         {
-            self.flush_active_cell_to_transcript();
-            self.transcript_state.active_item_id = Some(item_id.to_string());
-            self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-            self.transcript_state.active_cell = Some(HistoryCell::from_message(
-                "cloudagent",
-                String::new(),
-                HistoryTone::Agent,
-            ));
+            return;
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
             cell.append_body(delta);
@@ -399,23 +392,9 @@ impl TuiApp {
         self.run_state.last_tool_name = None;
     }
 
-    fn handle_secondary_item_delta(
-        &mut self,
-        item_id: &str,
-        fallback_kind: TurnItemKind,
-        fallback_title: &str,
-        delta: &str,
-        tone: HistoryTone,
-    ) {
+    fn append_active_secondary_item_delta(&mut self, item_id: &str, delta: &str) {
         if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
-            self.flush_active_cell_to_transcript();
-            self.transcript_state.active_item_id = Some(item_id.to_string());
-            self.transcript_state.active_item_kind = Some(fallback_kind);
-            self.transcript_state.active_cell = Some(HistoryCell::from_message(
-                fallback_title.to_string(),
-                String::new(),
-                tone,
-            ));
+            return;
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
             if !cell.body.is_empty() {
@@ -450,13 +429,9 @@ impl TuiApp {
     }
 
     pub(crate) fn handle_reasoning_item_delta(&mut self, item_id: &str, delta: &str) {
-        self.handle_secondary_item_delta(
-            item_id,
-            TurnItemKind::Reasoning,
-            "reasoning",
-            delta,
-            HistoryTone::Reasoning,
-        );
+        if self.transcript_state.active_item_kind == Some(TurnItemKind::Reasoning) {
+            self.append_active_secondary_item_delta(item_id, delta);
+        }
     }
 
     pub(crate) fn handle_control_item_started(
@@ -479,13 +454,15 @@ impl TuiApp {
     }
 
     pub(crate) fn handle_control_item_delta(&mut self, item_id: &str, delta: &str) {
-        self.handle_secondary_item_delta(
-            item_id,
-            TurnItemKind::ToolCall,
-            "tool",
-            delta,
-            HistoryTone::Control,
-        );
+        if matches!(
+            self.transcript_state.active_item_kind,
+            Some(TurnItemKind::ToolCall)
+                | Some(TurnItemKind::ToolResult)
+                | Some(TurnItemKind::CommandExecution)
+                | Some(TurnItemKind::FileChange)
+        ) {
+            self.append_active_secondary_item_delta(item_id, delta);
+        }
     }
 
     fn clear_active_cell(&mut self) {
@@ -569,7 +546,7 @@ mod tests {
     use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
     use agent_protocol::{
         AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus,
-        ConversationStatus, StructuredToolResult, TranscriptItem, TurnItemKind,
+        ConversationStatus, ConversationTurn, StructuredToolResult, TranscriptItem, TurnItemKind,
     };
     use agent_runtime::AgentRuntime;
     use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
@@ -582,11 +559,21 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use tokio::time::timeout;
 
+    fn flatten_turns(turns: Vec<ConversationTurn>) -> Vec<TranscriptItem> {
+        turns
+            .into_iter()
+            .flat_map(|turn| turn.items.into_iter())
+            .collect()
+    }
+
     #[test]
-    fn assistant_completed_overwrites_partial_stream_and_recovers_without_started() {
+    fn assistant_delta_requires_item_started_before_streaming() {
         let mut app = TuiApp::new("default".to_string(), "test");
 
         app.handle_assistant_item_delta("assistant:1", "partial");
+        assert!(app.transcript_state.active_cell.is_none());
+
+        app.handle_assistant_item_started("turn-1", "assistant:1");
         app.handle_assistant_item_completed("assistant:1", "complete answer");
 
         let cells = app.transcript_state.transcript.cells();
@@ -595,10 +582,13 @@ mod tests {
     }
 
     #[test]
-    fn tool_completed_overwrites_partial_stream_and_recovers_without_started() {
+    fn tool_delta_requires_item_started_before_streaming() {
         let mut app = TuiApp::new("default".to_string(), "test");
 
         app.handle_control_item_delta("tool:1", "half");
+        assert!(app.transcript_state.active_cell.is_none());
+
+        app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "pwd");
         app.handle_control_item_completed(
             "tool:1",
             TurnItemKind::CommandExecution,
@@ -622,8 +612,10 @@ mod tests {
     fn reasoning_and_control_cells_use_distinct_tones() {
         let mut app = TuiApp::new("default".to_string(), "test");
 
+        app.handle_reasoning_item_started("reasoning:1", "reasoning");
         app.handle_reasoning_item_delta("reasoning:1", "thinking");
         app.handle_reasoning_item_completed("reasoning:1", "reasoning", "thinking complete");
+        app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "pwd");
         app.handle_control_item_delta("tool:1", "pwd");
         app.handle_control_item_completed(
             "tool:1",
@@ -696,6 +688,7 @@ mod tests {
     #[test]
     fn turn_dispatch_completed_flushes_active_assistant_cell() {
         let mut app = TuiApp::new("default".to_string(), "test");
+        app.handle_assistant_item_started("turn-1", "assistant:flush");
         app.handle_assistant_item_delta("assistant:flush", "hello");
         app.apply_turn_dispatch(TurnDispatch::Completed);
 
@@ -846,8 +839,8 @@ mod tests {
                 .expect("client event");
             match event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::ConversationHistory { messages, .. },
-                )) => history = Some(messages),
+                    AppServerNotification::ConversationHistory { turns, .. },
+                )) => history = Some(flatten_turns(turns)),
                 AppServerEvent::Message(AppServerMessage::Notification(
                     AppServerNotification::ConversationStatus { snapshot, .. },
                 )) => {
@@ -1042,8 +1035,8 @@ mod tests {
                 .expect("client event");
             match event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::ConversationHistory { messages, .. },
-                )) => break messages,
+                    AppServerNotification::ConversationHistory { turns, .. },
+                )) => break flatten_turns(turns),
                 other => app.handle_client_event(other),
             }
         };
@@ -1248,8 +1241,8 @@ mod tests {
                 .expect("client event");
             match event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::ConversationHistory { messages, .. },
-                )) => break messages,
+                    AppServerNotification::ConversationHistory { turns, .. },
+                )) => break flatten_turns(turns),
                 other => app.handle_client_event(other),
             }
         };
@@ -1275,8 +1268,8 @@ mod tests {
                 .expect("client event after restart");
             match event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::ConversationHistory { messages, .. },
-                )) => break messages,
+                    AppServerNotification::ConversationHistory { turns, .. },
+                )) => break flatten_turns(turns),
                 _ => {}
             }
         };

@@ -558,6 +558,7 @@ fn tool_item_kind(tool_name: &str) -> TurnItemKind {
 
 fn tool_delta_kind(tool_name: &str) -> TurnItemDeltaKind {
     match tool_name {
+        "shell_command" => TurnItemDeltaKind::CommandExecutionOutput,
         "write_file" => TurnItemDeltaKind::FileChangeOutput,
         _ => TurnItemDeltaKind::ToolOutput,
     }

@@ -53,6 +53,7 @@ pub enum TurnItemKind {
 #[serde(rename_all = "snake_case")]
 pub enum TurnItemDeltaKind {
     Text,
+    CommandExecutionOutput,
     ToolOutput,
     FileChangeOutput,
     ReasoningText,

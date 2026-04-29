@@ -71,7 +71,8 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
                 item_id: item_id.clone(),
                 delta: delta.clone(),
             }),
-            TurnItemDeltaKind::ToolOutput
+            TurnItemDeltaKind::CommandExecutionOutput
+            | TurnItemDeltaKind::ToolOutput
             | TurnItemDeltaKind::FileChangeOutput
             | TurnItemDeltaKind::JsonPatch => None,
         },
@@ -101,7 +102,9 @@ pub fn classify_event_msg(event: &EventMsg) -> (EventStream, EventDelivery) {
             | TurnItemDeltaKind::ReasoningText => {
                 (EventStream::CoreTranscript, EventDelivery::Lossless)
             }
-            TurnItemDeltaKind::ToolOutput | TurnItemDeltaKind::FileChangeOutput => {
+            TurnItemDeltaKind::CommandExecutionOutput
+            | TurnItemDeltaKind::ToolOutput
+            | TurnItemDeltaKind::FileChangeOutput => {
                 (EventStream::Control, EventDelivery::BestEffort)
             }
             TurnItemDeltaKind::JsonPatch => (EventStream::Diagnostic, EventDelivery::InternalOnly),

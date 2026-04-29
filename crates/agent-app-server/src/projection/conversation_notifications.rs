@@ -45,8 +45,16 @@ impl ConversationNotificationProjector {
                 TurnItemDeltaKind::Text
                 | TurnItemDeltaKind::ReasoningSummary
                 | TurnItemDeltaKind::ReasoningText => Vec::new(),
-                TurnItemDeltaKind::ToolOutput => {
+                TurnItemDeltaKind::CommandExecutionOutput => {
                     vec![AppServerNotification::CommandExecutionOutputDelta {
+                        conversation_id: self.conversation_id.clone(),
+                        turn_id: turn_id.clone(),
+                        item_id: item_id.clone(),
+                        delta: delta.clone(),
+                    }]
+                }
+                TurnItemDeltaKind::ToolOutput => {
+                    vec![AppServerNotification::ToolOutputDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         item_id: item_id.clone(),
@@ -222,6 +230,44 @@ mod tests {
             &notifications[0],
             AppServerNotification::FileChangeOutputDelta { item_id, delta, .. }
                 if item_id == "tool:write" && delta == "wrote note.txt"
+        ));
+    }
+
+    #[test]
+    fn command_execution_output_delta_projects_to_command_notification() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:shell".to_string(),
+            kind: TurnItemDeltaKind::CommandExecutionOutput,
+            delta: "D:\\work".to_string(),
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. }
+                if item_id == "tool:shell" && delta == "D:\\work"
+        ));
+    }
+
+    #[test]
+    fn generic_tool_output_delta_projects_to_tool_notification() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:custom".to_string(),
+            kind: TurnItemDeltaKind::ToolOutput,
+            delta: "custom output".to_string(),
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::ToolOutputDelta { item_id, delta, .. }
+                if item_id == "tool:custom" && delta == "custom output"
         ));
     }
 }
