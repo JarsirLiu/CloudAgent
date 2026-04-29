@@ -339,7 +339,7 @@ where
                         EventMsg::ItemCompleted {
                             turn_id: turn_id.to_string(),
                             item_id: tool_item_id.clone(),
-                            item: denied_thread_item(
+                            item: denied_transcript_item(
                                 &tool_item_id,
                                 &call.name,
                                 &call.arguments,
@@ -402,7 +402,7 @@ where
                 EventMsg::ItemCompleted {
                     turn_id: turn_id.to_string(),
                     item_id: tool_item_id.clone(),
-                    item: thread_item_from_tool_result(&tool_item_id, &call.name, &result),
+                    item: transcript_item_from_tool_result(&tool_item_id, &call.name, &result),
                 },
             );
             let tool_response_item = context_manager.record_tool_result(result);
@@ -453,7 +453,7 @@ where
     })
 }
 
-fn thread_item_from_tool_result(
+fn transcript_item_from_tool_result(
     item_id: &str,
     tool_name: &str,
     result: &ToolResult,
@@ -500,7 +500,7 @@ fn thread_item_from_tool_result(
     }
 }
 
-fn denied_thread_item(
+fn denied_transcript_item(
     item_id: &str,
     tool_name: &str,
     arguments: &serde_json::Value,
