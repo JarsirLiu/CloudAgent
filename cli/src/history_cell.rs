@@ -107,6 +107,17 @@ impl HistoryCell {
         self.body.trim().is_empty()
     }
 
+    pub fn append_body(&mut self, delta: &str) {
+        self.body.push_str(delta);
+        self.invalidate_cache();
+    }
+
+    fn invalidate_cache(&mut self) {
+        if let Ok(mut cache) = self.cache.lock() {
+            *cache = None;
+        }
+    }
+
     pub fn to_lines_with_mode(&self, width: usize) -> Vec<Line<'static>> {
         if let Ok(mut cache) = self.cache.lock() {
             if let Some((w, lines)) = &*cache {

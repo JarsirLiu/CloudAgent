@@ -443,21 +443,39 @@ fn project_turn_event(session_id: &str, event: &TurnEvent) -> Vec<AppServerNotif
         TurnEvent::TurnCompleted {
             turn_id,
             final_response,
-        } => vec![AppServerNotification::TurnCompleted {
-            session_id: session_id.to_string(),
-            turn_id: turn_id.clone(),
-            final_response: final_response.clone(),
-        }],
-        TurnEvent::TurnFailed { turn_id, error } => vec![AppServerNotification::TurnFailed {
-            session_id: session_id.to_string(),
-            turn_id: turn_id.clone(),
-            error: error.clone(),
-        }],
-        TurnEvent::TurnCancelled { turn_id, reason } => vec![AppServerNotification::TurnCancelled {
-            session_id: session_id.to_string(),
-            turn_id: turn_id.clone(),
-            reason: reason.clone(),
-        }],
+        } => vec![
+            AppServerNotification::TurnCompleted {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.clone(),
+                final_response: final_response.clone(),
+            },
+            AppServerNotification::FrontendStateChanged {
+                session_id: session_id.to_string(),
+                mode: agent_protocol::FrontendMode::Idle,
+            },
+        ],
+        TurnEvent::TurnFailed { turn_id, error } => vec![
+            AppServerNotification::TurnFailed {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.clone(),
+                error: error.clone(),
+            },
+            AppServerNotification::FrontendStateChanged {
+                session_id: session_id.to_string(),
+                mode: agent_protocol::FrontendMode::Idle,
+            },
+        ],
+        TurnEvent::TurnCancelled { turn_id, reason } => vec![
+            AppServerNotification::TurnCancelled {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.clone(),
+                reason: reason.clone(),
+            },
+            AppServerNotification::FrontendStateChanged {
+                session_id: session_id.to_string(),
+                mode: agent_protocol::FrontendMode::Idle,
+            },
+        ],
         TurnEvent::ModelRequestStarted { .. }
         | TurnEvent::ModelResponseReceived { .. }
         | TurnEvent::ApprovalRequested { .. }

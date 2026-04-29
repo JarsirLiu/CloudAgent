@@ -1,29 +1,31 @@
 use crate::chat_composer::ComposerAction;
+use crate::console_client::create_client;
+use crate::console_events::{
+    ItemDispatch, TurnDispatch, derive_item_dispatch, derive_message_effects, derive_turn_dispatch,
+};
+use crate::console_parse::{ParsedInput, parse_line};
+use crate::console_state::ConsoleState;
+use crate::console_status::status_text_from_mode;
 use crate::history_cell::{HistoryCell, HistoryTone, Transcript};
 use crate::input_pane::{ApprovalInlineState, InputPane, InputPaneAction};
+use crate::terminal_runtime::{TerminalGuard, UiEvent, spawn_tui_event_loop};
 use crate::welcome::WelcomeScreen;
-use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
+use agent_app_server_client::AppServerClient;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    RequestId, TurnItemDeltaKind, TurnItemKind, UserTurnInput,
+    TurnItemKind, UserTurnInput,
 };
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
-use crossterm::cursor::MoveTo;
-use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
-use crossterm::execute;
-use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
-use ratatui::backend::CrosstermBackend;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::{Frame, Terminal};
+use ratatui::Frame;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct ConsoleConfig {
@@ -53,50 +55,6 @@ impl ConsoleConnection {
     }
 }
 
-#[derive(Clone, Debug)]
-struct ConsoleState {
-    mode: FrontendMode,
-    pending_approval_request_id: Option<RequestId>,
-}
-
-impl ConsoleState {
-    fn new() -> Self {
-        Self {
-            mode: FrontendMode::Idle,
-            pending_approval_request_id: None,
-        }
-    }
-
-    fn can_submit_turn(&self) -> bool {
-        self.mode == FrontendMode::Idle
-    }
-
-    fn update_from_message(&mut self, message: &AppServerMessage) {
-        match message {
-            AppServerMessage::Notification(notification) => match notification {
-                AppServerNotification::FrontendStateChanged { mode, .. } => self.mode = *mode,
-                AppServerNotification::TurnCompleted { .. }
-                | AppServerNotification::TurnFailed { .. }
-                | AppServerNotification::TurnCancelled { .. } => {
-                    self.mode = FrontendMode::Idle;
-                    self.pending_approval_request_id = None;
-                }
-                _ => {}
-            },
-            AppServerMessage::Request(AppServerRequest::Approval { request_id, .. }) => {
-                self.mode = FrontendMode::WaitingForApproval;
-                self.pending_approval_request_id = Some(request_id.clone());
-            }
-        }
-    }
-}
-
-enum ParsedInput {
-    Command(AppClientCommand),
-    ApprovalAnswer { approved: bool, reason: String },
-    LocalCopy,
-}
-
 struct TuiApp {
     session_id: String,
     connection_label: String,
@@ -106,7 +64,7 @@ struct TuiApp {
     transcript_viewport_height: usize,
     transcript_viewport_width: usize,
     history_loaded: bool,
-    status_text: String,
+    status_notice: Option<String>,
     last_message_count: usize,
     last_tool_name: Option<String>,
     active_item_id: Option<String>,
@@ -128,7 +86,7 @@ impl TuiApp {
             transcript_viewport_height: 0,
             transcript_viewport_width: 0,
             history_loaded: false,
-            status_text: format!("Connected via {connection_label}"),
+            status_notice: Some(format!("Connected via {connection_label}")),
             last_message_count: 0,
             last_tool_name: None,
             active_item_id: None,
@@ -153,7 +111,7 @@ impl TuiApp {
         self.transcript_viewport_height = 0;
         self.transcript_viewport_width = 0;
         self.history_loaded = true;
-        self.status_text = format!("Connected via {}", self.connection_label);
+        self.status_notice = Some(format!("Connected via {}", self.connection_label));
         self.last_message_count = 0;
         self.last_tool_name = None;
         self.active_item_id = None;
@@ -168,39 +126,32 @@ impl TuiApp {
         if mode != FrontendMode::WaitingForApproval {
             self.input_pane.clear_approval();
         }
-        self.status_text = match mode {
-            FrontendMode::Idle => "Idle".to_string(),
-            FrontendMode::Running => "Thinking".to_string(),
-            FrontendMode::WaitingForApproval => "Waiting for approval".to_string(),
-        };
     }
 
     fn handle_server_message(&mut self, message: &AppServerMessage) {
+        let effects = derive_message_effects(message);
+        self.apply_message_effects(&effects);
+
+        let previous_mode = self.console_state.mode;
         self.console_state.update_from_message(message);
+        if self.console_state.mode != previous_mode {
+            self.set_mode(self.console_state.mode);
+        }
+        if let Some(mode) = effects.explicit_mode {
+            self.set_mode(mode);
+        }
         match message {
             AppServerMessage::Notification(notification) => match notification {
-                AppServerNotification::FrontendStateChanged { mode, .. } => self.set_mode(*mode),
-                AppServerNotification::SessionStatus { snapshot, .. } => {
-                    self.last_message_count = snapshot.message_count;
-                    self.status_text = format!(
-                        "{:?}  turn={:?}  messages={}",
-                        snapshot.session_state, snapshot.turn_state, snapshot.message_count
-                    );
-                }
+                AppServerNotification::FrontendStateChanged { .. } => {}
+                AppServerNotification::SessionStatus { .. } => {}
                 AppServerNotification::SessionHistory { messages, .. } => {
-                    self.status_text = "Workspace context ready".to_string();
-                    self.last_message_count = messages.len();
                     self.transcript.replace_with_history(messages);
                     self.transcript_scroll = 0;
                     self.clamp_transcript_scroll();
-                    self.history_loaded = true;
                 }
                 AppServerNotification::SubscriptionChanged { .. } => {}
-                AppServerNotification::Info { message, .. } => {
-                    self.status_text = message.clone();
-                }
+                AppServerNotification::Info { .. } => {}
                 AppServerNotification::Error { message, .. } => {
-                    self.status_text = message.clone();
                     self.input_pane.clear_views();
                     self.push_cell(HistoryCell::from_message(
                         "error",
@@ -209,65 +160,35 @@ impl TuiApp {
                     ));
                 }
                 AppServerNotification::TurnStarted { .. } => {}
-                AppServerNotification::ItemStarted {
-                    item_id,
-                    kind,
-                    title,
-                    ..
-                } => {
-                    if *kind == TurnItemKind::AssistantMessage {
-                        if let AppServerNotification::ItemStarted { turn_id, .. } = notification {
-                            self.handle_assistant_item_started(turn_id, item_id);
-                        }
-                    } else if *kind == TurnItemKind::Reasoning || *kind == TurnItemKind::ToolCall {
-                        if let Some(title) = title.as_deref() {
-                            self.handle_tool_item_started(item_id, title);
+                AppServerNotification::ItemStarted { .. }
+                | AppServerNotification::ItemDelta { .. }
+                | AppServerNotification::ItemCompleted { .. } => {
+                    if let Some(dispatch) = derive_item_dispatch(notification) {
+                        match dispatch {
+                            ItemDispatch::AssistantStarted { turn_id, item_id } => {
+                                self.handle_assistant_item_started(&turn_id, &item_id);
+                            }
+                            ItemDispatch::ToolLikeStarted { item_id, title } => {
+                                self.handle_tool_item_started(&item_id, &title);
+                            }
+                            ItemDispatch::AssistantDelta { item_id, delta } => {
+                                self.handle_assistant_item_delta(&item_id, &delta);
+                            }
+                            ItemDispatch::AssistantCompleted { item_id } => {
+                                self.handle_assistant_item_completed(&item_id);
+                            }
+                            ItemDispatch::ToolLikeCompleted { item_id } => {
+                                self.handle_tool_item_completed(&item_id);
+                            }
                         }
                     }
                 }
-                AppServerNotification::ItemDelta {
-                    item_id,
-                    kind,
-                    delta,
-                    ..
-                } => match kind {
-                    TurnItemDeltaKind::Text => self.handle_assistant_item_delta(item_id, delta),
-                    TurnItemDeltaKind::ToolOutput
-                    | TurnItemDeltaKind::ReasoningSummary
-                    | TurnItemDeltaKind::ReasoningText => {}
-                    _ => {}
-                }
-                AppServerNotification::ItemCompleted { item_id, kind, .. } => {
-                    if *kind == TurnItemKind::AssistantMessage {
-                        self.handle_assistant_item_completed(item_id);
-                    } else if *kind == TurnItemKind::Reasoning || *kind == TurnItemKind::ToolCall {
-                        self.handle_tool_item_completed(item_id);
+                AppServerNotification::TurnCompleted { .. }
+                | AppServerNotification::TurnFailed { .. }
+                | AppServerNotification::TurnCancelled { .. } => {
+                    if let Some(dispatch) = derive_turn_dispatch(notification) {
+                        self.apply_turn_dispatch(dispatch);
                     }
-                }
-                AppServerNotification::TurnCompleted { .. } => {
-                    self.flush_active_cell_to_transcript();
-                    self.input_pane.clear_approval();
-                    self.last_tool_name = None;
-                }
-                AppServerNotification::TurnFailed { error, .. } => {
-                    self.flush_active_cell_to_transcript();
-                    self.input_pane.clear_approval();
-                    self.push_cell(HistoryCell::from_message(
-                        "turn",
-                        format!("failed: {error}"),
-                        HistoryTone::Error,
-                    ));
-                    self.last_tool_name = None;
-                }
-                AppServerNotification::TurnCancelled { reason, .. } => {
-                    self.flush_active_cell_to_transcript();
-                    self.input_pane.clear_approval();
-                    self.push_cell(HistoryCell::from_message(
-                        "turn",
-                        reason.clone(),
-                        HistoryTone::Warning,
-                    ));
-                    self.last_tool_name = None;
                 }
             },
             AppServerMessage::Request(AppServerRequest::Approval {
@@ -284,7 +205,46 @@ impl TuiApp {
                         request.reason, request.arguments_preview
                     ),
                 });
-                self.status_text = format!("Approval for {}", request.tool_name);
+                self.status_notice = Some(format!("Approval for {}", request.tool_name));
+            }
+        }
+    }
+
+    fn apply_message_effects(&mut self, effects: &crate::console_events::ConsoleMessageEffects) {
+        if let Some(count) = effects.last_message_count {
+            self.last_message_count = count;
+        }
+        if let Some(notice) = &effects.status_notice {
+            self.status_notice = notice.clone();
+        }
+        if let Some(loaded) = effects.history_loaded {
+            self.history_loaded = loaded;
+        }
+        if effects.clear_approval {
+            self.input_pane.clear_approval();
+        }
+        if effects.clear_last_tool_name {
+            self.last_tool_name = None;
+        }
+    }
+
+    fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
+        self.flush_active_cell_to_transcript();
+        match dispatch {
+            TurnDispatch::Completed => {}
+            TurnDispatch::Failed { error } => {
+                self.push_cell(HistoryCell::from_message(
+                    "turn",
+                    format!("failed: {error}"),
+                    HistoryTone::Error,
+                ));
+            }
+            TurnDispatch::Cancelled { reason } => {
+                self.push_cell(HistoryCell::from_message(
+                    "turn",
+                    reason,
+                    HistoryTone::Warning,
+                ));
             }
         }
     }
@@ -400,7 +360,7 @@ impl TuiApp {
 
         let (bottom_widget, lines_before, _) = self.input_pane.render(
             self.console_state.mode,
-            &self.status_text,
+            &self.current_status_text(),
             &self.status_meta_text(),
             sections[2].width,
         );
@@ -537,7 +497,7 @@ impl TuiApp {
         )));
 
         frame.render_widget(
-            WelcomeScreen::new(self.history_loaded, self.status_text.clone()).render(left_inner),
+            WelcomeScreen::new(self.history_loaded, self.current_status_text()).render(left_inner),
             left_inner,
         );
         frame.render_widget(
@@ -639,6 +599,13 @@ impl TuiApp {
         parts.join("  ·  ")
     }
 
+    fn current_status_text(&self) -> String {
+        if let Some(notice) = &self.status_notice {
+            return notice.clone();
+        }
+        status_text_from_mode(self.console_state.mode).to_string()
+    }
+
     fn handle_assistant_item_started(&mut self, turn_id: &str, item_id: &str) {
         let _ = turn_id;
         self.flush_active_cell_to_transcript();
@@ -658,7 +625,7 @@ impl TuiApp {
             return;
         }
         if let Some(cell) = self.active_cell.as_mut() {
-            cell.body.push_str(delta);
+            cell.append_body(delta);
         }
     }
 
@@ -720,78 +687,6 @@ impl TuiApp {
     }
 }
 
-struct TerminalGuard {
-    terminal: Terminal<CrosstermBackend<io::Stdout>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EnableAlternateScroll;
-
-impl crossterm::Command for EnableAlternateScroll {
-    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        write!(f, "\x1b[?1007h")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> Result<(), std::io::Error> {
-        Err(std::io::Error::other(
-            "EnableAlternateScroll requires ANSI execution",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DisableAlternateScroll;
-
-impl crossterm::Command for DisableAlternateScroll {
-    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        write!(f, "\x1b[?1007l")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> Result<(), std::io::Error> {
-        Err(std::io::Error::other(
-            "DisableAlternateScroll requires ANSI execution",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
-}
-
-impl TerminalGuard {
-    fn new() -> Result<Self> {
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        let _ = execute!(stdout, EnableAlternateScroll);
-        execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
-        let backend = CrosstermBackend::new(io::stdout());
-        let terminal = Terminal::new(backend)?;
-        Ok(Self { terminal })
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = self.terminal.show_cursor();
-        let _ = execute!(io::stdout(), DisableAlternateScroll);
-        let _ = disable_raw_mode();
-    }
-}
-
-enum UiEvent {
-    Key(KeyEvent),
-    MouseScroll { up: bool },
-    Tick,
-}
-
 pub async fn run_console(config: ConsoleConfig) -> Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         anyhow::bail!("cloudagent cli requires an interactive terminal");
@@ -844,64 +739,6 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     client.shutdown().await
 }
 
-async fn create_client(config: &ConsoleConfig, session_id: String) -> Result<AppServerClient> {
-    match &config.connection {
-        ConsoleConnection::InProcess { runtime } => {
-            Ok(AppServerClient::in_process(InProcessClientConfig {
-                runtime: runtime.clone(),
-                session_id,
-                auto_approve: config.auto_approve,
-                auto_approve_reason: config.auto_approve_reason.clone(),
-            }))
-        }
-        ConsoleConnection::Stdio { program, args } => {
-            AppServerClient::stdio(StdioClientConfig {
-                program: program.clone(),
-                args: args.clone(),
-            })
-            .await
-        }
-    }
-}
-
-fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
-    let (tx, rx) = mpsc::unbounded_channel();
-    std::thread::spawn(move || {
-        loop {
-            match event::poll(Duration::from_millis(120)) {
-                Ok(true) => match event::read() {
-                    Ok(CEvent::Key(key)) => {
-                        if tx.send(UiEvent::Key(key)).is_err() {
-                            break;
-                        }
-                    }
-                    Ok(CEvent::Mouse(mouse)) => {
-                        let scroll = match mouse.kind {
-                            MouseEventKind::ScrollUp => Some(true),
-                            MouseEventKind::ScrollDown => Some(false),
-                            _ => None,
-                        };
-                        if let Some(up) = scroll {
-                            if tx.send(UiEvent::MouseScroll { up }).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(_) => break,
-                },
-                Ok(false) => {
-                    if tx.send(UiEvent::Tick).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
-    rx
-}
-
 fn handle_tui_input(
     session_id: &str,
     app: &mut TuiApp,
@@ -920,7 +757,7 @@ fn handle_tui_input(
             };
             match copy_text_to_clipboard(text) {
                 Ok(()) => {
-                    app.status_text = "Copied latest assistant output".to_string();
+                    app.status_notice = Some("Copied latest assistant output".to_string());
                 }
                 Err(err) => {
                     app.push_cell(HistoryCell::from_message(
@@ -965,7 +802,7 @@ fn handle_tui_input(
             }
             if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
                 app.console_state.mode = FrontendMode::Running;
-                app.status_text = "Submitting turn".to_string();
+                app.status_notice = Some("Submitting turn".to_string());
                 app.input_pane.clear_views();
                 app.push_cell(HistoryCell::from_message(
                     "you",
@@ -1006,44 +843,6 @@ fn handle_tui_input(
         }
     }
     Ok(false)
-}
-
-fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return ParsedInput::Command(AppClientCommand::SubmitTurn(UserTurnInput {
-            session_id: session_id.to_string(),
-            content: String::new(),
-        }));
-    }
-
-    let command = match trimmed {
-        "/copy" => return ParsedInput::LocalCopy,
-        "/exit" | "/quit" => AppClientCommand::Exit,
-        "/clear" => AppClientCommand::ResetSession {
-            session_id: session_id.to_string(),
-        },
-        "/interrupt" => AppClientCommand::InterruptTurn {
-            session_id: session_id.to_string(),
-        },
-        _ if mode == FrontendMode::WaitingForApproval => {
-            let approved = matches!(trimmed, "1" | "y" | "Y" | "yes" | "YES");
-            return ParsedInput::ApprovalAnswer {
-                approved,
-                reason: if approved {
-                    "approved by console operator".to_string()
-                } else {
-                    "denied by console operator".to_string()
-                },
-            };
-        }
-        _ => AppClientCommand::SubmitTurn(UserTurnInput {
-            session_id: session_id.to_string(),
-            content: trimmed.to_string(),
-        }),
-    };
-
-    ParsedInput::Command(command)
 }
 
 fn copy_text_to_clipboard(text: &str) -> Result<()> {
