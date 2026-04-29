@@ -148,21 +148,36 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             ItemDispatch::AssistantStarted { turn_id, item_id } => {
                 app.handle_assistant_item_started(&turn_id, &item_id);
             }
-            ItemDispatch::ToolLikeStarted { item_id, kind, title } => {
-                app.handle_tool_like_item_started(&item_id, kind, &title);
+            ItemDispatch::ReasoningStarted { item_id, title } => {
+                app.handle_reasoning_item_started(&item_id, &title);
+            }
+            ItemDispatch::ControlStarted { item_id, kind, title } => {
+                app.handle_control_item_started(&item_id, kind, &title);
             }
             ItemDispatch::AssistantDelta { item_id, delta } => {
                 app.handle_assistant_item_delta(&item_id, &delta);
             }
-            ItemDispatch::ToolLikeDelta { item_id, delta } => {
-                app.handle_tool_like_item_delta(&item_id, &delta);
+            ItemDispatch::ReasoningDelta { item_id, delta } => {
+                app.handle_reasoning_item_delta(&item_id, &delta);
+            }
+            ItemDispatch::ControlDelta { item_id, delta } => {
+                app.handle_control_item_delta(&item_id, &delta);
             }
             ItemDispatch::AssistantCompleted { item } => {
                 if let ThreadItem::AgentMessage { id, text } = item {
                     app.handle_assistant_item_completed(&id, &text);
                 }
             }
-            ItemDispatch::ToolLikeCompleted { item } => match item {
+            ItemDispatch::ReasoningCompleted { item } => match item {
+                ThreadItem::Reasoning { id, text, .. } => {
+                    app.handle_reasoning_item_completed(&id, "reasoning", &text);
+                }
+                ThreadItem::UserMessage { .. }
+                | ThreadItem::AgentMessage { .. }
+                | ThreadItem::CommandExecution { .. }
+                | ThreadItem::ToolResult { .. } => {}
+            },
+            ItemDispatch::ControlCompleted { item } => match item {
                 ThreadItem::CommandExecution {
                     id,
                     command,
@@ -175,7 +190,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                     } else {
                         command.as_str()
                     };
-                    app.handle_tool_like_item_completed(
+                    app.handle_control_item_completed(
                         &id,
                         TurnItemKind::CommandExecution,
                         title,
@@ -188,23 +203,17 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                     summary,
                     ..
                 } => {
-                    app.handle_tool_like_item_completed(
+                    app.handle_control_item_completed(
                         &id,
                         TurnItemKind::ToolResult,
                         &tool_name,
                         &summary,
                     );
                 }
-                ThreadItem::Reasoning { id, text, .. } => {
-                    app.handle_tool_like_item_completed(
-                        &id,
-                        TurnItemKind::Reasoning,
-                        "reasoning",
-                        &text,
-                    );
-                }
-                ThreadItem::UserMessage { .. } | ThreadItem::AgentMessage { .. } => {}
-            }
+                ThreadItem::UserMessage { .. }
+                | ThreadItem::AgentMessage { .. }
+                | ThreadItem::Reasoning { .. } => {}
+            },
         },
         ServerAction::TurnDispatch(dispatch) => app.apply_turn_dispatch(dispatch),
         ServerAction::ShowServerRequestPrompt {

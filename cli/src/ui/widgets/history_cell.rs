@@ -70,7 +70,9 @@ fn unpack(c: Color) -> (u8, u8, u8) {
 pub enum HistoryTone {
     User,
     Agent,
+    Reasoning,
     Tool,
+    Control,
     Warning,
     Error,
     Meta,
@@ -142,7 +144,13 @@ impl HistoryCell {
         match self.tone {
             HistoryTone::User => self.render_user(width),
             HistoryTone::Agent => self.render_agent(width),
+            HistoryTone::Reasoning => {
+                self.render_tool_like(width, Color::Rgb(170, 140, 255), "≈")
+            }
             HistoryTone::Tool => self.render_tool_like(width, Color::Rgb(80, 200, 120), "◆"),
+            HistoryTone::Control => {
+                self.render_tool_like(width, Color::Rgb(120, 170, 255), "▣")
+            }
             HistoryTone::Warning => self.render_tool_like(width, Color::Rgb(255, 180, 50), "◆"),
             HistoryTone::Error => self.render_tool_like(width, Color::Rgb(255, 80, 80), "◆"),
             HistoryTone::Meta => self.render_meta(width),
@@ -341,7 +349,7 @@ pub fn render_history_entry(message: &HistoryEntry) -> HistoryCell {
             HistoryCell::from_message(
                 name.clone(),
                 summarize_tool_content(name, content, structured.as_ref()),
-                HistoryTone::Tool,
+                HistoryTone::Control,
             )
         }
     }

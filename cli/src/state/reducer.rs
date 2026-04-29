@@ -7,11 +7,14 @@ use agent_protocol::{
 #[derive(Debug, Clone)]
 pub(crate) enum ItemDispatch {
     AssistantStarted { turn_id: String, item_id: String },
-    ToolLikeStarted { item_id: String, kind: TurnItemKind, title: String },
+    ReasoningStarted { item_id: String, title: String },
+    ControlStarted { item_id: String, kind: TurnItemKind, title: String },
     AssistantDelta { item_id: String, delta: String },
-    ToolLikeDelta { item_id: String, delta: String },
+    ReasoningDelta { item_id: String, delta: String },
+    ControlDelta { item_id: String, delta: String },
     AssistantCompleted { item: ThreadItem },
-    ToolLikeCompleted { item: ThreadItem },
+    ReasoningCompleted { item: ThreadItem },
+    ControlCompleted { item: ThreadItem },
 }
 
 #[derive(Debug, Clone)]
@@ -211,12 +214,19 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             kind,
             title,
             ..
-        } if (*kind == TurnItemKind::Reasoning
-            || *kind == TurnItemKind::ToolCall
-            || *kind == TurnItemKind::CommandExecution)
+        } if *kind == TurnItemKind::Reasoning && title.is_some() => Some(ItemDispatch::ReasoningStarted {
+            item_id: item_id.clone(),
+            title: title.clone().unwrap_or_default(),
+        }),
+        AppServerNotification::ItemStarted {
+            item_id,
+            kind,
+            title,
+            ..
+        } if (*kind == TurnItemKind::ToolCall || *kind == TurnItemKind::CommandExecution)
             && title.is_some() =>
         {
-            Some(ItemDispatch::ToolLikeStarted {
+            Some(ItemDispatch::ControlStarted {
                 item_id: item_id.clone(),
                 kind: kind.clone(),
                 title: title.clone().unwrap_or_default(),
@@ -234,17 +244,23 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             item_id,
             delta,
             ..
-        }
-        | AppServerNotification::ReasoningTextDelta {
+        } => Some(ItemDispatch::ReasoningDelta {
+            item_id: item_id.clone(),
+            delta: delta.clone(),
+        }),
+        AppServerNotification::ReasoningTextDelta {
             item_id,
             delta,
             ..
-        }
-        | AppServerNotification::CommandExecutionOutputDelta {
+        } => Some(ItemDispatch::ReasoningDelta {
+            item_id: item_id.clone(),
+            delta: delta.clone(),
+        }),
+        AppServerNotification::CommandExecutionOutputDelta {
             item_id,
             delta,
             ..
-        } => Some(ItemDispatch::ToolLikeDelta {
+        } => Some(ItemDispatch::ControlDelta {
             item_id: item_id.clone(),
             delta: delta.clone(),
         }),
@@ -252,10 +268,11 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             ThreadItem::AgentMessage { .. } => Some(ItemDispatch::AssistantCompleted {
                 item: item.clone(),
             }),
-            ThreadItem::CommandExecution { .. }
-            | ThreadItem::ToolResult { .. }
-            | ThreadItem::Reasoning { .. } => {
-                Some(ItemDispatch::ToolLikeCompleted { item: item.clone() })
+            ThreadItem::Reasoning { .. } => Some(ItemDispatch::ReasoningCompleted {
+                item: item.clone(),
+            }),
+            ThreadItem::CommandExecution { .. } | ThreadItem::ToolResult { .. } => {
+                Some(ItemDispatch::ControlCompleted { item: item.clone() })
             }
             ThreadItem::UserMessage { .. } => None,
         },

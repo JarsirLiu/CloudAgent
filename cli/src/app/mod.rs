@@ -344,11 +344,12 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn handle_tool_like_item_started(
+    fn handle_secondary_item_started(
         &mut self,
         item_id: &str,
         kind: TurnItemKind,
         title: &str,
+        tone: HistoryTone,
     ) {
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
@@ -356,17 +357,18 @@ impl TuiApp {
         self.transcript_state.active_cell = Some(HistoryCell::from_message(
             title.to_string(),
             String::new(),
-            HistoryTone::Tool,
+            tone,
         ));
         self.run_state.last_tool_name = Some(title.to_string());
     }
 
-    pub(crate) fn handle_tool_like_item_completed(
+    fn handle_secondary_item_completed(
         &mut self,
         item_id: &str,
         kind: TurnItemKind,
         title: &str,
         output: &str,
+        tone: HistoryTone,
     ) {
         if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
             self.flush_active_cell_to_transcript();
@@ -375,7 +377,7 @@ impl TuiApp {
             self.transcript_state.active_cell = Some(HistoryCell::from_message(
                 title.to_string(),
                 String::new(),
-                HistoryTone::Tool,
+                tone,
             ));
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
@@ -387,15 +389,22 @@ impl TuiApp {
         self.run_state.last_tool_name = None;
     }
 
-    pub(crate) fn handle_tool_like_item_delta(&mut self, item_id: &str, delta: &str) {
+    fn handle_secondary_item_delta(
+        &mut self,
+        item_id: &str,
+        fallback_kind: TurnItemKind,
+        fallback_title: &str,
+        delta: &str,
+        tone: HistoryTone,
+    ) {
         if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
             self.flush_active_cell_to_transcript();
             self.transcript_state.active_item_id = Some(item_id.to_string());
-            self.transcript_state.active_item_kind = Some(TurnItemKind::ToolCall);
+            self.transcript_state.active_item_kind = Some(fallback_kind);
             self.transcript_state.active_cell = Some(HistoryCell::from_message(
-                "tool",
+                fallback_title.to_string(),
                 String::new(),
-                HistoryTone::Tool,
+                tone,
             ));
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
@@ -404,6 +413,75 @@ impl TuiApp {
             }
             cell.append_body(delta);
         }
+    }
+
+    pub(crate) fn handle_reasoning_item_started(&mut self, item_id: &str, title: &str) {
+        self.handle_secondary_item_started(
+            item_id,
+            TurnItemKind::Reasoning,
+            title,
+            HistoryTone::Reasoning,
+        );
+    }
+
+    pub(crate) fn handle_reasoning_item_completed(
+        &mut self,
+        item_id: &str,
+        title: &str,
+        output: &str,
+    ) {
+        self.handle_secondary_item_completed(
+            item_id,
+            TurnItemKind::Reasoning,
+            title,
+            output,
+            HistoryTone::Reasoning,
+        );
+    }
+
+    pub(crate) fn handle_reasoning_item_delta(&mut self, item_id: &str, delta: &str) {
+        self.handle_secondary_item_delta(
+            item_id,
+            TurnItemKind::Reasoning,
+            "reasoning",
+            delta,
+            HistoryTone::Reasoning,
+        );
+    }
+
+    pub(crate) fn handle_control_item_started(
+        &mut self,
+        item_id: &str,
+        kind: TurnItemKind,
+        title: &str,
+    ) {
+        self.handle_secondary_item_started(item_id, kind, title, HistoryTone::Control);
+    }
+
+    pub(crate) fn handle_control_item_completed(
+        &mut self,
+        item_id: &str,
+        kind: TurnItemKind,
+        title: &str,
+        output: &str,
+    ) {
+        self.handle_secondary_item_completed(
+            item_id,
+            kind,
+            title,
+            output,
+            HistoryTone::Control,
+        );
+    }
+
+    pub(crate) fn handle_control_item_delta(&mut self, item_id: &str, delta: &str) {
+        self.handle_secondary_item_delta(
+            item_id,
+            TurnItemKind::ToolCall,
+            "tool",
+            delta,
+            HistoryTone::Control,
+        );
     }
 
     fn clear_active_cell(&mut self) {
@@ -517,8 +595,8 @@ mod tests {
     fn tool_completed_overwrites_partial_stream_and_recovers_without_started() {
         let mut app = TuiApp::new("default".to_string(), "test");
 
-        app.handle_tool_like_item_delta("tool:1", "half");
-        app.handle_tool_like_item_completed(
+        app.handle_control_item_delta("tool:1", "half");
+        app.handle_control_item_completed(
             "tool:1",
             TurnItemKind::CommandExecution,
             "pwd",
@@ -528,6 +606,27 @@ mod tests {
         let cells = app.transcript_state.transcript.cells();
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].body, "current directory is D:\\learn\\gifti\\cloudagent");
+        assert_eq!(cells[0].tone, crate::ui::widgets::history_cell::HistoryTone::Control);
+    }
+
+    #[test]
+    fn reasoning_and_control_cells_use_distinct_tones() {
+        let mut app = TuiApp::new("default".to_string(), "test");
+
+        app.handle_reasoning_item_delta("reasoning:1", "thinking");
+        app.handle_reasoning_item_completed("reasoning:1", "reasoning", "thinking complete");
+        app.handle_control_item_delta("tool:1", "pwd");
+        app.handle_control_item_completed(
+            "tool:1",
+            TurnItemKind::CommandExecution,
+            "pwd",
+            "D:\\learn\\gifti\\cloudagent",
+        );
+
+        let cells = app.transcript_state.transcript.cells();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].tone, crate::ui::widgets::history_cell::HistoryTone::Reasoning);
+        assert_eq!(cells[1].tone, crate::ui::widgets::history_cell::HistoryTone::Control);
     }
 
     #[test]
@@ -693,7 +792,7 @@ mod tests {
         assert!(live_cells.iter().any(|cell| cell.body == "可以看到当前在哪个目录下吗"));
         assert!(live_cells.iter().any(|cell| cell.body == "approved"));
         assert!(live_cells.iter().any(|cell| {
-            cell.tone == crate::ui::widgets::history_cell::HistoryTone::Tool
+            cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
                 && cell.body.starts_with("current directory is ")
                 && cell.body.ends_with("\\workspace")
         }));
@@ -789,7 +888,7 @@ mod tests {
         let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
         assert!(rebuilt_cells.iter().any(|cell| cell.body == "可以看到当前在哪个目录下吗"));
         assert!(rebuilt_cells.iter().any(|cell| {
-            cell.tone == crate::ui::widgets::history_cell::HistoryTone::Tool
+            cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
                 && cell.body.starts_with("completed: pwd (exit 0) @ ")
                 && cell.body.ends_with("\\workspace")
         }));
