@@ -75,7 +75,7 @@ fn header_block(app: &TuiApp) -> Paragraph<'static> {
         ),
         Span::raw("  "),
         Span::styled(
-            format!("conversation {}", app.session_id),
+            format!("conversation {}", app.conversation_id),
             Style::default().fg(Color::White),
         ),
         Span::raw("  "),
@@ -219,7 +219,7 @@ fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
 
 fn status_meta_text(app: &TuiApp) -> String {
     let mut parts = vec![
-        format!("conversation {}", app.session_id),
+        format!("conversation {}", app.conversation_id),
         format!("messages {}", app.run_state.last_message_count),
     ];
     if let Some(tool) = &app.run_state.last_tool_name {

@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     };
 
     run_console(ConsoleConfig {
-        session_id: conversation_id.clone(),
+        conversation_id: conversation_id.clone(),
         auto_approve: false,
         auto_approve_reason: None,
         connection,

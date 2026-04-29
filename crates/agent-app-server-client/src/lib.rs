@@ -135,14 +135,14 @@ mod tests {
 
     fn info_event(message: &str) -> AppServerEvent {
         AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::Info {
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             message: message.to_string(),
         }))
     }
 
     fn text_delta_event(delta: &str) -> AppServerEvent {
         AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::ItemDelta {
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "assistant:1".to_string(),
             kind: TurnItemDeltaKind::Text,
@@ -152,7 +152,7 @@ mod tests {
 
     fn item_started_event() -> AppServerEvent {
         AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::ItemStarted {
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "tool:1".to_string(),
             kind: TurnItemKind::CommandExecution,
@@ -163,7 +163,7 @@ mod tests {
     fn item_completed_event() -> AppServerEvent {
         AppServerEvent::Message(AppServerMessage::Notification(
             AppServerNotification::ItemCompleted {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item: ThreadItem::CommandExecution {
                     id: "tool:1".to_string(),
@@ -184,7 +184,7 @@ mod tests {
         AppServerEvent::Message(AppServerMessage::Request(
             agent_protocol::AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(1),
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 request: ServerRequest::ToolApproval {
                     request: ToolApprovalRequest {
                         turn_id: "turn-1".to_string(),

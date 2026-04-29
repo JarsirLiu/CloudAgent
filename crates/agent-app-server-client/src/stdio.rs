@@ -185,7 +185,7 @@ mod tests {
 
         command_tx
             .send(AppClientCommand::SubmitTurn(UserTurnInput {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 content: "hello".to_string(),
             }))
             .expect("queue command");
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(envelope.request_id, RequestId::Integer(7));
         match envelope.command {
             AppClientCommand::SubmitTurn(input) => {
-                assert_eq!(input.session_id, "default");
+                assert_eq!(input.conversation_id, "default");
                 assert_eq!(input.content, "hello");
             }
             other => panic!("unexpected command: {other:?}"),
@@ -216,14 +216,14 @@ mod tests {
     async fn read_events_parses_notifications_and_requests() {
         let notification = AppServerMessageEnvelope {
             message: AppServerMessage::Notification(AppServerNotification::Info {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 message: "hello".to_string(),
             }),
         };
         let request = AppServerMessageEnvelope {
             message: AppServerMessage::Request(agent_protocol::AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(11),
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 request: ServerRequest::ToolApproval {
                     request: ToolApprovalRequest {
                         turn_id: "turn-1".to_string(),

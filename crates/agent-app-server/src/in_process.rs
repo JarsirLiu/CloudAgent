@@ -54,13 +54,13 @@ pub struct InProcessServer;
 
 pub fn start_in_process(
     runtime: Arc<AgentRuntime>,
-    session_id: String,
+    conversation_id: String,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) -> InProcessClientHandle {
     let (command_tx, mut command_rx) = mpsc::unbounded_channel::<ServerMessage>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<AppServerMessage>();
-    let state = Arc::new(Mutex::new(ServerState::new(session_id.clone())));
+    let state = Arc::new(Mutex::new(ServerState::new(conversation_id.clone())));
 
     tokio::spawn(async move {
         while let Some(message) = command_rx.recv().await {
@@ -89,7 +89,7 @@ pub fn start_in_process(
                     {
                         let _ = event_tx.send(AppServerMessage::Notification(
                             AppServerNotification::Error {
-                                session_id: session_id.clone(),
+                                conversation_id: conversation_id.clone(),
                                 message: "command handling failed".to_string(),
                             },
                         ));

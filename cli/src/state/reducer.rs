@@ -156,13 +156,13 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
 
 pub(crate) fn apply_ui_event(
     line: &str,
-    session_id: &str,
+    conversation_id: &str,
     mode: FrontendMode,
 ) -> UiInputEvent {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return UiInputEvent::Command(AppClientCommand::SubmitTurn(UserTurnInput {
-            session_id: session_id.to_string(),
+            conversation_id: conversation_id.to_string(),
             content: String::new(),
         }));
     }
@@ -171,10 +171,10 @@ pub(crate) fn apply_ui_event(
         "/copy" => UiInputEvent::LocalCopy,
         "/exit" | "/quit" => UiInputEvent::Command(AppClientCommand::Exit),
         "/clear" => UiInputEvent::Command(AppClientCommand::ResetConversation {
-            session_id: session_id.to_string(),
+            conversation_id: conversation_id.to_string(),
         }),
         "/interrupt" => UiInputEvent::Command(AppClientCommand::InterruptTurn {
-            session_id: session_id.to_string(),
+            conversation_id: conversation_id.to_string(),
         }),
         _ if mode == FrontendMode::WaitingForServerRequest => {
             let approved = matches!(trimmed, "1" | "y" | "Y" | "yes" | "YES");
@@ -188,7 +188,7 @@ pub(crate) fn apply_ui_event(
             }
         }
         _ => UiInputEvent::Command(AppClientCommand::SubmitTurn(UserTurnInput {
-            session_id: session_id.to_string(),
+            conversation_id: conversation_id.to_string(),
             content: trimmed.to_string(),
         })),
     }

@@ -3,6 +3,6 @@ use agent_protocol::FrontendMode;
 
 pub(crate) type ParsedInput = UiInputEvent;
 
-pub(crate) fn parse_line(line: &str, session_id: &str, mode: FrontendMode) -> ParsedInput {
-    apply_ui_event(line, session_id, mode)
+pub(crate) fn parse_line(line: &str, conversation_id: &str, mode: FrontendMode) -> ParsedInput {
+    apply_ui_event(line, conversation_id, mode)
 }

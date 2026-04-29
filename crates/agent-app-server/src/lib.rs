@@ -17,11 +17,11 @@ pub use in_process::{
 
 pub async fn run_stdio_server(
     runtime: Arc<AgentRuntime>,
-    session_id: String,
+    conversation_id: String,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) -> Result<()> {
-    let mut client = start_in_process(runtime, session_id, auto_approve, auto_approve_reason);
+    let mut client = start_in_process(runtime, conversation_id, auto_approve, auto_approve_reason);
     let sender = client.sender();
     let (command_tx, mut command_rx) = mpsc::unbounded_channel::<AppClientCommandEnvelope>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<AppServerMessageEnvelope>();

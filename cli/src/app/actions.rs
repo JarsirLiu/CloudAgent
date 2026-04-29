@@ -8,7 +8,7 @@ use agent_protocol::{AppClientCommand, FrontendMode, ThreadItem, TurnItemKind, U
 use anyhow::Result;
 
 pub(crate) fn handle_tui_input(
-    session_id: &str,
+    conversation_id: &str,
     app: &mut TuiApp,
     client: &AppServerClient,
     input: ParsedInput,
@@ -40,7 +40,7 @@ pub(crate) fn handle_tui_input(
             if let AppClientCommand::Exit = command {
                 if app.console_state.mode != FrontendMode::Idle {
                     client.send_command(AppClientCommand::InterruptTurn {
-                        session_id: session_id.to_string(),
+                        conversation_id: conversation_id.to_string(),
                     })?;
                 }
                 app.run_state.should_exit = true;
@@ -103,7 +103,7 @@ pub(crate) fn handle_tui_input(
                 },
             ));
             client.send_command(AppClientCommand::ResolveServerRequest {
-                session_id: session_id.to_string(),
+                conversation_id: conversation_id.to_string(),
                 request_id,
                 approved,
                 reason: Some(reason),

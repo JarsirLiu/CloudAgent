@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 #[derive(Clone)]
 pub struct InProcessClientConfig {
     pub runtime: Arc<AgentRuntime>,
-    pub session_id: String,
+    pub conversation_id: String,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
 }
@@ -26,7 +26,7 @@ impl InProcessAppServerClient {
     pub fn start(config: InProcessClientConfig) -> Self {
         let handle = start_in_process(
             config.runtime,
-            config.session_id,
+            config.conversation_id,
             config.auto_approve,
             config.auto_approve_reason,
         );

@@ -53,19 +53,19 @@ impl RuntimeState {
         }
     }
 
-    pub(crate) async fn conversation(&self, session_id: &str) -> Option<ConversationState> {
+    pub(crate) async fn conversation(&self, conversation_id: &str) -> Option<ConversationState> {
         self.conversations
             .lock()
             .ok()?
-            .get(session_id)
+            .get(conversation_id)
             .map(|entry| entry.conversation.clone())
     }
 
-    pub(crate) async fn history(&self, session_id: &str) -> Option<ConversationHistory> {
+    pub(crate) async fn history(&self, conversation_id: &str) -> Option<ConversationHistory> {
         self.conversations
             .lock()
             .ok()?
-            .get(session_id)
+            .get(conversation_id)
             .map(|entry| entry.conversation.history().clone())
     }
 
@@ -73,12 +73,12 @@ impl RuntimeState {
         let Ok(mut conversations) = self.conversations.lock() else {
             return;
         };
-        let session_id = conversation.history.id.clone();
+        let conversation_id = conversation.history.id.clone();
         let cancellation_token = conversations
-            .get(&session_id)
+            .get(&conversation_id)
             .and_then(|entry| entry.cancellation_token.clone());
         conversations.insert(
-            session_id,
+            conversation_id,
             RuntimeConversationEntry {
                 conversation,
                 cancellation_token,
@@ -90,11 +90,11 @@ impl RuntimeState {
         let Ok(mut conversations) = self.conversations.lock() else {
             return;
         };
-        let session_id = history.id.clone();
-        if let Some(entry) = conversations.get_mut(&session_id) {
+        let conversation_id = history.id.clone();
+        if let Some(entry) = conversations.get_mut(&conversation_id) {
             *entry.conversation.history_mut() = history;
         } else {
-            conversations.insert(session_id, RuntimeConversationEntry::new(history));
+            conversations.insert(conversation_id, RuntimeConversationEntry::new(history));
         }
     }
 
@@ -104,15 +104,15 @@ impl RuntimeState {
         }
     }
 
-    pub(crate) async fn active_turn(&self, session_id: &str) -> Option<ActiveTurnHandle> {
+    pub(crate) async fn active_turn(&self, conversation_id: &str) -> Option<ActiveTurnHandle> {
         let conversations = self.conversations.lock().ok()?;
-        let entry = conversations.get(session_id)?;
+        let entry = conversations.get(conversation_id)?;
         let active_turn = entry.conversation.active_turn.as_ref()?;
         let cancellation_token = entry.cancellation_token.clone()?;
         Some(ActiveTurnHandle::from_parts(active_turn, cancellation_token))
     }
 
-    pub(crate) async fn start_turn(&self, session_id: String, turn_id: String) -> ActiveTurnHandle {
+    pub(crate) async fn start_turn(&self, conversation_id: String, turn_id: String) -> ActiveTurnHandle {
         let cancellation_token = CancellationToken::new();
         let active_turn = ActiveTurnHandle {
             turn_id: turn_id.clone(),
@@ -123,9 +123,9 @@ impl RuntimeState {
         let Ok(mut conversations) = self.conversations.lock() else {
             return active_turn;
         };
-        let entry = conversations.entry(session_id.clone()).or_insert_with(|| {
+        let entry = conversations.entry(conversation_id.clone()).or_insert_with(|| {
             RuntimeConversationEntry::new(ConversationHistory::new(
-                session_id,
+                conversation_id,
                 self.system_prompt.clone(),
             ))
         });
@@ -135,9 +135,9 @@ impl RuntimeState {
         active_turn
     }
 
-    pub(crate) async fn finish_turn(&self, session_id: &str) {
+    pub(crate) async fn finish_turn(&self, conversation_id: &str) {
         if let Ok(mut conversations) = self.conversations.lock()
-            && let Some(entry) = conversations.get_mut(session_id)
+            && let Some(entry) = conversations.get_mut(conversation_id)
         {
             entry.conversation.clear_active_turn();
             entry.cancellation_token = None;
@@ -146,12 +146,12 @@ impl RuntimeState {
 
     pub(crate) async fn update_turn_state(
         &self,
-        session_id: &str,
+        conversation_id: &str,
         turn_id: &str,
         turn_state: TurnState,
     ) {
         if let Ok(mut conversations) = self.conversations.lock()
-            && let Some(entry) = conversations.get_mut(session_id)
+            && let Some(entry) = conversations.get_mut(conversation_id)
         {
             entry.conversation.update_turn_state(turn_id, turn_state);
         }
@@ -189,25 +189,25 @@ impl RuntimeState {
 
     pub(crate) async fn set_pending_request(
         &self,
-        session_id: &str,
+        conversation_id: &str,
         request_id: RequestId,
         request: ServerRequest,
     ) {
         let Ok(mut conversations) = self.conversations.lock() else {
             return;
         };
-        let entry = conversations.entry(session_id.to_string()).or_insert_with(|| {
+        let entry = conversations.entry(conversation_id.to_string()).or_insert_with(|| {
             RuntimeConversationEntry::new(ConversationHistory::new(
-                session_id.to_string(),
+                conversation_id.to_string(),
                 self.system_prompt.clone(),
             ))
         });
         entry.conversation.set_pending_request(request_id, request);
     }
 
-    pub(crate) async fn resolve_pending_request(&self, session_id: &str, request_id: &RequestId) {
+    pub(crate) async fn resolve_pending_request(&self, conversation_id: &str, request_id: &RequestId) {
         if let Ok(mut conversations) = self.conversations.lock()
-            && let Some(entry) = conversations.get_mut(session_id)
+            && let Some(entry) = conversations.get_mut(conversation_id)
         {
             entry.conversation.resolve_pending_request(request_id);
         }

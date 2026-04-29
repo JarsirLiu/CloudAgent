@@ -70,14 +70,14 @@ pub(crate) async fn handle_command(
                 event_tx,
                 &state,
                 AppServerNotification::FrontendStateChanged {
-                    session_id: input.session_id.clone(),
+                    conversation_id: input.conversation_id.clone(),
                     mode: agent_protocol::FrontendMode::Running,
                 },
             )
             .await;
             let task = spawn_turn(
                 runtime,
-                input.session_id,
+                input.conversation_id,
                 input.content,
                 SpawnTurnContext {
                     event_tx: event_tx.clone(),
@@ -88,13 +88,13 @@ pub(crate) async fn handle_command(
             );
             state.lock().await.track_turn_task(task);
         }
-        AppClientCommand::InterruptTurn { session_id } => {
-            let interrupted = runtime.interrupt_conversation(&session_id).await;
+        AppClientCommand::InterruptTurn { conversation_id } => {
+            let interrupted = runtime.interrupt_conversation(&conversation_id).await;
             send_notification(
                 event_tx,
                 &state,
                 AppServerNotification::Info {
-                    session_id,
+                    conversation_id,
                     message: if interrupted {
                         "interrupt requested".to_string()
                     } else {
@@ -104,25 +104,25 @@ pub(crate) async fn handle_command(
             )
             .await;
         }
-        AppClientCommand::RequestConversationStatus { session_id } => {
-            let snapshot = runtime.conversation_status(&session_id).await?;
+        AppClientCommand::RequestConversationStatus { conversation_id } => {
+            let snapshot = runtime.conversation_status(&conversation_id).await?;
             send_notification(
                 event_tx,
                 &state,
                 AppServerNotification::ConversationStatus {
-                    session_id,
+                    conversation_id,
                     snapshot,
                 },
             )
             .await;
         }
-        AppClientCommand::RequestConversationHistory { session_id } => {
-            let snapshot = runtime.conversation_history_snapshot(&session_id).await?;
+        AppClientCommand::RequestConversationHistory { conversation_id } => {
+            let snapshot = runtime.conversation_history_snapshot(&conversation_id).await?;
             send_notification(
                 event_tx,
                 &state,
                 AppServerNotification::ConversationHistory {
-                    session_id,
+                    conversation_id,
                     messages: snapshot
                         .messages
                         .iter()
@@ -132,47 +132,47 @@ pub(crate) async fn handle_command(
             )
             .await;
         }
-        AppClientCommand::ResetConversation { session_id } => {
-            runtime.reset_conversation(&session_id).await?;
+        AppClientCommand::ResetConversation { conversation_id } => {
+            runtime.reset_conversation(&conversation_id).await?;
             send_notification(
                 event_tx,
                 &state,
                 AppServerNotification::Info {
-                    session_id,
+                    conversation_id,
                     message: "conversation reset".to_string(),
                 },
             )
             .await;
         }
-        AppClientCommand::SubscribeConversation { session_id } => {
+        AppClientCommand::SubscribeConversation { conversation_id } => {
             {
                 let mut state = state.lock().await;
-                state.subscriptions.subscribe(session_id.clone());
+                state.subscriptions.subscribe(conversation_id.clone());
             }
             send_notification(
                 event_tx,
                 &state,
                 AppServerNotification::ConversationSubscriptionChanged {
-                    session_id,
+                    conversation_id,
                     subscribed: true,
                 },
             )
             .await;
         }
-        AppClientCommand::UnsubscribeConversation { session_id } => {
+        AppClientCommand::UnsubscribeConversation { conversation_id } => {
             {
                 let mut state = state.lock().await;
-                state.subscriptions.unsubscribe(&session_id);
+                state.subscriptions.unsubscribe(&conversation_id);
             }
             let _ = event_tx.send(AppServerMessage::Notification(
                 AppServerNotification::ConversationSubscriptionChanged {
-                    session_id,
+                    conversation_id,
                     subscribed: false,
                 },
             ));
         }
         AppClientCommand::ResolveServerRequest {
-            session_id,
+            conversation_id,
             request_id,
             approved,
             reason,
@@ -184,13 +184,13 @@ pub(crate) async fn handle_command(
             drop(state_guard);
             if let Some((turn_id, request, decision)) = resolved {
                 runtime
-                    .resolve_pending_request(&session_id, &request_id)
+                    .resolve_pending_request(&conversation_id, &request_id)
                     .await;
                 send_notification(
                     event_tx,
                     &state,
                     AppServerNotification::ServerRequestResolved {
-                        session_id,
+                        conversation_id,
                         turn_id,
                         request_id,
                         request,
@@ -208,7 +208,7 @@ pub(crate) async fn handle_command(
 
 fn spawn_turn(
     runtime: Arc<AgentRuntime>,
-    session_id: String,
+    conversation_id: String,
     user_input: String,
     ctx: SpawnTurnContext,
 ) -> JoinHandle<()> {
@@ -217,12 +217,12 @@ fn spawn_turn(
         let finish_events = ctx.event_tx.clone();
         let state_for_turn = ctx.state.clone();
         let state_for_finish = ctx.state.clone();
-        let session_id_for_turn = session_id.clone();
-        let session_id_for_server_request = session_id.clone();
+        let conversation_id_for_turn = conversation_id.clone();
+        let conversation_id_for_server_request = conversation_id.clone();
         let active_turn_id = Arc::new(StdMutex::new(None::<String>));
         let active_turn_id_for_events = active_turn_id.clone();
         let processor = Arc::new(StdMutex::new(ConversationProcessor::new(
-            session_id_for_turn.clone(),
+            conversation_id_for_turn.clone(),
         )));
         let processor_for_events = processor.clone();
         let (projected_tx, mut projected_rx) =
@@ -242,7 +242,7 @@ fn spawn_turn(
 
         let result = runtime
             .chat_with_approval_and_events(
-                &session_id,
+                &conversation_id,
                 &user_input,
                 move |event| {
                     let event = event.clone();
@@ -263,7 +263,7 @@ fn spawn_turn(
                 move |request: ServerRequest| {
                     let event_tx = ctx.event_tx.clone();
                     let state = ctx.state.clone();
-                    let session_id = session_id_for_server_request.clone();
+                    let conversation_id = conversation_id_for_server_request.clone();
                     let auto_approve_reason = ctx.auto_approve_reason.clone();
                     let runtime = runtime_for_requests.clone();
                     async move {
@@ -297,7 +297,7 @@ fn spawn_turn(
                         }
                         runtime
                             .register_pending_request(
-                                &session_id,
+                                &conversation_id,
                                 request_id.clone(),
                                 request.clone(),
                             )
@@ -307,7 +307,7 @@ fn spawn_turn(
                             &state,
                         AppServerRequest::ServerRequest {
                             request_id,
-                            session_id,
+                            conversation_id,
                             request,
                             },
                         )
@@ -341,7 +341,7 @@ fn spawn_turn(
                     &finish_events,
                     &state_for_finish,
                     AppServerNotification::TurnFailed {
-                        session_id: session_id.clone(),
+                        conversation_id: conversation_id.clone(),
                         turn_id,
                         error: format!("{error:#}"),
                     },
@@ -352,7 +352,7 @@ fn spawn_turn(
                     &finish_events,
                     &state_for_finish,
                     AppServerNotification::Error {
-                        session_id: session_id.clone(),
+                        conversation_id: conversation_id.clone(),
                         message: format!("turn failed before start: {error:#}"),
                     },
                 )
@@ -362,7 +362,7 @@ fn spawn_turn(
                 &finish_events,
                 &state_for_finish,
                 AppServerNotification::FrontendStateChanged {
-                    session_id,
+                    conversation_id,
                     mode: agent_protocol::FrontendMode::Idle,
                 },
             )
@@ -378,7 +378,7 @@ async fn send_notification(
 ) {
     let subscribed = {
         let state = state.lock().await;
-        state.subscriptions.is_subscribed(notification.session_id())
+        state.subscriptions.is_subscribed(notification.conversation_id())
     };
     if subscribed {
         let _ = event_tx.send(AppServerMessage::Notification(notification));
@@ -392,7 +392,7 @@ async fn send_request(
 ) {
     let subscribed = {
         let state = state.lock().await;
-        state.subscriptions.is_subscribed(request.session_id())
+        state.subscriptions.is_subscribed(request.conversation_id())
     };
     if subscribed {
         let _ = event_tx.send(AppServerMessage::Request(request));

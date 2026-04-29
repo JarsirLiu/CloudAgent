@@ -19,7 +19,7 @@ pub enum FrontendMode {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserTurnInput {
-    pub session_id: String,
+    pub conversation_id: String,
     pub content: String,
 }
 
@@ -56,7 +56,7 @@ pub enum ConversationStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationSnapshot {
-    pub session_id: String,
+    pub conversation_id: String,
     pub conversation_status: ConversationStatus,
     pub active_turn: Option<TurnId>,
     pub turn_state: Option<TurnState>,
@@ -216,7 +216,7 @@ pub enum TurnItemDeltaKind {
 pub enum TurnEvent {
     TurnStarted {
         turn_id: TurnId,
-        session_id: String,
+        conversation_id: String,
         user_input: String,
     },
     ModelRequestStarted {
@@ -275,43 +275,43 @@ pub enum TurnEvent {
 pub enum AppClientCommand {
     SubmitTurn(UserTurnInput),
     ResolveServerRequest {
-        session_id: String,
+        conversation_id: String,
         request_id: RequestId,
         approved: bool,
         reason: Option<String>,
     },
     InterruptTurn {
-        session_id: String,
+        conversation_id: String,
     },
     ResetConversation {
-        session_id: String,
+        conversation_id: String,
     },
     RequestConversationStatus {
-        session_id: String,
+        conversation_id: String,
     },
     RequestConversationHistory {
-        session_id: String,
+        conversation_id: String,
     },
     SubscribeConversation {
-        session_id: String,
+        conversation_id: String,
     },
     UnsubscribeConversation {
-        session_id: String,
+        conversation_id: String,
     },
     Exit,
 }
 
 impl AppClientCommand {
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn conversation_id(&self) -> Option<&str> {
         match self {
-            Self::SubmitTurn(input) => Some(&input.session_id),
-            Self::ResolveServerRequest { session_id, .. }
-            | Self::InterruptTurn { session_id }
-            | Self::ResetConversation { session_id }
-            | Self::RequestConversationStatus { session_id }
-            | Self::RequestConversationHistory { session_id }
-            | Self::SubscribeConversation { session_id }
-            | Self::UnsubscribeConversation { session_id } => Some(session_id),
+            Self::SubmitTurn(input) => Some(&input.conversation_id),
+            Self::ResolveServerRequest { conversation_id, .. }
+            | Self::InterruptTurn { conversation_id }
+            | Self::ResetConversation { conversation_id }
+            | Self::RequestConversationStatus { conversation_id }
+            | Self::RequestConversationHistory { conversation_id }
+            | Self::SubscribeConversation { conversation_id }
+            | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
             Self::Exit => None,
         }
     }
@@ -321,98 +321,98 @@ impl AppClientCommand {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppServerNotification {
     FrontendStateChanged {
-        session_id: String,
+        conversation_id: String,
         mode: FrontendMode,
     },
     TurnStarted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
     },
     ItemStarted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         kind: TurnItemKind,
         title: Option<String>,
     },
     ItemDelta {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         kind: TurnItemDeltaKind,
         delta: String,
     },
     ItemCompleted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item: ThreadItem,
     },
     ServerRequestRequested {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         request: ServerRequest,
     },
     ServerRequestResolved {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         request_id: RequestId,
         request: ServerRequest,
         decision: ServerRequestDecision,
     },
     TurnCompleted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
     },
     TurnFailed {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         error: String,
     },
     TurnCancelled {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         reason: String,
     },
     ConversationStatus {
-        session_id: String,
+        conversation_id: String,
         snapshot: ConversationSnapshot,
     },
     ConversationHistory {
-        session_id: String,
+        conversation_id: String,
         messages: Vec<HistoryEntry>,
     },
     ConversationSubscriptionChanged {
-        session_id: String,
+        conversation_id: String,
         subscribed: bool,
     },
     Info {
-        session_id: String,
+        conversation_id: String,
         message: String,
     },
     Error {
-        session_id: String,
+        conversation_id: String,
         message: String,
     },
 }
 
 impl AppServerNotification {
-    pub fn session_id(&self) -> &str {
+    pub fn conversation_id(&self) -> &str {
         match self {
-            Self::FrontendStateChanged { session_id, .. }
-            | Self::TurnStarted { session_id, .. }
-            | Self::ItemStarted { session_id, .. }
-            | Self::ItemDelta { session_id, .. }
-            | Self::ItemCompleted { session_id, .. }
-            | Self::ServerRequestRequested { session_id, .. }
-            | Self::ServerRequestResolved { session_id, .. }
-            | Self::TurnCompleted { session_id, .. }
-            | Self::TurnFailed { session_id, .. }
-            | Self::TurnCancelled { session_id, .. }
-            | Self::ConversationStatus { session_id, .. }
-            | Self::ConversationHistory { session_id, .. }
-            | Self::ConversationSubscriptionChanged { session_id, .. }
-            | Self::Info { session_id, .. }
-            | Self::Error { session_id, .. } => session_id,
+            Self::FrontendStateChanged { conversation_id, .. }
+            | Self::TurnStarted { conversation_id, .. }
+            | Self::ItemStarted { conversation_id, .. }
+            | Self::ItemDelta { conversation_id, .. }
+            | Self::ItemCompleted { conversation_id, .. }
+            | Self::ServerRequestRequested { conversation_id, .. }
+            | Self::ServerRequestResolved { conversation_id, .. }
+            | Self::TurnCompleted { conversation_id, .. }
+            | Self::TurnFailed { conversation_id, .. }
+            | Self::TurnCancelled { conversation_id, .. }
+            | Self::ConversationStatus { conversation_id, .. }
+            | Self::ConversationHistory { conversation_id, .. }
+            | Self::ConversationSubscriptionChanged { conversation_id, .. }
+            | Self::Info { conversation_id, .. }
+            | Self::Error { conversation_id, .. } => conversation_id,
         }
     }
 }
@@ -422,7 +422,7 @@ impl AppServerNotification {
 pub enum AppServerRequest {
     ServerRequest {
         request_id: RequestId,
-        session_id: String,
+        conversation_id: String,
         request: ServerRequest,
     },
 }
@@ -434,9 +434,9 @@ impl AppServerRequest {
         }
     }
 
-    pub fn session_id(&self) -> &str {
+    pub fn conversation_id(&self) -> &str {
         match self {
-            Self::ServerRequest { session_id, .. } => session_id,
+            Self::ServerRequest { conversation_id, .. } => conversation_id,
         }
     }
 }
@@ -564,25 +564,25 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
             params,
         )?)),
         "turn/interrupt" => Ok(AppClientCommand::InterruptTurn {
-            session_id: value_field(params, "session_id")?,
+            conversation_id: value_field(params, "conversation_id")?,
         }),
         "conversation/reset" => Ok(AppClientCommand::ResetConversation {
-            session_id: value_field(params, "session_id")?,
+            conversation_id: value_field(params, "conversation_id")?,
         }),
         "conversation/status" => Ok(AppClientCommand::RequestConversationStatus {
-            session_id: value_field(params, "session_id")?,
+            conversation_id: value_field(params, "conversation_id")?,
         }),
         "conversation/history" => Ok(AppClientCommand::RequestConversationHistory {
-            session_id: value_field(params, "session_id")?,
+            conversation_id: value_field(params, "conversation_id")?,
         }),
         "conversation/subscribe" => Ok(AppClientCommand::SubscribeConversation {
-            session_id: value_field(params, "session_id")?,
+            conversation_id: value_field(params, "conversation_id")?,
         }),
         "conversation/unsubscribe" => Ok(AppClientCommand::UnsubscribeConversation {
-            session_id: value_field(params, "session_id")?,
+            conversation_id: value_field(params, "conversation_id")?,
         }),
         "serverRequest/resolve" => Ok(AppClientCommand::ResolveServerRequest {
-            session_id: value_field(params.clone(), "session_id")?,
+            conversation_id: value_field(params.clone(), "conversation_id")?,
             request_id: value_field(params.clone(), "request_id")?,
             approved: value_field(params.clone(), "approved")?,
             reason: value_field(params, "reason")?,
@@ -602,29 +602,29 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             "serverRequest/resolve",
             serde_json::to_value(command).unwrap_or(Value::Null),
         ),
-        AppClientCommand::InterruptTurn { session_id } => (
+        AppClientCommand::InterruptTurn { conversation_id } => (
             "turn/interrupt",
-            serde_json::json!({ "session_id": session_id }),
+            serde_json::json!({ "conversation_id": conversation_id }),
         ),
-        AppClientCommand::ResetConversation { session_id } => (
+        AppClientCommand::ResetConversation { conversation_id } => (
             "conversation/reset",
-            serde_json::json!({ "session_id": session_id }),
+            serde_json::json!({ "conversation_id": conversation_id }),
         ),
-        AppClientCommand::RequestConversationStatus { session_id } => (
+        AppClientCommand::RequestConversationStatus { conversation_id } => (
             "conversation/status",
-            serde_json::json!({ "session_id": session_id }),
+            serde_json::json!({ "conversation_id": conversation_id }),
         ),
-        AppClientCommand::RequestConversationHistory { session_id } => (
+        AppClientCommand::RequestConversationHistory { conversation_id } => (
             "conversation/history",
-            serde_json::json!({ "session_id": session_id }),
+            serde_json::json!({ "conversation_id": conversation_id }),
         ),
-        AppClientCommand::SubscribeConversation { session_id } => (
+        AppClientCommand::SubscribeConversation { conversation_id } => (
             "conversation/subscribe",
-            serde_json::json!({ "session_id": session_id }),
+            serde_json::json!({ "conversation_id": conversation_id }),
         ),
-        AppClientCommand::UnsubscribeConversation { session_id } => (
+        AppClientCommand::UnsubscribeConversation { conversation_id } => (
             "conversation/unsubscribe",
-            serde_json::json!({ "session_id": session_id }),
+            serde_json::json!({ "conversation_id": conversation_id }),
         ),
         AppClientCommand::Exit => ("app/exit", Value::Null),
     }
@@ -705,14 +705,14 @@ fn request_method_and_params(request: &AppServerRequest) -> (RequestId, &'static
     match request {
         AppServerRequest::ServerRequest {
             request_id,
-            session_id,
+            conversation_id,
             request,
         } => match request {
             ServerRequest::ToolApproval { .. } => (
                 request_id.clone(),
                 "serverRequest/toolApproval",
                 serde_json::json!({
-                    "session_id": session_id,
+                    "conversation_id": conversation_id,
                     "request": request,
                 }),
             ),
@@ -761,17 +761,17 @@ fn parse_server_request(
             let object = params
                 .as_object()
                 .ok_or_else(|| anyhow::anyhow!("expected object params"))?;
-            let session_id = object
-                .get("session_id")
+            let conversation_id = object
+                .get("conversation_id")
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("missing `session_id` field"))?;
+                .ok_or_else(|| anyhow::anyhow!("missing `conversation_id` field"))?;
             let request = object
                 .get("request")
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("missing `request` field"))?;
             Ok(AppServerRequest::ServerRequest {
                 request_id,
-                session_id: serde_json::from_value(session_id)?,
+                conversation_id: serde_json::from_value(conversation_id)?,
                 request: serde_json::from_value(request)?,
             })
         }
@@ -802,7 +802,7 @@ mod tests {
         let message = AppServerMessageEnvelope {
             message: AppServerMessage::Request(AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(7),
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 request: ServerRequest::ToolApproval {
                     request: ToolApprovalRequest {
                         turn_id: "turn-1".to_string(),
@@ -842,7 +842,7 @@ mod tests {
         let envelope = AppClientCommandEnvelope {
             request_id: RequestId::Integer(1),
             command: AppClientCommand::SubmitTurn(UserTurnInput {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 content: "hello".to_string(),
             }),
         };
@@ -853,7 +853,7 @@ mod tests {
         assert_eq!(parsed.request_id, RequestId::Integer(1));
         match parsed.command {
             AppClientCommand::SubmitTurn(input) => {
-                assert_eq!(input.session_id, "default");
+                assert_eq!(input.conversation_id, "default");
                 assert_eq!(input.content, "hello");
             }
             other => panic!("unexpected command: {other:?}"),
@@ -865,7 +865,7 @@ mod tests {
         let envelope = AppClientCommandEnvelope {
             request_id: RequestId::Integer(9),
             command: AppClientCommand::ResolveServerRequest {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 request_id: RequestId::Integer(7),
                 approved: true,
                 reason: Some("ok".to_string()),
@@ -878,12 +878,12 @@ mod tests {
         assert_eq!(parsed.request_id, RequestId::Integer(9));
         match parsed.command {
             AppClientCommand::ResolveServerRequest {
-                session_id,
+                conversation_id,
                 request_id,
                 approved,
                 reason,
             } => {
-                assert_eq!(session_id, "default");
+                assert_eq!(conversation_id, "default");
                 assert_eq!(request_id, RequestId::Integer(7));
                 assert!(approved);
                 assert_eq!(reason.as_deref(), Some("ok"));

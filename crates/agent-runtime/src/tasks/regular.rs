@@ -52,7 +52,7 @@ where
 
 pub(crate) async fn execute_regular_turn<E, F, Fut>(
     runtime: &AgentRuntime,
-    session_id: &str,
+    conversation_id: &str,
     turn_id: &str,
     cancellation_token: CancellationToken,
     history: ConversationHistory,
@@ -71,7 +71,7 @@ where
     let tool_specs = runtime.tools.specs();
 
     for _ in 0..runtime.policy.max_tool_roundtrips {
-        if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(session_id).await {
+        if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
             emit_event(
                 &mut events,
                 on_event,
@@ -220,9 +220,9 @@ where
 
         let tool_ctx = runtime
             .context
-            .tool_context(session_id.to_string(), cancellation_token.clone());
+            .tool_context(conversation_id.to_string(), cancellation_token.clone());
         for call in tool_calls {
-            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(session_id).await {
+            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
                 emit_event(
                     &mut events,
                     on_event,
@@ -263,7 +263,7 @@ where
             {
                 runtime
                     .state
-                    .update_turn_state(session_id, turn_id, TurnState::WaitingForServerRequest)
+                    .update_turn_state(conversation_id, turn_id, TurnState::WaitingForServerRequest)
                     .await;
                 let request = ServerRequest::ToolApproval {
                     request: ToolApprovalRequest {
@@ -287,7 +287,7 @@ where
                     .await?;
                 runtime
                     .state
-                    .update_turn_state(session_id, turn_id, TurnState::Running)
+                    .update_turn_state(conversation_id, turn_id, TurnState::Running)
                     .await;
                 emit_event(
                     &mut events,
@@ -340,7 +340,7 @@ where
             let result = runtime
                 .execute_tool_call(&cancellation_token, call.clone(), &tool_ctx)
                 .await?;
-            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(session_id).await {
+            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
                 emit_event(
                     &mut events,
                     on_event,

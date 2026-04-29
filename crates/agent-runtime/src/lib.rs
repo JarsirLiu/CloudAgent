@@ -156,7 +156,7 @@ impl AgentRuntime {
         let history = self.conversation_history_snapshot(conversation_id).await?;
         let active_turn = self.state.active_turn(conversation_id).await;
         Ok(ConversationSnapshot {
-            session_id: conversation_id.to_string(),
+            conversation_id: conversation_id.to_string(),
             conversation_status: if active_turn.is_some() {
                 ConversationStatus::Busy
             } else {
@@ -174,18 +174,18 @@ impl AgentRuntime {
 
     pub async fn register_pending_request(
         &self,
-        session_id: &str,
+        conversation_id: &str,
         request_id: RequestId,
         request: ServerRequest,
     ) {
         self.state
-            .set_pending_request(session_id, request_id, request)
+            .set_pending_request(conversation_id, request_id, request)
             .await;
     }
 
-    pub async fn resolve_pending_request(&self, session_id: &str, request_id: &RequestId) {
+    pub async fn resolve_pending_request(&self, conversation_id: &str, request_id: &RequestId) {
         self.state
-            .resolve_pending_request(session_id, request_id)
+            .resolve_pending_request(conversation_id, request_id)
             .await;
     }
 
@@ -277,7 +277,7 @@ impl AgentRuntime {
             &mut event_sink,
             TurnEvent::TurnStarted {
                 turn_id: turn_id.clone(),
-                session_id: conversation_id.to_string(),
+                conversation_id: conversation_id.to_string(),
                 user_input: user_input.to_string(),
             },
         );
@@ -937,9 +937,9 @@ where
 }
 
 impl AgentRuntime {
-    pub(crate) async fn is_turn_cancelled(&self, session_id: &str) -> bool {
+    pub(crate) async fn is_turn_cancelled(&self, conversation_id: &str) -> bool {
         self.state
-            .active_turn(session_id)
+            .active_turn(conversation_id)
             .await
             .is_some_and(|turn| turn.is_cancelled())
     }

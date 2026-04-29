@@ -4,13 +4,13 @@ use anyhow::Result;
 
 pub(crate) async fn create_client(
     config: &ConsoleConfig,
-    session_id: String,
+    conversation_id: String,
 ) -> Result<AppServerClient> {
     match &config.connection {
         ConsoleConnection::InProcess { runtime } => {
             Ok(AppServerClient::in_process(InProcessClientConfig {
                 runtime: runtime.clone(),
-                session_id,
+                conversation_id,
                 auto_approve: config.auto_approve,
                 auto_approve_reason: config.auto_approve_reason.clone(),
             }))

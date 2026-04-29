@@ -2,14 +2,14 @@ use agent_protocol::{AppServerNotification, FrontendMode, HistoryEntry, TurnEven
 use agent_runtime::ConversationMessage;
 
 pub(crate) struct ConversationProcessor {
-    session_id: String,
+    conversation_id: String,
     deferred_terminal_notifications: Vec<AppServerNotification>,
 }
 
 impl ConversationProcessor {
-    pub(crate) fn new(session_id: impl Into<String>) -> Self {
+    pub(crate) fn new(conversation_id: impl Into<String>) -> Self {
         Self {
-            session_id: session_id.into(),
+            conversation_id: conversation_id.into(),
             deferred_terminal_notifications: Vec::new(),
         }
     }
@@ -20,7 +20,7 @@ impl ConversationProcessor {
     ) -> Vec<AppServerNotification> {
         match event {
             TurnEvent::TurnStarted { turn_id, .. } => vec![AppServerNotification::TurnStarted {
-                session_id: self.session_id.clone(),
+                conversation_id: self.conversation_id.clone(),
                 turn_id: turn_id.clone(),
             }],
             TurnEvent::ItemStarted {
@@ -29,7 +29,7 @@ impl ConversationProcessor {
                 kind,
                 title,
             } => vec![AppServerNotification::ItemStarted {
-                session_id: self.session_id.clone(),
+                conversation_id: self.conversation_id.clone(),
                 turn_id: turn_id.clone(),
                 item_id: item_id.clone(),
                 kind: kind.clone(),
@@ -45,7 +45,7 @@ impl ConversationProcessor {
                     Vec::new()
                 } else {
                     vec![AppServerNotification::ItemDelta {
-                        session_id: self.session_id.clone(),
+                        conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         item_id: item_id.clone(),
                         kind: kind.clone(),
@@ -55,14 +55,14 @@ impl ConversationProcessor {
             }
             TurnEvent::ItemCompleted { turn_id, item, .. } => {
                 vec![AppServerNotification::ItemCompleted {
-                    session_id: self.session_id.clone(),
+                    conversation_id: self.conversation_id.clone(),
                     turn_id: turn_id.clone(),
                     item: item.clone(),
                 }]
             }
             TurnEvent::ServerRequestRequested { turn_id, request } => {
                 vec![AppServerNotification::ServerRequestRequested {
-                    session_id: self.session_id.clone(),
+                    conversation_id: self.conversation_id.clone(),
                     turn_id: turn_id.clone(),
                     request: request.clone(),
                 }]
@@ -70,7 +70,7 @@ impl ConversationProcessor {
             TurnEvent::TurnCompleted { turn_id, .. } => {
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnCompleted {
-                        session_id: self.session_id.clone(),
+                        conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                     });
                 Vec::new()
@@ -78,7 +78,7 @@ impl ConversationProcessor {
             TurnEvent::TurnFailed { turn_id, error } => {
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnFailed {
-                        session_id: self.session_id.clone(),
+                        conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         error: error.clone(),
                     });
@@ -87,7 +87,7 @@ impl ConversationProcessor {
             TurnEvent::TurnCancelled { turn_id, reason } => {
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnCancelled {
-                        session_id: self.session_id.clone(),
+                        conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         reason: reason.clone(),
                     });
@@ -106,7 +106,7 @@ impl ConversationProcessor {
             TurnState::Completed | TurnState::Failed | TurnState::Cancelled
         ) {
             notifications.push(AppServerNotification::FrontendStateChanged {
-                session_id: self.session_id.clone(),
+                conversation_id: self.conversation_id.clone(),
                 mode: FrontendMode::Idle,
             });
         }

@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ConsoleConfig {
-    pub session_id: String,
+    pub conversation_id: String,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
     pub connection: ConsoleConnection,
@@ -51,7 +51,7 @@ impl ConsoleConnection {
 }
 
 pub(crate) struct TuiApp {
-    pub(crate) session_id: String,
+    pub(crate) conversation_id: String,
     pub(crate) connection_label: String,
     pub(crate) console_state: ConsoleState,
     pub(crate) server_request_state: ServerRequestState,
@@ -61,9 +61,9 @@ pub(crate) struct TuiApp {
 }
 
 impl TuiApp {
-    fn new(session_id: String, connection_label: &str) -> Self {
+    fn new(conversation_id: String, connection_label: &str) -> Self {
         Self {
-            session_id,
+            conversation_id,
             connection_label: connection_label.to_string(),
             console_state: ConsoleState::new(),
             server_request_state: ServerRequestState::default(),
@@ -189,11 +189,11 @@ impl TuiApp {
 
         match self.input_pane.handle_key(key)? {
             InputPaneAction::Composer(ComposerAction::Submit(text)) => {
-                Some(parse_line(&text, &self.session_id, self.console_state.mode))
+                Some(parse_line(&text, &self.conversation_id, self.console_state.mode))
             }
             InputPaneAction::Composer(ComposerAction::Interrupt) => {
                 Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
-                    session_id: self.session_id.clone(),
+                    conversation_id: self.conversation_id.clone(),
                 }))
             }
             InputPaneAction::Composer(ComposerAction::Exit) => {
@@ -202,7 +202,7 @@ impl TuiApp {
             }
             InputPaneAction::Composer(ComposerAction::Reset) => {
                 Some(ParsedInput::Command(AppClientCommand::ResetConversation {
-                    session_id: self.session_id.clone(),
+                    conversation_id: self.conversation_id.clone(),
                 }))
             }
             InputPaneAction::Composer(ComposerAction::None) => None,
@@ -430,11 +430,11 @@ pub async fn run_console(config: ConsoleConfig) -> Result<()> {
 }
 
 async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
-    let session_id = config.session_id.clone();
-    let mut client = create_client(&config, session_id.clone()).await?;
-    let mut app = TuiApp::new(session_id.clone(), config.connection.label());
+    let conversation_id = config.conversation_id.clone();
+    let mut client = create_client(&config, conversation_id.clone()).await?;
+    let mut app = TuiApp::new(conversation_id.clone(), config.connection.label());
     client.send_command(AppClientCommand::RequestConversationHistory {
-        session_id: session_id.clone(),
+        conversation_id: conversation_id.clone(),
     })?;
     let mut terminal = TerminalGuard::new()?;
     let mut events = spawn_tui_event_loop();
@@ -450,7 +450,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                 match event {
                     UiEvent::Key(key) => {
                         if let Some(input) = app.handle_key(key) {
-                            if handle_tui_input(&session_id, &mut app, &client, input)? {
+                            if handle_tui_input(&conversation_id, &mut app, &client, input)? {
                                 break;
                             }
                         }
@@ -632,7 +632,7 @@ mod tests {
         let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime.clone(),
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             auto_approve: false,
             auto_approve_reason: None,
         });
@@ -643,7 +643,7 @@ mod tests {
             &mut app,
             &client,
             ParsedInput::Command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 content: "可以看到当前在哪个目录下吗".to_string(),
             })),
         )
@@ -701,12 +701,12 @@ mod tests {
 
         client
             .send_command(AppClientCommand::RequestConversationStatus {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
             })
             .expect("request status");
         client
             .send_command(AppClientCommand::RequestConversationHistory {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
             })
             .expect("request history");
 
@@ -752,14 +752,14 @@ mod tests {
             Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
         let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime_after_restart,
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             auto_approve: false,
             auto_approve_reason: None,
         });
         let mut restarted_app = TuiApp::new("default".to_string(), "in-process");
         restarted_client
             .send_command(AppClientCommand::RequestConversationHistory {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
             })
             .expect("request history after restart");
 
@@ -832,7 +832,7 @@ mod tests {
         let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime,
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             auto_approve: false,
             auto_approve_reason: None,
         });
@@ -843,7 +843,7 @@ mod tests {
             &mut app,
             &client,
             ParsedInput::Command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
                 content: "帮我看看当前目录".to_string(),
             })),
         )
@@ -860,7 +860,7 @@ mod tests {
                 saw_server_request = true;
                 client
                     .send_command(AppClientCommand::InterruptTurn {
-                        session_id: "default".to_string(),
+                        conversation_id: "default".to_string(),
                     })
                     .expect("interrupt turn");
             }
@@ -878,7 +878,7 @@ mod tests {
 
         client
             .send_command(AppClientCommand::RequestConversationHistory {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
             })
             .expect("request history");
 
@@ -905,14 +905,14 @@ mod tests {
             Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
         let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime_after_restart,
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             auto_approve: false,
             auto_approve_reason: None,
         });
         let mut restarted_app = TuiApp::new("default".to_string(), "in-process");
         restarted_client
             .send_command(AppClientCommand::RequestConversationHistory {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
             })
             .expect("request history after restart");
 
@@ -1017,7 +1017,7 @@ mod tests {
         let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime,
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             auto_approve: false,
             auto_approve_reason: None,
         });
@@ -1026,7 +1026,7 @@ mod tests {
         for content in ["第一轮看看目录", "第二轮再看一次目录"] {
             client
                 .send_command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
-                    session_id: "default".to_string(),
+                    conversation_id: "default".to_string(),
                     content: content.to_string(),
                 }))
                 .expect("submit turn");
@@ -1046,7 +1046,7 @@ mod tests {
                     saw_server_request = true;
                     client
                         .send_command(AppClientCommand::ResolveServerRequest {
-                            session_id: "default".to_string(),
+                            conversation_id: "default".to_string(),
                             request_id: request_id.clone(),
                             approved: true,
                             reason: Some("ok".to_string()),
@@ -1079,7 +1079,7 @@ mod tests {
 
         client
             .send_command(AppClientCommand::RequestConversationHistory {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
             })
             .expect("request live history");
         let live_history = loop {
@@ -1100,13 +1100,13 @@ mod tests {
             Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
         let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime_after_restart,
-            session_id: "default".to_string(),
+            conversation_id: "default".to_string(),
             auto_approve: false,
             auto_approve_reason: None,
         });
         restarted_client
             .send_command(AppClientCommand::RequestConversationHistory {
-                session_id: "default".to_string(),
+                conversation_id: "default".to_string(),
             })
             .expect("request history after restart");
         let restarted_history = loop {

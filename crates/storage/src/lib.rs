@@ -25,8 +25,8 @@ impl JsonConversationStore {
         &self.root
     }
 
-    pub async fn load_conversation(&self, session_id: &str) -> Result<Option<ConversationState>> {
-        let path = self.conversation_path(session_id);
+    pub async fn load_conversation(&self, conversation_id: &str) -> Result<Option<ConversationState>> {
+        let path = self.conversation_path(conversation_id);
         match fs::read_to_string(&path).await {
             Ok(text) => {
                 let conversation = serde_json::from_str::<PersistedConversation>(&text)
@@ -49,16 +49,16 @@ impl JsonConversationStore {
         Ok(())
     }
 
-    pub async fn delete_conversation(&self, session_id: &str) -> Result<()> {
-        self.delete_file_if_exists(&self.conversation_path(session_id)).await
+    pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.delete_file_if_exists(&self.conversation_path(conversation_id)).await
     }
 
-    pub async fn load_events(&self, session_id: &str) -> Result<Vec<TurnEvent>> {
-        let path = self.event_path(session_id);
+    pub async fn load_events(&self, conversation_id: &str) -> Result<Vec<TurnEvent>> {
+        let path = self.event_path(conversation_id);
         self.load_events_from_path(&path).await
     }
 
-    pub async fn append_events(&self, session_id: &str, events: &[TurnEvent]) -> Result<()> {
+    pub async fn append_events(&self, conversation_id: &str, events: &[TurnEvent]) -> Result<()> {
         if events.is_empty() {
             return Ok(());
         }
@@ -66,7 +66,7 @@ impl JsonConversationStore {
         fs::create_dir_all(&self.root)
             .await
             .with_context(|| format!("failed to create {}", self.root.display()))?;
-        let path = self.event_path(session_id);
+        let path = self.event_path(conversation_id);
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -88,22 +88,22 @@ impl JsonConversationStore {
         Ok(())
     }
 
-    pub async fn append_event(&self, session_id: &str, event: &TurnEvent) -> Result<()> {
-        self.append_events(session_id, std::slice::from_ref(event)).await
+    pub async fn append_event(&self, conversation_id: &str, event: &TurnEvent) -> Result<()> {
+        self.append_events(conversation_id, std::slice::from_ref(event)).await
     }
 
-    pub async fn delete_events(&self, session_id: &str) -> Result<()> {
-        self.delete_file_if_exists(&self.event_path(session_id)).await
+    pub async fn delete_events(&self, conversation_id: &str) -> Result<()> {
+        self.delete_file_if_exists(&self.event_path(conversation_id)).await
     }
 
-    fn conversation_path(&self, session_id: &str) -> PathBuf {
+    fn conversation_path(&self, conversation_id: &str) -> PathBuf {
         self.root
-            .join(format!("{}.conversation.json", sanitize_conversation_id(session_id)))
+            .join(format!("{}.conversation.json", sanitize_conversation_id(conversation_id)))
     }
 
-    fn event_path(&self, session_id: &str) -> PathBuf {
+    fn event_path(&self, conversation_id: &str) -> PathBuf {
         self.root
-            .join(format!("{}.events.json", sanitize_conversation_id(session_id)))
+            .join(format!("{}.events.json", sanitize_conversation_id(conversation_id)))
     }
 
     async fn load_events_from_path(&self, path: &Path) -> Result<Vec<TurnEvent>> {
@@ -199,7 +199,7 @@ mod tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("cloudagent-storage-test-{unique}"));
         let store = JsonConversationStore::new(&root);
-        let session_id = "concurrent-events";
+        let conversation_id = "concurrent-events";
 
         let mut tasks = Vec::new();
         for index in 0..8usize {
@@ -208,10 +208,10 @@ mod tests {
                 for item in 0..10usize {
                     cloned
                         .append_event(
-                            session_id,
+                            conversation_id,
                             &TurnEvent::TurnStarted {
                                 turn_id: format!("turn-{index}-{item}"),
-                                session_id: session_id.to_string(),
+                                conversation_id: conversation_id.to_string(),
                                 user_input: format!("message-{index}-{item}"),
                             },
                         )
@@ -225,7 +225,7 @@ mod tests {
             task.await.expect("append task");
         }
 
-        let events = store.load_events(session_id).await.expect("load events");
+        let events = store.load_events(conversation_id).await.expect("load events");
         assert_eq!(events.len(), 80);
 
         let _ = fs::remove_dir_all(root).await;
