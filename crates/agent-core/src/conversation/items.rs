@@ -1,4 +1,5 @@
 use crate::tool::{CommandExecutionStatus, StructuredToolResult, WriteFileStatus};
+use crate::turn::TurnState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,4 +48,13 @@ pub enum TranscriptItem {
         title: String,
         text: String,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationTurn {
+    pub id: String,
+    pub state: TurnState,
+    pub items: Vec<TranscriptItem>,
+    pub rollout_start_index: usize,
+    pub rollout_end_index: usize,
 }
