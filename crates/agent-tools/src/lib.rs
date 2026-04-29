@@ -2,6 +2,7 @@ use agent_core::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
     context::ToolExecutionContext as CtxAlias,
 };
+use agent_protocol::{CommandExecutionStatus, StructuredToolResult, WriteFileStatus};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -30,6 +31,7 @@ trait LocalTool: Send + Sync {
 struct ToolInvocationOutput {
     content: String,
     summary: String,
+    structured: Option<StructuredToolResult>,
 }
 
 #[derive(Clone)]
@@ -55,6 +57,8 @@ impl ToolExecutor for ToolRegistry {
     }
 
     async fn execute(&self, call: ToolCall, ctx: &ToolExecutionContext) -> Result<ToolResult> {
+        let call_name = call.name.clone();
+        let call_args = call.arguments.clone();
         let Some(tool) = self.tools.get(&call.name) else {
             return Ok(ToolResult {
                 tool_call_id: call.id,
@@ -62,6 +66,7 @@ impl ToolExecutor for ToolRegistry {
                 content: "Tool not found".to_string(),
                 summary: "tool lookup failed".to_string(),
                 is_error: true,
+                structured: None,
             });
         };
 
@@ -72,6 +77,7 @@ impl ToolExecutor for ToolRegistry {
                 content: output.content,
                 summary: output.summary,
                 is_error: false,
+                structured: output.structured,
             }),
             Err(err) => Ok(ToolResult {
                 tool_call_id: call.id,
@@ -79,6 +85,7 @@ impl ToolExecutor for ToolRegistry {
                 content: format!("Tool execution failed: {err:#}"),
                 summary: "tool execution failed".to_string(),
                 is_error: true,
+                structured: structured_failure_result(&call_name, &call_args),
             }),
         }
     }
@@ -89,6 +96,48 @@ where
     T: LocalTool + 'static,
 {
     tools.insert(tool.spec().name.clone(), Arc::new(tool));
+}
+
+fn structured_failure_result(
+    tool_name: &str,
+    arguments: &Value,
+) -> Option<StructuredToolResult> {
+    match tool_name {
+        "shell_command" => {
+            let command = arguments
+                .get("command")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let current_directory = arguments
+                .get("workdir")
+                .and_then(|value| value.as_str())
+                .unwrap_or(".")
+                .to_string();
+            Some(StructuredToolResult::CommandExecution {
+                command,
+                current_directory,
+                status: CommandExecutionStatus::Failed,
+                exit_code: None,
+                success: Some(false),
+                stdout: None,
+                stderr: None,
+            })
+        }
+        "write_file" => {
+            let path = arguments
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Some(StructuredToolResult::WriteFile {
+                path,
+                bytes_written: 0,
+                status: WriteFileStatus::Failed,
+            })
+        }
+        _ => None,
+    }
 }
 
 struct ShellCommandTool;
@@ -212,6 +261,19 @@ impl LocalTool for ShellCommandTool {
         Ok(ToolInvocationOutput {
             content,
             summary,
+            structured: Some(StructuredToolResult::CommandExecution {
+                command: args.command,
+                current_directory,
+                status: if status.success() {
+                    CommandExecutionStatus::Completed
+                } else {
+                    CommandExecutionStatus::Failed
+                },
+                exit_code: Some(exit_code),
+                success: Some(status.success()),
+                stdout: Some(stdout),
+                stderr: Some(stderr),
+            }),
         })
     }
 }
@@ -317,6 +379,10 @@ impl LocalTool for ListDirTool {
         Ok(ToolInvocationOutput {
             content: serde_json::to_string_pretty(&items)?,
             summary: format!("listed {} entries", items.len()),
+            structured: Some(StructuredToolResult::ListDirectory {
+                path: path.display().to_string(),
+                entry_count: items.len(),
+            }),
         })
     }
 }
@@ -363,10 +429,17 @@ impl LocalTool for ReadFileTool {
         } else {
             text
         };
+        let char_count = content.chars().count();
+        let truncated = content.ends_with("\n\n[truncated]");
 
         Ok(ToolInvocationOutput {
             content,
             summary: format!("read {}", path.display()),
+            structured: Some(StructuredToolResult::ReadFile {
+                path: path.display().to_string(),
+                truncated,
+                char_count,
+            }),
         })
     }
 }
@@ -405,11 +478,17 @@ impl LocalTool for WriteFileTool {
             bail!("cannot determine parent directory for {}", path.display());
         };
         fs::create_dir_all(parent).await?;
+        let bytes_written = args.content.len();
         fs::write(&path, args.content).await?;
 
         Ok(ToolInvocationOutput {
             content: format!("Wrote {}", path.display()),
             summary: format!("wrote {}", path.display()),
+            structured: Some(StructuredToolResult::WriteFile {
+                path: path.display().to_string(),
+                bytes_written,
+                status: WriteFileStatus::Completed,
+            }),
         })
     }
 }

@@ -86,6 +86,51 @@ pub struct ToolResult {
     pub content: String,
     pub summary: String,
     pub is_error: bool,
+    pub structured: Option<StructuredToolResult>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StructuredToolResult {
+    CommandExecution {
+        command: String,
+        current_directory: String,
+        status: CommandExecutionStatus,
+        exit_code: Option<i32>,
+        success: Option<bool>,
+        stdout: Option<String>,
+        stderr: Option<String>,
+    },
+    ListDirectory {
+        path: String,
+        entry_count: usize,
+    },
+    ReadFile {
+        path: String,
+        truncated: bool,
+        char_count: usize,
+    },
+    WriteFile {
+        path: String,
+        bytes_written: usize,
+        status: WriteFileStatus,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandExecutionStatus {
+    Completed,
+    Failed,
+    Declined,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteFileStatus {
+    Completed,
+    Declined,
+    Failed,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,6 +150,7 @@ pub enum HistoryEntry {
         tool_call_id: String,
         name: String,
         content: String,
+        structured: Option<StructuredToolResult>,
     },
 }
 

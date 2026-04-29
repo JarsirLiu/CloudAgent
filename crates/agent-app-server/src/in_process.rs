@@ -512,10 +512,12 @@ fn history_entry_from_message(message: &ConversationMessage) -> HistoryEntry {
             tool_call_id,
             name,
             content,
+            structured,
         } => HistoryEntry::Tool {
             tool_call_id: tool_call_id.clone(),
             name: name.clone(),
             content: content.clone(),
+            structured: structured.clone(),
         },
     }
 }

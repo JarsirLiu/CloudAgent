@@ -1,4 +1,4 @@
-use agent_protocol::{ToolCall, ToolResult};
+use agent_protocol::{StructuredToolResult, ToolCall, ToolResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,6 +38,7 @@ impl AgentSession {
             tool_call_id: result.tool_call_id,
             name: result.name,
             content: result.content,
+            structured: result.structured,
         });
     }
 
@@ -77,6 +78,8 @@ pub enum ConversationMessage {
         tool_call_id: String,
         name: String,
         content: String,
+        #[serde(default)]
+        structured: Option<StructuredToolResult>,
     },
 }
 

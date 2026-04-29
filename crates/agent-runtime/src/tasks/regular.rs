@@ -2,8 +2,8 @@ use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{AgentSession, ModelRequest};
 use agent_protocol::{
-    ApprovalDecision, ApprovalRequest, ToolResult, TurnEvent, TurnItemDeltaKind, TurnItemKind,
-    TurnState,
+    ApprovalDecision, ApprovalRequest, CommandExecutionStatus, StructuredToolResult, ToolResult,
+    TurnEvent, TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -297,6 +297,7 @@ where
                         content: format!("Tool execution skipped: {reason}"),
                         summary: "tool execution skipped".to_string(),
                         is_error: true,
+                        structured: denied_tool_result(call.name.as_str(), &call.arguments, reason.clone()),
                     };
                     emit_event(
                         &mut events,
@@ -435,4 +436,47 @@ fn emit_assistant_item(
             kind: TurnItemKind::AssistantMessage,
         },
     );
+}
+
+fn denied_tool_result(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    reason: String,
+) -> Option<StructuredToolResult> {
+    match tool_name {
+        "shell_command" => {
+            let command = arguments
+                .get("command")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let current_directory = arguments
+                .get("workdir")
+                .and_then(|value| value.as_str())
+                .unwrap_or(".")
+                .to_string();
+            Some(StructuredToolResult::CommandExecution {
+                command,
+                current_directory,
+                status: CommandExecutionStatus::Declined,
+                exit_code: None,
+                success: Some(false),
+                stdout: None,
+                stderr: Some(reason),
+            })
+        }
+        "write_file" => {
+            let path = arguments
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Some(StructuredToolResult::WriteFile {
+                path,
+                bytes_written: 0,
+                status: WriteFileStatus::Declined,
+            })
+        }
+        _ => None,
+    }
 }

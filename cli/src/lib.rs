@@ -9,4 +9,4 @@ mod textarea;
 mod welcome;
 
 pub use console::ConsoleConnection;
-pub use console::{ConsoleBanner, ConsoleConfig, run_console};
+pub use console::{ConsoleConfig, run_console};

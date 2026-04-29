@@ -1,4 +1,4 @@
-use agent_protocol::HistoryEntry;
+use agent_protocol::{CommandExecutionStatus, HistoryEntry, StructuredToolResult, WriteFileStatus};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 use textwrap::{Options as WrapOptions, WordSplitter, wrap};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
-use serde_json::Value;
 
 // ── Shimmer animation ─────────────────────────────────────────────────────────
 
@@ -188,16 +187,6 @@ impl HistoryCell {
             ),
         ]));
         let body_width = width.saturating_sub(8).max(8);
-        if self.body.trim() == "Running" || self.body.trim() == "Completed" {
-            lines.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled(
-                    self.body.trim().to_string(),
-                    Style::default().fg(Color::Rgb(110, 110, 120)),
-                ),
-            ]));
-            return lines;
-        }
         let wrapped = wrap_text(&self.body, body_width);
         let max_lines = 6usize;
         let mut output_lines: Vec<String> = Vec::new();
@@ -317,100 +306,78 @@ pub fn render_history_entry(message: &HistoryEntry) -> HistoryCell {
         }
         HistoryEntry::Assistant {
             content,
-            has_tool_calls,
+            has_tool_calls: _,
         } => {
-            let body = content.clone().unwrap_or_else(|| {
-                if *has_tool_calls {
-                    "Working...".into()
-                } else {
-                    "".into()
-                }
-            });
+            let body = content.clone().unwrap_or_default();
             HistoryCell::from_message("cloudagent", body, HistoryTone::Agent)
         }
-        HistoryEntry::Tool { name, content, .. } => {
+        HistoryEntry::Tool {
+            name,
+            content,
+            structured,
+            ..
+        } => {
             HistoryCell::from_message(
                 name.clone(),
-                summarize_tool_content(name, content),
+                summarize_tool_content(name, content, structured.as_ref()),
                 HistoryTone::Tool,
             )
         }
     }
 }
 
-fn summarize_tool_content(name: &str, content: &str) -> String {
-    match name {
-        "shell_command" => summarize_shell_tool_content(content),
-        "list_dir" => {
-            if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(content) {
-                format!("listed {} entries", items.len())
-            } else {
-                "listed entries".to_string()
-            }
-        }
-        "read_file" => "read file".to_string(),
-        "write_file" => content.lines().next().unwrap_or("wrote file").to_string(),
-        _ => content.lines().next().unwrap_or(content).to_string(),
-    }
-}
-
-fn summarize_shell_tool_content(content: &str) -> String {
-    let mut command = "";
-    let mut cwd = "";
-    let mut exit_code: Option<i32> = None;
-    let mut in_stdout = false;
-    let mut stdout_first_non_empty = None::<String>;
-
-    for line in content.lines() {
-        if let Some(rest) = line.strip_prefix("command: ") {
-            command = rest.trim();
-            in_stdout = false;
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("current_directory: ") {
-            cwd = rest.trim();
-            in_stdout = false;
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("exit_code: ") {
-            exit_code = rest.trim().parse::<i32>().ok();
-            in_stdout = false;
-            continue;
-        }
-        if line.trim() == "stdout:" {
-            in_stdout = true;
-            continue;
-        }
-        if line.trim() == "stderr:" {
-            in_stdout = false;
-            continue;
-        }
-        if in_stdout && stdout_first_non_empty.is_none() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() && trimmed != "(empty)" {
-                stdout_first_non_empty = Some(trimmed.to_string());
-            }
-        }
-    }
-
-    if command.eq_ignore_ascii_case("pwd")
-        || command.eq_ignore_ascii_case("Get-Location")
-        || command.eq_ignore_ascii_case("Get-Location | Select-Object -ExpandProperty Path")
+fn summarize_tool_content(
+    _name: &str,
+    _content: &str,
+    structured: Option<&StructuredToolResult>,
+) -> String {
+    if let Some(StructuredToolResult::CommandExecution {
+        command,
+        current_directory,
+        status,
+        exit_code,
+        ..
+    }) = structured
     {
-        let shown = stdout_first_non_empty
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(cwd);
-        if shown.is_empty() {
-            return "current directory is (unknown)".to_string();
-        }
-        return format!("current directory is {shown}");
+        let status_text = match status {
+            CommandExecutionStatus::Completed => "completed",
+            CommandExecutionStatus::Failed => "failed",
+            CommandExecutionStatus::Declined => "declined",
+        };
+        return match exit_code {
+            Some(code) => {
+                format!("{status_text}: {command} (exit {code}) @ {current_directory}")
+            }
+            None => format!("{status_text}: {command} @ {current_directory}"),
+        };
+    }
+    if let Some(StructuredToolResult::ListDirectory { path, entry_count }) = structured {
+        return format!("listed {entry_count} entries @ {path}");
+    }
+    if let Some(StructuredToolResult::ReadFile {
+        path,
+        truncated,
+        char_count,
+    }) = structured
+    {
+        let suffix = if *truncated { " (truncated)" } else { "" };
+        return format!("read {char_count} chars{suffix} @ {path}");
+    }
+    if let Some(StructuredToolResult::WriteFile {
+        path,
+        bytes_written,
+        status,
+    }) = structured
+    {
+        let status_text = match status {
+            WriteFileStatus::Completed => "wrote",
+            WriteFileStatus::Declined => "declined",
+            WriteFileStatus::Failed => "failed",
+        };
+        return format!("{status_text}: {bytes_written} bytes @ {path}");
     }
 
-    match exit_code {
-        Some(code) => format!("shell command finished with exit code {code}"),
-        None => "shell command finished".to_string(),
-    }
+    String::new()
 }
 
 // ── Markdown ──────────────────────────────────────────────────────────────────

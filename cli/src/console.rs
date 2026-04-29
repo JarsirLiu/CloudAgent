@@ -1,6 +1,6 @@
 use crate::chat_composer::ComposerAction;
 use crate::history_cell::{HistoryCell, HistoryTone, Transcript};
-use crate::input_pane::{ApprovalInlineState, InputPane, InputPaneAction, InputPaneViewState};
+use crate::input_pane::{ApprovalInlineState, InputPane, InputPaneAction};
 use crate::welcome::WelcomeScreen;
 use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
 use agent_protocol::{
@@ -25,40 +25,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-#[derive(Clone, Debug)]
-pub struct ConsoleBanner {
-    pub title: String,
-    pub commands: String,
-    pub idle_prompt: String,
-    pub approval_prompt: String,
-}
-
-impl ConsoleBanner {
-    pub fn cli(session_id: &str) -> Self {
-        Self {
-            title: format!("cloudagent session `{session_id}`"),
-            commands:
-                "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt  /clear clear session"
-                    .to_string(),
-            idle_prompt: "message".to_string(),
-            approval_prompt: "approval".to_string(),
-        }
-    }
-
-    pub fn daemon(session_id: &str) -> Self {
-        Self {
-            title: format!("agentd console attached to session `{session_id}`"),
-            commands: "Ctrl+J submit  Ctrl+C/Ctrl+Q exit  Ctrl+K interrupt".to_string(),
-            idle_prompt: "daemon-message".to_string(),
-            approval_prompt: "daemon-approval".to_string(),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct ConsoleConfig {
     pub session_id: String,
-    pub banner: ConsoleBanner,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
     pub connection: ConsoleConnection,
@@ -140,7 +109,6 @@ struct TuiApp {
     status_text: String,
     last_message_count: usize,
     last_tool_name: Option<String>,
-    active_item_turn_id: Option<String>,
     active_item_id: Option<String>,
     active_item_kind: Option<TurnItemKind>,
     active_cell: Option<HistoryCell>,
@@ -150,7 +118,7 @@ struct TuiApp {
 }
 
 impl TuiApp {
-    fn new(session_id: String, _banner: ConsoleBanner, connection_label: &str) -> Self {
+    fn new(session_id: String, connection_label: &str) -> Self {
         Self {
             session_id,
             connection_label: connection_label.to_string(),
@@ -163,7 +131,6 @@ impl TuiApp {
             status_text: format!("Connected via {connection_label}"),
             last_message_count: 0,
             last_tool_name: None,
-            active_item_turn_id: None,
             active_item_id: None,
             active_item_kind: None,
             active_cell: None,
@@ -189,7 +156,6 @@ impl TuiApp {
         self.status_text = format!("Connected via {}", self.connection_label);
         self.last_message_count = 0;
         self.last_tool_name = None;
-        self.active_item_turn_id = None;
         self.active_item_id = None;
         self.active_item_kind = None;
         self.active_cell = None;
@@ -220,16 +186,6 @@ impl TuiApp {
                         "{:?}  turn={:?}  messages={}",
                         snapshot.session_state, snapshot.turn_state, snapshot.message_count
                     );
-                    self.input_pane.set_panel(Some(InputPaneViewState {
-                        title: "Session status".to_string(),
-                        lines: vec![
-                            format!("state: {:?}", snapshot.session_state),
-                            format!("active turn: {:?}", snapshot.active_turn),
-                            format!("turn state: {:?}", snapshot.turn_state),
-                            format!("message count: {}", snapshot.message_count),
-                            "Esc closes this panel.".to_string(),
-                        ],
-                    }));
                 }
                 AppServerNotification::SessionHistory { messages, .. } => {
                     self.status_text = "Workspace context ready".to_string();
@@ -239,22 +195,7 @@ impl TuiApp {
                     self.clamp_transcript_scroll();
                     self.history_loaded = true;
                 }
-                AppServerNotification::SubscriptionChanged {
-                    session_id,
-                    subscribed,
-                } => self.push_cell(HistoryCell::from_message(
-                    "session",
-                    format!(
-                        "{} {}",
-                        if *subscribed {
-                            "Subscribed to"
-                        } else {
-                            "Unsubscribed from"
-                        },
-                        session_id
-                    ),
-                    HistoryTone::Meta,
-                )),
+                AppServerNotification::SubscriptionChanged { .. } => {}
                 AppServerNotification::Info { message, .. } => {
                     self.status_text = message.clone();
                 }
@@ -267,9 +208,7 @@ impl TuiApp {
                         HistoryTone::Error,
                     ));
                 }
-                AppServerNotification::TurnStarted { .. } => {
-                    self.status_text = "Working".to_string();
-                }
+                AppServerNotification::TurnStarted { .. } => {}
                 AppServerNotification::ItemStarted {
                     item_id,
                     kind,
@@ -281,14 +220,9 @@ impl TuiApp {
                             self.handle_assistant_item_started(turn_id, item_id);
                         }
                     } else if *kind == TurnItemKind::Reasoning || *kind == TurnItemKind::ToolCall {
-                        self.handle_tool_item_started(
-                            item_id,
-                            title.as_deref().unwrap_or(if *kind == TurnItemKind::ToolCall {
-                                "tool_call"
-                            } else {
-                                "reasoning"
-                            }),
-                        );
+                        if let Some(title) = title.as_deref() {
+                            self.handle_tool_item_started(item_id, title);
+                        }
                     }
                 }
                 AppServerNotification::ItemDelta {
@@ -300,9 +234,7 @@ impl TuiApp {
                     TurnItemDeltaKind::Text => self.handle_assistant_item_delta(item_id, delta),
                     TurnItemDeltaKind::ToolOutput
                     | TurnItemDeltaKind::ReasoningSummary
-                    | TurnItemDeltaKind::ReasoningText => {
-                        self.handle_tool_item_delta(item_id, delta)
-                    }
+                    | TurnItemDeltaKind::ReasoningText => {}
                     _ => {}
                 }
                 AppServerNotification::ItemCompleted { item_id, kind, .. } => {
@@ -315,13 +247,11 @@ impl TuiApp {
                 AppServerNotification::TurnCompleted { .. } => {
                     self.flush_active_cell_to_transcript();
                     self.input_pane.clear_approval();
-                    self.status_text = "Turn completed".to_string();
                     self.last_tool_name = None;
                 }
                 AppServerNotification::TurnFailed { error, .. } => {
                     self.flush_active_cell_to_transcript();
                     self.input_pane.clear_approval();
-                    self.status_text = "Turn failed".to_string();
                     self.push_cell(HistoryCell::from_message(
                         "turn",
                         format!("failed: {error}"),
@@ -332,7 +262,6 @@ impl TuiApp {
                 AppServerNotification::TurnCancelled { reason, .. } => {
                     self.flush_active_cell_to_transcript();
                     self.input_pane.clear_approval();
-                    self.status_text = "Turn cancelled".to_string();
                     self.push_cell(HistoryCell::from_message(
                         "turn",
                         reason.clone(),
@@ -711,8 +640,8 @@ impl TuiApp {
     }
 
     fn handle_assistant_item_started(&mut self, turn_id: &str, item_id: &str) {
+        let _ = turn_id;
         self.flush_active_cell_to_transcript();
-        self.active_item_turn_id = Some(turn_id.to_string());
         self.active_item_id = Some(item_id.to_string());
         self.active_item_kind = Some(TurnItemKind::AssistantMessage);
         self.active_cell = Some(HistoryCell::from_message(
@@ -731,7 +660,6 @@ impl TuiApp {
         if let Some(cell) = self.active_cell.as_mut() {
             cell.body.push_str(delta);
         }
-        self.status_text = "Streaming response".to_string();
     }
 
     fn handle_assistant_item_completed(&mut self, item_id: &str) {
@@ -751,7 +679,6 @@ impl TuiApp {
         } else {
             self.clear_active_cell();
         }
-        self.status_text = "Finalizing response".to_string();
     }
 
     fn handle_tool_item_started(&mut self, item_id: &str, title: &str) {
@@ -760,35 +687,20 @@ impl TuiApp {
         self.active_item_kind = Some(TurnItemKind::ToolCall);
         self.active_cell = Some(HistoryCell::from_message(
             title.to_string(),
-            "Running".to_string(),
+            String::new(),
             HistoryTone::Tool,
         ));
         self.last_tool_name = Some(title.to_string());
     }
 
-    fn handle_tool_item_delta(&mut self, item_id: &str, delta: &str) {
-        if self.active_item_id.as_deref() != Some(item_id)
-            || (self.active_item_kind != Some(TurnItemKind::ToolCall)
-                && self.active_item_kind != Some(TurnItemKind::Reasoning))
-        {
-            return;
-        }
-        let _ = delta;
-        // Intentionally do not stream raw tool/reasoning payload into transcript body.
-    }
-
     fn handle_tool_item_completed(&mut self, item_id: &str) {
         if self.active_item_id.as_deref() == Some(item_id) {
-            if let Some(cell) = self.active_cell.as_mut() && cell.body.trim().is_empty() {
-                cell.body = "Completed".to_string();
-            }
             self.flush_active_cell_to_transcript();
         }
         self.last_tool_name = None;
     }
 
     fn clear_active_cell(&mut self) {
-        self.active_item_turn_id = None;
         self.active_item_id = None;
         self.active_item_kind = None;
         self.active_cell = None;
@@ -890,7 +802,7 @@ pub async fn run_console(config: ConsoleConfig) -> Result<()> {
 async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     let session_id = config.session_id.clone();
     let mut client = create_client(&config, session_id.clone()).await?;
-    let mut app = TuiApp::new(session_id.clone(), config.banner, config.connection.label());
+    let mut app = TuiApp::new(session_id.clone(), config.connection.label());
     client.send_command(AppClientCommand::RequestHistory {
         session_id: session_id.clone(),
     })?;

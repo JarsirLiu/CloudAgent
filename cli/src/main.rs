@@ -1,6 +1,6 @@
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
-use cli::{ConsoleBanner, ConsoleConfig, ConsoleConnection, run_console};
+use cli::{ConsoleConfig, ConsoleConnection, run_console};
 use config::AgentConfig;
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -46,7 +46,6 @@ async fn main() -> Result<()> {
 
     run_console(ConsoleConfig {
         session_id: session_id.clone(),
-        banner: ConsoleBanner::cli(&session_id),
         auto_approve: false,
         auto_approve_reason: None,
         connection,

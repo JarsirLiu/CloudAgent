@@ -666,6 +666,7 @@ impl ChatApiMessage {
                 tool_call_id,
                 name,
                 content,
+                ..
             } => Ok(Self {
                 role: "tool".to_string(),
                 content: Some(content.clone()),
