@@ -16,8 +16,8 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str, width: usi
     let (dot_color, mode_label, badge_bg) = match mode {
         FrontendMode::Idle => (Color::Rgb(80, 200, 120), "IDLE", Color::Rgb(18, 34, 24)),
         FrontendMode::Running => (Color::Rgb(100, 160, 255), "WORKING", Color::Rgb(18, 28, 45)),
-        FrontendMode::WaitingForApproval => {
-            (Color::Rgb(255, 180, 50), "APPROVAL", Color::Rgb(48, 34, 14))
+        FrontendMode::WaitingForServerRequest => {
+            (Color::Rgb(255, 180, 50), "ACTION", Color::Rgb(48, 34, 14))
         }
     };
 
@@ -80,7 +80,7 @@ pub fn hint_line(mode: FrontendMode, width: usize) -> Line<'static> {
             "  Enter submit  ·  Ctrl+K interrupt  ·  /clear clear session  ·  /copy copy last reply"
         }
         FrontendMode::Running => "  Ctrl+K interrupt the current turn",
-        FrontendMode::WaitingForApproval => "  Enter submit  ·  y approve  ·  n deny",
+        FrontendMode::WaitingForServerRequest => "  Enter submit  ·  y approve  ·  n deny",
     };
     let hint = truncate_single_line(hint, width.saturating_sub(1));
     Line::from(Span::styled(

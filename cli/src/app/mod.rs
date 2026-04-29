@@ -4,7 +4,7 @@ mod parse;
 
 use crate::app::actions::{execute_server_action, handle_tui_input};
 use crate::app::parse::{ParsedInput, parse_line};
-use crate::state::{ApprovalState, ConsoleState, RunState, TranscriptState};
+use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
 use crate::state::reducer::{TurnDispatch, apply_server_message};
 use crate::transport::client::create_client;
 use crate::terminal::{TerminalGuard, UiEvent, spawn_tui_event_loop};
@@ -12,6 +12,7 @@ use crate::ui::screen::render_app;
 use crate::ui::widgets::chat_composer::ComposerAction;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
+use agent_app_server_client::AppServerEvent;
 use agent_protocol::{AppClientCommand, AppServerMessage, FrontendMode, TurnItemKind};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
@@ -53,7 +54,7 @@ pub(crate) struct TuiApp {
     pub(crate) session_id: String,
     pub(crate) connection_label: String,
     pub(crate) console_state: ConsoleState,
-    pub(crate) approval_state: ApprovalState,
+    pub(crate) server_request_state: ServerRequestState,
     pub(crate) transcript_state: TranscriptState,
     pub(crate) run_state: RunState,
     pub(crate) input_pane: InputPane,
@@ -65,7 +66,7 @@ impl TuiApp {
             session_id,
             connection_label: connection_label.to_string(),
             console_state: ConsoleState::new(),
-            approval_state: ApprovalState::default(),
+            server_request_state: ServerRequestState::default(),
             transcript_state: TranscriptState::default(),
             run_state: RunState::new(connection_label),
             input_pane: InputPane::new(),
@@ -80,7 +81,7 @@ impl TuiApp {
 
     pub(crate) fn reset_local_view(&mut self) {
         self.console_state = ConsoleState::new();
-        self.approval_state = ApprovalState::default();
+        self.server_request_state = ServerRequestState::default();
         self.transcript_state = TranscriptState::default();
         self.run_state = RunState::new(&self.connection_label);
         self.run_state.history_loaded = true;
@@ -89,8 +90,8 @@ impl TuiApp {
 
     pub(crate) fn set_mode(&mut self, mode: FrontendMode) {
         self.console_state.mode = mode;
-        if mode != FrontendMode::WaitingForApproval {
-            self.input_pane.clear_approval();
+        if mode != FrontendMode::WaitingForServerRequest {
+            self.input_pane.clear_server_request();
         }
     }
 
@@ -101,11 +102,27 @@ impl TuiApp {
         }
     }
 
+    fn handle_client_event(&mut self, event: AppServerEvent) {
+        match event {
+            AppServerEvent::Message(message) => self.handle_server_message(&message),
+            AppServerEvent::Lagged { skipped } => {
+                self.run_state.status_notice =
+                    Some(format!("UI skipped {skipped} non-critical events while catching up"));
+            }
+            AppServerEvent::Disconnected { message } => {
+                self.push_cell(HistoryCell::from_message("session", message, HistoryTone::Error));
+                self.run_state.should_exit = true;
+            }
+        }
+    }
+
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
-        self.flush_active_cell_to_transcript();
         match dispatch {
-            TurnDispatch::Completed => {}
+            TurnDispatch::Completed => {
+                self.flush_active_cell_to_transcript();
+            }
             TurnDispatch::Failed { error } => {
+                self.flush_active_cell_to_transcript();
                 self.push_cell(HistoryCell::from_message(
                     "turn",
                     format!("failed: {error}"),
@@ -113,6 +130,7 @@ impl TuiApp {
                 ));
             }
             TurnDispatch::Cancelled { reason } => {
+                self.flush_active_cell_to_transcript();
                 self.push_cell(HistoryCell::from_message(
                     "turn",
                     reason,
@@ -188,8 +206,8 @@ impl TuiApp {
                 }))
             }
             InputPaneAction::Composer(ComposerAction::None) => None,
-            InputPaneAction::ApprovalSubmit { approved, reason } => {
-                Some(ParsedInput::ApprovalAnswer { approved, reason })
+            InputPaneAction::ServerRequestSubmit { approved, reason } => {
+                Some(ParsedInput::ServerRequestAnswer { approved, reason })
             }
         }
     }
@@ -277,18 +295,35 @@ impl TuiApp {
         if self.transcript_state.active_item_id.as_deref() != Some(item_id)
             || self.transcript_state.active_item_kind != Some(TurnItemKind::AssistantMessage)
         {
-            return;
+            self.flush_active_cell_to_transcript();
+            self.transcript_state.active_item_id = Some(item_id.to_string());
+            self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
+            self.transcript_state.active_cell = Some(HistoryCell::from_message(
+                "cloudagent",
+                String::new(),
+                HistoryTone::Agent,
+            ));
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
             cell.append_body(delta);
         }
     }
 
-    pub(crate) fn handle_assistant_item_completed(&mut self, item_id: &str) {
+    pub(crate) fn handle_assistant_item_completed(&mut self, item_id: &str, output: &str) {
         if self.transcript_state.active_item_id.as_deref() != Some(item_id)
             || self.transcript_state.active_item_kind != Some(TurnItemKind::AssistantMessage)
         {
-            return;
+            self.flush_active_cell_to_transcript();
+            self.transcript_state.active_item_id = Some(item_id.to_string());
+            self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
+            self.transcript_state.active_cell = Some(HistoryCell::from_message(
+                "cloudagent",
+                String::new(),
+                HistoryTone::Agent,
+            ));
+        }
+        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
+            cell.replace_body(output);
         }
         let has_text = self
             .transcript_state
@@ -305,10 +340,15 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn handle_tool_item_started(&mut self, item_id: &str, title: &str) {
+    pub(crate) fn handle_tool_like_item_started(
+        &mut self,
+        item_id: &str,
+        kind: TurnItemKind,
+        title: &str,
+    ) {
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
-        self.transcript_state.active_item_kind = Some(TurnItemKind::ToolCall);
+        self.transcript_state.active_item_kind = Some(kind);
         self.transcript_state.active_cell = Some(HistoryCell::from_message(
             title.to_string(),
             String::new(),
@@ -317,11 +357,49 @@ impl TuiApp {
         self.run_state.last_tool_name = Some(title.to_string());
     }
 
-    pub(crate) fn handle_tool_item_completed(&mut self, item_id: &str) {
+    pub(crate) fn handle_tool_like_item_completed(
+        &mut self,
+        item_id: &str,
+        kind: TurnItemKind,
+        title: &str,
+        output: &str,
+    ) {
+        if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
+            self.flush_active_cell_to_transcript();
+            self.transcript_state.active_item_id = Some(item_id.to_string());
+            self.transcript_state.active_item_kind = Some(kind);
+            self.transcript_state.active_cell = Some(HistoryCell::from_message(
+                title.to_string(),
+                String::new(),
+                HistoryTone::Tool,
+            ));
+        }
+        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
+            cell.replace_body(output);
+        }
         if self.transcript_state.active_item_id.as_deref() == Some(item_id) {
             self.flush_active_cell_to_transcript();
         }
         self.run_state.last_tool_name = None;
+    }
+
+    pub(crate) fn handle_tool_like_item_delta(&mut self, item_id: &str, delta: &str) {
+        if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
+            self.flush_active_cell_to_transcript();
+            self.transcript_state.active_item_id = Some(item_id.to_string());
+            self.transcript_state.active_item_kind = Some(TurnItemKind::ToolCall);
+            self.transcript_state.active_cell = Some(HistoryCell::from_message(
+                "tool",
+                String::new(),
+                HistoryTone::Tool,
+            ));
+        }
+        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
+            if !cell.body.is_empty() {
+                cell.append_body("\n");
+            }
+            cell.append_body(delta);
+        }
     }
 
     fn clear_active_cell(&mut self) {
@@ -358,6 +436,9 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     client.send_command(AppClientCommand::RequestHistory {
         session_id: session_id.clone(),
     })?;
+    client.send_command(AppClientCommand::RequestEventLog {
+        session_id: session_id.clone(),
+    })?;
     let mut terminal = TerminalGuard::new()?;
     let mut events = spawn_tui_event_loop();
 
@@ -365,8 +446,8 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         terminal.terminal.draw(|frame| app.render(frame))?;
 
         tokio::select! {
-            Some(message) = client.next_message() => {
-                app.handle_server_message(&message);
+            Some(event) = client.next_event() => {
+                app.handle_client_event(event);
             }
             Some(event) = events.recv() => {
                 match event {
@@ -394,4 +475,561 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     }
 
     client.shutdown().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TuiApp;
+    use crate::app::actions::{execute_server_action, handle_tui_input};
+    use crate::app::parse::ParsedInput;
+    use crate::state::reducer::{ServerAction, TurnDispatch};
+    use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
+    use agent_protocol::{
+        AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus, HistoryEntry,
+        HistoryEntry::Assistant, HistoryEntry::Tool, HistoryEntry::User, ServerRequest, ServerRequestDecision,
+        SessionState, StructuredToolResult,
+        ThreadItem, ToolApprovalRequest, TurnEvent, TurnItemKind,
+    };
+    use agent_runtime::AgentRuntime;
+    use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use tokio::time::timeout;
+
+    #[test]
+    fn assistant_completed_overwrites_partial_stream_and_recovers_without_started() {
+        let mut app = TuiApp::new("default".to_string(), "test");
+
+        app.handle_assistant_item_delta("assistant:1", "partial");
+        app.handle_assistant_item_completed("assistant:1", "complete answer");
+
+        let cells = app.transcript_state.transcript.cells();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].body, "complete answer");
+    }
+
+    #[test]
+    fn tool_completed_overwrites_partial_stream_and_recovers_without_started() {
+        let mut app = TuiApp::new("default".to_string(), "test");
+
+        app.handle_tool_like_item_delta("tool:1", "half");
+        app.handle_tool_like_item_completed(
+            "tool:1",
+            TurnItemKind::CommandExecution,
+            "pwd",
+            "current directory is D:\\learn\\gifti\\cloudagent",
+        );
+
+        let cells = app.transcript_state.transcript.cells();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].body, "current directory is D:\\learn\\gifti\\cloudagent");
+    }
+
+    #[test]
+    fn snapshot_history_is_preserved_and_event_log_only_overlays_new_turns() {
+        let mut app = TuiApp::new("default".to_string(), "test");
+
+        execute_server_action(
+            &mut app,
+            ServerAction::ReplaceHistory(vec![
+                HistoryEntry::User {
+                    content: "old question".to_string(),
+                },
+                HistoryEntry::Assistant {
+                    content: Some("old answer".to_string()),
+                    has_tool_calls: false,
+                },
+            ]),
+        );
+
+        let events = vec![
+            TurnEvent::TurnStarted {
+                turn_id: "turn-old".to_string(),
+                session_id: "default".to_string(),
+                user_input: "old question".to_string(),
+            },
+            TurnEvent::ItemCompleted {
+                turn_id: "turn-old".to_string(),
+                item_id: "assistant:old".to_string(),
+                item: ThreadItem::AgentMessage {
+                    id: "assistant:old".to_string(),
+                    text: "old answer".to_string(),
+                },
+            },
+            TurnEvent::TurnCompleted {
+                turn_id: "turn-old".to_string(),
+                final_response: "old answer".to_string(),
+            },
+            TurnEvent::TurnStarted {
+                turn_id: "turn-new".to_string(),
+                session_id: "default".to_string(),
+                user_input: "where am i".to_string(),
+            },
+            TurnEvent::ServerRequestRequested {
+                turn_id: "turn-new".to_string(),
+                request: ServerRequest::ToolApproval {
+                    request: ToolApprovalRequest {
+                        turn_id: "turn-new".to_string(),
+                        tool_call_id: "call-1".to_string(),
+                        tool_name: "shell_command".to_string(),
+                        reason: "need pwd".to_string(),
+                        arguments_preview: "{\"command\":\"pwd\"}".to_string(),
+                    },
+                },
+            },
+            TurnEvent::ServerRequestResolved {
+                turn_id: "turn-new".to_string(),
+                request: ServerRequest::ToolApproval {
+                    request: ToolApprovalRequest {
+                        turn_id: "turn-new".to_string(),
+                        tool_call_id: "call-1".to_string(),
+                        tool_name: "shell_command".to_string(),
+                        reason: "need pwd".to_string(),
+                        arguments_preview: "{\"command\":\"pwd\"}".to_string(),
+                    },
+                },
+                decision: ServerRequestDecision {
+                    approved: true,
+                    reason: Some("ok".to_string()),
+                },
+            },
+            TurnEvent::ItemCompleted {
+                turn_id: "turn-new".to_string(),
+                item_id: "tool:call-1".to_string(),
+                item: ThreadItem::CommandExecution {
+                    id: "tool:call-1".to_string(),
+                    tool_name: "shell_command".to_string(),
+                    command: "pwd".to_string(),
+                    current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
+                    status: CommandExecutionStatus::Completed,
+                    exit_code: Some(0),
+                    stdout: Some("D:\\learn\\gifti\\cloudagent".to_string()),
+                    stderr: Some(String::new()),
+                    summary: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
+                },
+            },
+            TurnEvent::ItemCompleted {
+                turn_id: "turn-new".to_string(),
+                item_id: "assistant:new".to_string(),
+                item: ThreadItem::AgentMessage {
+                    id: "assistant:new".to_string(),
+                    text: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
+                },
+            },
+            TurnEvent::TurnCompleted {
+                turn_id: "turn-new".to_string(),
+                final_response: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
+            },
+        ];
+
+        execute_server_action(&mut app, ServerAction::ReplayEventLog(events));
+
+        let cells = app.transcript_state.transcript.cells();
+        let bodies: Vec<&str> = cells.iter().map(|cell| cell.body.as_str()).collect();
+        assert!(bodies.contains(&"old question"));
+        assert!(bodies.contains(&"old answer"));
+        assert!(bodies.contains(&"where am i"));
+        assert!(bodies.contains(&"current directory is D:\\learn\\gifti\\cloudagent"));
+    }
+
+    #[test]
+    fn turn_dispatch_completed_flushes_active_assistant_cell() {
+        let mut app = TuiApp::new("default".to_string(), "test");
+        app.handle_assistant_item_delta("assistant:flush", "hello");
+        app.apply_turn_dispatch(TurnDispatch::Completed);
+
+        let cells = app.transcript_state.transcript.cells();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].body, "hello");
+    }
+
+    #[tokio::test]
+    async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
+        let fixture = TempFixture::new();
+        let expected_path = fixture.workspace.display().to_string();
+        let responses = vec![
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_1",
+                            "function": {
+                                "name": "shell_command",
+                                "arguments": "{\"command\":\"pwd\"}"
+                            }
+                        }]
+                    }
+                }]
+            })]),
+            sse_body(vec![
+                json!({
+                    "model": "fake-model",
+                    "choices": [{
+                        "delta": {
+                            "content": "current directory is "
+                        }
+                    }]
+                }),
+                json!({
+                    "model": "fake-model",
+                    "choices": [{
+                        "delta": {
+                            "content": expected_path
+                        }
+                    }]
+                }),
+            ]),
+        ];
+        let (base_url, server_thread) = spawn_fake_llm_server(responses);
+        let config = Arc::new(test_config(
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            base_url,
+        ));
+
+        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let mut client = AppServerClient::in_process(InProcessClientConfig {
+            runtime: runtime.clone(),
+            session_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        let mut app = TuiApp::new("default".to_string(), "in-process");
+
+        handle_tui_input(
+            "default",
+            &mut app,
+            &client,
+            ParsedInput::Command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
+                session_id: "default".to_string(),
+                content: "可以看到当前在哪个目录下吗".to_string(),
+            })),
+        )
+        .expect("submit turn");
+
+        let mut saw_server_request = false;
+        let mut saw_turn_completed = false;
+        while !saw_turn_completed {
+            let event = timeout(Duration::from_secs(10), client.next_event())
+                .await
+                .expect("timed out waiting for client event")
+                .expect("client event");
+            let is_request = matches!(
+                &event,
+                AppServerEvent::Message(AppServerMessage::Request(_))
+            );
+            if matches!(
+                &event,
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::TurnCompleted { .. }
+                ))
+            ) {
+                saw_turn_completed = true;
+            }
+            app.handle_client_event(event);
+            if is_request {
+                saw_server_request = true;
+                handle_tui_input(
+                    "default",
+                    &mut app,
+                    &client,
+                    ParsedInput::ServerRequestAnswer {
+                        approved: true,
+                        reason: "ok".to_string(),
+                    },
+                )
+                .expect("approve request");
+            }
+        }
+        assert!(saw_server_request, "expected a tool approval request");
+
+        let live_cells = app.transcript_state.transcript.cells();
+        assert!(live_cells.iter().any(|cell| cell.body == "可以看到当前在哪个目录下吗"));
+        assert!(live_cells.iter().any(|cell| cell.body == "approved"));
+        assert!(live_cells.iter().any(|cell| {
+            cell.tone == crate::ui::widgets::history_cell::HistoryTone::Tool
+                && cell.body.starts_with("current directory is ")
+                && cell.body.ends_with("\\workspace")
+        }));
+        assert!(live_cells.iter().any(|cell| {
+            cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
+                && cell.body.starts_with("current directory is ")
+                && cell.body.ends_with("\\workspace")
+        }));
+
+        client
+            .send_command(AppClientCommand::RequestStatus {
+                session_id: "default".to_string(),
+            })
+            .expect("request status");
+        client
+            .send_command(AppClientCommand::RequestHistory {
+                session_id: "default".to_string(),
+            })
+            .expect("request history");
+        client
+            .send_command(AppClientCommand::RequestEventLog {
+                session_id: "default".to_string(),
+            })
+            .expect("request event log");
+
+        let mut history = None;
+        let mut event_log = None;
+        let mut status_idle = false;
+        while history.is_none() || event_log.is_none() || !status_idle {
+            let event = timeout(Duration::from_secs(10), client.next_event())
+                .await
+                .expect("timed out waiting for history/event log")
+                .expect("client event");
+            match event {
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionHistory { messages, .. },
+                )) => history = Some(messages),
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionEventLog { events, .. },
+                )) => event_log = Some(events),
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionStatus { snapshot, .. },
+                )) => {
+                    status_idle = matches!(snapshot.session_state, SessionState::Idle)
+                        && snapshot.active_turn.is_none();
+                }
+                other => app.handle_client_event(other),
+            }
+        }
+        client.shutdown().await.expect("shutdown client");
+
+        let history = history.expect("history snapshot");
+        assert!(history.iter().any(|entry| matches!(
+            entry,
+            User { content } if content == "可以看到当前在哪个目录下吗"
+        )));
+        assert!(history.iter().any(|entry| matches!(
+            entry,
+            Tool { name, structured: Some(StructuredToolResult::CommandExecution { command, .. }), .. }
+            if name == "shell_command" && command == "pwd"
+        )));
+        assert!(history.iter().any(|entry| matches!(
+            entry,
+            Assistant { content: Some(content), .. }
+            if content.starts_with("current directory is ") && content.ends_with("\\workspace")
+        )));
+
+        let event_log = event_log.expect("event log");
+        assert!(event_log.iter().any(|event| matches!(event, TurnEvent::ServerRequestRequested { .. })));
+        assert!(event_log.iter().any(|event| matches!(event, TurnEvent::ServerRequestResolved { .. })));
+        assert!(event_log.iter().any(|event| matches!(
+            event,
+            TurnEvent::ItemCompleted { item: ThreadItem::CommandExecution { command, .. }, .. }
+            if command == "pwd"
+        )));
+        assert!(event_log.iter().any(|event| matches!(
+            event,
+            TurnEvent::ItemCompleted { item: ThreadItem::AgentMessage { text, .. }, .. }
+            if text.starts_with("current directory is ") && text.ends_with("\\workspace")
+        )));
+
+        let runtime_after_restart =
+            Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
+        let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
+            runtime: runtime_after_restart,
+            session_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        let mut restarted_app = TuiApp::new("default".to_string(), "in-process");
+        restarted_client
+            .send_command(AppClientCommand::RequestHistory {
+                session_id: "default".to_string(),
+            })
+            .expect("request history after restart");
+        restarted_client
+            .send_command(AppClientCommand::RequestEventLog {
+                session_id: "default".to_string(),
+            })
+            .expect("request event log after restart");
+
+        let mut restarted_history_loaded = false;
+        let mut restarted_events_loaded = false;
+        while !restarted_history_loaded || !restarted_events_loaded {
+            let event = timeout(Duration::from_secs(10), restarted_client.next_event())
+                .await
+                .expect("timed out waiting after restart")
+                .expect("client event after restart");
+            match &event {
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionHistory { .. },
+                )) => restarted_history_loaded = true,
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionEventLog { .. },
+                )) => restarted_events_loaded = true,
+                _ => {}
+            }
+            restarted_app.handle_client_event(event);
+        }
+        restarted_client
+            .shutdown()
+            .await
+            .expect("shutdown restarted client");
+
+        let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
+        assert!(rebuilt_cells.iter().any(|cell| cell.body == "可以看到当前在哪个目录下吗"));
+        assert!(rebuilt_cells.iter().any(|cell| {
+            cell.tone == crate::ui::widgets::history_cell::HistoryTone::Tool
+                && cell.body.starts_with("completed: pwd (exit 0) @ ")
+                && cell.body.ends_with("\\workspace")
+        }));
+        assert!(rebuilt_cells.iter().any(|cell| {
+            cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
+                && cell.body.starts_with("current directory is ")
+                && cell.body.ends_with("\\workspace")
+        }));
+
+        let recorded_requests = server_thread
+            .join()
+            .expect("fake llm server thread panicked")
+            .expect("fake llm server");
+        assert_eq!(recorded_requests.len(), 2);
+        assert!(recorded_requests[0].contains("\"stream\":true"));
+        assert!(recorded_requests[1].contains("\"role\":\"tool\""));
+        assert!(recorded_requests[1].contains("\"shell_command\""));
+    }
+
+    fn test_config(workspace_root: PathBuf, session_store_dir: PathBuf, base_url: String) -> AgentConfig {
+        AgentConfig {
+            workspace_root,
+            llm: LlmConfig {
+                base_url,
+                api_key: "test-key".to_string(),
+                model: "fake-model".to_string(),
+                temperature: 0.0,
+            },
+            runtime: RuntimeConfig {
+                default_session_id: "default".to_string(),
+                system_prompt: "You are a test agent.".to_string(),
+                max_tool_roundtrips: 4,
+                session_store_dir,
+            },
+            tools: ToolConfig {
+                default_shell_timeout_ms: 5_000,
+                max_read_chars: 8_192,
+            },
+        }
+    }
+
+    fn sse_body(chunks: Vec<serde_json::Value>) -> String {
+        let mut body = String::new();
+        for chunk in chunks {
+            body.push_str("data: ");
+            body.push_str(&serde_json::to_string(&chunk).expect("sse chunk"));
+            body.push_str("\n\n");
+        }
+        body.push_str("data: [DONE]\n\n");
+        body
+    }
+
+    fn spawn_fake_llm_server(
+        responses: Vec<String>,
+    ) -> (String, thread::JoinHandle<std::io::Result<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake llm server");
+        let base_url = format!("http://{}", listener.local_addr().expect("listener addr"));
+        let handle = thread::spawn(move || {
+            let mut requests = Vec::new();
+            for response in responses {
+                let (mut stream, _) = listener.accept()?;
+                stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+                let request_body = read_http_request_body(&mut stream)?;
+                requests.push(request_body);
+                let http_response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
+                    response.len(),
+                    response
+                );
+                stream.write_all(http_response.as_bytes())?;
+                stream.flush()?;
+            }
+            Ok(requests)
+        });
+        (base_url, handle)
+    }
+
+    fn read_http_request_body(stream: &mut TcpStream) -> std::io::Result<String> {
+        let mut buffer = Vec::new();
+        let mut scratch = [0u8; 4096];
+        let header_end = loop {
+            let read = stream.read(&mut scratch)?;
+            if read == 0 {
+                return Ok(String::new());
+            }
+            buffer.extend_from_slice(&scratch[..read]);
+            if let Some(position) = buffer
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+            {
+                break position + 4;
+            }
+        };
+
+        let header_text = String::from_utf8_lossy(&buffer[..header_end]);
+        let content_length = header_text
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                if name.eq_ignore_ascii_case("content-length") {
+                    value.trim().parse::<usize>().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+
+        let mut body = buffer[header_end..].to_vec();
+        while body.len() < content_length {
+            let read = stream.read(&mut scratch)?;
+            if read == 0 {
+                break;
+            }
+            body.extend_from_slice(&scratch[..read]);
+        }
+        body.truncate(content_length);
+        Ok(String::from_utf8_lossy(&body).to_string())
+    }
+
+    struct TempFixture {
+        root: PathBuf,
+        workspace: PathBuf,
+        store: PathBuf,
+    }
+
+    impl TempFixture {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock drift")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("cloudagent-cli-test-{unique}"));
+            let workspace = root.join("workspace");
+            let store = root.join("sessions");
+            std::fs::create_dir_all(&workspace).expect("create workspace");
+            std::fs::create_dir_all(&store).expect("create session store");
+            Self {
+                root,
+                workspace,
+                store,
+            }
+        }
+    }
+
+    impl Drop for TempFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
 }

@@ -2,8 +2,9 @@ use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{AgentSession, ModelRequest};
 use agent_protocol::{
-    ApprovalDecision, ApprovalRequest, CommandExecutionStatus, StructuredToolResult, ToolResult,
-    TurnEvent, TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
+    CommandExecutionStatus, ServerRequest, ServerRequestDecision, StructuredToolResult,
+    ThreadItem, ToolApprovalRequest, ToolResult, TurnEvent, TurnItemDeltaKind, TurnItemKind,
+    TurnState, WriteFileStatus,
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -23,8 +24,8 @@ pub(crate) struct RegularTurnTask;
 impl<E, F, Fut> RuntimeTask<E, F, Fut> for RegularTurnTask
 where
     E: FnMut(&TurnEvent) + Send,
-    F: Fn(ApprovalRequest) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
+    F: Fn(ServerRequest) -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
 {
     fn kind(&self) -> TaskKind {
         TaskKind::Regular
@@ -60,8 +61,8 @@ pub(crate) async fn execute_regular_turn<E, F, Fut>(
 ) -> Result<TurnOutcome>
 where
     E: FnMut(&TurnEvent) + Send,
-    F: Fn(ApprovalRequest) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
+    F: Fn(ServerRequest) -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
 {
     let mut session = session;
     let mut events = Vec::new();
@@ -148,8 +149,11 @@ where
                 on_event,
                 TurnEvent::ItemCompleted {
                     turn_id: turn_id.to_string(),
-                    item_id,
-                    kind: TurnItemKind::AssistantMessage,
+                    item_id: item_id.clone(),
+                    item: ThreadItem::AgentMessage {
+                        id: item_id,
+                        text: response.content.clone().unwrap_or_default(),
+                    },
                 },
             );
         }
@@ -180,6 +184,7 @@ where
         );
 
         session.push_assistant_message(response.content.clone(), tool_calls.clone());
+        runtime.state.save_session(session.clone()).await;
 
         if tool_calls.is_empty() {
             let final_response = response
@@ -237,14 +242,19 @@ where
             }
 
             let tool_item_id = format!("tool:{}", call.id);
+            let tool_item_kind = if call.name == "shell_command" {
+                TurnItemKind::CommandExecution
+            } else {
+                TurnItemKind::ToolCall
+            };
             emit_event(
                 &mut events,
                 on_event,
                 TurnEvent::ItemStarted {
                     turn_id: turn_id.to_string(),
                     item_id: tool_item_id.clone(),
-                    kind: TurnItemKind::ToolCall,
-                    title: Some(call.name.clone()),
+                    kind: tool_item_kind,
+                    title: Some(tool_item_title(&call)),
                 },
             );
 
@@ -253,25 +263,27 @@ where
             {
                 runtime
                     .state
-                    .update_turn_state(session_id, turn_id, TurnState::WaitingForApproval)
+                    .update_turn_state(session_id, turn_id, TurnState::WaitingForServerRequest)
                     .await;
-                let request = ApprovalRequest {
+                let request = ServerRequest::ToolApproval {
+                    request: ToolApprovalRequest {
                     turn_id: turn_id.to_string(),
                     tool_call_id: call.id.clone(),
                     tool_name: call.name.clone(),
                     reason: format!("Tool `{}` can modify files or execute commands.", call.name),
                     arguments_preview: summarize_arguments(&call.arguments),
+                    },
                 };
                 emit_event(
                     &mut events,
                     on_event,
-                    TurnEvent::ApprovalRequested {
+                    TurnEvent::ServerRequestRequested {
                         turn_id: turn_id.to_string(),
                         request: request.clone(),
                     },
                 );
                 let decision = runtime
-                    .await_approval(&cancellation_token, approval(request))
+                    .await_approval(&cancellation_token, approval(request.clone()))
                     .await?;
                 runtime
                     .state
@@ -280,17 +292,16 @@ where
                 emit_event(
                     &mut events,
                     on_event,
-                    TurnEvent::ApprovalResolved {
+                    TurnEvent::ServerRequestResolved {
                         turn_id: turn_id.to_string(),
-                        tool_call_id: call.id.clone(),
-                        approved: decision.approved,
-                        reason: decision.reason.clone(),
+                        request: request.clone(),
+                        decision: decision.clone(),
                     },
                 );
                 if !decision.approved {
                     let reason = decision
                         .reason
-                        .unwrap_or_else(|| "approval denied".to_string());
+                        .unwrap_or_else(|| "request denied".to_string());
                     let result = ToolResult {
                         tool_call_id: call.id.clone(),
                         name: call.name.clone(),
@@ -315,10 +326,11 @@ where
                         TurnEvent::ItemCompleted {
                             turn_id: turn_id.to_string(),
                             item_id: tool_item_id.clone(),
-                            kind: TurnItemKind::ToolCall,
+                            item: denied_thread_item(&tool_item_id, &call.name, &call.arguments, &reason),
                         },
                     );
                     session.push_tool_result(result);
+                    runtime.state.save_session(session.clone()).await;
                     // Stop processing the remaining tool calls from the same assistant output.
                     // Let the model consume this denial result first in the next roundtrip.
                     break;
@@ -361,11 +373,12 @@ where
                 on_event,
                 TurnEvent::ItemCompleted {
                     turn_id: turn_id.to_string(),
-                    item_id: tool_item_id,
-                    kind: TurnItemKind::ToolCall,
+                    item_id: tool_item_id.clone(),
+                    item: thread_item_from_tool_result(&tool_item_id, &call.name, &result),
                 },
             );
             session.push_tool_result(result);
+            runtime.state.save_session(session.clone()).await;
         }
     }
 
@@ -380,6 +393,7 @@ where
         &mut assistant_item_seq,
     );
     session.push_assistant_message(Some(final_response.clone()), Vec::new());
+    runtime.state.save_session(session.clone()).await;
     emit_event(
         &mut events,
         on_event,
@@ -396,6 +410,71 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
+}
+
+fn thread_item_from_tool_result(item_id: &str, tool_name: &str, result: &ToolResult) -> ThreadItem {
+    match &result.structured {
+        Some(StructuredToolResult::CommandExecution {
+            command,
+            current_directory,
+            status,
+            exit_code,
+            stdout,
+            stderr,
+            ..
+        }) => ThreadItem::CommandExecution {
+            id: item_id.to_string(),
+            tool_name: tool_name.to_string(),
+            command: command.clone(),
+            current_directory: current_directory.clone(),
+            status: status.clone(),
+            exit_code: *exit_code,
+            stdout: stdout.clone(),
+            stderr: stderr.clone(),
+            summary: result.summary.clone(),
+        },
+        _ => ThreadItem::ToolResult {
+            id: item_id.to_string(),
+            tool_name: tool_name.to_string(),
+            summary: result.summary.clone(),
+            structured: result.structured.clone(),
+        },
+    }
+}
+
+fn denied_thread_item(
+    item_id: &str,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    reason: &str,
+) -> ThreadItem {
+    match denied_tool_result(tool_name, arguments, reason.to_string()) {
+        Some(StructuredToolResult::CommandExecution {
+            command,
+            current_directory,
+            status,
+            exit_code,
+            stdout,
+            stderr,
+            ..
+        }) => ThreadItem::CommandExecution {
+            id: item_id.to_string(),
+            tool_name: tool_name.to_string(),
+            command,
+            current_directory,
+            status,
+            exit_code,
+            stdout,
+            stderr,
+            summary: "tool execution skipped".to_string(),
+        },
+        structured => ThreadItem::ToolResult {
+            id: item_id.to_string(),
+            tool_name: tool_name.to_string(),
+            summary: "tool execution skipped".to_string(),
+            structured,
+        },
+    }
 }
 
 fn emit_assistant_item(
@@ -432,10 +511,23 @@ fn emit_assistant_item(
         on_event,
         TurnEvent::ItemCompleted {
             turn_id: turn_id.to_string(),
-            item_id: assistant_item_id,
-            kind: TurnItemKind::AssistantMessage,
+            item_id: assistant_item_id.clone(),
+            item: ThreadItem::AgentMessage {
+                id: assistant_item_id,
+                text: content.to_string(),
+            },
         },
     );
+}
+
+fn tool_item_title(call: &agent_core::ToolCall) -> String {
+    if call.name == "shell_command"
+        && let Some(command) = call.arguments.get("command").and_then(|value| value.as_str())
+        && !command.trim().is_empty()
+    {
+        return command.trim().to_string();
+    }
+    call.name.clone()
 }
 
 fn denied_tool_result(

@@ -1,7 +1,7 @@
-mod approval_coordinator;
 mod command_router;
 mod in_process;
 mod session_subscriptions;
+mod server_request_coordinator;
 mod turn_bridge;
 pub mod transport;
 

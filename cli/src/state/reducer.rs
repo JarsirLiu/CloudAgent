@@ -1,15 +1,17 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    HistoryEntry, RequestId, TurnItemDeltaKind, TurnItemKind, UserTurnInput,
+    HistoryEntry, RequestId, ServerRequest, ThreadItem, TurnEvent, TurnItemDeltaKind,
+    TurnItemKind, UserTurnInput,
 };
 
 #[derive(Debug, Clone)]
 pub(crate) enum ItemDispatch {
     AssistantStarted { turn_id: String, item_id: String },
-    ToolLikeStarted { item_id: String, title: String },
+    ToolLikeStarted { item_id: String, kind: TurnItemKind, title: String },
     AssistantDelta { item_id: String, delta: String },
-    AssistantCompleted { item_id: String },
-    ToolLikeCompleted { item_id: String },
+    ToolLikeDelta { item_id: String, delta: String },
+    AssistantCompleted { item: ThreadItem },
+    ToolLikeCompleted { item: ThreadItem },
 }
 
 #[derive(Debug, Clone)]
@@ -22,7 +24,7 @@ pub(crate) enum TurnDispatch {
 #[derive(Debug, Clone)]
 pub(crate) enum UiInputEvent {
     Command(AppClientCommand),
-    ApprovalAnswer { approved: bool, reason: String },
+    ServerRequestAnswer { approved: bool, reason: String },
     LocalCopy,
 }
 
@@ -34,17 +36,19 @@ pub(crate) struct ServerMessageReduce {
 #[derive(Debug, Clone)]
 pub(crate) enum ServerAction {
     SetMode(FrontendMode),
-    SetPendingApproval(Option<RequestId>),
+    SetPendingServerRequest(Option<RequestId>),
     SetStatusNotice(Option<String>),
     SetLastMessageCount(usize),
     SetHistoryLoaded(bool),
-    ClearApprovalView,
+    SetEventLogLoaded(bool),
+    ClearServerRequestView,
     ClearLastToolName,
     ReplaceHistory(Vec<HistoryEntry>),
+    ReplayEventLog(Vec<TurnEvent>),
     PushErrorCell(String),
     ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
-    ShowApprovalPrompt { title: String, detail: String, notice: String },
+    ShowServerRequestPrompt { title: String, detail: String, notice: String },
 }
 
 pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageReduce {
@@ -67,6 +71,10 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     actions.push(ServerAction::SetHistoryLoaded(true));
                     actions.push(ServerAction::ReplaceHistory(messages.clone()));
                 }
+                AppServerNotification::SessionEventLog { events, .. } => {
+                    actions.push(ServerAction::SetEventLogLoaded(true));
+                    actions.push(ServerAction::ReplayEventLog(events.clone()));
+                }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
                 }
@@ -74,17 +82,39 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
                     actions.push(ServerAction::PushErrorCell(message.clone()));
                 }
+                AppServerNotification::ServerRequestRequested { request, .. } => {
+                    let notice = match request {
+                        ServerRequest::ToolApproval { request } => {
+                            format!("Action required for {}", request.tool_name)
+                        }
+                    };
+                    actions.push(ServerAction::SetStatusNotice(Some(notice)));
+                }
+                AppServerNotification::ServerRequestResolved {
+                    decision,
+                    ..
+                } => {
+                    actions.push(ServerAction::SetMode(FrontendMode::Running));
+                    actions.push(ServerAction::SetPendingServerRequest(None));
+                    actions.push(ServerAction::ClearServerRequestView);
+                    actions.push(ServerAction::SetStatusNotice(Some(if decision.approved {
+                        format!("Request approved{}", decision.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default())
+                    } else {
+                        format!("Request denied{}", decision.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default())
+                    })));
+                }
                 AppServerNotification::TurnCompleted { .. } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::SetPendingApproval(None));
-                    actions.push(ServerAction::ClearApprovalView);
+                    actions.push(ServerAction::SetPendingServerRequest(None));
+                    actions.push(ServerAction::ClearServerRequestView);
                     actions.push(ServerAction::ClearLastToolName);
+                    actions.push(ServerAction::SetStatusNotice(None));
                     actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
                 }
                 AppServerNotification::TurnFailed { error, .. } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::SetPendingApproval(None));
-                    actions.push(ServerAction::ClearApprovalView);
+                    actions.push(ServerAction::SetPendingServerRequest(None));
+                    actions.push(ServerAction::ClearServerRequestView);
                     actions.push(ServerAction::ClearLastToolName);
                     actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
                         error: error.clone(),
@@ -92,8 +122,8 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 AppServerNotification::TurnCancelled { reason, .. } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::SetPendingApproval(None));
-                    actions.push(ServerAction::ClearApprovalView);
+                    actions.push(ServerAction::SetPendingServerRequest(None));
+                    actions.push(ServerAction::ClearServerRequestView);
                     actions.push(ServerAction::ClearLastToolName);
                     actions.push(ServerAction::TurnDispatch(TurnDispatch::Cancelled {
                         reason: reason.clone(),
@@ -105,21 +135,23 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 actions.push(ServerAction::ItemDispatch(dispatch));
             }
         }
-        AppServerMessage::Request(AppServerRequest::Approval {
+        AppServerMessage::Request(AppServerRequest::ServerRequest {
             request_id,
             request,
             ..
-        }) => {
-            actions.push(ServerAction::SetMode(FrontendMode::WaitingForApproval));
-            actions.push(ServerAction::SetPendingApproval(Some(request_id.clone())));
-            actions.push(ServerAction::ShowApprovalPrompt {
-                title: format!("tool `{}` wants to run", request.tool_name),
-                detail: format!(
-                    "reason: {}  args: {}",
-                    request.reason, request.arguments_preview
-                ),
-                notice: format!("Approval for {}", request.tool_name),
-            });
+        }) => match request {
+            ServerRequest::ToolApproval { request } => {
+                actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
+                actions.push(ServerAction::SetPendingServerRequest(Some(request_id.clone())));
+                actions.push(ServerAction::ShowServerRequestPrompt {
+                    title: format!("tool `{}` wants to run", request.tool_name),
+                    detail: format!(
+                        "reason: {}  args: {}",
+                        request.reason, request.arguments_preview
+                    ),
+                    notice: format!("Action required for {}", request.tool_name),
+                });
+            }
         }
     }
 
@@ -150,9 +182,9 @@ pub(crate) fn apply_ui_event(
         "/interrupt" => UiInputEvent::Command(AppClientCommand::InterruptTurn {
             session_id: session_id.to_string(),
         }),
-        _ if mode == FrontendMode::WaitingForApproval => {
+        _ if mode == FrontendMode::WaitingForServerRequest => {
             let approved = matches!(trimmed, "1" | "y" | "Y" | "yes" | "YES");
-            UiInputEvent::ApprovalAnswer {
+            UiInputEvent::ServerRequestAnswer {
                 approved,
                 reason: if approved {
                     "approved by console operator".to_string()
@@ -185,11 +217,14 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             kind,
             title,
             ..
-        } if (*kind == TurnItemKind::Reasoning || *kind == TurnItemKind::ToolCall)
+        } if (*kind == TurnItemKind::Reasoning
+            || *kind == TurnItemKind::ToolCall
+            || *kind == TurnItemKind::CommandExecution)
             && title.is_some() =>
         {
             Some(ItemDispatch::ToolLikeStarted {
                 item_id: item_id.clone(),
+                kind: kind.clone(),
                 title: title.clone().unwrap_or_default(),
             })
         }
@@ -202,20 +237,26 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             item_id: item_id.clone(),
             delta: delta.clone(),
         }),
-        AppServerNotification::ItemCompleted { item_id, kind, .. }
-            if *kind == TurnItemKind::AssistantMessage =>
-        {
-            Some(ItemDispatch::AssistantCompleted {
-                item_id: item_id.clone(),
-            })
-        }
-        AppServerNotification::ItemCompleted { item_id, kind, .. }
-            if *kind == TurnItemKind::Reasoning || *kind == TurnItemKind::ToolCall =>
-        {
-            Some(ItemDispatch::ToolLikeCompleted {
-                item_id: item_id.clone(),
-            })
-        }
+        AppServerNotification::ItemDelta {
+            item_id,
+            kind,
+            delta,
+            ..
+        } if *kind == TurnItemDeltaKind::ToolOutput => Some(ItemDispatch::ToolLikeDelta {
+            item_id: item_id.clone(),
+            delta: delta.clone(),
+        }),
+        AppServerNotification::ItemCompleted { item, .. } => match item {
+            ThreadItem::AgentMessage { .. } => Some(ItemDispatch::AssistantCompleted {
+                item: item.clone(),
+            }),
+            ThreadItem::CommandExecution { .. }
+            | ThreadItem::ToolResult { .. }
+            | ThreadItem::Reasoning { .. } => {
+                Some(ItemDispatch::ToolLikeCompleted { item: item.clone() })
+            }
+            ThreadItem::UserMessage { .. } => None,
+        },
         _ => None,
     }
 }

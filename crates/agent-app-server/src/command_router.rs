@@ -1,9 +1,9 @@
-use crate::approval_coordinator::ApprovalCoordinator;
+use crate::server_request_coordinator::ServerRequestCoordinator;
 use crate::session_subscriptions::SessionSubscriptions;
 use crate::turn_bridge::{history_entry_from_message, project_turn_event};
 use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ApprovalDecision,
-    ApprovalRequest,
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest,
+    ServerRequestDecision,
 };
 use agent_runtime::AgentRuntime;
 use anyhow::{Result, anyhow};
@@ -13,14 +13,14 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 pub(crate) struct ServerState {
     subscriptions: SessionSubscriptions,
-    approvals: ApprovalCoordinator,
+    server_requests: ServerRequestCoordinator,
 }
 
 impl ServerState {
     pub(crate) fn new(default_session_id: String) -> Self {
         Self {
             subscriptions: SessionSubscriptions::new(default_session_id),
-            approvals: ApprovalCoordinator::new(),
+            server_requests: ServerRequestCoordinator::new(),
         }
     }
 }
@@ -108,6 +108,15 @@ pub(crate) async fn handle_command(
             )
             .await;
         }
+        AppClientCommand::RequestEventLog { session_id } => {
+            let events = runtime.session_events(&session_id).await?;
+            send_notification(
+                event_tx,
+                &state,
+                AppServerNotification::SessionEventLog { session_id, events },
+            )
+            .await;
+        }
         AppClientCommand::ResetSession { session_id } => {
             runtime.reset_session(&session_id).await?;
             send_notification(
@@ -147,16 +156,31 @@ pub(crate) async fn handle_command(
                 },
             ));
         }
-        AppClientCommand::ApprovalResponse {
+        AppClientCommand::ResolveServerRequest {
+            session_id,
             request_id,
             approved,
             reason,
-            ..
         } => {
-            let mut state = state.lock().await;
-            let _ = state
-                .approvals
-                .resolve(&request_id, ApprovalDecision { approved, reason });
+            let mut state_guard = state.lock().await;
+            let resolved = state_guard
+                .server_requests
+                .resolve(&request_id, ServerRequestDecision { approved, reason: reason.clone() });
+            drop(state_guard);
+            if let Some((turn_id, request, decision)) = resolved {
+                send_notification(
+                    event_tx,
+                    &state,
+                    AppServerNotification::ServerRequestResolved {
+                        session_id,
+                        turn_id,
+                        request_id,
+                        request,
+                        decision,
+                    },
+                )
+                .await;
+            }
         }
         AppClientCommand::Exit => {}
     }
@@ -176,7 +200,7 @@ fn spawn_turn(
         let state_for_turn = ctx.state.clone();
         let state_for_finish = ctx.state.clone();
         let session_id_for_turn = session_id.clone();
-        let session_id_for_approval = session_id.clone();
+        let session_id_for_server_request = session_id.clone();
         let active_turn_id = Arc::new(StdMutex::new(None::<String>));
         let active_turn_id_for_events = active_turn_id.clone();
         let (projected_tx, mut projected_rx) =
@@ -209,14 +233,14 @@ fn spawn_turn(
                     let notifications = project_turn_event(&session_id, &event);
                     let _ = projected_tx.send(notifications);
                 },
-                move |request: ApprovalRequest| {
+                move |request: ServerRequest| {
                     let event_tx = ctx.event_tx.clone();
                     let state = ctx.state.clone();
-                    let session_id = session_id_for_approval.clone();
+                    let session_id = session_id_for_server_request.clone();
                     let auto_approve_reason = ctx.auto_approve_reason.clone();
                     async move {
                         if ctx.auto_approve {
-                            return Ok(ApprovalDecision {
+                            return Ok(ServerRequestDecision {
                                 approved: true,
                                 reason: auto_approve_reason
                                     .clone()
@@ -226,28 +250,36 @@ fn spawn_turn(
 
                         let request_id = {
                             let state_guard = state.lock().await;
-                            state_guard.approvals.next_request_id()
+                            state_guard.server_requests.next_request_id()
                         };
                         let (reply_tx, reply_rx) = oneshot::channel();
+                        let turn_id = match &request {
+                            ServerRequest::ToolApproval { request } => request.turn_id.clone(),
+                        };
                         {
                             let mut state_guard = state.lock().await;
                             state_guard
-                                .approvals
-                                .insert_pending(request_id.clone(), reply_tx);
+                                .server_requests
+                                .insert_pending(
+                                    request_id.clone(),
+                                    turn_id,
+                                    request.clone(),
+                                    reply_tx,
+                                );
                         }
                         send_request(
                             &event_tx,
                             &state,
-                            AppServerRequest::Approval {
-                                request_id,
-                                session_id,
-                                request,
+                        AppServerRequest::ServerRequest {
+                            request_id,
+                            session_id,
+                            request,
                             },
                         )
                         .await;
                         reply_rx
                             .await
-                            .map_err(|_| anyhow!("approval response channel closed"))
+                            .map_err(|_| anyhow!("server request response channel closed"))
                     }
                 },
             )
@@ -317,4 +349,3 @@ async fn send_request(
         let _ = event_tx.send(AppServerMessage::Request(request));
     }
 }
-

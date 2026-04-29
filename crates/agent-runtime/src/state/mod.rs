@@ -1,6 +1,7 @@
 use agent_core::AgentSession;
-use agent_protocol::TurnState;
+use agent_protocol::{TurnEvent, TurnState};
 use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -32,6 +33,7 @@ impl ActiveTurnHandle {
 pub(crate) struct RuntimeState {
     sessions: Mutex<HashMap<String, AgentSession>>,
     active_turns: Mutex<HashMap<String, ActiveTurnHandle>>,
+    event_logs: StdMutex<HashMap<String, Vec<TurnEvent>>>,
 }
 
 impl RuntimeState {
@@ -39,6 +41,7 @@ impl RuntimeState {
         Self {
             sessions: Mutex::new(HashMap::new()),
             active_turns: Mutex::new(HashMap::new()),
+            event_logs: StdMutex::new(HashMap::new()),
         }
     }
 
@@ -56,6 +59,9 @@ impl RuntimeState {
     pub(crate) async fn remove_session(&self, session_id: &str) {
         self.sessions.lock().await.remove(session_id);
         self.active_turns.lock().await.remove(session_id);
+        if let Ok(mut event_logs) = self.event_logs.lock() {
+            event_logs.remove(session_id);
+        }
     }
 
     pub(crate) async fn active_turn(&self, session_id: &str) -> Option<ActiveTurnHandle> {
@@ -96,6 +102,25 @@ impl RuntimeState {
             true
         } else {
             false
+        }
+    }
+
+    pub(crate) fn session_events(&self, session_id: &str) -> Option<Vec<TurnEvent>> {
+        self.event_logs.lock().ok()?.get(session_id).cloned()
+    }
+
+    pub(crate) fn replace_session_events(&self, session_id: impl Into<String>, events: Vec<TurnEvent>) {
+        if let Ok(mut event_logs) = self.event_logs.lock() {
+            event_logs.insert(session_id.into(), events);
+        }
+    }
+
+    pub(crate) fn append_session_event(&self, session_id: &str, event: TurnEvent) {
+        if let Ok(mut event_logs) = self.event_logs.lock() {
+            event_logs
+                .entry(session_id.to_string())
+                .or_default()
+                .push(event);
         }
     }
 }

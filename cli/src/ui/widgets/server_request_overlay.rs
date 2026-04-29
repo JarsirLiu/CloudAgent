@@ -7,20 +7,20 @@ use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction}
 use crate::ui::widgets::textarea::TextArea;
 
 #[derive(Clone, Debug, Default)]
-pub struct ApprovalInlineState {
+pub struct ServerRequestInlineState {
     pub title: String,
     pub detail: String,
 }
 
-pub struct ApprovalOverlay {
-    state: ApprovalInlineState,
+pub struct ServerRequestOverlay {
+    state: ServerRequestInlineState,
     reply: TextArea,
     complete: bool,
     selected: usize,
 }
 
-impl ApprovalOverlay {
-    pub fn new(state: ApprovalInlineState) -> Self {
+impl ServerRequestOverlay {
+    pub fn new(state: ServerRequestInlineState) -> Self {
         Self {
             state,
             reply: TextArea::new(),
@@ -30,7 +30,7 @@ impl ApprovalOverlay {
     }
 }
 
-impl BottomPaneView for ApprovalOverlay {
+impl BottomPaneView for ServerRequestOverlay {
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if !matches!(key.kind, KeyEventKind::Press) {
             return BottomPaneViewAction::None;
@@ -47,14 +47,14 @@ impl BottomPaneView for ApprovalOverlay {
             }
             KeyCode::Char('y') if self.reply.is_empty() => {
                 self.complete = true;
-                BottomPaneViewAction::ApprovalSubmit {
+                BottomPaneViewAction::ServerRequestSubmit {
                     approved: true,
                     reason: String::new(),
                 }
             }
             KeyCode::Char('n') if self.reply.is_empty() => {
                 self.complete = true;
-                BottomPaneViewAction::ApprovalSubmit {
+                BottomPaneViewAction::ServerRequestSubmit {
                     approved: false,
                     reason: String::new(),
                 }
@@ -67,7 +67,7 @@ impl BottomPaneView for ApprovalOverlay {
                     !reason.eq_ignore_ascii_case("n") && !reason.eq_ignore_ascii_case("no")
                 };
                 self.complete = true;
-                BottomPaneViewAction::ApprovalSubmit { approved, reason }
+                BottomPaneViewAction::ServerRequestSubmit { approved, reason }
             }
             _ => {
                 self.reply.handle_key(key);

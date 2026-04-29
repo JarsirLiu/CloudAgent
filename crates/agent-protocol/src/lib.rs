@@ -14,7 +14,7 @@ pub type TurnId = String;
 pub enum FrontendMode {
     Idle,
     Running,
-    WaitingForApproval,
+    WaitingForServerRequest,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,7 +24,7 @@ pub struct UserTurnInput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ApprovalRequest {
+pub struct ToolApprovalRequest {
     pub turn_id: TurnId,
     pub tool_call_id: String,
     pub tool_name: String,
@@ -33,7 +33,7 @@ pub struct ApprovalRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ApprovalDecision {
+pub struct ServerRequestDecision {
     pub approved: bool,
     pub reason: Option<String>,
 }
@@ -42,7 +42,7 @@ pub struct ApprovalDecision {
 pub enum TurnState {
     Idle,
     Running,
-    WaitingForApproval,
+    WaitingForServerRequest,
     Completed,
     Failed,
     Cancelled,
@@ -154,11 +154,47 @@ pub enum HistoryEntry {
     },
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ThreadItem {
+    UserMessage {
+        id: String,
+        text: String,
+    },
+    AgentMessage {
+        id: String,
+        text: String,
+    },
+    CommandExecution {
+        id: String,
+        tool_name: String,
+        command: String,
+        current_directory: String,
+        status: CommandExecutionStatus,
+        exit_code: Option<i32>,
+        stdout: Option<String>,
+        stderr: Option<String>,
+        summary: String,
+    },
+    ToolResult {
+        id: String,
+        tool_name: String,
+        summary: String,
+        structured: Option<StructuredToolResult>,
+    },
+    Reasoning {
+        id: String,
+        title: String,
+        text: String,
+    },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnItemKind {
     UserMessage,
     AssistantMessage,
+    CommandExecution,
     ToolCall,
     ToolResult,
     Reasoning,
@@ -209,17 +245,16 @@ pub enum TurnEvent {
     ItemCompleted {
         turn_id: TurnId,
         item_id: String,
-        kind: TurnItemKind,
+        item: ThreadItem,
     },
-    ApprovalRequested {
+    ServerRequestRequested {
         turn_id: TurnId,
-        request: ApprovalRequest,
+        request: ServerRequest,
     },
-    ApprovalResolved {
+    ServerRequestResolved {
         turn_id: TurnId,
-        tool_call_id: String,
-        approved: bool,
-        reason: Option<String>,
+        request: ServerRequest,
+        decision: ServerRequestDecision,
     },
     TurnCompleted {
         turn_id: TurnId,
@@ -239,7 +274,7 @@ pub enum TurnEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppClientCommand {
     SubmitTurn(UserTurnInput),
-    ApprovalResponse {
+    ResolveServerRequest {
         session_id: String,
         request_id: RequestId,
         approved: bool,
@@ -257,6 +292,9 @@ pub enum AppClientCommand {
     RequestHistory {
         session_id: String,
     },
+    RequestEventLog {
+        session_id: String,
+    },
     SubscribeSession {
         session_id: String,
     },
@@ -270,11 +308,12 @@ impl AppClientCommand {
     pub fn session_id(&self) -> Option<&str> {
         match self {
             Self::SubmitTurn(input) => Some(&input.session_id),
-            Self::ApprovalResponse { session_id, .. }
+            Self::ResolveServerRequest { session_id, .. }
             | Self::InterruptTurn { session_id }
             | Self::ResetSession { session_id }
             | Self::RequestStatus { session_id }
             | Self::RequestHistory { session_id }
+            | Self::RequestEventLog { session_id }
             | Self::SubscribeSession { session_id }
             | Self::UnsubscribeSession { session_id } => Some(session_id),
             Self::Exit => None,
@@ -310,13 +349,23 @@ pub enum AppServerNotification {
     ItemCompleted {
         session_id: String,
         turn_id: TurnId,
-        item_id: String,
-        kind: TurnItemKind,
+        item: ThreadItem,
+    },
+    ServerRequestRequested {
+        session_id: String,
+        turn_id: TurnId,
+        request: ServerRequest,
+    },
+    ServerRequestResolved {
+        session_id: String,
+        turn_id: TurnId,
+        request_id: RequestId,
+        request: ServerRequest,
+        decision: ServerRequestDecision,
     },
     TurnCompleted {
         session_id: String,
         turn_id: TurnId,
-        final_response: String,
     },
     TurnFailed {
         session_id: String,
@@ -335,6 +384,10 @@ pub enum AppServerNotification {
     SessionHistory {
         session_id: String,
         messages: Vec<HistoryEntry>,
+    },
+    SessionEventLog {
+        session_id: String,
+        events: Vec<TurnEvent>,
     },
     SubscriptionChanged {
         session_id: String,
@@ -358,11 +411,14 @@ impl AppServerNotification {
             | Self::ItemStarted { session_id, .. }
             | Self::ItemDelta { session_id, .. }
             | Self::ItemCompleted { session_id, .. }
+            | Self::ServerRequestRequested { session_id, .. }
+            | Self::ServerRequestResolved { session_id, .. }
             | Self::TurnCompleted { session_id, .. }
             | Self::TurnFailed { session_id, .. }
             | Self::TurnCancelled { session_id, .. }
             | Self::SessionStatus { session_id, .. }
             | Self::SessionHistory { session_id, .. }
+            | Self::SessionEventLog { session_id, .. }
             | Self::SubscriptionChanged { session_id, .. }
             | Self::Info { session_id, .. }
             | Self::Error { session_id, .. } => session_id,
@@ -373,25 +429,33 @@ impl AppServerNotification {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppServerRequest {
-    Approval {
+    ServerRequest {
         request_id: RequestId,
         session_id: String,
-        request: ApprovalRequest,
+        request: ServerRequest,
     },
 }
 
 impl AppServerRequest {
     pub fn request_id(&self) -> &RequestId {
         match self {
-            Self::Approval { request_id, .. } => request_id,
+            Self::ServerRequest { request_id, .. } => request_id,
         }
     }
 
     pub fn session_id(&self) -> &str {
         match self {
-            Self::Approval { session_id, .. } => session_id,
+            Self::ServerRequest { session_id, .. } => session_id,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "request_type", rename_all = "snake_case")]
+pub enum ServerRequest {
+    ToolApproval {
+        request: ToolApprovalRequest,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -520,13 +584,16 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "session/history" => Ok(AppClientCommand::RequestHistory {
             session_id: value_field(params, "session_id")?,
         }),
+        "session/events" => Ok(AppClientCommand::RequestEventLog {
+            session_id: value_field(params, "session_id")?,
+        }),
         "session/subscribe" => Ok(AppClientCommand::SubscribeSession {
             session_id: value_field(params, "session_id")?,
         }),
         "session/unsubscribe" => Ok(AppClientCommand::UnsubscribeSession {
             session_id: value_field(params, "session_id")?,
         }),
-        "approval/respond" => Ok(serde_json::from_value(params)?),
+        "serverRequest/resolve" => Ok(serde_json::from_value(params)?),
         "app/exit" => Ok(AppClientCommand::Exit),
         other => anyhow::bail!("unsupported request method: {other}"),
     }
@@ -538,8 +605,8 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             "turn/start",
             serde_json::to_value(input).unwrap_or(Value::Null),
         ),
-        AppClientCommand::ApprovalResponse { .. } => (
-            "approval/respond",
+        AppClientCommand::ResolveServerRequest { .. } => (
+            "serverRequest/resolve",
             serde_json::to_value(command).unwrap_or(Value::Null),
         ),
         AppClientCommand::InterruptTurn { session_id } => (
@@ -558,6 +625,10 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             "session/history",
             serde_json::json!({ "session_id": session_id }),
         ),
+        AppClientCommand::RequestEventLog { session_id } => (
+            "session/events",
+            serde_json::json!({ "session_id": session_id }),
+        ),
         AppClientCommand::SubscribeSession { session_id } => (
             "session/subscribe",
             serde_json::json!({ "session_id": session_id }),
@@ -573,7 +644,7 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
 fn notification_method_and_params(notification: &AppServerNotification) -> (&'static str, Value) {
     match notification {
         AppServerNotification::FrontendStateChanged { .. } => (
-            "frontend/state_changed",
+            "frontend/stateChanged",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::TurnStarted { .. } => (
@@ -584,12 +655,26 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "item/started",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ItemDelta { .. } => (
-            "item/delta",
+        AppServerNotification::ItemDelta { kind, .. } => (
+            match kind {
+                TurnItemDeltaKind::Text => "item/agentMessage/delta",
+                TurnItemDeltaKind::ToolOutput => "item/commandExecution/outputDelta",
+                TurnItemDeltaKind::ReasoningSummary => "item/reasoning/summaryTextDelta",
+                TurnItemDeltaKind::ReasoningText => "item/reasoning/textDelta",
+                TurnItemDeltaKind::JsonPatch => "item/jsonPatch/delta",
+            },
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::ItemCompleted { .. } => (
             "item/completed",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ServerRequestRequested { .. } => (
+            "serverRequest/requested",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ServerRequestResolved { .. } => (
+            "serverRequest/resolved",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::TurnCompleted { .. } => (
@@ -612,8 +697,12 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "session/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::SessionEventLog { .. } => (
+            "session/events",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::SubscriptionChanged { .. } => (
-            "session/subscription_changed",
+            "session/subscriptionChanged",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::Info { .. } => (
@@ -629,18 +718,20 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
 
 fn request_method_and_params(request: &AppServerRequest) -> (RequestId, &'static str, Value) {
     match request {
-        AppServerRequest::Approval {
+        AppServerRequest::ServerRequest {
             request_id,
             session_id,
             request,
-        } => (
-            request_id.clone(),
-            "approval/request",
-            serde_json::json!({
-                "session_id": session_id,
-                "request": request,
-            }),
-        ),
+        } => match request {
+            ServerRequest::ToolApproval { .. } => (
+                request_id.clone(),
+                "serverRequest/toolApproval",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "request": request,
+                }),
+            ),
+        },
     }
 }
 
@@ -650,23 +741,25 @@ fn parse_server_notification(
 ) -> anyhow::Result<AppServerNotification> {
     let params = params.unwrap_or(Value::Null);
     match method {
-        "frontend/state_changed"
+        "frontend/stateChanged"
         | "turn/started"
         | "item/started"
-        | "item/agent_message/delta"
+        | "item/agentMessage/delta"
         | "item/plan/delta"
-        | "item/reasoning/summary_text_delta"
-        | "item/reasoning/text_delta"
-        | "item/tool_call/started"
-        | "item/tool_call/output_delta"
-        | "item/tool_call/completed"
+        | "item/reasoning/summaryTextDelta"
+        | "item/reasoning/textDelta"
+        | "item/commandExecution/outputDelta"
+        | "item/jsonPatch/delta"
         | "item/completed"
+        | "serverRequest/requested"
+        | "serverRequest/resolved"
         | "turn/completed"
         | "turn/failed"
         | "turn/cancelled"
         | "session/status"
         | "session/history"
-        | "session/subscription_changed"
+        | "session/events"
+        | "session/subscriptionChanged"
         | "app/info"
         | "app/error" => Ok(serde_json::from_value(params)?),
         other => anyhow::bail!("unsupported notification method: {other}"),
@@ -680,7 +773,7 @@ fn parse_server_request(
 ) -> anyhow::Result<AppServerRequest> {
     let params = params.unwrap_or(Value::Null);
     match method {
-        "approval/request" => {
+        "serverRequest/toolApproval" => {
             let object = params
                 .as_object()
                 .ok_or_else(|| anyhow::anyhow!("expected object params"))?;
@@ -692,10 +785,12 @@ fn parse_server_request(
                 .get("request")
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("missing `request` field"))?;
-            Ok(AppServerRequest::Approval {
+            Ok(AppServerRequest::ServerRequest {
                 request_id,
                 session_id: serde_json::from_value(session_id)?,
-                request: serde_json::from_value(request)?,
+                request: ServerRequest::ToolApproval {
+                    request: serde_json::from_value(request)?,
+                },
             })
         }
         other => anyhow::bail!("unsupported server request method: {other}"),
@@ -723,15 +818,17 @@ mod tests {
     #[test]
     fn approval_request_roundtrips_through_jsonrpc() {
         let message = AppServerMessageEnvelope {
-            message: AppServerMessage::Request(AppServerRequest::Approval {
+            message: AppServerMessage::Request(AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(7),
                 session_id: "default".to_string(),
-                request: ApprovalRequest {
-                    turn_id: "turn-1".to_string(),
-                    tool_call_id: "call-1".to_string(),
-                    tool_name: "shell_command".to_string(),
-                    reason: "mutating tool".to_string(),
-                    arguments_preview: "{\"command\":\"echo hi\"}".to_string(),
+                request: ServerRequest::ToolApproval {
+                    request: ToolApprovalRequest {
+                        turn_id: "turn-1".to_string(),
+                        tool_call_id: "call-1".to_string(),
+                        tool_name: "shell_command".to_string(),
+                        reason: "mutating tool".to_string(),
+                        arguments_preview: "{\"command\":\"echo hi\"}".to_string(),
+                    },
                 },
             }),
         };
@@ -739,7 +836,7 @@ mod tests {
         let JsonRpcMessage::Request(request) = JsonRpcMessage::from(message) else {
             panic!("expected request");
         };
-        assert_eq!(request.method, "approval/request");
+        assert_eq!(request.method, "serverRequest/toolApproval");
         assert_eq!(request.id, RequestId::Integer(7));
     }
 

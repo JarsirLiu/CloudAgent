@@ -52,7 +52,7 @@ fn header_block(app: &TuiApp) -> Paragraph<'static> {
     let status = match app.console_state.mode {
         FrontendMode::Idle => ("IDLE", Color::Green),
         FrontendMode::Running => ("RUNNING", Color::Cyan),
-        FrontendMode::WaitingForApproval => ("APPROVAL", Color::Yellow),
+        FrontendMode::WaitingForServerRequest => ("ACTION", Color::Yellow),
     };
 
     let scroll_hint = if app.transcript_state.scroll > 0 {

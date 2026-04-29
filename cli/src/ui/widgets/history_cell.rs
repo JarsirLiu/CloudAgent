@@ -112,6 +112,11 @@ impl HistoryCell {
         self.invalidate_cache();
     }
 
+    pub fn replace_body(&mut self, body: impl Into<String>) {
+        self.body = body.into();
+        self.invalidate_cache();
+    }
+
     fn invalidate_cache(&mut self) {
         if let Ok(mut cache) = self.cache.lock() {
             *cache = None;
@@ -262,9 +267,14 @@ impl Transcript {
         self.cells.len().saturating_sub(1)
     }
 
+    pub fn cells(&self) -> &[HistoryCell] {
+        &self.cells
+    }
+
     pub fn is_empty(&self) -> bool {
         self.cells.is_empty()
     }
+
     pub fn render_lines_with_tail(
         &self,
         width: usize,

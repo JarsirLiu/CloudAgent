@@ -1,6 +1,7 @@
+use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, forward_event};
 use agent_protocol::{
-    AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerMessageEnvelope,
-    JsonRpcMessage, RequestId,
+    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcMessage,
+    RequestId,
 };
 use anyhow::{Context, Result, anyhow};
 use std::ffi::OsString;
@@ -10,6 +11,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc};
+use tokio::task::JoinHandle;
 
 #[derive(Clone, Debug)]
 pub struct StdioClientConfig {
@@ -19,8 +21,9 @@ pub struct StdioClientConfig {
 
 pub struct StdioAppServerClient {
     command_tx: mpsc::UnboundedSender<AppClientCommand>,
-    event_rx: mpsc::UnboundedReceiver<AppServerMessage>,
+    event_rx: mpsc::Receiver<AppServerEvent>,
     child: Arc<Mutex<Child>>,
+    reader_task: JoinHandle<Result<()>>,
 }
 
 impl StdioAppServerClient {
@@ -45,16 +48,17 @@ impl StdioAppServerClient {
             .ok_or_else(|| anyhow!("stdio app-server child missing stdout"))?;
 
         let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_CAPACITY);
         let request_counter = Arc::new(AtomicI64::new(1));
 
         tokio::spawn(write_commands(stdin, command_rx, request_counter));
-        tokio::spawn(read_events(stdout, event_tx));
+        let reader_task = tokio::spawn(read_events(stdout, event_tx));
 
         Ok(Self {
             command_tx,
             event_rx,
             child: Arc::new(Mutex::new(child)),
+            reader_task,
         })
     }
 
@@ -64,7 +68,7 @@ impl StdioAppServerClient {
             .map_err(|_| anyhow!("stdio app-server command channel is closed"))
     }
 
-    pub async fn next_message(&mut self) -> Option<AppServerMessage> {
+    pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         self.event_rx.recv().await
     }
 
@@ -73,6 +77,8 @@ impl StdioAppServerClient {
         if child.try_wait()?.is_none() {
             child.kill().await.ok();
         }
+        drop(child);
+        self.reader_task.await??;
         Ok(())
     }
 }
@@ -97,20 +103,35 @@ async fn write_commands(
 
 async fn read_events(
     stdout: tokio::process::ChildStdout,
-    event_tx: mpsc::UnboundedSender<AppServerMessage>,
+    event_tx: mpsc::Sender<AppServerEvent>,
 ) -> Result<()> {
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
+    let mut skipped_events = 0usize;
 
     while let Some(line) = lines.next_line().await? {
         let message: JsonRpcMessage =
             serde_json::from_str(&line).context("failed to parse stdio app-server event")?;
         let envelope = AppServerMessageEnvelope::try_from(message)?;
 
-        if event_tx.send(envelope.message).is_err() {
-            break;
+        if !forward_event(
+            &event_tx,
+            &mut skipped_events,
+            AppServerEvent::Message(envelope.message),
+        )
+        .await
+        {
+            return Ok(());
         }
     }
 
+    let _ = forward_event(
+        &event_tx,
+        &mut skipped_events,
+        AppServerEvent::Disconnected {
+            message: "stdio app server closed".to_string(),
+        },
+    )
+    .await;
     Ok(())
 }

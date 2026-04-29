@@ -2,7 +2,10 @@ pub mod reducer;
 pub mod selectors;
 
 use crate::ui::widgets::history_cell::{HistoryCell, Transcript};
-use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode, RequestId};
+use agent_protocol::{
+    AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode, HistoryEntry,
+    RequestId, TurnEvent,
+};
 
 #[derive(Clone, Debug)]
 pub struct ConsoleState {
@@ -22,8 +25,8 @@ impl ConsoleState {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ApprovalState {
-    pub pending_request_id: Option<RequestId>,
+pub struct ServerRequestState {
+    pub pending_server_request_id: Option<RequestId>,
 }
 
 #[derive(Default)]
@@ -41,6 +44,9 @@ pub struct TranscriptState {
 #[derive(Clone, Debug)]
 pub struct RunState {
     pub history_loaded: bool,
+    pub event_log_loaded: bool,
+    pub history_snapshot: Option<Vec<HistoryEntry>>,
+    pub event_log_snapshot: Option<Vec<TurnEvent>>,
     pub status_notice: Option<String>,
     pub last_message_count: usize,
     pub last_tool_name: Option<String>,
@@ -51,6 +57,9 @@ impl RunState {
     pub fn new(connection_label: &str) -> Self {
         Self {
             history_loaded: false,
+            event_log_loaded: false,
+            history_snapshot: None,
+            event_log_snapshot: None,
             status_notice: Some(format!("Connected via {connection_label}")),
             last_message_count: 0,
             last_tool_name: None,
@@ -61,7 +70,7 @@ impl RunState {
 
 pub fn update_core_state_from_message(
     console: &mut ConsoleState,
-    approval: &mut ApprovalState,
+    server_request: &mut ServerRequestState,
     message: &AppServerMessage,
 ) {
     match message {
@@ -71,13 +80,13 @@ pub fn update_core_state_from_message(
             | AppServerNotification::TurnFailed { .. }
             | AppServerNotification::TurnCancelled { .. } => {
                 console.mode = FrontendMode::Idle;
-                approval.pending_request_id = None;
+                server_request.pending_server_request_id = None;
             }
             _ => {}
         },
-        AppServerMessage::Request(AppServerRequest::Approval { request_id, .. }) => {
-            console.mode = FrontendMode::WaitingForApproval;
-            approval.pending_request_id = Some(request_id.clone());
+        AppServerMessage::Request(AppServerRequest::ServerRequest { request_id, .. }) => {
+            console.mode = FrontendMode::WaitingForServerRequest;
+            server_request.pending_server_request_id = Some(request_id.clone());
         }
     }
 }

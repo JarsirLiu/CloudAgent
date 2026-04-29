@@ -40,24 +40,15 @@ pub(crate) fn project_turn_event(
                 }]
             }
         }
-        TurnEvent::ItemCompleted {
-            turn_id,
-            item_id,
-            kind,
-        } => vec![AppServerNotification::ItemCompleted {
+        TurnEvent::ItemCompleted { turn_id, item, .. } => vec![AppServerNotification::ItemCompleted {
             session_id: session_id.to_string(),
             turn_id: turn_id.clone(),
-            item_id: item_id.clone(),
-            kind: kind.clone(),
+            item: item.clone(),
         }],
-        TurnEvent::TurnCompleted {
-            turn_id,
-            final_response,
-        } => vec![
+        TurnEvent::TurnCompleted { turn_id, .. } => vec![
             AppServerNotification::TurnCompleted {
                 session_id: session_id.to_string(),
                 turn_id: turn_id.clone(),
-                final_response: final_response.clone(),
             },
             AppServerNotification::FrontendStateChanged {
                 session_id: session_id.to_string(),
@@ -86,10 +77,18 @@ pub(crate) fn project_turn_event(
                 mode: agent_protocol::FrontendMode::Idle,
             },
         ],
+        TurnEvent::ServerRequestRequested { turn_id, request } => {
+            vec![AppServerNotification::ServerRequestRequested {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.clone(),
+                request: request.clone(),
+            }]
+        }
+        TurnEvent::ServerRequestResolved {
+            ..
+        } => Vec::new(),
         TurnEvent::ModelRequestStarted { .. }
-        | TurnEvent::ModelResponseReceived { .. }
-        | TurnEvent::ApprovalRequested { .. }
-        | TurnEvent::ApprovalResolved { .. } => Vec::new(),
+        | TurnEvent::ModelResponseReceived { .. } => Vec::new(),
     }
 }
 
@@ -121,4 +120,3 @@ pub(crate) fn history_entry_from_message(message: &ConversationMessage) -> Histo
         },
     }
 }
-

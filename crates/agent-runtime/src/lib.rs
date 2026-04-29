@@ -17,12 +17,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage::JsonSessionStore;
 use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub use agent_core::ConversationMessage;
 pub use agent_protocol::{
-    ApprovalDecision, ApprovalRequest, SessionSnapshot, SessionState, TurnEvent, TurnItemKind,
-    TurnState,
+    ServerRequest, ServerRequestDecision, SessionSnapshot, SessionState, ThreadItem, TurnEvent,
+    TurnItemKind, TurnState,
 };
 
 const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
@@ -71,7 +72,7 @@ impl AgentRuntime {
                 user_input,
                 |_event| {},
                 |_request| async move {
-                    Ok(ApprovalDecision {
+                    Ok(ServerRequestDecision {
                         approved: false,
                         reason: Some(
                             "Mutating tools require an approval-capable client. Use the interactive cli."
@@ -91,8 +92,8 @@ impl AgentRuntime {
         approval: F,
     ) -> Result<AgentTurnOutput>
     where
-        F: Fn(ApprovalRequest) -> Fut + Send + Sync,
-        Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
+        F: Fn(ServerRequest) -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
         self.chat_with_approval_and_events(session_id, user_input, |_event| {}, approval)
             .await
@@ -107,8 +108,8 @@ impl AgentRuntime {
     ) -> Result<AgentTurnOutput>
     where
         E: FnMut(&TurnEvent) + Send,
-        F: Fn(ApprovalRequest) -> Fut + Send + Sync,
-        Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
+        F: Fn(ServerRequest) -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
         let outcome = self
             .run_turn_with_approval(session_id, user_input, &mut on_event, approval)
@@ -118,7 +119,8 @@ impl AgentRuntime {
 
     pub async fn reset_session(&self, session_id: &str) -> Result<()> {
         self.state.remove_session(session_id).await;
-        self.store.delete_session(session_id).await
+        self.store.delete_session(session_id).await?;
+        self.store.delete_events(session_id).await
     }
 
     pub async fn session_snapshot(&self, session_id: &str) -> Result<AgentSession> {
@@ -159,6 +161,16 @@ impl AgentRuntime {
         self.state.interrupt_session(session_id).await
     }
 
+    pub async fn session_events(&self, session_id: &str) -> Result<Vec<TurnEvent>> {
+        if let Some(events) = self.state.session_events(session_id) {
+            return Ok(events);
+        }
+        let events = self.store.load_events(session_id).await?;
+        self.state
+            .replace_session_events(session_id.to_string(), events.clone());
+        Ok(events)
+    }
+
     pub(crate) async fn complete_model_request_streaming(
         &self,
         cancellation_token: &CancellationToken,
@@ -177,9 +189,9 @@ impl AgentRuntime {
         &self,
         cancellation_token: &CancellationToken,
         approval_future: Fut,
-    ) -> Result<ApprovalDecision>
+    ) -> Result<ServerRequestDecision>
     where
-        Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
+        Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
         tokio::select! {
             _ = cancellation_token.cancelled() => {
@@ -212,9 +224,24 @@ impl AgentRuntime {
     ) -> Result<TurnOutcome>
     where
         E: FnMut(&TurnEvent) + Send,
-        F: Fn(ApprovalRequest) -> Fut + Send + Sync,
-        Fut: std::future::Future<Output = Result<ApprovalDecision>> + Send,
+        F: Fn(ServerRequest) -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
+        let (persist_tx, mut persist_rx) = mpsc::unbounded_channel::<TurnEvent>();
+        let store = self.store.clone();
+        let persisted_session_id = session_id.to_string();
+        let persist_task = tokio::spawn(async move {
+            while let Some(event) = persist_rx.recv().await {
+                store.append_event(&persisted_session_id, &event).await?;
+            }
+            Result::<()>::Ok(())
+        });
+        let mut event_sink = |event: &TurnEvent| {
+            self.state.append_session_event(session_id, event.clone());
+            let _ = persist_tx.send(event.clone());
+            on_event(event);
+        };
+
         let turn_id = next_turn_id();
         let active_turn = self
             .state
@@ -223,12 +250,13 @@ impl AgentRuntime {
 
         let mut session = self.load_session(session_id).await?;
         session.push_user_message(user_input);
+        self.state.save_session(session.clone()).await;
 
         let mut events = Vec::new();
         let session_for_interrupt = session.clone();
         emit_event(
             &mut events,
-            on_event,
+            &mut event_sink,
             TurnEvent::TurnStarted {
                 turn_id: turn_id.clone(),
                 session_id: session_id.to_string(),
@@ -238,7 +266,7 @@ impl AgentRuntime {
         let result = if active_turn.is_cancelled() {
             emit_event(
                 &mut events,
-                on_event,
+                &mut event_sink,
                 TurnEvent::TurnCancelled {
                     turn_id: turn_id.clone(),
                     reason: "interrupted by client".to_string(),
@@ -260,7 +288,7 @@ impl AgentRuntime {
                         session_id,
                         turn_id: &turn_id,
                         cancellation_token: active_turn.cancellation_token.clone(),
-                        on_event,
+                        on_event: &mut event_sink,
                     },
                     session,
                     approval,
@@ -268,43 +296,65 @@ impl AgentRuntime {
                 .await
         };
 
+        drop(event_sink);
+        drop(persist_tx);
+
         self.state.finish_turn(session_id).await;
 
         match result {
             Ok(outcome) => {
                 self.save_session(outcome.session.clone()).await?;
+                persist_task.await??;
                 Ok(outcome)
             }
             Err(err) => {
                 if is_turn_interrupted_error(&err) {
                     self.save_session(session_for_interrupt.clone()).await?;
-                    return Ok(TurnOutcome {
+                    let mut events = Vec::new();
+                    let event = TurnEvent::TurnCancelled {
+                        turn_id: turn_id.clone(),
+                        reason: "interrupted by client".to_string(),
+                    };
+                    self.state.append_session_event(session_id, event.clone());
+                    emit_event(&mut events, on_event, event);
+                    self.store
+                        .append_events(session_id, &events)
+                        .await?;
+                    persist_task.await??;
+                    let outcome = TurnOutcome {
                         turn_id: turn_id.clone(),
                         final_response: "Turn cancelled.".to_string(),
-                        events: vec![TurnEvent::TurnCancelled {
-                            turn_id,
-                            reason: "interrupted by client".to_string(),
-                        }],
+                        events,
                         session: session_for_interrupt,
                         model_name: None,
                         state: TurnState::Cancelled,
-                    });
+                    };
+                    return Ok(outcome);
                 }
                 let mut session = self.load_session(session_id).await?;
                 session.push_assistant_message(Some(format!("Turn failed: {err:#}")), Vec::new());
                 self.save_session(session.clone()).await?;
                 let error_text = format!("{err:#}");
-                Ok(TurnOutcome {
+                let mut events = Vec::new();
+                let event = TurnEvent::TurnFailed {
+                    turn_id: turn_id.clone(),
+                    error: error_text.clone(),
+                };
+                self.state.append_session_event(session_id, event.clone());
+                emit_event(&mut events, on_event, event);
+                self.store
+                    .append_events(session_id, &events)
+                    .await?;
+                persist_task.await??;
+                let outcome = TurnOutcome {
                     turn_id: turn_id.clone(),
                     final_response: format!("Turn failed: {error_text}"),
-                    events: vec![TurnEvent::TurnFailed {
-                        turn_id,
-                        error: error_text,
-                    }],
+                    events,
                     session,
                     model_name: None,
                     state: TurnState::Failed,
-                })
+                };
+                Ok(outcome)
             }
         }
     }
@@ -344,7 +394,7 @@ impl AgentRuntime {
                     kind,
                     title,
                     ..
-                } if *kind == TurnItemKind::ToolCall => {
+                } if *kind == TurnItemKind::ToolCall || *kind == TurnItemKind::CommandExecution => {
                     active_tools.insert(
                         item_id.clone(),
                         (title.clone().unwrap_or_else(|| "tool_call".to_string()), String::new()),
@@ -358,18 +408,64 @@ impl AgentRuntime {
                         summary.push_str(delta);
                     }
                 }
-                TurnEvent::ItemCompleted { item_id, .. } => {
-                    if let Some((name, summary)) = active_tools.remove(item_id) {
-                        let lower = summary.to_lowercase();
-                        let is_error = lower.contains("error")
-                            || lower.contains("failed")
-                            || lower.contains("denied")
-                            || lower.contains("skipped");
-                        tool_events.push(ToolEvent {
-                            name,
+                TurnEvent::ItemCompleted { item, .. } => {
+                    match item {
+                        ThreadItem::CommandExecution {
+                            id,
+                            tool_name,
+                            status,
                             summary,
-                            is_error,
-                        });
+                            ..
+                        } => {
+                            if let Some((fallback_name, streamed_summary)) = active_tools.remove(id) {
+                                let final_summary = if summary.trim().is_empty() {
+                                    streamed_summary
+                                } else {
+                                    summary.clone()
+                                };
+                                let name = if tool_name.is_empty() {
+                                    fallback_name
+                                } else {
+                                    tool_name.clone()
+                                };
+                                let is_error = *status != agent_protocol::CommandExecutionStatus::Completed;
+                                tool_events.push(ToolEvent {
+                                    name,
+                                    summary: final_summary,
+                                    is_error,
+                                });
+                            }
+                        }
+                        ThreadItem::ToolResult {
+                            id,
+                            tool_name,
+                            summary,
+                            ..
+                        } => {
+                            if let Some((fallback_name, streamed_summary)) = active_tools.remove(id) {
+                                let final_summary = if summary.trim().is_empty() {
+                                    streamed_summary
+                                } else {
+                                    summary.clone()
+                                };
+                                let name = if tool_name.is_empty() {
+                                    fallback_name
+                                } else {
+                                    tool_name.clone()
+                                };
+                                let lower = final_summary.to_lowercase();
+                                let is_error = lower.contains("error")
+                                    || lower.contains("failed")
+                                    || lower.contains("denied")
+                                    || lower.contains("skipped");
+                                tool_events.push(ToolEvent {
+                                    name,
+                                    summary: final_summary,
+                                    is_error,
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}

@@ -6,7 +6,7 @@ use ratatui::text::Line;
 pub enum BottomPaneViewAction {
     None,
     Close,
-    ApprovalSubmit { approved: bool, reason: String },
+    ServerRequestSubmit { approved: bool, reason: String },
 }
 
 pub trait BottomPaneView {

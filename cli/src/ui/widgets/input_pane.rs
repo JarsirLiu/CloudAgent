@@ -1,5 +1,5 @@
-pub use crate::ui::widgets::approval_overlay::ApprovalInlineState;
-use crate::ui::widgets::approval_overlay::ApprovalOverlay;
+pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
+use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::chat_composer::{ChatComposer, ComposerAction};
 use crate::ui::widgets::footer::{divider_line, hint_line, status_line};
@@ -16,7 +16,7 @@ pub struct InputPane {
 
 pub enum InputPaneAction {
     Composer(ComposerAction),
-    ApprovalSubmit { approved: bool, reason: String },
+    ServerRequestSubmit { approved: bool, reason: String },
 }
 
 impl InputPane {
@@ -39,9 +39,9 @@ impl InputPane {
                     self.view_stack.pop();
                     return Some(InputPaneAction::Composer(ComposerAction::None));
                 }
-                BottomPaneViewAction::ApprovalSubmit { approved, reason } => {
+                BottomPaneViewAction::ServerRequestSubmit { approved, reason } => {
                     self.view_stack.pop();
-                    return Some(InputPaneAction::ApprovalSubmit { approved, reason });
+                    return Some(InputPaneAction::ServerRequestSubmit { approved, reason });
                 }
             }
             if view.is_complete() {
@@ -120,13 +120,13 @@ impl InputPane {
         self.view_stack.clear();
     }
 
-    pub fn set_approval(&mut self, approval: ApprovalInlineState) {
+    pub fn set_server_request(&mut self, request: ServerRequestInlineState) {
         self.view_stack.clear();
         self.view_stack
-            .push(Box::new(ApprovalOverlay::new(approval)));
+            .push(Box::new(ServerRequestOverlay::new(request)));
     }
 
-    pub fn clear_approval(&mut self) {
+    pub fn clear_server_request(&mut self) {
         self.view_stack.clear();
     }
 

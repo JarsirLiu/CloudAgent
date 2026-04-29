@@ -59,7 +59,7 @@ impl ChatComposer {
 
     pub fn render(&self, mode: FrontendMode, width: usize) -> ComposerRender {
         let (prompt_text, prompt_color, prompt_bg) = match mode {
-            FrontendMode::WaitingForApproval => (
+            FrontendMode::WaitingForServerRequest => (
                 "reply",
                 Color::Rgb(255, 184, 76),
                 Some(Color::Rgb(45, 36, 18)),
@@ -83,7 +83,7 @@ impl ChatComposer {
         let body = if self.textarea.is_empty() {
             match mode {
                 FrontendMode::Idle => "Ask anything — e.g. \"check disk pressure\"",
-                FrontendMode::WaitingForApproval => "Type y / n, or enter a short reason",
+                FrontendMode::WaitingForServerRequest => "Type y / n, or enter a short reason",
                 FrontendMode::Running => "",
             }
         } else {
@@ -137,7 +137,7 @@ impl ChatComposer {
 
     pub fn cursor_position(&self, area: Rect, mode: FrontendMode) -> (u16, u16) {
         let prompt = match mode {
-            FrontendMode::WaitingForApproval => "  reply   ",
+            FrontendMode::WaitingForServerRequest => "  reply   ",
             _ => "  message ",
         };
         let prompt_width = display_width(prompt);
