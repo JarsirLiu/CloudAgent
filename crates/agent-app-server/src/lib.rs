@@ -1,4 +1,5 @@
 mod command_router;
+mod conversation_listener;
 mod conversation_subscriptions;
 mod in_process;
 mod projection;

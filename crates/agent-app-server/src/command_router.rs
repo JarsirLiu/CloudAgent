@@ -1,12 +1,15 @@
+use crate::conversation_listener::ConversationListenerHandle;
+use crate::conversation_listener::start_conversation_listener;
 use crate::conversation_subscriptions::ConversationSubscriptions;
-use crate::projection::ConversationNotificationProjector;
 use crate::server_request_coordinator::ServerRequestCoordinator;
+use agent_core::{ConversationTurn, flatten_conversation_turns};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest,
     ServerRequestDecision,
 };
 use agent_runtime::AgentRuntime;
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -16,6 +19,7 @@ pub(crate) struct ServerState {
     subscriptions: ConversationSubscriptions,
     server_requests: ServerRequestCoordinator,
     turn_tasks: Vec<JoinHandle<()>>,
+    active_listeners: HashMap<String, ConversationListenerHandle>,
 }
 
 impl ServerState {
@@ -24,6 +28,7 @@ impl ServerState {
             subscriptions: ConversationSubscriptions::new(default_conversation_id),
             server_requests: ServerRequestCoordinator::new(),
             turn_tasks: Vec::new(),
+            active_listeners: HashMap::new(),
         }
     }
 
@@ -34,6 +39,25 @@ impl ServerState {
 
     pub(crate) fn take_turn_tasks(&mut self) -> Vec<JoinHandle<()>> {
         std::mem::take(&mut self.turn_tasks)
+    }
+
+    pub(crate) fn set_active_listener(
+        &mut self,
+        conversation_id: String,
+        listener: ConversationListenerHandle,
+    ) {
+        self.active_listeners.insert(conversation_id, listener);
+    }
+
+    pub(crate) fn clear_active_listener(&mut self, conversation_id: &str) {
+        self.active_listeners.remove(conversation_id);
+    }
+
+    pub(crate) fn active_listener(
+        &self,
+        conversation_id: &str,
+    ) -> Option<ConversationListenerHandle> {
+        self.active_listeners.get(conversation_id).cloned()
     }
 }
 
@@ -117,9 +141,17 @@ pub(crate) async fn handle_command(
             .await;
         }
         AppClientCommand::RequestConversationHistory { conversation_id } => {
-            let messages = runtime
-                .conversation_transcript_snapshot(&conversation_id)
-                .await?;
+            let active_listener = {
+                let state = state.lock().await;
+                state.active_listener(&conversation_id)
+            };
+            let active_turn = match active_listener {
+                Some(listener) => listener.active_turn_snapshot().await,
+                None => None,
+            };
+            let mut turns = runtime.build_turns_from_rollout(&conversation_id).await?;
+            merge_active_turn(&mut turns, active_turn);
+            let messages = flatten_conversation_turns(&turns);
             send_notification(
                 event_tx,
                 &state,
@@ -215,36 +247,22 @@ fn spawn_turn(
     ctx: SpawnTurnContext,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let runtime_events = ctx.event_tx.clone();
         let finish_events = ctx.event_tx.clone();
-        let state_for_turn = ctx.state.clone();
         let state_for_finish = ctx.state.clone();
-        let conversation_id_for_turn = conversation_id.clone();
         let conversation_id_for_server_request = conversation_id.clone();
         let active_turn_id = Arc::new(StdMutex::new(None::<String>));
         let active_turn_id_for_events = active_turn_id.clone();
-        let projector = Arc::new(StdMutex::new(ConversationNotificationProjector::new(
-            conversation_id_for_turn.clone(),
-        )));
-        let projector_for_events = projector.clone();
-        let (projected_tx, mut projected_rx) =
-            mpsc::unbounded_channel::<Vec<AppServerNotification>>();
-        let projected_tx_for_events = projected_tx.clone();
-        let runtime_events_for_projected = runtime_events.clone();
-        let state_for_projected = state_for_turn.clone();
         let runtime_for_requests = runtime.clone();
-        let projected_task = tokio::spawn(async move {
-            while let Some(notifications) = projected_rx.recv().await {
-                for notification in notifications {
-                    send_notification(
-                        &runtime_events_for_projected,
-                        &state_for_projected,
-                        notification,
-                    )
-                    .await;
-                }
-            }
-        });
+        let (listener, listener_task) = start_conversation_listener(
+            conversation_id.clone(),
+            ctx.event_tx.clone(),
+            ctx.state.clone(),
+        );
+        {
+            let mut state = ctx.state.lock().await;
+            state.set_active_listener(conversation_id.clone(), listener.clone());
+        }
+        let listener_for_events = listener.clone();
 
         let result = runtime
             .chat_with_approval_and_events(
@@ -253,18 +271,12 @@ fn spawn_turn(
                 move |event| {
                     let event = event.clone();
                     let active_turn_id = active_turn_id_for_events.clone();
-                    let projected_tx = projected_tx_for_events.clone();
                     if let agent_protocol::EventMsg::TurnStarted { turn_id, .. } = &event
                         && let Ok(mut active) = active_turn_id.lock()
                     {
                         *active = Some(turn_id.clone());
                     }
-                    let notifications = projector_for_events
-                        .lock()
-                        .ok()
-                        .map(|mut projector| projector.project_turn_event(&event))
-                        .unwrap_or_default();
-                    let _ = projected_tx.send(notifications);
+                    listener_for_events.project_event(event);
                 },
                 move |request: ServerRequest| {
                     let event_tx = ctx.event_tx.clone();
@@ -324,58 +336,109 @@ fn spawn_turn(
             )
             .await;
 
-        drop(projected_tx);
-        let _ = projected_task.await;
-
-        if let Ok(output) = &result {
-            let notifications = projector
-                .lock()
-                .ok()
-                .map(|mut projector| projector.finish_turn(output.state.clone()))
-                .unwrap_or_default();
-            for notification in notifications {
-                send_notification(&finish_events, &state_for_finish, notification).await;
+        match result {
+            Ok(output) => {
+                listener.finish_turn(output.state).await;
             }
-        }
-
-        if let Err(error) = result {
-            let maybe_turn_id = active_turn_id.lock().ok().and_then(|guard| guard.clone());
-            if let Some(turn_id) = maybe_turn_id {
+            Err(error) => {
+                let maybe_turn_id = active_turn_id.lock().ok().and_then(|guard| guard.clone());
+                if let Some(turn_id) = maybe_turn_id {
+                    send_notification(
+                        &finish_events,
+                        &state_for_finish,
+                        AppServerNotification::TurnFailed {
+                            conversation_id: conversation_id.clone(),
+                            turn_id,
+                            error: format!("{error:#}"),
+                        },
+                    )
+                    .await;
+                } else {
+                    send_notification(
+                        &finish_events,
+                        &state_for_finish,
+                        AppServerNotification::Error {
+                            conversation_id: conversation_id.clone(),
+                            message: format!("turn failed before start: {error:#}"),
+                        },
+                    )
+                    .await;
+                }
                 send_notification(
                     &finish_events,
                     &state_for_finish,
-                    AppServerNotification::TurnFailed {
+                    AppServerNotification::FrontendStateChanged {
                         conversation_id: conversation_id.clone(),
-                        turn_id,
-                        error: format!("{error:#}"),
+                        mode: agent_protocol::FrontendMode::Idle,
                     },
                 )
                 .await;
-            } else {
-                send_notification(
-                    &finish_events,
-                    &state_for_finish,
-                    AppServerNotification::Error {
-                        conversation_id: conversation_id.clone(),
-                        message: format!("turn failed before start: {error:#}"),
-                    },
-                )
-                .await;
+                listener
+                    .finish_turn(agent_protocol::TurnState::Failed)
+                    .await;
             }
-            send_notification(
-                &finish_events,
-                &state_for_finish,
-                AppServerNotification::FrontendStateChanged {
-                    conversation_id,
-                    mode: agent_protocol::FrontendMode::Idle,
-                },
-            )
-            .await;
         }
+        let _ = listener_task.await;
+        let mut state = state_for_finish.lock().await;
+        state.clear_active_listener(&conversation_id);
     })
 }
 
-async fn send_notification(
+fn merge_active_turn(turns: &mut Vec<ConversationTurn>, active_turn: Option<ConversationTurn>) {
+    let Some(active_turn) = active_turn else {
+        return;
+    };
+    if let Some(existing) = turns.iter_mut().find(|turn| turn.id == active_turn.id) {
+        *existing = active_turn;
+    } else {
+        turns.push(active_turn);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_active_turn;
+    use agent_core::{ConversationTurn, TranscriptItem};
+    use agent_protocol::TurnState;
+
+    #[test]
+    fn active_turn_snapshot_replaces_matching_rollout_turn() {
+        let mut turns = vec![turn("turn-1", "old")];
+
+        merge_active_turn(&mut turns, Some(turn("turn-1", "live")));
+
+        assert_eq!(turns.len(), 1);
+        assert!(matches!(
+            &turns[0].items[..],
+            [TranscriptItem::AgentMessage { text, .. }] if text == "live"
+        ));
+    }
+
+    #[test]
+    fn active_turn_snapshot_appends_when_rollout_has_no_matching_turn() {
+        let mut turns = vec![turn("turn-1", "old")];
+
+        merge_active_turn(&mut turns, Some(turn("turn-2", "live")));
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].id, "turn-2");
+    }
+
+    fn turn(id: &str, text: &str) -> ConversationTurn {
+        ConversationTurn {
+            id: id.to_string(),
+            state: TurnState::Running,
+            items: vec![TranscriptItem::AgentMessage {
+                id: format!("assistant:{id}"),
+                text: text.to_string(),
+            }],
+            rollout_start_index: 0,
+            rollout_end_index: 0,
+        }
+    }
+}
+
+pub(crate) async fn send_notification(
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     notification: AppServerNotification,
