@@ -1,8 +1,7 @@
-use agent_core::AgentSession;
-use agent_protocol::{TurnEvent, TurnState};
+use agent_core::{ActiveConversationTurn, ConversationHistory, ConversationState};
+use agent_protocol::{RequestId, ServerRequest, TurnEvent, TurnState};
 use std::collections::HashMap;
 use std::sync::Mutex as StdMutex;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -13,11 +12,11 @@ pub(crate) struct ActiveTurnHandle {
 }
 
 impl ActiveTurnHandle {
-    pub(crate) fn new(turn_id: String) -> Self {
+    fn from_parts(active_turn: &ActiveConversationTurn, cancellation_token: CancellationToken) -> Self {
         Self {
-            turn_id,
-            turn_state: TurnState::Running,
-            cancellation_token: CancellationToken::new(),
+            turn_id: active_turn.turn_id.clone(),
+            turn_state: active_turn.turn_state.clone(),
+            cancellation_token,
         }
     }
 
@@ -25,60 +24,124 @@ impl ActiveTurnHandle {
         self.cancellation_token.is_cancelled()
     }
 
-    pub(crate) fn request_cancel(&self) {
-        self.cancellation_token.cancel();
+}
+
+struct RuntimeConversationEntry {
+    conversation: ConversationState,
+    cancellation_token: Option<CancellationToken>,
+}
+
+impl RuntimeConversationEntry {
+    fn new(history: ConversationHistory) -> Self {
+        Self {
+            conversation: ConversationState::new(history),
+            cancellation_token: None,
+        }
     }
 }
 
 pub(crate) struct RuntimeState {
-    sessions: Mutex<HashMap<String, AgentSession>>,
-    active_turns: Mutex<HashMap<String, ActiveTurnHandle>>,
-    event_logs: StdMutex<HashMap<String, Vec<TurnEvent>>>,
+    system_prompt: String,
+    conversations: StdMutex<HashMap<String, RuntimeConversationEntry>>,
 }
 
 impl RuntimeState {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(system_prompt: String) -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
-            active_turns: Mutex::new(HashMap::new()),
-            event_logs: StdMutex::new(HashMap::new()),
+            system_prompt,
+            conversations: StdMutex::new(HashMap::new()),
         }
     }
 
-    pub(crate) async fn session(&self, session_id: &str) -> Option<AgentSession> {
-        self.sessions.lock().await.get(session_id).cloned()
-    }
-
-    pub(crate) async fn save_session(&self, session: AgentSession) {
-        self.sessions
+    pub(crate) async fn conversation(&self, session_id: &str) -> Option<ConversationState> {
+        self.conversations
             .lock()
-            .await
-            .insert(session.id.clone(), session);
+            .ok()?
+            .get(session_id)
+            .map(|entry| entry.conversation.clone())
     }
 
-    pub(crate) async fn remove_session(&self, session_id: &str) {
-        self.sessions.lock().await.remove(session_id);
-        self.active_turns.lock().await.remove(session_id);
-        if let Ok(mut event_logs) = self.event_logs.lock() {
-            event_logs.remove(session_id);
+    pub(crate) async fn history(&self, session_id: &str) -> Option<ConversationHistory> {
+        self.conversations
+            .lock()
+            .ok()?
+            .get(session_id)
+            .map(|entry| entry.conversation.history().clone())
+    }
+
+    pub(crate) async fn save_conversation(&self, conversation: ConversationState) {
+        let Ok(mut conversations) = self.conversations.lock() else {
+            return;
+        };
+        let session_id = conversation.history.id.clone();
+        let cancellation_token = conversations
+            .get(&session_id)
+            .and_then(|entry| entry.cancellation_token.clone());
+        conversations.insert(
+            session_id,
+            RuntimeConversationEntry {
+                conversation,
+                cancellation_token,
+            },
+        );
+    }
+
+    pub(crate) async fn save_history(&self, history: ConversationHistory) {
+        let Ok(mut conversations) = self.conversations.lock() else {
+            return;
+        };
+        let session_id = history.id.clone();
+        if let Some(entry) = conversations.get_mut(&session_id) {
+            *entry.conversation.history_mut() = history;
+        } else {
+            conversations.insert(session_id, RuntimeConversationEntry::new(history));
+        }
+    }
+
+    pub(crate) async fn remove_conversation(&self, conversation_id: &str) {
+        if let Ok(mut conversations) = self.conversations.lock() {
+            conversations.remove(conversation_id);
         }
     }
 
     pub(crate) async fn active_turn(&self, session_id: &str) -> Option<ActiveTurnHandle> {
-        self.active_turns.lock().await.get(session_id).cloned()
+        let conversations = self.conversations.lock().ok()?;
+        let entry = conversations.get(session_id)?;
+        let active_turn = entry.conversation.active_turn.as_ref()?;
+        let cancellation_token = entry.cancellation_token.clone()?;
+        Some(ActiveTurnHandle::from_parts(active_turn, cancellation_token))
     }
 
     pub(crate) async fn start_turn(&self, session_id: String, turn_id: String) -> ActiveTurnHandle {
-        let handle = ActiveTurnHandle::new(turn_id);
-        self.active_turns
-            .lock()
-            .await
-            .insert(session_id, handle.clone());
-        handle
+        let cancellation_token = CancellationToken::new();
+        let active_turn = ActiveTurnHandle {
+            turn_id: turn_id.clone(),
+            turn_state: TurnState::Running,
+            cancellation_token: cancellation_token.clone(),
+        };
+
+        let Ok(mut conversations) = self.conversations.lock() else {
+            return active_turn;
+        };
+        let entry = conversations.entry(session_id.clone()).or_insert_with(|| {
+            RuntimeConversationEntry::new(ConversationHistory::new(
+                session_id,
+                self.system_prompt.clone(),
+            ))
+        });
+        entry.conversation.set_active_turn(turn_id);
+        entry.cancellation_token = Some(cancellation_token);
+
+        active_turn
     }
 
     pub(crate) async fn finish_turn(&self, session_id: &str) {
-        self.active_turns.lock().await.remove(session_id);
+        if let Ok(mut conversations) = self.conversations.lock()
+            && let Some(entry) = conversations.get_mut(session_id)
+        {
+            entry.conversation.clear_active_turn();
+            entry.cancellation_token = None;
+        }
     }
 
     pub(crate) async fn update_turn_state(
@@ -87,40 +150,67 @@ impl RuntimeState {
         turn_id: &str,
         turn_state: TurnState,
     ) {
-        let mut active_turns = self.active_turns.lock().await;
-        if let Some(active_turn) = active_turns.get_mut(session_id)
-            && active_turn.turn_id == turn_id
+        if let Ok(mut conversations) = self.conversations.lock()
+            && let Some(entry) = conversations.get_mut(session_id)
         {
-            active_turn.turn_state = turn_state;
+            entry.conversation.update_turn_state(turn_id, turn_state);
         }
     }
 
-    pub(crate) async fn interrupt_session(&self, session_id: &str) -> bool {
-        let active_turn = self.active_turn(session_id).await;
-        if let Some(active_turn) = active_turn {
-            active_turn.request_cancel();
-            true
-        } else {
-            false
+    pub(crate) async fn interrupt_conversation(&self, conversation_id: &str) -> bool {
+        let Ok(mut conversations) = self.conversations.lock() else {
+            return false;
+        };
+        let Some(entry) = conversations.get_mut(conversation_id) else {
+            return false;
+        };
+        let Some(cancellation_token) = entry.cancellation_token.clone() else {
+            return false;
+        };
+        cancellation_token.cancel();
+        if let Some(active_turn) = entry.conversation.active_turn.as_mut() {
+            active_turn.turn_state = TurnState::Cancelled;
+        }
+        true
+    }
+
+    pub(crate) fn append_conversation_event(&self, conversation_id: &str, event: TurnEvent) {
+        let Ok(mut conversations) = self.conversations.lock() else {
+            return;
+        };
+        let entry = conversations.entry(conversation_id.to_string()).or_insert_with(|| {
+            RuntimeConversationEntry::new(ConversationHistory::new(
+                conversation_id.to_string(),
+                self.system_prompt.clone(),
+            ))
+        });
+        entry.conversation.append_event(event);
+    }
+
+    pub(crate) async fn set_pending_request(
+        &self,
+        session_id: &str,
+        request_id: RequestId,
+        request: ServerRequest,
+    ) {
+        let Ok(mut conversations) = self.conversations.lock() else {
+            return;
+        };
+        let entry = conversations.entry(session_id.to_string()).or_insert_with(|| {
+            RuntimeConversationEntry::new(ConversationHistory::new(
+                session_id.to_string(),
+                self.system_prompt.clone(),
+            ))
+        });
+        entry.conversation.set_pending_request(request_id, request);
+    }
+
+    pub(crate) async fn resolve_pending_request(&self, session_id: &str, request_id: &RequestId) {
+        if let Ok(mut conversations) = self.conversations.lock()
+            && let Some(entry) = conversations.get_mut(session_id)
+        {
+            entry.conversation.resolve_pending_request(request_id);
         }
     }
 
-    pub(crate) fn session_events(&self, session_id: &str) -> Option<Vec<TurnEvent>> {
-        self.event_logs.lock().ok()?.get(session_id).cloned()
-    }
-
-    pub(crate) fn replace_session_events(&self, session_id: impl Into<String>, events: Vec<TurnEvent>) {
-        if let Ok(mut event_logs) = self.event_logs.lock() {
-            event_logs.insert(session_id.into(), events);
-        }
-    }
-
-    pub(crate) fn append_session_event(&self, session_id: &str, event: TurnEvent) {
-        if let Ok(mut event_logs) = self.event_logs.lock() {
-            event_logs
-                .entry(session_id.to_string())
-                .or_default()
-                .push(event);
-        }
-    }
 }

@@ -1,6 +1,6 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
-use agent_core::{AgentSession, ModelRequest};
+use agent_core::{ConversationHistory, ModelRequest};
 use agent_protocol::{
     CommandExecutionStatus, ServerRequest, ServerRequestDecision, StructuredToolResult,
     ThreadItem, ToolApprovalRequest, ToolResult, TurnEvent, TurnItemDeltaKind, TurnItemKind,
@@ -14,7 +14,7 @@ pub(crate) struct TurnOutcome {
     pub(crate) turn_id: String,
     pub(crate) final_response: String,
     pub(crate) events: Vec<TurnEvent>,
-    pub(crate) session: AgentSession,
+    pub(crate) history: ConversationHistory,
     pub(crate) model_name: Option<String>,
     pub(crate) state: TurnState,
 }
@@ -34,15 +34,15 @@ where
     async fn run(
         self,
         ctx: TaskContext<'_, E>,
-        session: AgentSession,
+        history: ConversationHistory,
         approval: F,
     ) -> Result<TurnOutcome> {
         execute_regular_turn(
             ctx.runtime,
-            ctx.session_id,
+            ctx.conversation_id,
             ctx.turn_id,
             ctx.cancellation_token,
-            session,
+            history,
             ctx.on_event,
             approval,
         )
@@ -55,7 +55,7 @@ pub(crate) async fn execute_regular_turn<E, F, Fut>(
     session_id: &str,
     turn_id: &str,
     cancellation_token: CancellationToken,
-    session: AgentSession,
+    history: ConversationHistory,
     on_event: &mut E,
     approval: F,
 ) -> Result<TurnOutcome>
@@ -64,7 +64,7 @@ where
     F: Fn(ServerRequest) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
 {
-    let mut session = session;
+    let mut history = history;
     let mut events = Vec::new();
     let mut last_model_name = None;
     let mut assistant_item_seq: usize = 0;
@@ -84,7 +84,7 @@ where
                 turn_id: turn_id.to_string(),
                 final_response: "Turn cancelled.".to_string(),
                 events,
-                session,
+                history,
                 model_name: last_model_name,
                 state: TurnState::Cancelled,
             });
@@ -95,7 +95,7 @@ where
             on_event,
             TurnEvent::ModelRequestStarted {
                 turn_id: turn_id.to_string(),
-                message_count: session.messages.len(),
+                message_count: history.messages.len(),
                 tool_count: tool_specs.len(),
             },
         );
@@ -105,7 +105,7 @@ where
             .complete_model_request_streaming(
                 &cancellation_token,
                 ModelRequest {
-                    messages: session.messages.clone(),
+                    messages: history.messages.clone(),
                     tools: tool_specs.clone(),
                     temperature: runtime.config.llm.temperature,
                 },
@@ -183,8 +183,8 @@ where
             },
         );
 
-        session.push_assistant_message(response.content.clone(), tool_calls.clone());
-        runtime.state.save_session(session.clone()).await;
+        history.push_assistant_message(response.content.clone(), tool_calls.clone());
+        runtime.state.save_history(history.clone()).await;
 
         if tool_calls.is_empty() {
             let final_response = response
@@ -212,7 +212,7 @@ where
                 turn_id: turn_id.to_string(),
                 final_response,
                 events,
-                session,
+                history,
                 model_name: last_model_name,
                 state: TurnState::Completed,
             });
@@ -235,7 +235,7 @@ where
                     turn_id: turn_id.to_string(),
                     final_response: "Turn cancelled.".to_string(),
                     events,
-                    session,
+                    history,
                     model_name: last_model_name,
                     state: TurnState::Cancelled,
                 });
@@ -329,8 +329,8 @@ where
                             item: denied_thread_item(&tool_item_id, &call.name, &call.arguments, &reason),
                         },
                     );
-                    session.push_tool_result(result);
-                    runtime.state.save_session(session.clone()).await;
+                    history.push_tool_result(result);
+                    runtime.state.save_history(history.clone()).await;
                     // Stop processing the remaining tool calls from the same assistant output.
                     // Let the model consume this denial result first in the next roundtrip.
                     break;
@@ -353,7 +353,7 @@ where
                     turn_id: turn_id.to_string(),
                     final_response: "Turn cancelled.".to_string(),
                     events,
-                    session,
+                    history,
                     model_name: last_model_name,
                     state: TurnState::Cancelled,
                 });
@@ -377,8 +377,8 @@ where
                     item: thread_item_from_tool_result(&tool_item_id, &call.name, &result),
                 },
             );
-            session.push_tool_result(result);
-            runtime.state.save_session(session.clone()).await;
+            history.push_tool_result(result);
+            runtime.state.save_history(history.clone()).await;
         }
     }
 
@@ -392,8 +392,8 @@ where
         &final_response,
         &mut assistant_item_seq,
     );
-    session.push_assistant_message(Some(final_response.clone()), Vec::new());
-    runtime.state.save_session(session.clone()).await;
+    history.push_assistant_message(Some(final_response.clone()), Vec::new());
+    runtime.state.save_history(history.clone()).await;
     emit_event(
         &mut events,
         on_event,
@@ -406,7 +406,7 @@ where
         turn_id: turn_id.to_string(),
         final_response,
         events,
-        session,
+        history,
         model_name: last_model_name,
         state: TurnState::Completed,
     })

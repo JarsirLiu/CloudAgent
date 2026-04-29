@@ -20,17 +20,17 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some("app-server-stdio") => {
-            let session_id =
-                parse_session_id(&args).unwrap_or_else(|| runtime.default_session_id().to_string());
-            run_stdio_server(runtime, session_id, false, None).await?;
+            let conversation_id = parse_conversation_id(&args)
+                .unwrap_or_else(|| runtime.default_conversation_id().to_string());
+            run_stdio_server(runtime, conversation_id, false, None).await?;
             return Ok(());
         }
         _ => {}
     }
 
     tracing::info!(
-        "agentd ready; session store at {}",
-        runtime.default_session_id()
+        "agentd ready; conversation store at {}",
+        runtime.default_conversation_id()
     );
     tracing::info!("run `cargo run -p agentd -- console` to attach a local console");
     tokio::signal::ctrl_c().await?;
@@ -38,9 +38,9 @@ async fn main() -> Result<()> {
 }
 
 async fn run_console_mode(runtime: Arc<AgentRuntime>) -> Result<()> {
-    let session_id = runtime.default_session_id().to_string();
+    let conversation_id = runtime.default_conversation_id().to_string();
     run_console(ConsoleConfig {
-        session_id: session_id.clone(),
+        session_id: conversation_id.clone(),
         auto_approve: true,
         auto_approve_reason: Some("auto-approved in local daemon console".to_string()),
         connection: ConsoleConnection::InProcess { runtime },
@@ -48,8 +48,8 @@ async fn run_console_mode(runtime: Arc<AgentRuntime>) -> Result<()> {
     .await
 }
 
-fn parse_session_id(args: &[String]) -> Option<String> {
+fn parse_conversation_id(args: &[String]) -> Option<String> {
     args.windows(2)
-        .find(|pair| pair[0] == "--session")
+        .find(|pair| pair[0] == "--conversation")
         .map(|pair| pair[1].clone())
 }

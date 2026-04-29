@@ -1,6 +1,6 @@
+use crate::conversation_subscriptions::ConversationSubscriptions;
+use crate::conversation_processor::{ConversationProcessor, history_entry_from_message};
 use crate::server_request_coordinator::ServerRequestCoordinator;
-use crate::session_subscriptions::SessionSubscriptions;
-use crate::turn_bridge::{history_entry_from_message, project_turn_event};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest,
     ServerRequestDecision,
@@ -13,15 +13,15 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 pub(crate) struct ServerState {
-    subscriptions: SessionSubscriptions,
+    subscriptions: ConversationSubscriptions,
     server_requests: ServerRequestCoordinator,
     turn_tasks: Vec<JoinHandle<()>>,
 }
 
 impl ServerState {
-    pub(crate) fn new(default_session_id: String) -> Self {
+    pub(crate) fn new(default_conversation_id: String) -> Self {
         Self {
-            subscriptions: SessionSubscriptions::new(default_session_id),
+            subscriptions: ConversationSubscriptions::new(default_conversation_id),
             server_requests: ServerRequestCoordinator::new(),
             turn_tasks: Vec::new(),
         }
@@ -89,7 +89,7 @@ pub(crate) async fn handle_command(
             state.lock().await.track_turn_task(task);
         }
         AppClientCommand::InterruptTurn { session_id } => {
-            let interrupted = runtime.interrupt_session(&session_id).await;
+            let interrupted = runtime.interrupt_conversation(&session_id).await;
             send_notification(
                 event_tx,
                 &state,
@@ -104,24 +104,24 @@ pub(crate) async fn handle_command(
             )
             .await;
         }
-        AppClientCommand::RequestStatus { session_id } => {
-            let snapshot = runtime.session_state(&session_id).await?;
+        AppClientCommand::RequestConversationStatus { session_id } => {
+            let snapshot = runtime.conversation_status(&session_id).await?;
             send_notification(
                 event_tx,
                 &state,
-                AppServerNotification::SessionStatus {
+                AppServerNotification::ConversationStatus {
                     session_id,
                     snapshot,
                 },
             )
             .await;
         }
-        AppClientCommand::RequestHistory { session_id } => {
-            let snapshot = runtime.session_snapshot(&session_id).await?;
+        AppClientCommand::RequestConversationHistory { session_id } => {
+            let snapshot = runtime.conversation_history_snapshot(&session_id).await?;
             send_notification(
                 event_tx,
                 &state,
-                AppServerNotification::SessionHistory {
+                AppServerNotification::ConversationHistory {
                     session_id,
                     messages: snapshot
                         .messages
@@ -132,28 +132,19 @@ pub(crate) async fn handle_command(
             )
             .await;
         }
-        AppClientCommand::RequestEventLog { session_id } => {
-            let events = runtime.session_events(&session_id).await?;
-            send_notification(
-                event_tx,
-                &state,
-                AppServerNotification::SessionEventLog { session_id, events },
-            )
-            .await;
-        }
-        AppClientCommand::ResetSession { session_id } => {
-            runtime.reset_session(&session_id).await?;
+        AppClientCommand::ResetConversation { session_id } => {
+            runtime.reset_conversation(&session_id).await?;
             send_notification(
                 event_tx,
                 &state,
                 AppServerNotification::Info {
                     session_id,
-                    message: "session reset".to_string(),
+                    message: "conversation reset".to_string(),
                 },
             )
             .await;
         }
-        AppClientCommand::SubscribeSession { session_id } => {
+        AppClientCommand::SubscribeConversation { session_id } => {
             {
                 let mut state = state.lock().await;
                 state.subscriptions.subscribe(session_id.clone());
@@ -161,20 +152,20 @@ pub(crate) async fn handle_command(
             send_notification(
                 event_tx,
                 &state,
-                AppServerNotification::SubscriptionChanged {
+                AppServerNotification::ConversationSubscriptionChanged {
                     session_id,
                     subscribed: true,
                 },
             )
             .await;
         }
-        AppClientCommand::UnsubscribeSession { session_id } => {
+        AppClientCommand::UnsubscribeConversation { session_id } => {
             {
                 let mut state = state.lock().await;
                 state.subscriptions.unsubscribe(&session_id);
             }
             let _ = event_tx.send(AppServerMessage::Notification(
-                AppServerNotification::SubscriptionChanged {
+                AppServerNotification::ConversationSubscriptionChanged {
                     session_id,
                     subscribed: false,
                 },
@@ -192,6 +183,9 @@ pub(crate) async fn handle_command(
                 .resolve(&request_id, ServerRequestDecision { approved, reason: reason.clone() });
             drop(state_guard);
             if let Some((turn_id, request, decision)) = resolved {
+                runtime
+                    .resolve_pending_request(&session_id, &request_id)
+                    .await;
                 send_notification(
                     event_tx,
                     &state,
@@ -227,11 +221,17 @@ fn spawn_turn(
         let session_id_for_server_request = session_id.clone();
         let active_turn_id = Arc::new(StdMutex::new(None::<String>));
         let active_turn_id_for_events = active_turn_id.clone();
+        let processor = Arc::new(StdMutex::new(ConversationProcessor::new(
+            session_id_for_turn.clone(),
+        )));
+        let processor_for_events = processor.clone();
         let (projected_tx, mut projected_rx) =
             mpsc::unbounded_channel::<Vec<AppServerNotification>>();
+        let projected_tx_for_events = projected_tx.clone();
         let runtime_events_for_projected = runtime_events.clone();
         let state_for_projected = state_for_turn.clone();
-        tokio::spawn(async move {
+        let runtime_for_requests = runtime.clone();
+        let projected_task = tokio::spawn(async move {
             while let Some(notifications) = projected_rx.recv().await {
                 for notification in notifications {
                     send_notification(&runtime_events_for_projected, &state_for_projected, notification)
@@ -245,16 +245,19 @@ fn spawn_turn(
                 &session_id,
                 &user_input,
                 move |event| {
-                    let session_id = session_id_for_turn.clone();
                     let event = event.clone();
                     let active_turn_id = active_turn_id_for_events.clone();
-                    let projected_tx = projected_tx.clone();
+                    let projected_tx = projected_tx_for_events.clone();
                     if let agent_protocol::TurnEvent::TurnStarted { turn_id, .. } = &event
                         && let Ok(mut active) = active_turn_id.lock()
                     {
                         *active = Some(turn_id.clone());
                     }
-                    let notifications = project_turn_event(&session_id, &event);
+                    let notifications = processor_for_events
+                        .lock()
+                        .ok()
+                        .map(|mut processor| processor.process_turn_event(&event))
+                        .unwrap_or_default();
                     let _ = projected_tx.send(notifications);
                 },
                 move |request: ServerRequest| {
@@ -262,6 +265,7 @@ fn spawn_turn(
                     let state = ctx.state.clone();
                     let session_id = session_id_for_server_request.clone();
                     let auto_approve_reason = ctx.auto_approve_reason.clone();
+                    let runtime = runtime_for_requests.clone();
                     async move {
                         if ctx.auto_approve {
                             return Ok(ServerRequestDecision {
@@ -291,6 +295,13 @@ fn spawn_turn(
                                     reply_tx,
                                 );
                         }
+                        runtime
+                            .register_pending_request(
+                                &session_id,
+                                request_id.clone(),
+                                request.clone(),
+                            )
+                            .await;
                         send_request(
                             &event_tx,
                             &state,
@@ -308,6 +319,20 @@ fn spawn_turn(
                 },
             )
             .await;
+
+        drop(projected_tx);
+        let _ = projected_task.await;
+
+        if let Ok(output) = &result {
+            let notifications = processor
+                .lock()
+                .ok()
+                .map(|mut processor| processor.finish_turn(output.state.clone()))
+                .unwrap_or_default();
+            for notification in notifications {
+                send_notification(&finish_events, &state_for_finish, notification).await;
+            }
+        }
 
         if let Err(error) = result {
             let maybe_turn_id = active_turn_id.lock().ok().and_then(|guard| guard.clone());
@@ -373,3 +398,4 @@ async fn send_request(
         let _ = event_tx.send(AppServerMessage::Request(request));
     }
 }
+

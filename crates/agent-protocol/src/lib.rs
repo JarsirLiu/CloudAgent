@@ -49,15 +49,15 @@ pub enum TurnState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum SessionState {
+pub enum ConversationStatus {
     Idle,
     Busy,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SessionSnapshot {
+pub struct ConversationSnapshot {
     pub session_id: String,
-    pub session_state: SessionState,
+    pub conversation_status: ConversationStatus,
     pub active_turn: Option<TurnId>,
     pub turn_state: Option<TurnState>,
     pub message_count: usize,
@@ -283,22 +283,19 @@ pub enum AppClientCommand {
     InterruptTurn {
         session_id: String,
     },
-    ResetSession {
+    ResetConversation {
         session_id: String,
     },
-    RequestStatus {
+    RequestConversationStatus {
         session_id: String,
     },
-    RequestHistory {
+    RequestConversationHistory {
         session_id: String,
     },
-    RequestEventLog {
+    SubscribeConversation {
         session_id: String,
     },
-    SubscribeSession {
-        session_id: String,
-    },
-    UnsubscribeSession {
+    UnsubscribeConversation {
         session_id: String,
     },
     Exit,
@@ -310,12 +307,11 @@ impl AppClientCommand {
             Self::SubmitTurn(input) => Some(&input.session_id),
             Self::ResolveServerRequest { session_id, .. }
             | Self::InterruptTurn { session_id }
-            | Self::ResetSession { session_id }
-            | Self::RequestStatus { session_id }
-            | Self::RequestHistory { session_id }
-            | Self::RequestEventLog { session_id }
-            | Self::SubscribeSession { session_id }
-            | Self::UnsubscribeSession { session_id } => Some(session_id),
+            | Self::ResetConversation { session_id }
+            | Self::RequestConversationStatus { session_id }
+            | Self::RequestConversationHistory { session_id }
+            | Self::SubscribeConversation { session_id }
+            | Self::UnsubscribeConversation { session_id } => Some(session_id),
             Self::Exit => None,
         }
     }
@@ -377,19 +373,15 @@ pub enum AppServerNotification {
         turn_id: TurnId,
         reason: String,
     },
-    SessionStatus {
+    ConversationStatus {
         session_id: String,
-        snapshot: SessionSnapshot,
+        snapshot: ConversationSnapshot,
     },
-    SessionHistory {
+    ConversationHistory {
         session_id: String,
         messages: Vec<HistoryEntry>,
     },
-    SessionEventLog {
-        session_id: String,
-        events: Vec<TurnEvent>,
-    },
-    SubscriptionChanged {
+    ConversationSubscriptionChanged {
         session_id: String,
         subscribed: bool,
     },
@@ -416,10 +408,9 @@ impl AppServerNotification {
             | Self::TurnCompleted { session_id, .. }
             | Self::TurnFailed { session_id, .. }
             | Self::TurnCancelled { session_id, .. }
-            | Self::SessionStatus { session_id, .. }
-            | Self::SessionHistory { session_id, .. }
-            | Self::SessionEventLog { session_id, .. }
-            | Self::SubscriptionChanged { session_id, .. }
+            | Self::ConversationStatus { session_id, .. }
+            | Self::ConversationHistory { session_id, .. }
+            | Self::ConversationSubscriptionChanged { session_id, .. }
             | Self::Info { session_id, .. }
             | Self::Error { session_id, .. } => session_id,
         }
@@ -575,22 +566,19 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "turn/interrupt" => Ok(AppClientCommand::InterruptTurn {
             session_id: value_field(params, "session_id")?,
         }),
-        "session/reset" => Ok(AppClientCommand::ResetSession {
+        "conversation/reset" => Ok(AppClientCommand::ResetConversation {
             session_id: value_field(params, "session_id")?,
         }),
-        "session/status" => Ok(AppClientCommand::RequestStatus {
+        "conversation/status" => Ok(AppClientCommand::RequestConversationStatus {
             session_id: value_field(params, "session_id")?,
         }),
-        "session/history" => Ok(AppClientCommand::RequestHistory {
+        "conversation/history" => Ok(AppClientCommand::RequestConversationHistory {
             session_id: value_field(params, "session_id")?,
         }),
-        "session/events" => Ok(AppClientCommand::RequestEventLog {
+        "conversation/subscribe" => Ok(AppClientCommand::SubscribeConversation {
             session_id: value_field(params, "session_id")?,
         }),
-        "session/subscribe" => Ok(AppClientCommand::SubscribeSession {
-            session_id: value_field(params, "session_id")?,
-        }),
-        "session/unsubscribe" => Ok(AppClientCommand::UnsubscribeSession {
+        "conversation/unsubscribe" => Ok(AppClientCommand::UnsubscribeConversation {
             session_id: value_field(params, "session_id")?,
         }),
         "serverRequest/resolve" => Ok(AppClientCommand::ResolveServerRequest {
@@ -618,28 +606,24 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             "turn/interrupt",
             serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::ResetSession { session_id } => (
-            "session/reset",
+        AppClientCommand::ResetConversation { session_id } => (
+            "conversation/reset",
             serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::RequestStatus { session_id } => (
-            "session/status",
+        AppClientCommand::RequestConversationStatus { session_id } => (
+            "conversation/status",
             serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::RequestHistory { session_id } => (
-            "session/history",
+        AppClientCommand::RequestConversationHistory { session_id } => (
+            "conversation/history",
             serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::RequestEventLog { session_id } => (
-            "session/events",
+        AppClientCommand::SubscribeConversation { session_id } => (
+            "conversation/subscribe",
             serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::SubscribeSession { session_id } => (
-            "session/subscribe",
-            serde_json::json!({ "session_id": session_id }),
-        ),
-        AppClientCommand::UnsubscribeSession { session_id } => (
-            "session/unsubscribe",
+        AppClientCommand::UnsubscribeConversation { session_id } => (
+            "conversation/unsubscribe",
             serde_json::json!({ "session_id": session_id }),
         ),
         AppClientCommand::Exit => ("app/exit", Value::Null),
@@ -694,20 +678,16 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "turn/cancelled",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::SessionStatus { .. } => (
-            "session/status",
+        AppServerNotification::ConversationStatus { .. } => (
+            "conversation/status",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::SessionHistory { .. } => (
-            "session/history",
+        AppServerNotification::ConversationHistory { .. } => (
+            "conversation/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::SessionEventLog { .. } => (
-            "session/events",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
-        AppServerNotification::SubscriptionChanged { .. } => (
-            "session/subscriptionChanged",
+        AppServerNotification::ConversationSubscriptionChanged { .. } => (
+            "conversation/subscriptionChanged",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::Info { .. } => (
@@ -761,10 +741,9 @@ fn parse_server_notification(
         | "turn/completed"
         | "turn/failed"
         | "turn/cancelled"
-        | "session/status"
-        | "session/history"
-        | "session/events"
-        | "session/subscriptionChanged"
+        | "conversation/status"
+        | "conversation/history"
+        | "conversation/subscriptionChanged"
         | "app/info"
         | "app/error" => Ok(serde_json::from_value(params)?),
         other => anyhow::bail!("unsupported notification method: {other}"),

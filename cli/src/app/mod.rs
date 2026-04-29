@@ -201,7 +201,7 @@ impl TuiApp {
                 Some(ParsedInput::Command(AppClientCommand::Exit))
             }
             InputPaneAction::Composer(ComposerAction::Reset) => {
-                Some(ParsedInput::Command(AppClientCommand::ResetSession {
+                Some(ParsedInput::Command(AppClientCommand::ResetConversation {
                     session_id: self.session_id.clone(),
                 }))
             }
@@ -433,10 +433,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     let session_id = config.session_id.clone();
     let mut client = create_client(&config, session_id.clone()).await?;
     let mut app = TuiApp::new(session_id.clone(), config.connection.label());
-    client.send_command(AppClientCommand::RequestHistory {
-        session_id: session_id.clone(),
-    })?;
-    client.send_command(AppClientCommand::RequestEventLog {
+    client.send_command(AppClientCommand::RequestConversationHistory {
         session_id: session_id.clone(),
     })?;
     let mut terminal = TerminalGuard::new()?;
@@ -486,9 +483,8 @@ mod tests {
     use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
     use agent_protocol::{
         AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus, HistoryEntry,
-        HistoryEntry::Assistant, HistoryEntry::Tool, HistoryEntry::User, ServerRequest, ServerRequestDecision,
-        SessionState, StructuredToolResult,
-        ThreadItem, ToolApprovalRequest, TurnEvent, TurnItemKind,
+        HistoryEntry::Assistant, HistoryEntry::Tool, HistoryEntry::User, ConversationStatus,
+        StructuredToolResult, TurnItemKind,
     };
     use agent_runtime::AgentRuntime;
     use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
@@ -531,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_history_is_preserved_and_event_log_only_overlays_new_turns() {
+    fn snapshot_history_replaces_transcript_without_event_replay() {
         let mut app = TuiApp::new("default".to_string(), "test");
 
         execute_server_action(
@@ -544,90 +540,29 @@ mod tests {
                     content: Some("old answer".to_string()),
                     has_tool_calls: false,
                 },
+                HistoryEntry::User {
+                    content: "where am i".to_string(),
+                },
+                HistoryEntry::Tool {
+                    tool_call_id: "call-1".to_string(),
+                    name: "shell_command".to_string(),
+                    content: "D:\\learn\\gifti\\cloudagent".to_string(),
+                    structured: Some(StructuredToolResult::CommandExecution {
+                        command: "pwd".to_string(),
+                        current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
+                        status: CommandExecutionStatus::Completed,
+                        exit_code: Some(0),
+                        success: Some(true),
+                        stdout: Some("D:\\learn\\gifti\\cloudagent".to_string()),
+                        stderr: Some(String::new()),
+                    }),
+                },
+                HistoryEntry::Assistant {
+                    content: Some("current directory is D:\\learn\\gifti\\cloudagent".to_string()),
+                    has_tool_calls: false,
+                },
             ]),
         );
-
-        let events = vec![
-            TurnEvent::TurnStarted {
-                turn_id: "turn-old".to_string(),
-                session_id: "default".to_string(),
-                user_input: "old question".to_string(),
-            },
-            TurnEvent::ItemCompleted {
-                turn_id: "turn-old".to_string(),
-                item_id: "assistant:old".to_string(),
-                item: ThreadItem::AgentMessage {
-                    id: "assistant:old".to_string(),
-                    text: "old answer".to_string(),
-                },
-            },
-            TurnEvent::TurnCompleted {
-                turn_id: "turn-old".to_string(),
-                final_response: "old answer".to_string(),
-            },
-            TurnEvent::TurnStarted {
-                turn_id: "turn-new".to_string(),
-                session_id: "default".to_string(),
-                user_input: "where am i".to_string(),
-            },
-            TurnEvent::ServerRequestRequested {
-                turn_id: "turn-new".to_string(),
-                request: ServerRequest::ToolApproval {
-                    request: ToolApprovalRequest {
-                        turn_id: "turn-new".to_string(),
-                        tool_call_id: "call-1".to_string(),
-                        tool_name: "shell_command".to_string(),
-                        reason: "need pwd".to_string(),
-                        arguments_preview: "{\"command\":\"pwd\"}".to_string(),
-                    },
-                },
-            },
-            TurnEvent::ServerRequestResolved {
-                turn_id: "turn-new".to_string(),
-                request: ServerRequest::ToolApproval {
-                    request: ToolApprovalRequest {
-                        turn_id: "turn-new".to_string(),
-                        tool_call_id: "call-1".to_string(),
-                        tool_name: "shell_command".to_string(),
-                        reason: "need pwd".to_string(),
-                        arguments_preview: "{\"command\":\"pwd\"}".to_string(),
-                    },
-                },
-                decision: ServerRequestDecision {
-                    approved: true,
-                    reason: Some("ok".to_string()),
-                },
-            },
-            TurnEvent::ItemCompleted {
-                turn_id: "turn-new".to_string(),
-                item_id: "tool:call-1".to_string(),
-                item: ThreadItem::CommandExecution {
-                    id: "tool:call-1".to_string(),
-                    tool_name: "shell_command".to_string(),
-                    command: "pwd".to_string(),
-                    current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
-                    status: CommandExecutionStatus::Completed,
-                    exit_code: Some(0),
-                    stdout: Some("D:\\learn\\gifti\\cloudagent".to_string()),
-                    stderr: Some(String::new()),
-                    summary: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
-                },
-            },
-            TurnEvent::ItemCompleted {
-                turn_id: "turn-new".to_string(),
-                item_id: "assistant:new".to_string(),
-                item: ThreadItem::AgentMessage {
-                    id: "assistant:new".to_string(),
-                    text: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
-                },
-            },
-            TurnEvent::TurnCompleted {
-                turn_id: "turn-new".to_string(),
-                final_response: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
-            },
-        ];
-
-        execute_server_action(&mut app, ServerAction::ReplayEventLog(events));
 
         let cells = app.transcript_state.transcript.cells();
         let bodies: Vec<&str> = cells.iter().map(|cell| cell.body.as_str()).collect();
@@ -765,40 +700,31 @@ mod tests {
         }));
 
         client
-            .send_command(AppClientCommand::RequestStatus {
+            .send_command(AppClientCommand::RequestConversationStatus {
                 session_id: "default".to_string(),
             })
             .expect("request status");
         client
-            .send_command(AppClientCommand::RequestHistory {
+            .send_command(AppClientCommand::RequestConversationHistory {
                 session_id: "default".to_string(),
             })
             .expect("request history");
-        client
-            .send_command(AppClientCommand::RequestEventLog {
-                session_id: "default".to_string(),
-            })
-            .expect("request event log");
 
         let mut history = None;
-        let mut event_log = None;
         let mut status_idle = false;
-        while history.is_none() || event_log.is_none() || !status_idle {
+        while history.is_none() || !status_idle {
             let event = timeout(Duration::from_secs(10), client.next_event())
                 .await
-                .expect("timed out waiting for history/event log")
+                .expect("timed out waiting for history")
                 .expect("client event");
             match event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionHistory { messages, .. },
+                    AppServerNotification::ConversationHistory { messages, .. },
                 )) => history = Some(messages),
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionEventLog { events, .. },
-                )) => event_log = Some(events),
-                AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionStatus { snapshot, .. },
+                    AppServerNotification::ConversationStatus { snapshot, .. },
                 )) => {
-                    status_idle = matches!(snapshot.session_state, SessionState::Idle)
+                    status_idle = matches!(snapshot.conversation_status, ConversationStatus::Idle)
                         && snapshot.active_turn.is_none();
                 }
                 other => app.handle_client_event(other),
@@ -822,20 +748,6 @@ mod tests {
             if content.starts_with("current directory is ") && content.ends_with("\\workspace")
         )));
 
-        let event_log = event_log.expect("event log");
-        assert!(event_log.iter().any(|event| matches!(event, TurnEvent::ServerRequestRequested { .. })));
-        assert!(event_log.iter().any(|event| matches!(event, TurnEvent::ServerRequestResolved { .. })));
-        assert!(event_log.iter().any(|event| matches!(
-            event,
-            TurnEvent::ItemCompleted { item: ThreadItem::CommandExecution { command, .. }, .. }
-            if command == "pwd"
-        )));
-        assert!(event_log.iter().any(|event| matches!(
-            event,
-            TurnEvent::ItemCompleted { item: ThreadItem::AgentMessage { text, .. }, .. }
-            if text.starts_with("current directory is ") && text.ends_with("\\workspace")
-        )));
-
         let runtime_after_restart =
             Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
         let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
@@ -846,30 +758,21 @@ mod tests {
         });
         let mut restarted_app = TuiApp::new("default".to_string(), "in-process");
         restarted_client
-            .send_command(AppClientCommand::RequestHistory {
+            .send_command(AppClientCommand::RequestConversationHistory {
                 session_id: "default".to_string(),
             })
             .expect("request history after restart");
-        restarted_client
-            .send_command(AppClientCommand::RequestEventLog {
-                session_id: "default".to_string(),
-            })
-            .expect("request event log after restart");
 
         let mut restarted_history_loaded = false;
-        let mut restarted_events_loaded = false;
-        while !restarted_history_loaded || !restarted_events_loaded {
+        while !restarted_history_loaded {
             let event = timeout(Duration::from_secs(10), restarted_client.next_event())
                 .await
                 .expect("timed out waiting after restart")
                 .expect("client event after restart");
             match &event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionHistory { .. },
+                    AppServerNotification::ConversationHistory { .. },
                 )) => restarted_history_loaded = true,
-                AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionEventLog { .. },
-                )) => restarted_events_loaded = true,
                 _ => {}
             }
             restarted_app.handle_client_event(event);
@@ -974,44 +877,29 @@ mod tests {
         assert!(saw_server_request, "expected pending server request before interrupt");
 
         client
-            .send_command(AppClientCommand::RequestHistory {
+            .send_command(AppClientCommand::RequestConversationHistory {
                 session_id: "default".to_string(),
             })
             .expect("request history");
-        client
-            .send_command(AppClientCommand::RequestEventLog {
-                session_id: "default".to_string(),
-            })
-            .expect("request event log");
 
-        let mut history = None;
-        let mut event_log = None;
-        while history.is_none() || event_log.is_none() {
+        let history = loop {
             let event = timeout(Duration::from_secs(10), client.next_event())
                 .await
-                .expect("timed out waiting for history/event log")
+                .expect("timed out waiting for history")
                 .expect("client event");
             match event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionHistory { messages, .. },
-                )) => history = Some(messages),
-                AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionEventLog { events, .. },
-                )) => event_log = Some(events),
+                    AppServerNotification::ConversationHistory { messages, .. },
+                )) => break messages,
                 other => app.handle_client_event(other),
             }
-        }
+        };
         client.shutdown().await.expect("shutdown client");
 
-        let history = history.expect("history");
         assert!(history.iter().any(|entry| matches!(
             entry,
             User { content } if content == "帮我看看当前目录"
         )));
-
-        let event_log = event_log.expect("event log");
-        assert!(event_log.iter().any(|event| matches!(event, TurnEvent::ServerRequestRequested { .. })));
-        assert!(event_log.iter().any(|event| matches!(event, TurnEvent::TurnCancelled { .. })));
 
         let runtime_after_restart =
             Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
@@ -1023,34 +911,21 @@ mod tests {
         });
         let mut restarted_app = TuiApp::new("default".to_string(), "in-process");
         restarted_client
-            .send_command(AppClientCommand::RequestHistory {
+            .send_command(AppClientCommand::RequestConversationHistory {
                 session_id: "default".to_string(),
             })
             .expect("request history after restart");
-        restarted_client
-            .send_command(AppClientCommand::RequestEventLog {
-                session_id: "default".to_string(),
-            })
-            .expect("request event log after restart");
 
         let mut restarted_history_loaded = false;
-        let mut restarted_events_loaded = false;
-        let mut restarted_event_log = None;
-        while !restarted_history_loaded || !restarted_events_loaded {
+        while !restarted_history_loaded {
             let event = timeout(Duration::from_secs(10), restarted_client.next_event())
                 .await
                 .expect("timed out waiting after restart")
                 .expect("client event after restart");
             match &event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionHistory { .. },
+                    AppServerNotification::ConversationHistory { .. },
                 )) => restarted_history_loaded = true,
-                AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionEventLog { events, .. },
-                )) => {
-                    restarted_events_loaded = true;
-                    restarted_event_log = Some(events.clone());
-                }
                 _ => {}
             }
             restarted_app.handle_client_event(event);
@@ -1061,7 +936,6 @@ mod tests {
             .expect("shutdown restarted client");
 
         let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
-        let _ = restarted_event_log;
         assert!(rebuilt_cells.iter().any(|cell| cell.body == "帮我看看当前目录"));
         assert_eq!(
             rebuilt_cells
@@ -1070,8 +944,7 @@ mod tests {
                 .count(),
             1
         );
-        assert!(rebuilt_cells.iter().any(|cell| cell.label == "request"));
-        assert!(rebuilt_cells.iter().any(|cell| cell.body.contains("interrupted by client")));
+        assert!(!rebuilt_cells.iter().any(|cell| cell.label == "request"));
 
         let recorded_requests = server_thread
             .join()
@@ -1081,7 +954,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn consecutive_tool_turns_preserve_event_log_across_restart() {
+    async fn consecutive_tool_turns_preserve_history_across_restart() {
         let fixture = TempFixture::new();
         let responses = vec![
             sse_body(vec![json!({
@@ -1205,19 +1078,19 @@ mod tests {
         }
 
         client
-            .send_command(AppClientCommand::RequestEventLog {
+            .send_command(AppClientCommand::RequestConversationHistory {
                 session_id: "default".to_string(),
             })
-            .expect("request live event log");
-        let live_event_log = loop {
+            .expect("request live history");
+        let live_history = loop {
             let event = timeout(Duration::from_secs(10), client.next_event())
                 .await
-                .expect("timed out waiting for event log")
+                .expect("timed out waiting for history")
                 .expect("client event");
             match event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionEventLog { events, .. },
-                )) => break events,
+                    AppServerNotification::ConversationHistory { messages, .. },
+                )) => break messages,
                 other => app.handle_client_event(other),
             }
         };
@@ -1232,19 +1105,19 @@ mod tests {
             auto_approve_reason: None,
         });
         restarted_client
-            .send_command(AppClientCommand::RequestEventLog {
+            .send_command(AppClientCommand::RequestConversationHistory {
                 session_id: "default".to_string(),
             })
-            .expect("request event log after restart");
-        let restarted_event_log = loop {
+            .expect("request history after restart");
+        let restarted_history = loop {
             let event = timeout(Duration::from_secs(10), restarted_client.next_event())
                 .await
                 .expect("timed out waiting after restart")
                 .expect("client event after restart");
             match event {
                 AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::SessionEventLog { events, .. },
-                )) => break events,
+                    AppServerNotification::ConversationHistory { messages, .. },
+                )) => break messages,
                 _ => {}
             }
         };
@@ -1253,39 +1126,23 @@ mod tests {
             .await
             .expect("shutdown restarted client");
 
-        let live_types: Vec<&str> = live_event_log
-            .iter()
-            .map(|event| match event {
-                TurnEvent::TurnStarted { .. } => "turn_started",
-                TurnEvent::ModelRequestStarted { .. } => "model_request_started",
-                TurnEvent::ModelResponseReceived { .. } => "model_response_received",
-                TurnEvent::ItemStarted { .. } => "item_started",
-                TurnEvent::ItemDelta { .. } => "item_delta",
-                TurnEvent::ItemCompleted { .. } => "item_completed",
-                TurnEvent::ServerRequestRequested { .. } => "server_request_requested",
-                TurnEvent::ServerRequestResolved { .. } => "server_request_resolved",
-                TurnEvent::TurnCompleted { .. } => "turn_completed",
-                TurnEvent::TurnFailed { .. } => "turn_failed",
-                TurnEvent::TurnCancelled { .. } => "turn_cancelled",
-            })
-            .collect();
-        let restarted_types: Vec<&str> = restarted_event_log
-            .iter()
-            .map(|event| match event {
-                TurnEvent::TurnStarted { .. } => "turn_started",
-                TurnEvent::ModelRequestStarted { .. } => "model_request_started",
-                TurnEvent::ModelResponseReceived { .. } => "model_response_received",
-                TurnEvent::ItemStarted { .. } => "item_started",
-                TurnEvent::ItemDelta { .. } => "item_delta",
-                TurnEvent::ItemCompleted { .. } => "item_completed",
-                TurnEvent::ServerRequestRequested { .. } => "server_request_requested",
-                TurnEvent::ServerRequestResolved { .. } => "server_request_resolved",
-                TurnEvent::TurnCompleted { .. } => "turn_completed",
-                TurnEvent::TurnFailed { .. } => "turn_failed",
-                TurnEvent::TurnCancelled { .. } => "turn_cancelled",
-            })
-            .collect();
-        assert_eq!(restarted_types, live_types);
+        assert_eq!(restarted_history.len(), live_history.len());
+        assert!(restarted_history.iter().any(|entry| matches!(
+            entry,
+            User { content } if content == "第一轮看看目录"
+        )));
+        assert!(restarted_history.iter().any(|entry| matches!(
+            entry,
+            User { content } if content == "第二轮再看一次目录"
+        )));
+        assert!(restarted_history.iter().filter(|entry| matches!(
+            entry,
+            Assistant { content: Some(body), .. } if body.starts_with("current directory is ")
+        )).count() >= 1);
+        assert!(restarted_history.iter().filter(|entry| matches!(
+            entry,
+            Assistant { content: Some(body), .. } if body.starts_with("again current directory is ")
+        )).count() >= 1);
 
         let recorded_requests = server_thread
             .join()
@@ -1294,7 +1151,11 @@ mod tests {
         assert_eq!(recorded_requests.len(), 4);
     }
 
-    fn test_config(workspace_root: PathBuf, session_store_dir: PathBuf, base_url: String) -> AgentConfig {
+    fn test_config(
+        workspace_root: PathBuf,
+        conversation_store_dir: PathBuf,
+        base_url: String,
+    ) -> AgentConfig {
         AgentConfig {
             workspace_root,
             llm: LlmConfig {
@@ -1304,10 +1165,10 @@ mod tests {
                 temperature: 0.0,
             },
             runtime: RuntimeConfig {
-                default_session_id: "default".to_string(),
+                default_conversation_id: "default".to_string(),
                 system_prompt: "You are a test agent.".to_string(),
                 max_tool_roundtrips: 4,
-                session_store_dir,
+                conversation_store_dir,
             },
             tools: ToolConfig {
                 default_shell_timeout_ms: 5_000,
@@ -1425,3 +1286,4 @@ mod tests {
         }
     }
 }
+

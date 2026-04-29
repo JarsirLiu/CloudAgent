@@ -1,7 +1,7 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    HistoryEntry, RequestId, ServerRequest, ThreadItem, TurnEvent, TurnItemDeltaKind,
-    TurnItemKind, UserTurnInput,
+    HistoryEntry, RequestId, ServerRequest, ThreadItem, TurnItemDeltaKind, TurnItemKind,
+    UserTurnInput,
 };
 
 #[derive(Debug, Clone)]
@@ -40,11 +40,9 @@ pub(crate) enum ServerAction {
     SetStatusNotice(Option<String>),
     SetLastMessageCount(usize),
     SetHistoryLoaded(bool),
-    SetEventLogLoaded(bool),
     ClearServerRequestView,
     ClearLastToolName,
     ReplaceHistory(Vec<HistoryEntry>),
-    ReplayEventLog(Vec<TurnEvent>),
     PushErrorCell(String),
     ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
@@ -59,21 +57,17 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 AppServerNotification::FrontendStateChanged { mode, .. } => {
                     actions.push(ServerAction::SetMode(*mode));
                 }
-                AppServerNotification::SessionStatus { snapshot, .. } => {
+                AppServerNotification::ConversationStatus { snapshot, .. } => {
                     actions.push(ServerAction::SetLastMessageCount(snapshot.message_count));
                     actions.push(ServerAction::SetStatusNotice(None));
                 }
-                AppServerNotification::SessionHistory { messages, .. } => {
+                AppServerNotification::ConversationHistory { messages, .. } => {
                     actions.push(ServerAction::SetLastMessageCount(messages.len()));
                     actions.push(ServerAction::SetStatusNotice(Some(
                         "Workspace context ready".to_string(),
                     )));
                     actions.push(ServerAction::SetHistoryLoaded(true));
                     actions.push(ServerAction::ReplaceHistory(messages.clone()));
-                }
-                AppServerNotification::SessionEventLog { events, .. } => {
-                    actions.push(ServerAction::SetEventLogLoaded(true));
-                    actions.push(ServerAction::ReplayEventLog(events.clone()));
                 }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
@@ -176,7 +170,7 @@ pub(crate) fn apply_ui_event(
     match trimmed {
         "/copy" => UiInputEvent::LocalCopy,
         "/exit" | "/quit" => UiInputEvent::Command(AppClientCommand::Exit),
-        "/clear" => UiInputEvent::Command(AppClientCommand::ResetSession {
+        "/clear" => UiInputEvent::Command(AppClientCommand::ResetConversation {
             session_id: session_id.to_string(),
         }),
         "/interrupt" => UiInputEvent::Command(AppClientCommand::InterruptTurn {

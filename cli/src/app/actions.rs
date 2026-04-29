@@ -4,7 +4,7 @@ use crate::app::TuiApp;
 use crate::state::reducer::{ItemDispatch, ServerAction};
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerClient;
-use agent_protocol::{AppClientCommand, FrontendMode, ThreadItem, TurnEvent, TurnItemDeltaKind, TurnItemKind, UserTurnInput};
+use agent_protocol::{AppClientCommand, FrontendMode, ThreadItem, TurnItemKind, UserTurnInput};
 use anyhow::Result;
 
 pub(crate) fn handle_tui_input(
@@ -63,7 +63,7 @@ pub(crate) fn handle_tui_input(
                 app.server_request_state.pending_server_request_id = None;
                 app.input_pane.clear_views();
             }
-            if let AppClientCommand::ResetSession { .. } = &command {
+            if let AppClientCommand::ResetConversation { .. } = &command {
                 app.reset_local_view();
                 client.send_command(command)?;
                 return Ok(false);
@@ -130,9 +130,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::SetHistoryLoaded(loaded) => {
             app.run_state.history_loaded = loaded;
         }
-        ServerAction::SetEventLogLoaded(loaded) => {
-            app.run_state.event_log_loaded = loaded;
-        }
         ServerAction::ClearServerRequestView => {
             app.input_pane.clear_server_request();
         }
@@ -141,11 +138,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         }
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
-            rebuild_transcript_from_sources(app);
-        }
-        ServerAction::ReplayEventLog(events) => {
-            app.run_state.event_log_snapshot = Some(events);
-            rebuild_transcript_from_sources(app);
+            rebuild_transcript_from_history(app);
         }
         ServerAction::PushErrorCell(message) => {
             app.input_pane.clear_views();
@@ -229,168 +222,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     }
 }
 
-fn overlay_event_log(
-    app: &mut TuiApp,
-    events: &[TurnEvent],
-    skip_turns: usize,
-    suppress_first_replayed_turn_user: bool,
-) {
-    if events.is_empty() {
-        return;
-    }
-
-    let mut seen_turns = 0usize;
-    let mut replaying = skip_turns == 0;
-    let mut suppress_turn_started_user = suppress_first_replayed_turn_user;
-    for event in events {
-        if let TurnEvent::TurnStarted { .. } = event {
-            if !replaying {
-                if seen_turns == skip_turns {
-                    replaying = true;
-                } else {
-                    seen_turns = seen_turns.saturating_add(1);
-                    continue;
-                }
-            }
-        }
-        if !replaying {
-            continue;
-        }
-        match event {
-            TurnEvent::TurnStarted { user_input, .. } => {
-                if suppress_turn_started_user {
-                    suppress_turn_started_user = false;
-                } else {
-                    app.push_cell(HistoryCell::from_message(
-                        "you",
-                        user_input.clone(),
-                        HistoryTone::User,
-                    ));
-                }
-            }
-            TurnEvent::ItemStarted {
-                turn_id,
-                item_id,
-                kind,
-                title,
-            } if *kind == TurnItemKind::AssistantMessage => {
-                app.handle_assistant_item_started(turn_id, item_id);
-            }
-            TurnEvent::ItemStarted {
-                item_id,
-                kind,
-                title,
-                ..
-            } if *kind == TurnItemKind::ToolCall
-                || *kind == TurnItemKind::CommandExecution
-                || *kind == TurnItemKind::Reasoning =>
-            {
-                app.handle_tool_like_item_started(item_id, kind.clone(), title.as_deref().unwrap_or("event"));
-            }
-            TurnEvent::ItemDelta {
-                item_id,
-                kind,
-                delta,
-                ..
-            } if *kind == TurnItemDeltaKind::Text => {
-                app.handle_assistant_item_delta(item_id, delta);
-            }
-            TurnEvent::ItemDelta {
-                item_id,
-                kind,
-                delta,
-                ..
-            } if *kind == TurnItemDeltaKind::ToolOutput || *kind == TurnItemDeltaKind::ReasoningText => {
-                app.handle_tool_like_item_delta(item_id, delta);
-            }
-            TurnEvent::ItemCompleted { item, .. } => match item {
-                ThreadItem::AgentMessage { id, text } => {
-                    app.handle_assistant_item_completed(id, text);
-                }
-                ThreadItem::CommandExecution {
-                    id,
-                    command,
-                    tool_name,
-                    summary,
-                    ..
-                } => {
-                    let title = if command.trim().is_empty() {
-                        tool_name.as_str()
-                    } else {
-                        command.as_str()
-                    };
-                    app.handle_tool_like_item_completed(
-                        id,
-                        TurnItemKind::CommandExecution,
-                        title,
-                        summary,
-                    );
-                }
-                ThreadItem::ToolResult {
-                    id,
-                    tool_name,
-                    summary,
-                    ..
-                } => {
-                    app.handle_tool_like_item_completed(
-                        id,
-                        TurnItemKind::ToolResult,
-                        tool_name,
-                        summary,
-                    );
-                }
-                ThreadItem::Reasoning { id, text, .. } => {
-                    app.handle_tool_like_item_completed(
-                        id,
-                        TurnItemKind::Reasoning,
-                        "reasoning",
-                        text,
-                    );
-                }
-                ThreadItem::UserMessage { .. } => {}
-            },
-            TurnEvent::ServerRequestRequested { request, .. } => {
-                let summary = match request {
-                    agent_protocol::ServerRequest::ToolApproval { request } => {
-                        format!("requested: {} {}", request.tool_name, request.arguments_preview)
-                    }
-                };
-                app.push_cell(HistoryCell::from_message(
-                    "request",
-                    summary,
-                    HistoryTone::Warning,
-                ));
-            }
-            TurnEvent::ServerRequestResolved { decision, .. } => {
-                app.push_cell(HistoryCell::from_message(
-                    "request",
-                    if decision.approved {
-                        format!("approved{}", decision.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default())
-                    } else {
-                        format!("denied{}", decision.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default())
-                    },
-                    if decision.approved { HistoryTone::Agent } else { HistoryTone::Warning },
-                ));
-            }
-            TurnEvent::TurnFailed { error, .. } => {
-                app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Failed {
-                    error: error.clone(),
-                });
-            }
-            TurnEvent::TurnCancelled { reason, .. } => {
-                app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Cancelled {
-                    reason: reason.clone(),
-                });
-            }
-            TurnEvent::TurnCompleted { .. } => {
-                app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Completed);
-            }
-            _ => {}
-        }
-    }
-}
-
-fn rebuild_transcript_from_sources(app: &mut TuiApp) {
+fn rebuild_transcript_from_history(app: &mut TuiApp) {
     app.transcript_state = crate::state::TranscriptState::default();
     app.input_pane.clear_views();
 
@@ -407,48 +239,6 @@ fn rebuild_transcript_from_sources(app: &mut TuiApp) {
             }
         });
     }
-
-    let completed_turns_in_history = completed_turns_to_skip(&history_snapshot);
-    let user_turns_in_history = history_snapshot
-        .iter()
-        .filter(|entry| matches!(entry, agent_protocol::HistoryEntry::User { .. }))
-        .count();
-    if let Some(events) = app.run_state.event_log_snapshot.clone() {
-        overlay_event_log(
-            app,
-            &events,
-            completed_turns_in_history,
-            completed_turns_in_history < user_turns_in_history,
-        );
-    }
-
-    app.run_state.event_log_loaded = app.run_state.event_log_snapshot.is_some();
     app.run_state.history_loaded = app.run_state.history_snapshot.is_some();
     app.clamp_transcript_scroll();
-}
-
-fn completed_turns_to_skip(history_snapshot: &[agent_protocol::HistoryEntry]) -> usize {
-    let user_turns = history_snapshot
-        .iter()
-        .filter(|entry| matches!(entry, agent_protocol::HistoryEntry::User { .. }))
-        .count();
-    if user_turns == 0 {
-        return 0;
-    }
-
-    let last_turn_is_incomplete = matches!(
-        history_snapshot.last(),
-        Some(agent_protocol::HistoryEntry::User { .. })
-            | Some(agent_protocol::HistoryEntry::Tool { .. })
-            | Some(agent_protocol::HistoryEntry::Assistant {
-                has_tool_calls: true,
-                ..
-            })
-    );
-
-    if last_turn_is_incomplete {
-        user_turns.saturating_sub(1)
-    } else {
-        user_turns
-    }
 }

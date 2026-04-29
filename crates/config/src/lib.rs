@@ -21,10 +21,10 @@ pub struct LlmConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeConfig {
-    pub default_session_id: String,
+    pub default_conversation_id: String,
     pub system_prompt: String,
     pub max_tool_roundtrips: usize,
-    pub session_store_dir: PathBuf,
+    pub conversation_store_dir: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,10 +50,10 @@ struct PartialLlmConfig {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct PartialRuntimeConfig {
-    default_session_id: Option<String>,
+    default_conversation_id: Option<String>,
     system_prompt: Option<String>,
     max_tool_roundtrips: Option<usize>,
-    session_store_dir: Option<PathBuf>,
+    conversation_store_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -98,10 +98,10 @@ impl AgentConfig {
     fn defaults(workspace_root: PathBuf) -> Self {
         Self {
             runtime: RuntimeConfig {
-                default_session_id: "default".to_string(),
+                default_conversation_id: "default".to_string(),
                 system_prompt: default_system_prompt(),
                 max_tool_roundtrips: 8,
-                session_store_dir: workspace_root.join("data").join("sessions"),
+                conversation_store_dir: workspace_root.join("data").join("conversations"),
             },
             llm: LlmConfig {
                 base_url: "https://api.openai.com/v1".to_string(),
@@ -134,8 +134,8 @@ impl AgentConfig {
         }
 
         if let Some(runtime) = partial.runtime {
-            if let Some(value) = runtime.default_session_id {
-                self.runtime.default_session_id = value;
+            if let Some(value) = runtime.default_conversation_id {
+                self.runtime.default_conversation_id = value;
             }
             if let Some(value) = runtime.system_prompt {
                 self.runtime.system_prompt = value;
@@ -143,8 +143,8 @@ impl AgentConfig {
             if let Some(value) = runtime.max_tool_roundtrips {
                 self.runtime.max_tool_roundtrips = value.max(1);
             }
-            if let Some(value) = runtime.session_store_dir {
-                self.runtime.session_store_dir = absolutize_path(&self.workspace_root, value);
+            if let Some(value) = runtime.conversation_store_dir {
+                self.runtime.conversation_store_dir = absolutize_path(&self.workspace_root, value);
             }
         }
 
@@ -176,16 +176,16 @@ impl AgentConfig {
         if let Ok(value) = env::var("CLOUDAGENT_SYSTEM_PROMPT") {
             self.runtime.system_prompt = value;
         }
-        if let Ok(value) = env::var("CLOUDAGENT_DEFAULT_SESSION_ID") {
-            self.runtime.default_session_id = value;
+        if let Ok(value) = env::var("CLOUDAGENT_DEFAULT_CONVERSATION_ID") {
+            self.runtime.default_conversation_id = value;
         }
         if let Ok(value) = env::var("CLOUDAGENT_MAX_TOOL_ROUNDTRIPS")
             && let Ok(parsed) = value.parse::<usize>()
         {
             self.runtime.max_tool_roundtrips = parsed.max(1);
         }
-        if let Ok(value) = env::var("CLOUDAGENT_SESSION_STORE_DIR") {
-            self.runtime.session_store_dir =
+        if let Ok(value) = env::var("CLOUDAGENT_CONVERSATION_STORE_DIR") {
+            self.runtime.conversation_store_dir =
                 absolutize_path(&self.workspace_root, PathBuf::from(value));
         }
         if let Ok(value) = env::var("CLOUDAGENT_SHELL_TIMEOUT_MS")

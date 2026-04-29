@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     let workspace_root = std::env::current_dir()?;
     let config = AgentConfig::load(workspace_root)?;
     let runtime = Arc::new(AgentRuntime::from_config(config)?);
-    let session_id = runtime.default_session_id().to_string();
+    let conversation_id = runtime.default_conversation_id().to_string();
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
     let transport = arg_value(&args, "--transport")
@@ -29,15 +29,15 @@ async fn main() -> Result<()> {
                     .map(|path| path.into_os_string())
                     .unwrap_or_else(|| OsString::from(exe_name("agentd")))
             });
-        let remote_session = arg_value(&args, "--session")
+        let remote_conversation = arg_value(&args, "--conversation")
             .and_then(|value| value.into_string().ok())
-            .unwrap_or_else(|| session_id.clone());
+            .unwrap_or_else(|| conversation_id.clone());
         ConsoleConnection::Stdio {
             program,
             args: vec![
                 OsString::from("app-server-stdio"),
-                OsString::from("--session"),
-                OsString::from(remote_session),
+                OsString::from("--conversation"),
+                OsString::from(remote_conversation),
             ],
         }
     } else {
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     };
 
     run_console(ConsoleConfig {
-        session_id: session_id.clone(),
+        session_id: conversation_id.clone(),
         auto_approve: false,
         auto_approve_reason: None,
         connection,

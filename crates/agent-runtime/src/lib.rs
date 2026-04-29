@@ -2,8 +2,8 @@ mod state;
 mod tasks;
 
 use agent_core::{
-    AgentContext, AgentSession, AgentTurnOutput, ChatModel, ExecutionPolicy, ModelRequest,
-    ModelResponse, ToolCall, ToolEvent, ToolExecutor, ToolSpec,
+    AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
+    ExecutionPolicy, ModelRequest, ModelResponse, ToolCall, ToolEvent, ToolExecutor, ToolSpec,
 };
 use agent_tools::ToolRegistry;
 use anyhow::{Context, Result, bail};
@@ -15,15 +15,15 @@ use serde_json::Value;
 use state::RuntimeState;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use storage::JsonSessionStore;
+use storage::JsonConversationStore;
 use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub use agent_core::ConversationMessage;
 pub use agent_protocol::{
-    ServerRequest, ServerRequestDecision, SessionSnapshot, SessionState, ThreadItem, TurnEvent,
-    TurnItemKind, TurnState,
+    ConversationSnapshot, ConversationStatus, RequestId, ServerRequest, ServerRequestDecision,
+    ThreadItem, TurnEvent, TurnItemKind, TurnState,
 };
 
 const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
@@ -39,7 +39,7 @@ pub struct AgentRuntime {
     model: Arc<dyn ChatModel>,
     tools: Arc<dyn ToolExecutor>,
     state: RuntimeState,
-    store: JsonSessionStore,
+    store: JsonConversationStore,
 }
 
 impl AgentRuntime {
@@ -52,7 +52,9 @@ impl AgentRuntime {
         let policy = ExecutionPolicy::new(config.runtime.max_tool_roundtrips);
         let model = Arc::new(OpenAiCompatibleModel::new(config.llm.clone())?);
         let tools = Arc::new(ToolRegistry::new(config.tools.max_read_chars));
-        let store = JsonSessionStore::new(config.runtime.session_store_dir.clone());
+        let store = JsonConversationStore::new(config.runtime.conversation_store_dir.clone());
+
+        let system_prompt = config.runtime.system_prompt.clone();
 
         Ok(Self {
             config,
@@ -60,15 +62,15 @@ impl AgentRuntime {
             policy,
             model,
             tools,
-            state: RuntimeState::new(),
+            state: RuntimeState::new(system_prompt),
             store,
         })
     }
 
-    pub async fn chat(&self, session_id: &str, user_input: &str) -> Result<AgentTurnOutput> {
+    pub async fn chat(&self, conversation_id: &str, user_input: &str) -> Result<AgentTurnOutput> {
         let outcome = self
             .chat_with_approval_and_events(
-                session_id,
+                conversation_id,
                 user_input,
                 |_event| {},
                 |_request| async move {
@@ -87,7 +89,7 @@ impl AgentRuntime {
 
     pub async fn chat_with_approval<F, Fut>(
         &self,
-        session_id: &str,
+        conversation_id: &str,
         user_input: &str,
         approval: F,
     ) -> Result<AgentTurnOutput>
@@ -95,13 +97,13 @@ impl AgentRuntime {
         F: Fn(ServerRequest) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
-        self.chat_with_approval_and_events(session_id, user_input, |_event| {}, approval)
+        self.chat_with_approval_and_events(conversation_id, user_input, |_event| {}, approval)
             .await
     }
 
     pub async fn chat_with_approval_and_events<E, F, Fut>(
         &self,
-        session_id: &str,
+        conversation_id: &str,
         user_input: &str,
         mut on_event: E,
         approval: F,
@@ -112,63 +114,79 @@ impl AgentRuntime {
         Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
         let outcome = self
-            .run_turn_with_approval(session_id, user_input, &mut on_event, approval)
+            .run_turn_with_approval(conversation_id, user_input, &mut on_event, approval)
             .await?;
         Ok(self.outcome_to_output(outcome))
     }
 
-    pub async fn reset_session(&self, session_id: &str) -> Result<()> {
-        self.state.remove_session(session_id).await;
-        self.store.delete_session(session_id).await?;
-        self.store.delete_events(session_id).await
+    pub async fn reset_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.state.remove_conversation(conversation_id).await;
+        self.store.delete_conversation(conversation_id).await?;
+        self.store.delete_events(conversation_id).await
     }
 
-    pub async fn session_snapshot(&self, session_id: &str) -> Result<AgentSession> {
-        if let Some(session) = self.state.session(session_id).await {
-            return Ok(session);
+    pub async fn conversation_history_snapshot(
+        &self,
+        conversation_id: &str,
+    ) -> Result<ConversationHistory> {
+        Ok(self.conversation_snapshot(conversation_id).await?.history)
+    }
+
+    pub async fn conversation_snapshot(&self, conversation_id: &str) -> Result<ConversationState> {
+        if let Some(conversation) = self.state.conversation(conversation_id).await {
+            return Ok(conversation);
         }
-        if let Some(mut session) = self.store.load_session(session_id).await? {
-            session.ensure_system_prompt(self.config.runtime.system_prompt.clone());
-            return Ok(session);
+        if let Some(mut conversation) = self.store.load_conversation(conversation_id).await? {
+            conversation
+                .history
+                .ensure_system_prompt(self.config.runtime.system_prompt.clone());
+            return Ok(conversation);
         }
-        Ok(AgentSession::new(
-            session_id.to_string(),
+        Ok(ConversationState::new(ConversationHistory::new(
+            conversation_id.to_string(),
             self.config.runtime.system_prompt.clone(),
-        ))
+        )))
     }
 
-    pub fn default_session_id(&self) -> &str {
-        &self.config.runtime.default_session_id
+    pub fn default_conversation_id(&self) -> &str {
+        &self.config.runtime.default_conversation_id
     }
 
-    pub async fn session_state(&self, session_id: &str) -> Result<SessionSnapshot> {
-        let session = self.session_snapshot(session_id).await?;
-        let active_turn = self.state.active_turn(session_id).await;
-        Ok(SessionSnapshot {
-            session_id: session_id.to_string(),
-            session_state: if active_turn.is_some() {
-                SessionState::Busy
+    pub async fn conversation_status(&self, conversation_id: &str) -> Result<ConversationSnapshot> {
+        let history = self.conversation_history_snapshot(conversation_id).await?;
+        let active_turn = self.state.active_turn(conversation_id).await;
+        Ok(ConversationSnapshot {
+            session_id: conversation_id.to_string(),
+            conversation_status: if active_turn.is_some() {
+                ConversationStatus::Busy
             } else {
-                SessionState::Idle
+                ConversationStatus::Idle
             },
             active_turn: active_turn.as_ref().map(|turn| turn.turn_id.clone()),
             turn_state: active_turn.as_ref().map(|turn| turn.turn_state.clone()),
-            message_count: session.messages.len(),
+            message_count: history.messages.len(),
         })
     }
 
-    pub async fn interrupt_session(&self, session_id: &str) -> bool {
-        self.state.interrupt_session(session_id).await
+    pub async fn interrupt_conversation(&self, conversation_id: &str) -> bool {
+        self.state.interrupt_conversation(conversation_id).await
     }
 
-    pub async fn session_events(&self, session_id: &str) -> Result<Vec<TurnEvent>> {
-        if let Some(events) = self.state.session_events(session_id) {
-            return Ok(events);
-        }
-        let events = self.store.load_events(session_id).await?;
+    pub async fn register_pending_request(
+        &self,
+        session_id: &str,
+        request_id: RequestId,
+        request: ServerRequest,
+    ) {
         self.state
-            .replace_session_events(session_id.to_string(), events.clone());
-        Ok(events)
+            .set_pending_request(session_id, request_id, request)
+            .await;
+    }
+
+    pub async fn resolve_pending_request(&self, session_id: &str, request_id: &RequestId) {
+        self.state
+            .resolve_pending_request(session_id, request_id)
+            .await;
     }
 
     pub(crate) async fn complete_model_request_streaming(
@@ -217,7 +235,7 @@ impl AgentRuntime {
 
     async fn run_turn_with_approval<E, F, Fut>(
         &self,
-        session_id: &str,
+        conversation_id: &str,
         user_input: &str,
         on_event: &mut E,
         approval: F,
@@ -229,15 +247,15 @@ impl AgentRuntime {
     {
         let (persist_tx, mut persist_rx) = mpsc::unbounded_channel::<TurnEvent>();
         let store = self.store.clone();
-        let persisted_session_id = session_id.to_string();
+        let persisted_conversation_id = conversation_id.to_string();
         let persist_task = tokio::spawn(async move {
             while let Some(event) = persist_rx.recv().await {
-                store.append_event(&persisted_session_id, &event).await?;
+                store.append_event(&persisted_conversation_id, &event).await?;
             }
             Result::<()>::Ok(())
         });
         let mut event_sink = |event: &TurnEvent| {
-            self.state.append_session_event(session_id, event.clone());
+            self.state.append_conversation_event(conversation_id, event.clone());
             let _ = persist_tx.send(event.clone());
             on_event(event);
         };
@@ -245,21 +263,21 @@ impl AgentRuntime {
         let turn_id = next_turn_id();
         let active_turn = self
             .state
-            .start_turn(session_id.to_string(), turn_id.clone())
+            .start_turn(conversation_id.to_string(), turn_id.clone())
             .await;
 
-        let mut session = self.load_session(session_id).await?;
-        session.push_user_message(user_input);
-        self.state.save_session(session.clone()).await;
+        let mut history = self.load_history(conversation_id).await?;
+        history.push_user_message(user_input);
+        self.state.save_history(history.clone()).await;
 
         let mut events = Vec::new();
-        let session_for_interrupt = session.clone();
+        let history_for_interrupt = history.clone();
         emit_event(
             &mut events,
             &mut event_sink,
             TurnEvent::TurnStarted {
                 turn_id: turn_id.clone(),
-                session_id: session_id.to_string(),
+                session_id: conversation_id.to_string(),
                 user_input: user_input.to_string(),
             },
         );
@@ -276,7 +294,7 @@ impl AgentRuntime {
                 turn_id: turn_id.clone(),
                 final_response: "Turn cancelled.".to_string(),
                 events,
-                session,
+                history,
                 model_name: None,
                 state: TurnState::Cancelled,
             })
@@ -285,24 +303,24 @@ impl AgentRuntime {
                 .run(
                     TaskContext {
                         runtime: self,
-                        session_id,
+                        conversation_id,
                         turn_id: &turn_id,
                         cancellation_token: active_turn.cancellation_token.clone(),
                         on_event: &mut event_sink,
                     },
-                    session,
+                    history,
                     approval,
                 )
                 .await
         };
 
-        self.state.finish_turn(session_id).await;
+        self.state.finish_turn(conversation_id).await;
 
         match result {
             Ok(outcome) => {
                 drop(event_sink);
                 drop(persist_tx);
-                self.save_session(outcome.session.clone()).await?;
+                self.save_history(outcome.history.clone()).await?;
                 persist_task.await??;
                 Ok(outcome)
             }
@@ -319,20 +337,20 @@ impl AgentRuntime {
                     );
                     drop(event_sink);
                     drop(persist_tx);
-                    self.save_session(session_for_interrupt.clone()).await?;
+                    self.save_history(history_for_interrupt.clone()).await?;
                     persist_task.await??;
                     let outcome = TurnOutcome {
                         turn_id: turn_id.clone(),
                         final_response: "Turn cancelled.".to_string(),
                         events,
-                        session: session_for_interrupt,
+                        history: history_for_interrupt,
                         model_name: None,
                         state: TurnState::Cancelled,
                     };
                     return Ok(outcome);
                 }
-                let mut session = self.load_session(session_id).await?;
-                session.push_assistant_message(Some(format!("Turn failed: {err:#}")), Vec::new());
+                let mut history = self.load_history(conversation_id).await?;
+                history.push_assistant_message(Some(format!("Turn failed: {err:#}")), Vec::new());
                 let error_text = format!("{err:#}");
                 let mut events = Vec::new();
                 emit_event(
@@ -345,13 +363,13 @@ impl AgentRuntime {
                 );
                 drop(event_sink);
                 drop(persist_tx);
-                self.save_session(session.clone()).await?;
+                self.save_history(history.clone()).await?;
                 persist_task.await??;
                 let outcome = TurnOutcome {
                     turn_id: turn_id.clone(),
                     final_response: format!("Turn failed: {error_text}"),
                     events,
-                    session,
+                    history,
                     model_name: None,
                     state: TurnState::Failed,
                 };
@@ -360,27 +378,33 @@ impl AgentRuntime {
         }
     }
 
-    async fn load_session(&self, session_id: &str) -> Result<AgentSession> {
-        if let Some(session) = self.state.session(session_id).await {
-            return Ok(session);
+    async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory> {
+        if let Some(history) = self.state.history(conversation_id).await {
+            return Ok(history);
         }
 
-        let mut session = if let Some(session) = self.store.load_session(session_id).await? {
-            session
+        let mut conversation = if let Some(conversation) = self.store.load_conversation(conversation_id).await? {
+            conversation
         } else {
-            AgentSession::new(
-                session_id.to_string(),
+            ConversationState::new(ConversationHistory::new(
+                conversation_id.to_string(),
                 self.config.runtime.system_prompt.clone(),
-            )
+            ))
         };
-        session.ensure_system_prompt(self.config.runtime.system_prompt.clone());
-        self.state.save_session(session.clone()).await;
-        Ok(session)
+        conversation
+            .history
+            .ensure_system_prompt(self.config.runtime.system_prompt.clone());
+        let history = conversation.history.clone();
+        self.state.save_conversation(conversation).await;
+        Ok(history)
     }
 
-    async fn save_session(&self, session: AgentSession) -> Result<()> {
-        self.store.save_session(&session).await?;
-        self.state.save_session(session).await;
+    async fn save_history(&self, history: ConversationHistory) -> Result<()> {
+        let conversation_id = history.id.clone();
+        self.state.save_history(history).await;
+        if let Some(conversation) = self.state.conversation(&conversation_id).await {
+            self.store.save_conversation(&conversation).await?;
+        }
         Ok(())
     }
 
@@ -479,7 +503,7 @@ impl AgentRuntime {
             tool_events,
             events: outcome.events,
             model_name: outcome.model_name,
-            total_messages: outcome.session.messages.len(),
+            total_messages: outcome.history.messages.len(),
             state: outcome.state,
         }
     }

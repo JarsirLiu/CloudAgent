@@ -7,7 +7,7 @@ use crate::ui::widgets::history_cell::shimmer_spans;
 
 pub fn divider_line(width: usize) -> Line<'static> {
     Line::from(Span::styled(
-        "─".repeat(width),
+        "-".repeat(width),
         Style::default().fg(Color::Rgb(40, 40, 50)),
     ))
 }
@@ -39,7 +39,7 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str, width: usi
                 .bg(badge_bg)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  ·  ", Style::default().fg(Color::Rgb(60, 60, 70))),
+        Span::styled("  .  ", Style::default().fg(Color::Rgb(60, 60, 70))),
     ];
     spans.extend(status_spans);
     if !meta.is_empty() {
@@ -56,14 +56,14 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str, width: usi
         for ch in meta.chars() {
             let w = UnicodeWidthStr::width(ch.encode_utf8(&mut [0; 4]));
             if used + w > available_meta {
-                meta_text.push('…');
+                meta_text.push_str("...");
                 break;
             }
             meta_text.push(ch);
             used += w;
         }
         spans.push(Span::styled(
-            "  ·  ",
+            "  .  ",
             Style::default().fg(Color::Rgb(60, 60, 70)),
         ));
         spans.push(Span::styled(
@@ -77,10 +77,10 @@ pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str, width: usi
 pub fn hint_line(mode: FrontendMode, width: usize) -> Line<'static> {
     let hint = match mode {
         FrontendMode::Idle => {
-            "  Enter submit  ·  Ctrl+K interrupt  ·  /clear clear session  ·  /copy copy last reply"
+            "  Enter submit  .  Ctrl+K interrupt  .  /clear clear conversation  .  /copy copy last reply"
         }
         FrontendMode::Running => "  Ctrl+K interrupt the current turn",
-        FrontendMode::WaitingForServerRequest => "  Enter submit  ·  y approve  ·  n deny",
+        FrontendMode::WaitingForServerRequest => "  Enter submit  .  y approve  .  n deny",
     };
     let hint = truncate_single_line(hint, width.saturating_sub(1));
     Line::from(Span::styled(
@@ -97,8 +97,8 @@ fn truncate_single_line(input: &str, max_width: usize) -> String {
     let mut used = 0usize;
     for ch in input.chars() {
         let w = UnicodeWidthStr::width(ch.encode_utf8(&mut [0; 4]));
-        if used + w > max_width.saturating_sub(1) {
-            out.push('…');
+        if used + w > max_width.saturating_sub(3) {
+            out.push_str("...");
             return out;
         }
         out.push(ch);

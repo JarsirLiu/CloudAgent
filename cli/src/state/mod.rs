@@ -4,7 +4,7 @@ pub mod selectors;
 use crate::ui::widgets::history_cell::{HistoryCell, Transcript};
 use agent_protocol::{
     AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode, HistoryEntry,
-    RequestId, TurnEvent,
+    RequestId,
 };
 
 #[derive(Clone, Debug)]
@@ -44,9 +44,7 @@ pub struct TranscriptState {
 #[derive(Clone, Debug)]
 pub struct RunState {
     pub history_loaded: bool,
-    pub event_log_loaded: bool,
     pub history_snapshot: Option<Vec<HistoryEntry>>,
-    pub event_log_snapshot: Option<Vec<TurnEvent>>,
     pub status_notice: Option<String>,
     pub last_message_count: usize,
     pub last_tool_name: Option<String>,
@@ -57,9 +55,7 @@ impl RunState {
     pub fn new(connection_label: &str) -> Self {
         Self {
             history_loaded: false,
-            event_log_loaded: false,
             history_snapshot: None,
-            event_log_snapshot: None,
             status_notice: Some(format!("Connected via {connection_label}")),
             last_message_count: 0,
             last_tool_name: None,

@@ -1,4 +1,4 @@
-use crate::session::{AgentSession, ConversationMessage};
+use crate::history::{ConversationHistory, ConversationMessage};
 
 #[derive(Clone, Debug, Default)]
 pub struct ConversationMemory {
@@ -7,9 +7,9 @@ pub struct ConversationMemory {
 }
 
 impl ConversationMemory {
-    pub fn from_session(session: &AgentSession) -> Self {
+    pub fn from_history(history: &ConversationHistory) -> Self {
         let mut memory = Self::default();
-        for message in &session.messages {
+        for message in &history.messages {
             match message {
                 ConversationMessage::User { content } => {
                     memory.last_user_message = Some(content.clone());

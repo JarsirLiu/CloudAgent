@@ -2,13 +2,13 @@ use agent_protocol::{StructuredToolResult, ToolCall, ToolResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AgentSession {
+pub struct ConversationHistory {
     pub id: String,
     pub turn_count: u64,
     pub messages: Vec<ConversationMessage>,
 }
 
-impl AgentSession {
+impl ConversationHistory {
     pub fn new(id: impl Into<String>, system_prompt: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -84,5 +84,5 @@ pub enum ConversationMessage {
 }
 
 pub fn module_name() -> &'static str {
-    "agent-core::session"
+    "agent-core::history"
 }

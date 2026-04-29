@@ -1,7 +1,7 @@
 mod regular;
 
 use crate::AgentRuntime;
-use agent_core::AgentSession;
+use agent_core::ConversationHistory;
 use agent_protocol::{ServerRequest, ServerRequestDecision, TurnEvent};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -18,7 +18,7 @@ pub(crate) enum TaskKind {
 
 pub(crate) struct TaskContext<'a, E> {
     pub(crate) runtime: &'a AgentRuntime,
-    pub(crate) session_id: &'a str,
+    pub(crate) conversation_id: &'a str,
     pub(crate) turn_id: &'a str,
     pub(crate) cancellation_token: CancellationToken,
     pub(crate) on_event: &'a mut E,
@@ -36,7 +36,7 @@ where
     fn run(
         self,
         ctx: TaskContext<'_, E>,
-        session: AgentSession,
+        history: ConversationHistory,
         approval: F,
     ) -> impl std::future::Future<Output = Result<TurnOutcome>> + Send;
 }

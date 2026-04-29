@@ -1,8 +1,8 @@
 mod command_router;
+mod conversation_subscriptions;
+mod conversation_processor;
 mod in_process;
-mod session_subscriptions;
 mod server_request_coordinator;
-mod turn_bridge;
 pub mod transport;
 
 use agent_protocol::{AppClientCommandEnvelope, AppServerMessageEnvelope};

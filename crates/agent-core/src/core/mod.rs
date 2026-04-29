@@ -1,4 +1,4 @@
-use crate::session::ConversationMessage;
+use crate::history::ConversationMessage;
 use crate::tool::{ToolCall, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;

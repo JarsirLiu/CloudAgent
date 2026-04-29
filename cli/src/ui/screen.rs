@@ -75,7 +75,7 @@ fn header_block(app: &TuiApp) -> Paragraph<'static> {
         ),
         Span::raw("  "),
         Span::styled(
-            format!("session {}", app.session_id),
+            format!("conversation {}", app.session_id),
             Style::default().fg(Color::White),
         ),
         Span::raw("  "),
@@ -209,7 +209,7 @@ fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
 
     vec![
         Line::from(Span::styled(
-            "Session has recent conversation",
+            "Conversation has recent history",
             Style::default().fg(Color::Gray),
         )),
         Line::from(Span::styled(
@@ -221,7 +221,7 @@ fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
 
 fn status_meta_text(app: &TuiApp) -> String {
     let mut parts = vec![
-        format!("session {}", app.session_id),
+        format!("conversation {}", app.session_id),
         format!("messages {}", app.run_state.last_message_count),
     ];
     if let Some(tool) = &app.run_state.last_tool_name {
@@ -247,3 +247,4 @@ fn centered_column(area: Rect, max_width: u16) -> Rect {
         height: area.height,
     }
 }
+
