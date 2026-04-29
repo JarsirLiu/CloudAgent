@@ -296,30 +296,30 @@ impl AgentRuntime {
                 .await
         };
 
-        drop(event_sink);
-        drop(persist_tx);
-
         self.state.finish_turn(session_id).await;
 
         match result {
             Ok(outcome) => {
+                drop(event_sink);
+                drop(persist_tx);
                 self.save_session(outcome.session.clone()).await?;
                 persist_task.await??;
                 Ok(outcome)
             }
             Err(err) => {
                 if is_turn_interrupted_error(&err) {
-                    self.save_session(session_for_interrupt.clone()).await?;
                     let mut events = Vec::new();
-                    let event = TurnEvent::TurnCancelled {
-                        turn_id: turn_id.clone(),
-                        reason: "interrupted by client".to_string(),
-                    };
-                    self.state.append_session_event(session_id, event.clone());
-                    emit_event(&mut events, on_event, event);
-                    self.store
-                        .append_events(session_id, &events)
-                        .await?;
+                    emit_event(
+                        &mut events,
+                        &mut event_sink,
+                        TurnEvent::TurnCancelled {
+                            turn_id: turn_id.clone(),
+                            reason: "interrupted by client".to_string(),
+                        },
+                    );
+                    drop(event_sink);
+                    drop(persist_tx);
+                    self.save_session(session_for_interrupt.clone()).await?;
                     persist_task.await??;
                     let outcome = TurnOutcome {
                         turn_id: turn_id.clone(),
@@ -333,18 +333,19 @@ impl AgentRuntime {
                 }
                 let mut session = self.load_session(session_id).await?;
                 session.push_assistant_message(Some(format!("Turn failed: {err:#}")), Vec::new());
-                self.save_session(session.clone()).await?;
                 let error_text = format!("{err:#}");
                 let mut events = Vec::new();
-                let event = TurnEvent::TurnFailed {
-                    turn_id: turn_id.clone(),
-                    error: error_text.clone(),
-                };
-                self.state.append_session_event(session_id, event.clone());
-                emit_event(&mut events, on_event, event);
-                self.store
-                    .append_events(session_id, &events)
-                    .await?;
+                emit_event(
+                    &mut events,
+                    &mut event_sink,
+                    TurnEvent::TurnFailed {
+                        turn_id: turn_id.clone(),
+                        error: error_text.clone(),
+                    },
+                );
+                drop(event_sink);
+                drop(persist_tx);
+                self.save_session(session.clone()).await?;
                 persist_task.await??;
                 let outcome = TurnOutcome {
                     turn_id: turn_id.clone(),

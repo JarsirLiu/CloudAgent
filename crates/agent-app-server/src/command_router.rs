@@ -10,10 +10,12 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::task::JoinHandle;
 
 pub(crate) struct ServerState {
     subscriptions: SessionSubscriptions,
     server_requests: ServerRequestCoordinator,
+    turn_tasks: Vec<JoinHandle<()>>,
 }
 
 impl ServerState {
@@ -21,7 +23,17 @@ impl ServerState {
         Self {
             subscriptions: SessionSubscriptions::new(default_session_id),
             server_requests: ServerRequestCoordinator::new(),
+            turn_tasks: Vec::new(),
         }
+    }
+
+    pub(crate) fn track_turn_task(&mut self, task: JoinHandle<()>) {
+        self.turn_tasks.retain(|task| !task.is_finished());
+        self.turn_tasks.push(task);
+    }
+
+    pub(crate) fn take_turn_tasks(&mut self) -> Vec<JoinHandle<()>> {
+        std::mem::take(&mut self.turn_tasks)
     }
 }
 
@@ -52,17 +64,18 @@ pub(crate) async fn handle_command(
                 },
             )
             .await;
-            spawn_turn(
+            let task = spawn_turn(
                 runtime,
                 input.session_id,
                 input.content,
                 SpawnTurnContext {
                     event_tx: event_tx.clone(),
-                    state,
+                    state: state.clone(),
                     auto_approve,
                     auto_approve_reason,
                 },
             );
+            state.lock().await.track_turn_task(task);
         }
         AppClientCommand::InterruptTurn { session_id } => {
             let interrupted = runtime.interrupt_session(&session_id).await;
@@ -193,7 +206,7 @@ fn spawn_turn(
     session_id: String,
     user_input: String,
     ctx: SpawnTurnContext,
-) {
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let runtime_events = ctx.event_tx.clone();
         let finish_events = ctx.event_tx.clone();
@@ -319,7 +332,7 @@ fn spawn_turn(
             )
             .await;
         }
-    });
+    })
 }
 
 async fn send_notification(

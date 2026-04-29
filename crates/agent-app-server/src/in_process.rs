@@ -86,6 +86,13 @@ pub fn start_in_process(
                     }
                 }
                 ServerMessage::Shutdown { done } => {
+                    let tasks = {
+                        let mut guard = state.lock().await;
+                        guard.take_turn_tasks()
+                    };
+                    for task in tasks {
+                        let _ = task.await;
+                    }
                     let _ = done.send(());
                     break;
                 }
@@ -98,4 +105,3 @@ pub fn start_in_process(
         event_rx,
     }
 }
-

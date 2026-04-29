@@ -229,13 +229,19 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     }
 }
 
-fn overlay_event_log(app: &mut TuiApp, events: &[TurnEvent], skip_turns: usize) {
+fn overlay_event_log(
+    app: &mut TuiApp,
+    events: &[TurnEvent],
+    skip_turns: usize,
+    suppress_first_replayed_turn_user: bool,
+) {
     if events.is_empty() {
         return;
     }
 
     let mut seen_turns = 0usize;
     let mut replaying = skip_turns == 0;
+    let mut suppress_turn_started_user = suppress_first_replayed_turn_user;
     for event in events {
         if let TurnEvent::TurnStarted { .. } = event {
             if !replaying {
@@ -252,11 +258,15 @@ fn overlay_event_log(app: &mut TuiApp, events: &[TurnEvent], skip_turns: usize) 
         }
         match event {
             TurnEvent::TurnStarted { user_input, .. } => {
-                app.push_cell(HistoryCell::from_message(
-                    "you",
-                    user_input.clone(),
-                    HistoryTone::User,
-                ));
+                if suppress_turn_started_user {
+                    suppress_turn_started_user = false;
+                } else {
+                    app.push_cell(HistoryCell::from_message(
+                        "you",
+                        user_input.clone(),
+                        HistoryTone::User,
+                    ));
+                }
             }
             TurnEvent::ItemStarted {
                 turn_id,
@@ -398,15 +408,47 @@ fn rebuild_transcript_from_sources(app: &mut TuiApp) {
         });
     }
 
-    let completed_turns_in_history = history_snapshot
+    let completed_turns_in_history = completed_turns_to_skip(&history_snapshot);
+    let user_turns_in_history = history_snapshot
         .iter()
         .filter(|entry| matches!(entry, agent_protocol::HistoryEntry::User { .. }))
         .count();
     if let Some(events) = app.run_state.event_log_snapshot.clone() {
-        overlay_event_log(app, &events, completed_turns_in_history);
+        overlay_event_log(
+            app,
+            &events,
+            completed_turns_in_history,
+            completed_turns_in_history < user_turns_in_history,
+        );
     }
 
     app.run_state.event_log_loaded = app.run_state.event_log_snapshot.is_some();
     app.run_state.history_loaded = app.run_state.history_snapshot.is_some();
     app.clamp_transcript_scroll();
+}
+
+fn completed_turns_to_skip(history_snapshot: &[agent_protocol::HistoryEntry]) -> usize {
+    let user_turns = history_snapshot
+        .iter()
+        .filter(|entry| matches!(entry, agent_protocol::HistoryEntry::User { .. }))
+        .count();
+    if user_turns == 0 {
+        return 0;
+    }
+
+    let last_turn_is_incomplete = matches!(
+        history_snapshot.last(),
+        Some(agent_protocol::HistoryEntry::User { .. })
+            | Some(agent_protocol::HistoryEntry::Tool { .. })
+            | Some(agent_protocol::HistoryEntry::Assistant {
+                has_tool_calls: true,
+                ..
+            })
+    );
+
+    if last_turn_is_incomplete {
+        user_turns.saturating_sub(1)
+    } else {
+        user_turns
+    }
 }

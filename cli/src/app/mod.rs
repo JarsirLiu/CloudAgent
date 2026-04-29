@@ -902,6 +902,184 @@ mod tests {
         assert!(recorded_requests[1].contains("\"shell_command\""));
     }
 
+    #[tokio::test]
+    async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
+        let fixture = TempFixture::new();
+        let responses = vec![sse_body(vec![json!({
+            "model": "fake-model",
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_interrupt",
+                        "function": {
+                            "name": "shell_command",
+                            "arguments": "{\"command\":\"pwd\"}"
+                        }
+                    }]
+                }
+            }]
+        })])];
+        let (base_url, server_thread) = spawn_fake_llm_server(responses);
+        let config = Arc::new(test_config(
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            base_url,
+        ));
+        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let mut client = AppServerClient::in_process(InProcessClientConfig {
+            runtime,
+            session_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        let mut app = TuiApp::new("default".to_string(), "in-process");
+
+        handle_tui_input(
+            "default",
+            &mut app,
+            &client,
+            ParsedInput::Command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
+                session_id: "default".to_string(),
+                content: "帮我看看当前目录".to_string(),
+            })),
+        )
+        .expect("submit turn");
+
+        let mut saw_server_request = false;
+        let mut saw_turn_cancelled = false;
+        while !saw_turn_cancelled {
+            let event = timeout(Duration::from_secs(10), client.next_event())
+                .await
+                .expect("timed out waiting for client event")
+                .expect("client event");
+            if matches!(&event, AppServerEvent::Message(AppServerMessage::Request(_))) {
+                saw_server_request = true;
+                client
+                    .send_command(AppClientCommand::InterruptTurn {
+                        session_id: "default".to_string(),
+                    })
+                    .expect("interrupt turn");
+            }
+            if matches!(
+                &event,
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::TurnCancelled { .. }
+                ))
+            ) {
+                saw_turn_cancelled = true;
+            }
+            app.handle_client_event(event);
+        }
+        assert!(saw_server_request, "expected pending server request before interrupt");
+
+        client
+            .send_command(AppClientCommand::RequestHistory {
+                session_id: "default".to_string(),
+            })
+            .expect("request history");
+        client
+            .send_command(AppClientCommand::RequestEventLog {
+                session_id: "default".to_string(),
+            })
+            .expect("request event log");
+
+        let mut history = None;
+        let mut event_log = None;
+        while history.is_none() || event_log.is_none() {
+            let event = timeout(Duration::from_secs(10), client.next_event())
+                .await
+                .expect("timed out waiting for history/event log")
+                .expect("client event");
+            match event {
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionHistory { messages, .. },
+                )) => history = Some(messages),
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionEventLog { events, .. },
+                )) => event_log = Some(events),
+                other => app.handle_client_event(other),
+            }
+        }
+        client.shutdown().await.expect("shutdown client");
+
+        let history = history.expect("history");
+        assert!(history.iter().any(|entry| matches!(
+            entry,
+            User { content } if content == "帮我看看当前目录"
+        )));
+
+        let event_log = event_log.expect("event log");
+        assert!(event_log.iter().any(|event| matches!(event, TurnEvent::ServerRequestRequested { .. })));
+        assert!(event_log.iter().any(|event| matches!(event, TurnEvent::TurnCancelled { .. })));
+
+        let runtime_after_restart =
+            Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
+        let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
+            runtime: runtime_after_restart,
+            session_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        let mut restarted_app = TuiApp::new("default".to_string(), "in-process");
+        restarted_client
+            .send_command(AppClientCommand::RequestHistory {
+                session_id: "default".to_string(),
+            })
+            .expect("request history after restart");
+        restarted_client
+            .send_command(AppClientCommand::RequestEventLog {
+                session_id: "default".to_string(),
+            })
+            .expect("request event log after restart");
+
+        let mut restarted_history_loaded = false;
+        let mut restarted_events_loaded = false;
+        let mut restarted_event_log = None;
+        while !restarted_history_loaded || !restarted_events_loaded {
+            let event = timeout(Duration::from_secs(10), restarted_client.next_event())
+                .await
+                .expect("timed out waiting after restart")
+                .expect("client event after restart");
+            match &event {
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionHistory { .. },
+                )) => restarted_history_loaded = true,
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionEventLog { events, .. },
+                )) => {
+                    restarted_events_loaded = true;
+                    restarted_event_log = Some(events.clone());
+                }
+                _ => {}
+            }
+            restarted_app.handle_client_event(event);
+        }
+        restarted_client
+            .shutdown()
+            .await
+            .expect("shutdown restarted client");
+
+        let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
+        let _ = restarted_event_log;
+        assert!(rebuilt_cells.iter().any(|cell| cell.body == "帮我看看当前目录"));
+        assert_eq!(
+            rebuilt_cells
+                .iter()
+                .filter(|cell| cell.body == "帮我看看当前目录")
+                .count(),
+            1
+        );
+        assert!(rebuilt_cells.iter().any(|cell| cell.label == "request"));
+        assert!(rebuilt_cells.iter().any(|cell| cell.body.contains("interrupted by client")));
+
+        let recorded_requests = server_thread
+            .join()
+            .expect("fake llm server thread panicked")
+            .expect("fake llm server");
+        assert_eq!(recorded_requests.len(), 1);
+    }
+
     fn test_config(workspace_root: PathBuf, session_store_dir: PathBuf, base_url: String) -> AgentConfig {
         AgentConfig {
             workspace_root,
