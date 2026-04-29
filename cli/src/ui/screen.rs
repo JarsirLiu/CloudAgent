@@ -194,9 +194,7 @@ fn transcript_panel(app: &TuiApp, area: Rect) -> Paragraph<'static> {
         app.transcript_state.scroll,
         app.transcript_state.active_cell.as_ref(),
     );
-    Paragraph::new(Text::from(lines))
-        .wrap(Wrap { trim: false })
-        .block(Block::default())
+    Paragraph::new(Text::from(lines)).block(Block::default())
 }
 
 fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
