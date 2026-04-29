@@ -82,7 +82,3 @@ pub enum ConversationMessage {
         structured: Option<StructuredToolResult>,
     },
 }
-
-pub fn module_name() -> &'static str {
-    "agent-core::history"
-}

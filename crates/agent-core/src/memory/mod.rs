@@ -1,4 +1,4 @@
-use crate::history::{ConversationHistory, ConversationMessage};
+use crate::conversation::{ConversationHistory, ConversationMessage};
 
 #[derive(Clone, Debug, Default)]
 pub struct ConversationMemory {

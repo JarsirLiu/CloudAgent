@@ -1,6 +1,7 @@
 use crate::conversation_subscriptions::ConversationSubscriptions;
-use crate::conversation_processor::{ConversationProcessor, history_entry_from_message};
+use crate::projection::ConversationNotificationProjector;
 use crate::server_request_coordinator::ServerRequestCoordinator;
+use agent_core::history_entry_from_message;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest,
     ServerRequestDecision,
@@ -221,10 +222,10 @@ fn spawn_turn(
         let conversation_id_for_server_request = conversation_id.clone();
         let active_turn_id = Arc::new(StdMutex::new(None::<String>));
         let active_turn_id_for_events = active_turn_id.clone();
-        let processor = Arc::new(StdMutex::new(ConversationProcessor::new(
+        let projector = Arc::new(StdMutex::new(ConversationNotificationProjector::new(
             conversation_id_for_turn.clone(),
         )));
-        let processor_for_events = processor.clone();
+        let projector_for_events = projector.clone();
         let (projected_tx, mut projected_rx) =
             mpsc::unbounded_channel::<Vec<AppServerNotification>>();
         let projected_tx_for_events = projected_tx.clone();
@@ -253,10 +254,10 @@ fn spawn_turn(
                     {
                         *active = Some(turn_id.clone());
                     }
-                    let notifications = processor_for_events
+                    let notifications = projector_for_events
                         .lock()
                         .ok()
-                        .map(|mut processor| processor.process_turn_event(&event))
+                        .map(|mut projector| projector.project_turn_event(&event))
                         .unwrap_or_default();
                     let _ = projected_tx.send(notifications);
                 },
@@ -324,10 +325,10 @@ fn spawn_turn(
         let _ = projected_task.await;
 
         if let Ok(output) = &result {
-            let notifications = processor
+            let notifications = projector
                 .lock()
                 .ok()
-                .map(|mut processor| processor.finish_turn(output.state.clone()))
+                .map(|mut projector| projector.finish_turn(output.state.clone()))
                 .unwrap_or_default();
             for notification in notifications {
                 send_notification(&finish_events, &state_for_finish, notification).await;

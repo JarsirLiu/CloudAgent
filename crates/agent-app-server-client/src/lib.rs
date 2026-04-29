@@ -1,7 +1,8 @@
 mod in_process;
 mod stdio;
 
-use agent_protocol::{AppServerMessage, AppServerNotification, TurnItemDeltaKind};
+use agent_core::{classify_notification, EventDelivery};
+use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 use tokio::sync::mpsc;
 
@@ -65,21 +66,14 @@ pub(crate) fn event_requires_delivery(event: &AppServerEvent) -> bool {
 fn app_server_message_requires_delivery(message: &AppServerMessage) -> bool {
     match message {
         AppServerMessage::Request(_) => true,
-        AppServerMessage::Notification(notification) => matches!(
-            notification,
-            AppServerNotification::ItemStarted { .. }
-                | AppServerNotification::ServerRequestRequested { .. }
-                | AppServerNotification::ServerRequestResolved { .. }
-                | AppServerNotification::ItemCompleted { .. }
-                | AppServerNotification::TurnCompleted { .. }
-                | AppServerNotification::TurnFailed { .. }
-                | AppServerNotification::TurnCancelled { .. }
-        ) || matches!(
-            notification,
-            AppServerNotification::ItemDelta { kind: TurnItemDeltaKind::Text, .. }
-                | AppServerNotification::ItemDelta { kind: TurnItemDeltaKind::ReasoningSummary, .. }
-                | AppServerNotification::ItemDelta { kind: TurnItemDeltaKind::ReasoningText, .. }
-        ),
+        AppServerMessage::Notification(notification) => {
+            matches!(classify_notification(notification), (_, EventDelivery::Lossless))
+                || matches!(
+                    notification,
+                    AppServerNotification::TurnFailed { .. }
+                        | AppServerNotification::TurnCancelled { .. }
+                )
+        }
     }
 }
 

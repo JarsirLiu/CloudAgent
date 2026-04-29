@@ -11,7 +11,3 @@ pub struct AgentTurnOutput {
     pub total_messages: usize,
     pub state: TurnState,
 }
-
-pub fn module_name() -> &'static str {
-    "agent-core::runtime"
-}

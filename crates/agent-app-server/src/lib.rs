@@ -1,7 +1,7 @@
 mod command_router;
 mod conversation_subscriptions;
-mod conversation_processor;
 mod in_process;
+mod projection;
 mod server_request_coordinator;
 pub mod transport;
 

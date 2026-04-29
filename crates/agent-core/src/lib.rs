@@ -1,27 +1,29 @@
 pub mod conversation;
 pub mod context;
 pub mod core;
-pub mod history;
+pub mod events;
 pub mod memory;
 pub mod plan;
 pub mod policy;
-pub mod runtime;
-pub mod task;
 pub mod tool;
+pub mod projection;
+pub mod turn;
 
 pub use agent_protocol::{
     ConversationSnapshot, ConversationStatus, ServerRequest, ServerRequestDecision, TurnEvent,
     TurnId, TurnState, UserTurnInput,
 };
 pub use conversation::{
-    ActiveConversationTurn, ConversationState, PendingConversationRequest, PersistedConversation,
+    ActiveConversationTurn, ConversationHistory, ConversationMessage, ConversationState,
+    PendingConversationRequest, PersistedConversation,
 };
-pub use context::{AgentContext, ToolExecutionContext};
+pub use context::{AgentContext, ContextManager, ModelContext, ToolExecutionContext};
 pub use core::{ChatModel, ModelRequest, ModelResponse};
-pub use history::{ConversationHistory, ConversationMessage};
+pub use events::{classify_notification, classify_turn_event, EventDelivery, EventStream};
 pub use policy::ExecutionPolicy;
-pub use runtime::AgentTurnOutput;
+pub use projection::history_entry_from_message;
 pub use tool::{ToolCall, ToolEvent, ToolExecutor, ToolResult, ToolSpec};
+pub use turn::{AgentTurnOutput, TurnLifecycleClass, TurnLifecyclePhase};
 
 pub fn crate_name() -> &'static str {
     "agent-core"

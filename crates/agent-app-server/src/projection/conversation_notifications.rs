@@ -1,12 +1,11 @@
-use agent_protocol::{AppServerNotification, FrontendMode, HistoryEntry, TurnEvent, TurnItemDeltaKind, TurnState};
-use agent_runtime::ConversationMessage;
+use agent_protocol::{AppServerNotification, FrontendMode, TurnEvent, TurnItemDeltaKind, TurnState};
 
-pub(crate) struct ConversationProcessor {
+pub(crate) struct ConversationNotificationProjector {
     conversation_id: String,
     deferred_terminal_notifications: Vec<AppServerNotification>,
 }
 
-impl ConversationProcessor {
+impl ConversationNotificationProjector {
     pub(crate) fn new(conversation_id: impl Into<String>) -> Self {
         Self {
             conversation_id: conversation_id.into(),
@@ -14,10 +13,7 @@ impl ConversationProcessor {
         }
     }
 
-    pub(crate) fn process_turn_event(
-        &mut self,
-        event: &TurnEvent,
-    ) -> Vec<AppServerNotification> {
+    pub(crate) fn project_turn_event(&mut self, event: &TurnEvent) -> Vec<AppServerNotification> {
         match event {
             TurnEvent::TurnStarted { turn_id, .. } => vec![AppServerNotification::TurnStarted {
                 conversation_id: self.conversation_id.clone(),
@@ -114,51 +110,22 @@ impl ConversationProcessor {
     }
 }
 
-pub(crate) fn history_entry_from_message(message: &ConversationMessage) -> HistoryEntry {
-    match message {
-        ConversationMessage::System { content } => HistoryEntry::System {
-            content: content.clone(),
-        },
-        ConversationMessage::User { content } => HistoryEntry::User {
-            content: content.clone(),
-        },
-        ConversationMessage::Assistant {
-            content,
-            tool_calls,
-        } => HistoryEntry::Assistant {
-            content: content.clone(),
-            has_tool_calls: !tool_calls.is_empty(),
-        },
-        ConversationMessage::Tool {
-            tool_call_id,
-            name,
-            content,
-            structured,
-        } => HistoryEntry::Tool {
-            tool_call_id: tool_call_id.clone(),
-            name: name.clone(),
-            content: content.clone(),
-            structured: structured.clone(),
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::ConversationProcessor;
+    use super::ConversationNotificationProjector;
     use agent_protocol::{AppServerNotification, FrontendMode, TurnEvent, TurnState};
 
     #[test]
     fn terminal_notifications_are_deferred_until_finish() {
-        let mut processor = ConversationProcessor::new("default");
+        let mut projector = ConversationNotificationProjector::new("default");
 
-        let immediate = processor.process_turn_event(&TurnEvent::TurnCompleted {
+        let immediate = projector.project_turn_event(&TurnEvent::TurnCompleted {
             turn_id: "turn-1".to_string(),
             final_response: "done".to_string(),
         });
         assert!(immediate.is_empty());
 
-        let flushed = processor.finish_turn(TurnState::Completed);
+        let flushed = projector.finish_turn(TurnState::Completed);
         assert_eq!(flushed.len(), 2);
         assert!(matches!(
             &flushed[0],

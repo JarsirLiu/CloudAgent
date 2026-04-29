@@ -12,6 +12,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agent-app-server"
 version = "0.1.0"
 dependencies = [
+ "agent-core",
  "agent-protocol",
  "agent-runtime",
  "anyhow",
@@ -25,6 +26,7 @@ name = "agent-app-server-client"
 version = "0.1.0"
 dependencies = [
  "agent-app-server",
+ "agent-core",
  "agent-protocol",
  "agent-runtime",
  "anyhow",
