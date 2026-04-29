@@ -593,7 +593,12 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "session/unsubscribe" => Ok(AppClientCommand::UnsubscribeSession {
             session_id: value_field(params, "session_id")?,
         }),
-        "serverRequest/resolve" => Ok(serde_json::from_value(params)?),
+        "serverRequest/resolve" => Ok(AppClientCommand::ResolveServerRequest {
+            session_id: value_field(params.clone(), "session_id")?,
+            request_id: value_field(params.clone(), "request_id")?,
+            approved: value_field(params.clone(), "approved")?,
+            reason: value_field(params, "reason")?,
+        }),
         "app/exit" => Ok(AppClientCommand::Exit),
         other => anyhow::bail!("unsupported request method: {other}"),
     }
@@ -788,9 +793,7 @@ fn parse_server_request(
             Ok(AppServerRequest::ServerRequest {
                 request_id,
                 session_id: serde_json::from_value(session_id)?,
-                request: ServerRequest::ToolApproval {
-                    request: serde_json::from_value(request)?,
-                },
+                request: serde_json::from_value(request)?,
             })
         }
         other => anyhow::bail!("unsupported server request method: {other}"),
@@ -838,6 +841,21 @@ mod tests {
         };
         assert_eq!(request.method, "serverRequest/toolApproval");
         assert_eq!(request.id, RequestId::Integer(7));
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Request(request)).expect("reparse");
+        match reparsed.message {
+            AppServerMessage::Request(AppServerRequest::ServerRequest {
+                request_id,
+                request: ServerRequest::ToolApproval { request },
+                ..
+            }) => {
+                assert_eq!(request_id, RequestId::Integer(7));
+                assert_eq!(request.tool_name, "shell_command");
+                assert_eq!(request.tool_call_id, "call-1");
+            }
+            other => panic!("unexpected request: {other:?}"),
+        }
     }
 
     #[test]
@@ -858,6 +876,38 @@ mod tests {
             AppClientCommand::SubmitTurn(input) => {
                 assert_eq!(input.session_id, "default");
                 assert_eq!(input.content, "hello");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_server_request_roundtrips_from_jsonrpc_request() {
+        let envelope = AppClientCommandEnvelope {
+            request_id: RequestId::Integer(9),
+            command: AppClientCommand::ResolveServerRequest {
+                session_id: "default".to_string(),
+                request_id: RequestId::Integer(7),
+                approved: true,
+                reason: Some("ok".to_string()),
+            },
+        };
+
+        let rpc = JsonRpcMessage::from(envelope.clone());
+        let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");
+
+        assert_eq!(parsed.request_id, RequestId::Integer(9));
+        match parsed.command {
+            AppClientCommand::ResolveServerRequest {
+                session_id,
+                request_id,
+                approved,
+                reason,
+            } => {
+                assert_eq!(session_id, "default");
+                assert_eq!(request_id, RequestId::Integer(7));
+                assert!(approved);
+                assert_eq!(reason.as_deref(), Some("ok"));
             }
             other => panic!("unexpected command: {other:?}"),
         }

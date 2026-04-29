@@ -65,6 +65,16 @@ pub fn start_in_process(
     tokio::spawn(async move {
         while let Some(message) = command_rx.recv().await {
             match message {
+                ServerMessage::Command(AppClientCommand::Exit) => {
+                    let tasks = {
+                        let mut guard = state.lock().await;
+                        guard.take_turn_tasks()
+                    };
+                    for task in tasks {
+                        let _ = task.await;
+                    }
+                    break;
+                }
                 ServerMessage::Command(command) => {
                     if handle_command(
                         runtime.clone(),

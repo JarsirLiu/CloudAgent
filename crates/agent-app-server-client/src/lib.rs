@@ -124,3 +124,148 @@ pub(crate) async fn forward_event(
         Err(mpsc::error::TrySendError::Closed(_)) => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_protocol::{
+        AppServerNotification, CommandExecutionStatus, RequestId, ServerRequest, ThreadItem,
+        ToolApprovalRequest, TurnItemDeltaKind, TurnItemKind,
+    };
+
+    fn info_event(message: &str) -> AppServerEvent {
+        AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::Info {
+            session_id: "default".to_string(),
+            message: message.to_string(),
+        }))
+    }
+
+    fn text_delta_event(delta: &str) -> AppServerEvent {
+        AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::ItemDelta {
+            session_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            kind: TurnItemDeltaKind::Text,
+            delta: delta.to_string(),
+        }))
+    }
+
+    fn item_started_event() -> AppServerEvent {
+        AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::ItemStarted {
+            session_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:1".to_string(),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("pwd".to_string()),
+        }))
+    }
+
+    fn item_completed_event() -> AppServerEvent {
+        AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::ItemCompleted {
+                session_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item: ThreadItem::CommandExecution {
+                    id: "tool:1".to_string(),
+                    tool_name: "shell_command".to_string(),
+                    command: "pwd".to_string(),
+                    current_directory: "D:\\work".to_string(),
+                    status: CommandExecutionStatus::Completed,
+                    exit_code: Some(0),
+                    stdout: Some("D:\\work".to_string()),
+                    stderr: Some(String::new()),
+                    summary: "current directory is D:\\work".to_string(),
+                },
+            },
+        ))
+    }
+
+    fn server_request_event() -> AppServerEvent {
+        AppServerEvent::Message(AppServerMessage::Request(
+            agent_protocol::AppServerRequest::ServerRequest {
+                request_id: RequestId::Integer(1),
+                session_id: "default".to_string(),
+                request: ServerRequest::ToolApproval {
+                    request: ToolApprovalRequest {
+                        turn_id: "turn-1".to_string(),
+                        tool_call_id: "call-1".to_string(),
+                        tool_name: "shell_command".to_string(),
+                        reason: "need approval".to_string(),
+                        arguments_preview: "{\"command\":\"pwd\"}".to_string(),
+                    },
+                },
+            },
+        ))
+    }
+
+    #[tokio::test]
+    async fn non_critical_events_drop_when_queue_is_full() {
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.send(info_event("already queued")).await.expect("seed queue");
+        let mut skipped = 0usize;
+
+        assert!(forward_event(&tx, &mut skipped, info_event("drop me")).await);
+        assert_eq!(skipped, 1);
+
+        let first = rx.recv().await.expect("seed event");
+        match first {
+            AppServerEvent::Message(AppServerMessage::Notification(
+                AppServerNotification::Info { message, .. },
+            )) => assert_eq!(message, "already queued"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn lossless_events_flush_lag_marker_before_delivery() {
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.send(info_event("already queued")).await.expect("seed queue");
+        let mut skipped = 0usize;
+
+        assert!(forward_event(&tx, &mut skipped, info_event("drop me")).await);
+        assert_eq!(skipped, 1);
+
+        let sender = tokio::spawn(async move {
+            let mut skipped = skipped;
+            let delivered = forward_event(&tx, &mut skipped, item_completed_event()).await;
+            (delivered, skipped)
+        });
+
+        let first = rx.recv().await.expect("first event");
+        let second = rx.recv().await.expect("second event");
+        let third = rx.recv().await.expect("third event");
+        let (delivered, skipped) = sender.await.expect("sender task");
+        assert!(delivered);
+        assert_eq!(skipped, 0);
+
+        match first {
+            AppServerEvent::Message(AppServerMessage::Notification(
+                AppServerNotification::Info { message, .. },
+            )) => assert_eq!(message, "already queued"),
+            other => panic!("unexpected first event: {other:?}"),
+        }
+        match second {
+            AppServerEvent::Lagged { skipped } => assert_eq!(skipped, 1),
+            other => panic!("unexpected second event: {other:?}"),
+        }
+        match third {
+            AppServerEvent::Message(AppServerMessage::Notification(
+                AppServerNotification::ItemCompleted { .. },
+            )) => {}
+            other => panic!("unexpected third event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn request_and_transcript_events_are_classified_lossless() {
+        assert!(event_requires_delivery(&item_started_event()));
+        assert!(event_requires_delivery(&item_completed_event()));
+        assert!(event_requires_delivery(&text_delta_event("hello")));
+        assert!(event_requires_delivery(&server_request_event()));
+        assert!(!event_requires_delivery(&info_event("cosmetic")));
+        assert!(!event_requires_delivery(&AppServerEvent::Lagged { skipped: 1 }));
+        assert!(!event_requires_delivery(&AppServerEvent::Disconnected {
+            message: "bye".to_string()
+        }));
+    }
+}

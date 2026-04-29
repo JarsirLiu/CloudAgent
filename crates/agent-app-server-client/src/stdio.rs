@@ -8,10 +8,11 @@ use std::ffi::OsString;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
+use tokio::time::{Duration, timeout};
 
 #[derive(Clone, Debug)]
 pub struct StdioClientConfig {
@@ -73,12 +74,26 @@ impl StdioAppServerClient {
     }
 
     pub async fn shutdown(self) -> Result<()> {
-        let mut child = self.child.lock().await;
-        if child.try_wait()?.is_none() {
+        let StdioAppServerClient {
+            command_tx,
+            event_rx: _,
+            child,
+            reader_task,
+        } = self;
+
+        let _ = command_tx.send(AppClientCommand::Exit);
+        drop(command_tx);
+
+        let mut child = child.lock().await;
+        if child.try_wait()?.is_none()
+            && timeout(Duration::from_secs(5), child.wait())
+                .await
+                .is_err()
+        {
             child.kill().await.ok();
         }
         drop(child);
-        self.reader_task.await??;
+        reader_task.await??;
         Ok(())
     }
 }
@@ -88,15 +103,26 @@ async fn write_commands(
     mut command_rx: mpsc::UnboundedReceiver<AppClientCommand>,
     request_counter: Arc<AtomicI64>,
 ) -> Result<()> {
+    write_commands_to(&mut stdin, &mut command_rx, request_counter).await
+}
+
+async fn write_commands_to<W>(
+    writer: &mut W,
+    command_rx: &mut mpsc::UnboundedReceiver<AppClientCommand>,
+    request_counter: Arc<AtomicI64>,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
     while let Some(command) = command_rx.recv().await {
         let envelope = AppClientCommandEnvelope {
             request_id: RequestId::Integer(request_counter.fetch_add(1, Ordering::Relaxed)),
             command,
         };
         let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
-        stdin.write_all(payload.as_bytes()).await?;
-        stdin.write_all(b"\n").await?;
-        stdin.flush().await?;
+        writer.write_all(payload.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
+        writer.flush().await?;
     }
     Ok(())
 }
@@ -105,7 +131,13 @@ async fn read_events(
     stdout: tokio::process::ChildStdout,
     event_tx: mpsc::Sender<AppServerEvent>,
 ) -> Result<()> {
-    let reader = BufReader::new(stdout);
+    read_events_from(BufReader::new(stdout), event_tx).await
+}
+
+async fn read_events_from<R>(reader: R, event_tx: mpsc::Sender<AppServerEvent>) -> Result<()>
+where
+    R: AsyncBufRead + Unpin,
+{
     let mut lines = reader.lines();
     let mut skipped_events = 0usize;
 
@@ -134,4 +166,119 @@ async fn read_events(
     )
     .await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_protocol::{
+        AppClientCommand, AppServerMessage, AppServerNotification, JsonRpcMessage, ServerRequest,
+        ToolApprovalRequest, UserTurnInput,
+    };
+    use tokio::io::duplex;
+
+    #[tokio::test]
+    async fn write_commands_serializes_jsonrpc_lines() {
+        let (mut write_side, read_side) = duplex(4096);
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let counter = Arc::new(AtomicI64::new(7));
+
+        command_tx
+            .send(AppClientCommand::SubmitTurn(UserTurnInput {
+                session_id: "default".to_string(),
+                content: "hello".to_string(),
+            }))
+            .expect("queue command");
+        drop(command_tx);
+
+        write_commands_to(&mut write_side, &mut command_rx, counter)
+            .await
+            .expect("write commands");
+        drop(write_side);
+
+        let mut reader = BufReader::new(read_side);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("read line");
+
+        let rpc: JsonRpcMessage = serde_json::from_str(line.trim()).expect("jsonrpc");
+        let envelope = AppClientCommandEnvelope::try_from(rpc).expect("command envelope");
+        assert_eq!(envelope.request_id, RequestId::Integer(7));
+        match envelope.command {
+            AppClientCommand::SubmitTurn(input) => {
+                assert_eq!(input.session_id, "default");
+                assert_eq!(input.content, "hello");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_events_parses_notifications_and_requests() {
+        let notification = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::Info {
+                session_id: "default".to_string(),
+                message: "hello".to_string(),
+            }),
+        };
+        let request = AppServerMessageEnvelope {
+            message: AppServerMessage::Request(agent_protocol::AppServerRequest::ServerRequest {
+                request_id: RequestId::Integer(11),
+                session_id: "default".to_string(),
+                request: ServerRequest::ToolApproval {
+                    request: ToolApprovalRequest {
+                        turn_id: "turn-1".to_string(),
+                        tool_call_id: "call-1".to_string(),
+                        tool_name: "shell_command".to_string(),
+                        reason: "need approval".to_string(),
+                        arguments_preview: "{\"command\":\"pwd\"}".to_string(),
+                    },
+                },
+            }),
+        };
+        let payload = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&JsonRpcMessage::from(notification)).expect("notification"),
+            serde_json::to_string(&JsonRpcMessage::from(request)).expect("request"),
+        );
+
+        let (mut write_side, read_side) = duplex(4096);
+        let writer = tokio::spawn(async move {
+            write_side
+                .write_all(payload.as_bytes())
+                .await
+                .expect("write payload");
+        });
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+
+        read_events_from(BufReader::new(read_side), event_tx)
+            .await
+            .expect("read events");
+        writer.await.expect("writer task");
+
+        match event_rx.recv().await.expect("notification event") {
+            AppServerEvent::Message(AppServerMessage::Notification(
+                AppServerNotification::Info { message, .. },
+            )) => assert_eq!(message, "hello"),
+            other => panic!("unexpected first event: {other:?}"),
+        }
+        match event_rx.recv().await.expect("request event") {
+            AppServerEvent::Message(AppServerMessage::Request(
+                agent_protocol::AppServerRequest::ServerRequest {
+                    request_id,
+                    request: ServerRequest::ToolApproval { request },
+                    ..
+                },
+            )) => {
+                assert_eq!(request_id, RequestId::Integer(11));
+                assert_eq!(request.tool_name, "shell_command");
+            }
+            other => panic!("unexpected second event: {other:?}"),
+        }
+        match event_rx.recv().await.expect("disconnect event") {
+            AppServerEvent::Disconnected { message } => {
+                assert_eq!(message, "stdio app server closed");
+            }
+            other => panic!("unexpected third event: {other:?}"),
+        }
+    }
 }

@@ -37,6 +37,16 @@ impl ServerState {
     }
 }
 
+async fn await_tracked_turn_tasks(state: &Arc<Mutex<ServerState>>) {
+    let tasks = {
+        let mut guard = state.lock().await;
+        guard.take_turn_tasks()
+    };
+    for task in tasks {
+        let _ = task.await;
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct SpawnTurnContext {
     pub(crate) event_tx: mpsc::UnboundedSender<AppServerMessage>,
@@ -55,6 +65,7 @@ pub(crate) async fn handle_command(
 ) -> Result<()> {
     match command {
         AppClientCommand::SubmitTurn(input) => {
+            await_tracked_turn_tasks(&state).await;
             send_notification(
                 event_tx,
                 &state,

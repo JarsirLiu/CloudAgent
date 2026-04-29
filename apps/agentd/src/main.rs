@@ -1,7 +1,7 @@
 use agent_app_server::run_stdio_server;
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
-use cli::{ConsoleBanner, ConsoleConfig, ConsoleConnection, run_console};
+use cli::{ConsoleConfig, ConsoleConnection, run_console};
 use config::AgentConfig;
 use std::sync::Arc;
 
@@ -41,7 +41,6 @@ async fn run_console_mode(runtime: Arc<AgentRuntime>) -> Result<()> {
     let session_id = runtime.default_session_id().to_string();
     run_console(ConsoleConfig {
         session_id: session_id.clone(),
-        banner: ConsoleBanner::daemon(&session_id),
         auto_approve: true,
         auto_approve_reason: Some("auto-approved in local daemon console".to_string()),
         connection: ConsoleConnection::InProcess { runtime },

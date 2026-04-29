@@ -1080,6 +1080,220 @@ mod tests {
         assert_eq!(recorded_requests.len(), 1);
     }
 
+    #[tokio::test]
+    async fn consecutive_tool_turns_preserve_event_log_across_restart() {
+        let fixture = TempFixture::new();
+        let responses = vec![
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_one",
+                            "function": {
+                                "name": "shell_command",
+                                "arguments": "{\"command\":\"pwd\"}"
+                            }
+                        }]
+                    }
+                }]
+            })]),
+            sse_body(vec![
+                json!({
+                    "model": "fake-model",
+                    "choices": [{ "delta": { "content": "current directory is " } }]
+                }),
+                json!({
+                    "model": "fake-model",
+                    "choices": [{ "delta": { "content": fixture.workspace.display().to_string() } }]
+                }),
+            ]),
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_two",
+                            "function": {
+                                "name": "shell_command",
+                                "arguments": "{\"command\":\"pwd\"}"
+                            }
+                        }]
+                    }
+                }]
+            })]),
+            sse_body(vec![
+                json!({
+                    "model": "fake-model",
+                    "choices": [{ "delta": { "content": "again current directory is " } }]
+                }),
+                json!({
+                    "model": "fake-model",
+                    "choices": [{ "delta": { "content": fixture.workspace.display().to_string() } }]
+                }),
+            ]),
+        ];
+        let (base_url, server_thread) = spawn_fake_llm_server(responses);
+        let config = Arc::new(test_config(
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            base_url,
+        ));
+        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let mut client = AppServerClient::in_process(InProcessClientConfig {
+            runtime,
+            session_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        let mut app = TuiApp::new("default".to_string(), "in-process");
+
+        for content in ["第一轮看看目录", "第二轮再看一次目录"] {
+            client
+                .send_command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
+                    session_id: "default".to_string(),
+                    content: content.to_string(),
+                }))
+                .expect("submit turn");
+
+            let mut saw_server_request = false;
+            let mut saw_turn_completed = false;
+            let mut saw_idle = false;
+            while !saw_turn_completed || !saw_idle {
+                let event = timeout(Duration::from_secs(10), client.next_event())
+                    .await
+                    .expect("timed out waiting for client event")
+                    .expect("client event");
+                if let AppServerEvent::Message(AppServerMessage::Request(
+                    agent_protocol::AppServerRequest::ServerRequest { request_id, .. },
+                )) = &event
+                {
+                    saw_server_request = true;
+                    client
+                        .send_command(AppClientCommand::ResolveServerRequest {
+                            session_id: "default".to_string(),
+                            request_id: request_id.clone(),
+                            approved: true,
+                            reason: Some("ok".to_string()),
+                        })
+                        .expect("approve request");
+                }
+                if matches!(
+                    &event,
+                    AppServerEvent::Message(AppServerMessage::Notification(
+                        AppServerNotification::TurnCompleted { .. }
+                    ))
+                ) {
+                    saw_turn_completed = true;
+                }
+                if matches!(
+                    &event,
+                    AppServerEvent::Message(AppServerMessage::Notification(
+                        AppServerNotification::FrontendStateChanged {
+                            mode: agent_protocol::FrontendMode::Idle,
+                            ..
+                        }
+                    ))
+                ) {
+                    saw_idle = true;
+                }
+                app.handle_client_event(event);
+            }
+            assert!(saw_server_request, "expected server request for tool turn");
+        }
+
+        client
+            .send_command(AppClientCommand::RequestEventLog {
+                session_id: "default".to_string(),
+            })
+            .expect("request live event log");
+        let live_event_log = loop {
+            let event = timeout(Duration::from_secs(10), client.next_event())
+                .await
+                .expect("timed out waiting for event log")
+                .expect("client event");
+            match event {
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionEventLog { events, .. },
+                )) => break events,
+                other => app.handle_client_event(other),
+            }
+        };
+        client.shutdown().await.expect("shutdown client");
+
+        let runtime_after_restart =
+            Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
+        let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
+            runtime: runtime_after_restart,
+            session_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        restarted_client
+            .send_command(AppClientCommand::RequestEventLog {
+                session_id: "default".to_string(),
+            })
+            .expect("request event log after restart");
+        let restarted_event_log = loop {
+            let event = timeout(Duration::from_secs(10), restarted_client.next_event())
+                .await
+                .expect("timed out waiting after restart")
+                .expect("client event after restart");
+            match event {
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::SessionEventLog { events, .. },
+                )) => break events,
+                _ => {}
+            }
+        };
+        restarted_client
+            .shutdown()
+            .await
+            .expect("shutdown restarted client");
+
+        let live_types: Vec<&str> = live_event_log
+            .iter()
+            .map(|event| match event {
+                TurnEvent::TurnStarted { .. } => "turn_started",
+                TurnEvent::ModelRequestStarted { .. } => "model_request_started",
+                TurnEvent::ModelResponseReceived { .. } => "model_response_received",
+                TurnEvent::ItemStarted { .. } => "item_started",
+                TurnEvent::ItemDelta { .. } => "item_delta",
+                TurnEvent::ItemCompleted { .. } => "item_completed",
+                TurnEvent::ServerRequestRequested { .. } => "server_request_requested",
+                TurnEvent::ServerRequestResolved { .. } => "server_request_resolved",
+                TurnEvent::TurnCompleted { .. } => "turn_completed",
+                TurnEvent::TurnFailed { .. } => "turn_failed",
+                TurnEvent::TurnCancelled { .. } => "turn_cancelled",
+            })
+            .collect();
+        let restarted_types: Vec<&str> = restarted_event_log
+            .iter()
+            .map(|event| match event {
+                TurnEvent::TurnStarted { .. } => "turn_started",
+                TurnEvent::ModelRequestStarted { .. } => "model_request_started",
+                TurnEvent::ModelResponseReceived { .. } => "model_response_received",
+                TurnEvent::ItemStarted { .. } => "item_started",
+                TurnEvent::ItemDelta { .. } => "item_delta",
+                TurnEvent::ItemCompleted { .. } => "item_completed",
+                TurnEvent::ServerRequestRequested { .. } => "server_request_requested",
+                TurnEvent::ServerRequestResolved { .. } => "server_request_resolved",
+                TurnEvent::TurnCompleted { .. } => "turn_completed",
+                TurnEvent::TurnFailed { .. } => "turn_failed",
+                TurnEvent::TurnCancelled { .. } => "turn_cancelled",
+            })
+            .collect();
+        assert_eq!(restarted_types, live_types);
+
+        let recorded_requests = server_thread
+            .join()
+            .expect("fake llm server thread panicked")
+            .expect("fake llm server");
+        assert_eq!(recorded_requests.len(), 4);
+    }
+
     fn test_config(workspace_root: PathBuf, session_store_dir: PathBuf, base_url: String) -> AgentConfig {
         AgentConfig {
             workspace_root,
