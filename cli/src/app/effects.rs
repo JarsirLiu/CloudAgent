@@ -8,4 +8,3 @@ pub(crate) fn copy_text_to_clipboard(text: &str) -> Result<()> {
         .map_err(|err| anyhow::anyhow!("clipboard write failed: {err}"))?;
     Ok(())
 }
-

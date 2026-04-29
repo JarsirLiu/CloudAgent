@@ -12,7 +12,12 @@ pub fn divider_line(width: usize) -> Line<'static> {
     ))
 }
 
-pub fn status_line(mode: FrontendMode, status_text: &str, meta: &str, width: usize) -> Line<'static> {
+pub fn status_line(
+    mode: FrontendMode,
+    status_text: &str,
+    meta: &str,
+    width: usize,
+) -> Line<'static> {
     let (dot_color, mode_label, badge_bg) = match mode {
         FrontendMode::Idle => (Color::Rgb(80, 200, 120), "IDLE", Color::Rgb(18, 34, 24)),
         FrontendMode::Running => (Color::Rgb(100, 160, 255), "WORKING", Color::Rgb(18, 28, 45)),

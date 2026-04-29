@@ -1,13 +1,13 @@
 mod jsonrpc;
 
+pub use agent_core::{
+    CommandExecutionStatus, EventMsg, HistoryEntry, ServerRequest, ServerRequestDecision,
+    StructuredToolResult, ThreadItem, ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TurnId,
+    TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
+};
 pub use jsonrpc::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, RequestId,
-};
-pub use agent_core::{
-    CommandExecutionStatus, HistoryEntry, ServerRequest, ServerRequestDecision,
-    StructuredToolResult, ThreadItem, ToolApprovalRequest, ToolCall, ToolResult, ToolSpec,
-    TurnEvent, TurnId, TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
 };
 
 use serde::{Deserialize, Serialize};
@@ -76,7 +76,9 @@ impl AppClientCommand {
     pub fn conversation_id(&self) -> Option<&str> {
         match self {
             Self::SubmitTurn(input) => Some(&input.conversation_id),
-            Self::ResolveServerRequest { conversation_id, .. }
+            Self::ResolveServerRequest {
+                conversation_id, ..
+            }
             | Self::InterruptTurn { conversation_id }
             | Self::ResetConversation { conversation_id }
             | Self::RequestConversationStatus { conversation_id }
@@ -192,25 +194,63 @@ pub enum AppServerNotification {
 impl AppServerNotification {
     pub fn conversation_id(&self) -> &str {
         match self {
-            Self::FrontendStateChanged { conversation_id, .. }
-            | Self::TurnStarted { conversation_id, .. }
-            | Self::ItemStarted { conversation_id, .. }
-            | Self::AgentMessageDelta { conversation_id, .. }
-            | Self::PlanDelta { conversation_id, .. }
-            | Self::ReasoningSummaryTextDelta { conversation_id, .. }
-            | Self::ReasoningTextDelta { conversation_id, .. }
-            | Self::CommandExecutionOutputDelta { conversation_id, .. }
-            | Self::ItemCompleted { conversation_id, .. }
-            | Self::ServerRequestRequested { conversation_id, .. }
-            | Self::ServerRequestResolved { conversation_id, .. }
-            | Self::TurnCompleted { conversation_id, .. }
-            | Self::TurnFailed { conversation_id, .. }
-            | Self::TurnCancelled { conversation_id, .. }
-            | Self::ConversationStatus { conversation_id, .. }
-            | Self::ConversationHistory { conversation_id, .. }
-            | Self::ConversationSubscriptionChanged { conversation_id, .. }
-            | Self::Info { conversation_id, .. }
-            | Self::Error { conversation_id, .. } => conversation_id,
+            Self::FrontendStateChanged {
+                conversation_id, ..
+            }
+            | Self::TurnStarted {
+                conversation_id, ..
+            }
+            | Self::ItemStarted {
+                conversation_id, ..
+            }
+            | Self::AgentMessageDelta {
+                conversation_id, ..
+            }
+            | Self::PlanDelta {
+                conversation_id, ..
+            }
+            | Self::ReasoningSummaryTextDelta {
+                conversation_id, ..
+            }
+            | Self::ReasoningTextDelta {
+                conversation_id, ..
+            }
+            | Self::CommandExecutionOutputDelta {
+                conversation_id, ..
+            }
+            | Self::ItemCompleted {
+                conversation_id, ..
+            }
+            | Self::ServerRequestRequested {
+                conversation_id, ..
+            }
+            | Self::ServerRequestResolved {
+                conversation_id, ..
+            }
+            | Self::TurnCompleted {
+                conversation_id, ..
+            }
+            | Self::TurnFailed {
+                conversation_id, ..
+            }
+            | Self::TurnCancelled {
+                conversation_id, ..
+            }
+            | Self::ConversationStatus {
+                conversation_id, ..
+            }
+            | Self::ConversationHistory {
+                conversation_id, ..
+            }
+            | Self::ConversationSubscriptionChanged {
+                conversation_id, ..
+            }
+            | Self::Info {
+                conversation_id, ..
+            }
+            | Self::Error {
+                conversation_id, ..
+            } => conversation_id,
         }
     }
 }
@@ -234,7 +274,9 @@ impl AppServerRequest {
 
     pub fn conversation_id(&self) -> &str {
         match self {
-            Self::ServerRequest { conversation_id, .. } => conversation_id,
+            Self::ServerRequest {
+                conversation_id, ..
+            } => conversation_id,
         }
     }
 }
@@ -268,9 +310,10 @@ pub fn classify_notification(
         | AppServerNotification::ReasoningSummaryTextDelta { .. }
         | AppServerNotification::ReasoningTextDelta { .. }
         | AppServerNotification::ItemCompleted { .. }
-        | AppServerNotification::TurnCompleted { .. } => {
-            (NotificationStream::CoreTranscript, NotificationDelivery::Lossless)
-        }
+        | AppServerNotification::TurnCompleted { .. } => (
+            NotificationStream::CoreTranscript,
+            NotificationDelivery::Lossless,
+        ),
         AppServerNotification::TurnStarted { .. }
         | AppServerNotification::ItemStarted { .. }
         | AppServerNotification::ServerRequestRequested { .. }
@@ -283,12 +326,14 @@ pub fn classify_notification(
         | AppServerNotification::FrontendStateChanged { .. } => {
             (NotificationStream::Control, NotificationDelivery::Lossless)
         }
-        AppServerNotification::CommandExecutionOutputDelta { .. } => {
-            (NotificationStream::Control, NotificationDelivery::BestEffort)
-        }
-        AppServerNotification::Info { .. } | AppServerNotification::Error { .. } => {
-            (NotificationStream::Diagnostic, NotificationDelivery::BestEffort)
-        }
+        AppServerNotification::CommandExecutionOutputDelta { .. } => (
+            NotificationStream::Control,
+            NotificationDelivery::BestEffort,
+        ),
+        AppServerNotification::Info { .. } | AppServerNotification::Error { .. } => (
+            NotificationStream::Diagnostic,
+            NotificationDelivery::BestEffort,
+        ),
     }
 }
 
@@ -711,7 +756,10 @@ mod tests {
 
         assert_eq!(
             classify_notification(&notification),
-            (NotificationStream::Control, NotificationDelivery::BestEffort)
+            (
+                NotificationStream::Control,
+                NotificationDelivery::BestEffort
+            )
         );
     }
 

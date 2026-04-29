@@ -98,10 +98,7 @@ where
     tools.insert(tool.spec().name.clone(), Arc::new(tool));
 }
 
-fn structured_failure_result(
-    tool_name: &str,
-    arguments: &Value,
-) -> Option<StructuredToolResult> {
+fn structured_failure_result(tool_name: &str, arguments: &Value) -> Option<StructuredToolResult> {
     match tool_name {
         "shell_command" => {
             let command = arguments
@@ -237,8 +234,12 @@ impl LocalTool for ShellCommandTool {
             }
         };
 
-        let stdout = String::from_utf8_lossy(&stdout_task.await??).trim().to_string();
-        let stderr = String::from_utf8_lossy(&stderr_task.await??).trim().to_string();
+        let stdout = String::from_utf8_lossy(&stdout_task.await??)
+            .trim()
+            .to_string();
+        let stderr = String::from_utf8_lossy(&stderr_task.await??)
+            .trim()
+            .to_string();
 
         let exit_code = status.code().unwrap_or(-1);
         let current_directory = workdir.display().to_string();

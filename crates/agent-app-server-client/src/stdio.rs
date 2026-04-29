@@ -1,7 +1,6 @@
 use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, forward_event};
 use agent_protocol::{
-    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcMessage,
-    RequestId,
+    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcMessage, RequestId,
 };
 use anyhow::{Context, Result, anyhow};
 use std::ffi::OsString;
@@ -86,9 +85,7 @@ impl StdioAppServerClient {
 
         let mut child = child.lock().await;
         if child.try_wait()?.is_none()
-            && timeout(Duration::from_secs(5), child.wait())
-                .await
-                .is_err()
+            && timeout(Duration::from_secs(5), child.wait()).await.is_err()
         {
             child.kill().await.ok();
         }

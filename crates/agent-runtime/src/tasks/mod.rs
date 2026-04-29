@@ -2,7 +2,7 @@ mod regular;
 
 use crate::AgentRuntime;
 use agent_core::ConversationHistory;
-use agent_protocol::{ServerRequest, ServerRequestDecision, TurnEvent};
+use agent_protocol::{EventMsg, ServerRequest, ServerRequestDecision};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +26,7 @@ pub(crate) struct TaskContext<'a, E> {
 
 pub(crate) trait RuntimeTask<E, F, Fut>
 where
-    E: FnMut(&TurnEvent) + Send,
+    E: FnMut(&EventMsg) + Send,
     F: Fn(ServerRequest) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
 {

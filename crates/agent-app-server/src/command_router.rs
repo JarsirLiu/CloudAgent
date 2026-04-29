@@ -118,7 +118,9 @@ pub(crate) async fn handle_command(
             .await;
         }
         AppClientCommand::RequestConversationHistory { conversation_id } => {
-            let snapshot = runtime.conversation_history_snapshot(&conversation_id).await?;
+            let snapshot = runtime
+                .conversation_history_snapshot(&conversation_id)
+                .await?;
             send_notification(
                 event_tx,
                 &state,
@@ -179,9 +181,13 @@ pub(crate) async fn handle_command(
             reason,
         } => {
             let mut state_guard = state.lock().await;
-            let resolved = state_guard
-                .server_requests
-                .resolve(&request_id, ServerRequestDecision { approved, reason: reason.clone() });
+            let resolved = state_guard.server_requests.resolve(
+                &request_id,
+                ServerRequestDecision {
+                    approved,
+                    reason: reason.clone(),
+                },
+            );
             drop(state_guard);
             if let Some((turn_id, request, decision)) = resolved {
                 runtime
@@ -235,8 +241,12 @@ fn spawn_turn(
         let projected_task = tokio::spawn(async move {
             while let Some(notifications) = projected_rx.recv().await {
                 for notification in notifications {
-                    send_notification(&runtime_events_for_projected, &state_for_projected, notification)
-                        .await;
+                    send_notification(
+                        &runtime_events_for_projected,
+                        &state_for_projected,
+                        notification,
+                    )
+                    .await;
                 }
             }
         });
@@ -249,7 +259,7 @@ fn spawn_turn(
                     let event = event.clone();
                     let active_turn_id = active_turn_id_for_events.clone();
                     let projected_tx = projected_tx_for_events.clone();
-                    if let agent_protocol::TurnEvent::TurnStarted { turn_id, .. } = &event
+                    if let agent_protocol::EventMsg::TurnStarted { turn_id, .. } = &event
                         && let Ok(mut active) = active_turn_id.lock()
                     {
                         *active = Some(turn_id.clone());
@@ -287,14 +297,12 @@ fn spawn_turn(
                         };
                         {
                             let mut state_guard = state.lock().await;
-                            state_guard
-                                .server_requests
-                                .insert_pending(
-                                    request_id.clone(),
-                                    turn_id,
-                                    request.clone(),
-                                    reply_tx,
-                                );
+                            state_guard.server_requests.insert_pending(
+                                request_id.clone(),
+                                turn_id,
+                                request.clone(),
+                                reply_tx,
+                            );
                         }
                         runtime
                             .register_pending_request(
@@ -306,10 +314,10 @@ fn spawn_turn(
                         send_request(
                             &event_tx,
                             &state,
-                        AppServerRequest::ServerRequest {
-                            request_id,
-                            conversation_id,
-                            request,
+                            AppServerRequest::ServerRequest {
+                                request_id,
+                                conversation_id,
+                                request,
                             },
                         )
                         .await;
@@ -379,7 +387,9 @@ async fn send_notification(
 ) {
     let subscribed = {
         let state = state.lock().await;
-        state.subscriptions.is_subscribed(notification.conversation_id())
+        state
+            .subscriptions
+            .is_subscribed(notification.conversation_id())
     };
     if subscribed {
         let _ = event_tx.send(AppServerMessage::Notification(notification));
@@ -399,4 +409,3 @@ async fn send_request(
         let _ = event_tx.send(AppServerMessage::Request(request));
     }
 }
-

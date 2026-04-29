@@ -144,13 +144,9 @@ impl HistoryCell {
         match self.tone {
             HistoryTone::User => self.render_user(width),
             HistoryTone::Agent => self.render_agent(width),
-            HistoryTone::Reasoning => {
-                self.render_tool_like(width, Color::Rgb(170, 140, 255), "≈")
-            }
+            HistoryTone::Reasoning => self.render_tool_like(width, Color::Rgb(170, 140, 255), "≈"),
             HistoryTone::Tool => self.render_tool_like(width, Color::Rgb(80, 200, 120), "◆"),
-            HistoryTone::Control => {
-                self.render_tool_like(width, Color::Rgb(120, 170, 255), "▣")
-            }
+            HistoryTone::Control => self.render_tool_like(width, Color::Rgb(120, 170, 255), "▣"),
             HistoryTone::Warning => self.render_tool_like(width, Color::Rgb(255, 180, 50), "◆"),
             HistoryTone::Error => self.render_tool_like(width, Color::Rgb(255, 80, 80), "◆"),
             HistoryTone::Meta => self.render_meta(width),
@@ -224,7 +220,12 @@ impl HistoryCell {
                 "… +{} lines",
                 wrapped.len().saturating_sub(head + tail)
             ));
-            output_lines.extend(wrapped.iter().skip(wrapped.len().saturating_sub(tail)).cloned());
+            output_lines.extend(
+                wrapped
+                    .iter()
+                    .skip(wrapped.len().saturating_sub(tail))
+                    .cloned(),
+            );
         }
         for line in output_lines {
             if !line.is_empty() {
@@ -249,7 +250,6 @@ impl HistoryCell {
         }
         lines
     }
-
 }
 
 // ── Transcript ────────────────────────────────────────────────────────────────
@@ -304,7 +304,11 @@ impl Transcript {
         }
         let end = total.saturating_sub(scroll);
         let start = end.saturating_sub(height);
-        all_lines.into_iter().skip(start).take(end - start).collect()
+        all_lines
+            .into_iter()
+            .skip(start)
+            .take(end - start)
+            .collect()
     }
 
     pub fn total_lines(&self, width: usize) -> usize {
@@ -322,7 +326,6 @@ impl Transcript {
         }
         total
     }
-
 }
 
 // ── Event Helpers ─────────────────────────────────────────────────────────────
@@ -345,13 +348,11 @@ pub fn render_history_entry(message: &HistoryEntry) -> HistoryCell {
             content,
             structured,
             ..
-        } => {
-            HistoryCell::from_message(
-                name.clone(),
-                summarize_tool_content(name, content, structured.as_ref()),
-                HistoryTone::Control,
-            )
-        }
+        } => HistoryCell::from_message(
+            name.clone(),
+            summarize_tool_content(name, content, structured.as_ref()),
+            HistoryTone::Control,
+        ),
     }
 }
 

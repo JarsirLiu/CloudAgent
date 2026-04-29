@@ -1,8 +1,8 @@
-pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
-use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::chat_composer::{ChatComposer, ComposerAction};
 use crate::ui::widgets::footer::{divider_line, hint_line, status_line};
+pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
+use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use agent_protocol::FrontendMode;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
@@ -61,7 +61,12 @@ impl InputPane {
     ) -> (Paragraph<'static>, u16, u16) {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(divider_line(area_width as usize));
-        lines.push(status_line(mode, status_text, status_meta, area_width as usize));
+        lines.push(status_line(
+            mode,
+            status_text,
+            status_meta,
+            area_width as usize,
+        ));
         lines.push(Line::raw(""));
 
         let mut lines_before_composer = 3u16;
@@ -83,8 +88,7 @@ impl InputPane {
 
         let total_lines = lines.len() as u16;
         (
-            Paragraph::new(Text::from(lines))
-                .block(Block::default().borders(Borders::NONE)),
+            Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::NONE)),
             lines_before_composer,
             total_lines,
         )

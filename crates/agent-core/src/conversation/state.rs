@@ -1,6 +1,7 @@
+use crate::context::ContextManager;
 use crate::conversation::ConversationHistory;
 use crate::protocol::RequestId;
-use crate::turn::{ServerRequest, TurnEvent, TurnState};
+use crate::turn::{EventMsg, ServerRequest, TurnState};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -26,16 +27,16 @@ pub struct PendingConversationRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationState {
-    pub history: ConversationHistory,
+    pub context: ContextManager,
     pub active_turn: Option<ActiveConversationTurn>,
-    pub event_log: Vec<TurnEvent>,
+    pub event_log: Vec<EventMsg>,
     pub pending_requests: Vec<PendingConversationRequest>,
 }
 
 impl ConversationState {
     pub fn new(history: ConversationHistory) -> Self {
         Self {
-            history,
+            context: ContextManager::from_history(history),
             active_turn: None,
             event_log: Vec::new(),
             pending_requests: Vec::new(),
@@ -58,7 +59,7 @@ impl ConversationState {
         }
     }
 
-    pub fn append_event(&mut self, event: TurnEvent) {
+    pub fn append_event(&mut self, event: EventMsg) {
         self.event_log.push(event);
     }
 
@@ -75,11 +76,19 @@ impl ConversationState {
     }
 
     pub fn history(&self) -> &ConversationHistory {
-        &self.history
+        self.context.history()
     }
 
     pub fn history_mut(&mut self) -> &mut ConversationHistory {
-        &mut self.history
+        self.context.history_mut()
+    }
+
+    pub fn context(&self) -> &ContextManager {
+        &self.context
+    }
+
+    pub fn context_mut(&mut self) -> &mut ContextManager {
+        &mut self.context
     }
 
     pub fn pending_requests(&self) -> &[PendingConversationRequest] {
@@ -88,7 +97,7 @@ impl ConversationState {
 
     pub fn persisted_record(&self) -> PersistedConversation {
         PersistedConversation {
-            history: self.history.clone(),
+            context: self.context.clone(),
             pending_requests: self.pending_requests.clone(),
         }
     }
@@ -96,7 +105,7 @@ impl ConversationState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PersistedConversation {
-    pub history: ConversationHistory,
+    pub context: ContextManager,
     #[serde(default)]
     pub pending_requests: Vec<PendingConversationRequest>,
 }
@@ -104,7 +113,7 @@ pub struct PersistedConversation {
 impl PersistedConversation {
     pub fn into_state(self) -> ConversationState {
         ConversationState {
-            history: self.history,
+            context: self.context,
             active_turn: None,
             event_log: Vec::new(),
             pending_requests: self.pending_requests,

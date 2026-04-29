@@ -9,5 +9,7 @@ use std::pin::Pin;
 pub trait AppServerPort {
     fn send_command(&self, command: AppClientCommand) -> Result<()>;
     fn next_event<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = Option<AppServerEvent>> + 'a>>;
-    fn shutdown(self) -> Pin<Box<dyn Future<Output = Result<()>>>> where Self: Sized;
+    fn shutdown(self) -> Pin<Box<dyn Future<Output = Result<()>>>>
+    where
+        Self: Sized;
 }

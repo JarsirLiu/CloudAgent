@@ -4,10 +4,10 @@ mod parse;
 
 use crate::app::actions::{execute_server_action, handle_tui_input};
 use crate::app::parse::{ParsedInput, parse_line};
-use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
 use crate::state::reducer::{TurnDispatch, apply_server_message};
-use crate::transport::client::create_client;
+use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
 use crate::terminal::{TerminalGuard, UiEvent, spawn_tui_event_loop};
+use crate::transport::client::create_client;
 use crate::ui::screen::render_app;
 use crate::ui::widgets::chat_composer::ComposerAction;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
@@ -106,8 +106,9 @@ impl TuiApp {
         match event {
             AppServerEvent::Message(message) => self.handle_server_message(&message),
             AppServerEvent::Lagged { skipped } => {
-                self.run_state.status_notice =
-                    Some(format!("UI skipped {skipped} non-critical events while catching up"));
+                self.run_state.status_notice = Some(format!(
+                    "UI skipped {skipped} non-critical events while catching up"
+                ));
             }
             AppServerEvent::Disconnected { message } => {
                 self.push_cell(HistoryCell::from_message(
@@ -157,7 +158,8 @@ impl TuiApp {
                     return None;
                 }
                 KeyCode::PageDown => {
-                    self.transcript_state.scroll = self.transcript_state.scroll.saturating_sub(page_step);
+                    self.transcript_state.scroll =
+                        self.transcript_state.scroll.saturating_sub(page_step);
                     return None;
                 }
                 KeyCode::Home => {
@@ -192,9 +194,11 @@ impl TuiApp {
         }
 
         match self.input_pane.handle_key(key)? {
-            InputPaneAction::Composer(ComposerAction::Submit(text)) => {
-                Some(parse_line(&text, &self.conversation_id, self.console_state.mode))
-            }
+            InputPaneAction::Composer(ComposerAction::Submit(text)) => Some(parse_line(
+                &text,
+                &self.conversation_id,
+                self.console_state.mode,
+            )),
             InputPaneAction::Composer(ComposerAction::Interrupt) => {
                 Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
                     conversation_id: self.conversation_id.clone(),
@@ -244,9 +248,10 @@ impl TuiApp {
     }
 
     fn total_transcript_lines(&self) -> usize {
-        self.transcript_state
-            .transcript
-            .total_lines_with_tail(self.transcript_state.viewport_width.max(20), self.transcript_state.active_cell.as_ref())
+        self.transcript_state.transcript.total_lines_with_tail(
+            self.transcript_state.viewport_width.max(20),
+            self.transcript_state.active_cell.as_ref(),
+        )
     }
 
     pub(crate) fn clamp_transcript_scroll(&mut self) {
@@ -270,7 +275,8 @@ impl TuiApp {
         if was_scrolling_history {
             let after_lines = self.total_transcript_lines();
             let appended_lines = after_lines.saturating_sub(before_lines);
-            self.transcript_state.scroll = self.transcript_state.scroll.saturating_add(appended_lines);
+            self.transcript_state.scroll =
+                self.transcript_state.scroll.saturating_add(appended_lines);
         } else {
             self.transcript_state.scroll = 0;
         }
@@ -278,7 +284,8 @@ impl TuiApp {
     }
 
     fn page_scroll_step(&self) -> usize {
-        self.transcript_state.viewport_height
+        self.transcript_state
+            .viewport_height
             .saturating_sub(2)
             .clamp(6, 18)
     }
@@ -335,8 +342,11 @@ impl TuiApp {
             .as_ref()
             .is_some_and(|cell| !cell.body.trim().is_empty());
         if has_text {
-            self.transcript_state.last_copyable_output =
-                self.transcript_state.active_cell.as_ref().map(|c| c.body.clone());
+            self.transcript_state.last_copyable_output = self
+                .transcript_state
+                .active_cell
+                .as_ref()
+                .map(|c| c.body.clone());
             self.run_state.last_message_count = self.run_state.last_message_count.saturating_add(1);
             self.flush_active_cell_to_transcript();
         } else {
@@ -465,13 +475,7 @@ impl TuiApp {
         title: &str,
         output: &str,
     ) {
-        self.handle_secondary_item_completed(
-            item_id,
-            kind,
-            title,
-            output,
-            HistoryTone::Control,
-        );
+        self.handle_secondary_item_completed(item_id, kind, title, output, HistoryTone::Control);
     }
 
     pub(crate) fn handle_control_item_delta(&mut self, item_id: &str, delta: &str) {
@@ -564,9 +568,9 @@ mod tests {
     use crate::state::reducer::{ServerAction, TurnDispatch};
     use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
     use agent_protocol::{
-        AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus, HistoryEntry,
-        HistoryEntry::Assistant, HistoryEntry::Tool, HistoryEntry::User, ConversationStatus,
-        StructuredToolResult, TurnItemKind,
+        AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus,
+        ConversationStatus, HistoryEntry, HistoryEntry::Assistant, HistoryEntry::Tool,
+        HistoryEntry::User, StructuredToolResult, TurnItemKind,
     };
     use agent_runtime::AgentRuntime;
     use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
@@ -605,8 +609,14 @@ mod tests {
 
         let cells = app.transcript_state.transcript.cells();
         assert_eq!(cells.len(), 1);
-        assert_eq!(cells[0].body, "current directory is D:\\learn\\gifti\\cloudagent");
-        assert_eq!(cells[0].tone, crate::ui::widgets::history_cell::HistoryTone::Control);
+        assert_eq!(
+            cells[0].body,
+            "current directory is D:\\learn\\gifti\\cloudagent"
+        );
+        assert_eq!(
+            cells[0].tone,
+            crate::ui::widgets::history_cell::HistoryTone::Control
+        );
     }
 
     #[test]
@@ -625,8 +635,14 @@ mod tests {
 
         let cells = app.transcript_state.transcript.cells();
         assert_eq!(cells.len(), 2);
-        assert_eq!(cells[0].tone, crate::ui::widgets::history_cell::HistoryTone::Reasoning);
-        assert_eq!(cells[1].tone, crate::ui::widgets::history_cell::HistoryTone::Control);
+        assert_eq!(
+            cells[0].tone,
+            crate::ui::widgets::history_cell::HistoryTone::Reasoning
+        );
+        assert_eq!(
+            cells[1].tone,
+            crate::ui::widgets::history_cell::HistoryTone::Control
+        );
     }
 
     #[test]
@@ -745,10 +761,12 @@ mod tests {
             "default",
             &mut app,
             &client,
-            ParsedInput::Command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: "可以看到当前在哪个目录下吗".to_string(),
-            })),
+            ParsedInput::Command(AppClientCommand::SubmitTurn(
+                agent_protocol::UserTurnInput {
+                    conversation_id: "default".to_string(),
+                    content: "可以看到当前在哪个目录下吗".to_string(),
+                },
+            )),
         )
         .expect("submit turn");
 
@@ -789,7 +807,11 @@ mod tests {
         assert!(saw_server_request, "expected a tool approval request");
 
         let live_cells = app.transcript_state.transcript.cells();
-        assert!(live_cells.iter().any(|cell| cell.body == "可以看到当前在哪个目录下吗"));
+        assert!(
+            live_cells
+                .iter()
+                .any(|cell| cell.body == "可以看到当前在哪个目录下吗")
+        );
         assert!(live_cells.iter().any(|cell| cell.body == "approved"));
         assert!(live_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
@@ -886,7 +908,11 @@ mod tests {
             .expect("shutdown restarted client");
 
         let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
-        assert!(rebuilt_cells.iter().any(|cell| cell.body == "可以看到当前在哪个目录下吗"));
+        assert!(
+            rebuilt_cells
+                .iter()
+                .any(|cell| cell.body == "可以看到当前在哪个目录下吗")
+        );
         assert!(rebuilt_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
                 && cell.body.starts_with("completed: pwd (exit 0) @ ")
@@ -945,10 +971,12 @@ mod tests {
             "default",
             &mut app,
             &client,
-            ParsedInput::Command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: "帮我看看当前目录".to_string(),
-            })),
+            ParsedInput::Command(AppClientCommand::SubmitTurn(
+                agent_protocol::UserTurnInput {
+                    conversation_id: "default".to_string(),
+                    content: "帮我看看当前目录".to_string(),
+                },
+            )),
         )
         .expect("submit turn");
 
@@ -959,7 +987,10 @@ mod tests {
                 .await
                 .expect("timed out waiting for client event")
                 .expect("client event");
-            if matches!(&event, AppServerEvent::Message(AppServerMessage::Request(_))) {
+            if matches!(
+                &event,
+                AppServerEvent::Message(AppServerMessage::Request(_))
+            ) {
                 saw_server_request = true;
                 client
                     .send_command(AppClientCommand::InterruptTurn {
@@ -977,7 +1008,10 @@ mod tests {
             }
             app.handle_client_event(event);
         }
-        assert!(saw_server_request, "expected pending server request before interrupt");
+        assert!(
+            saw_server_request,
+            "expected pending server request before interrupt"
+        );
 
         client
             .send_command(AppClientCommand::RequestConversationHistory {
@@ -1039,7 +1073,11 @@ mod tests {
             .expect("shutdown restarted client");
 
         let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
-        assert!(rebuilt_cells.iter().any(|cell| cell.body == "帮我看看当前目录"));
+        assert!(
+            rebuilt_cells
+                .iter()
+                .any(|cell| cell.body == "帮我看看当前目录")
+        );
         assert_eq!(
             rebuilt_cells
                 .iter()
@@ -1128,10 +1166,12 @@ mod tests {
 
         for content in ["第一轮看看目录", "第二轮再看一次目录"] {
             client
-                .send_command(AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
-                    conversation_id: "default".to_string(),
-                    content: content.to_string(),
-                }))
+                .send_command(AppClientCommand::SubmitTurn(
+                    agent_protocol::UserTurnInput {
+                        conversation_id: "default".to_string(),
+                        content: content.to_string(),
+                    },
+                ))
                 .expect("submit turn");
 
             let mut saw_server_request = false;
@@ -1325,10 +1365,7 @@ mod tests {
                 return Ok(String::new());
             }
             buffer.extend_from_slice(&scratch[..read]);
-            if let Some(position) = buffer
-                .windows(4)
-                .position(|window| window == b"\r\n\r\n")
-            {
+            if let Some(position) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
                 break position + 4;
             }
         };
@@ -1389,4 +1426,3 @@ mod tests {
         }
     }
 }
-

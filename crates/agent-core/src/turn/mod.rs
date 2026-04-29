@@ -3,7 +3,7 @@ mod lifecycle;
 mod output;
 
 pub use events::{
-    PendingTurnRequest, ServerRequest, ServerRequestDecision, ToolApprovalRequest, TurnEvent,
+    EventMsg, PendingTurnRequest, ServerRequest, ServerRequestDecision, ToolApprovalRequest,
     TurnId, TurnItemDeltaKind, TurnItemKind, TurnState,
 };
 pub use lifecycle::{TurnLifecycleClass, TurnLifecyclePhase};

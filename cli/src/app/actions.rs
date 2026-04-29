@@ -1,6 +1,6 @@
+use crate::app::TuiApp;
 use crate::app::effects::copy_text_to_clipboard;
 use crate::app::parse::ParsedInput;
-use crate::app::TuiApp;
 use crate::state::reducer::{ItemDispatch, ServerAction};
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerClient;
@@ -25,7 +25,8 @@ pub(crate) fn handle_tui_input(
             };
             match copy_text_to_clipboard(text) {
                 Ok(()) => {
-                    app.run_state.status_notice = Some("Copied latest assistant output".to_string());
+                    app.run_state.status_notice =
+                        Some("Copied latest assistant output".to_string());
                 }
                 Err(err) => {
                     app.push_cell(HistoryCell::from_message(
@@ -77,12 +78,14 @@ pub(crate) fn handle_tui_input(
                     content.clone(),
                     HistoryTone::User,
                 ));
-                app.run_state.last_message_count = app.run_state.last_message_count.saturating_add(1);
+                app.run_state.last_message_count =
+                    app.run_state.last_message_count.saturating_add(1);
             }
             client.send_command(command)?;
         }
         ParsedInput::ServerRequestAnswer { approved, reason } => {
-            let Some(request_id) = app.server_request_state.pending_server_request_id.clone() else {
+            let Some(request_id) = app.server_request_state.pending_server_request_id.clone()
+            else {
                 app.push_cell(HistoryCell::from_message(
                     "request",
                     "no pending server request",
@@ -142,7 +145,11 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         }
         ServerAction::PushErrorCell(message) => {
             app.input_pane.clear_views();
-            app.push_cell(HistoryCell::from_message("error", message, HistoryTone::Error));
+            app.push_cell(HistoryCell::from_message(
+                "error",
+                message,
+                HistoryTone::Error,
+            ));
         }
         ServerAction::ItemDispatch(dispatch) => match dispatch {
             ItemDispatch::AssistantStarted { turn_id, item_id } => {
@@ -151,7 +158,11 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             ItemDispatch::ReasoningStarted { item_id, title } => {
                 app.handle_reasoning_item_started(&item_id, &title);
             }
-            ItemDispatch::ControlStarted { item_id, kind, title } => {
+            ItemDispatch::ControlStarted {
+                item_id,
+                kind,
+                title,
+            } => {
                 app.handle_control_item_started(&item_id, kind, &title);
             }
             ItemDispatch::AssistantDelta { item_id, delta } => {
@@ -221,11 +232,9 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             detail,
             notice,
         } => {
-            app.input_pane
-                .set_server_request(crate::ui::widgets::input_pane::ServerRequestInlineState {
-                    title,
-                    detail,
-                });
+            app.input_pane.set_server_request(
+                crate::ui::widgets::input_pane::ServerRequestInlineState { title, detail },
+            );
             app.run_state.status_notice = Some(notice);
         }
     }
@@ -240,13 +249,14 @@ fn rebuild_transcript_from_history(app: &mut TuiApp) {
         app.transcript_state
             .transcript
             .replace_with_history(&history_snapshot);
-        app.transcript_state.last_copyable_output = history_snapshot.iter().rev().find_map(|entry| {
-            if let agent_protocol::HistoryEntry::Assistant { content, .. } = entry {
-                content.clone().filter(|text| !text.trim().is_empty())
-            } else {
-                None
-            }
-        });
+        app.transcript_state.last_copyable_output =
+            history_snapshot.iter().rev().find_map(|entry| {
+                if let agent_protocol::HistoryEntry::Assistant { content, .. } = entry {
+                    content.clone().filter(|text| !text.trim().is_empty())
+                } else {
+                    None
+                }
+            });
     }
     app.run_state.history_loaded = app.run_state.history_snapshot.is_some();
     app.clamp_transcript_scroll();

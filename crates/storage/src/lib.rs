@@ -1,5 +1,5 @@
 use agent_core::{ConversationState, PersistedConversation};
-use agent_protocol::TurnEvent;
+use agent_protocol::EventMsg;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,12 +25,17 @@ impl JsonConversationStore {
         &self.root
     }
 
-    pub async fn load_conversation(&self, conversation_id: &str) -> Result<Option<ConversationState>> {
+    pub async fn load_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<ConversationState>> {
         let path = self.conversation_path(conversation_id);
         match fs::read_to_string(&path).await {
             Ok(text) => {
                 let conversation = serde_json::from_str::<PersistedConversation>(&text)
-                    .with_context(|| format!("failed to parse conversation file {}", path.display()))?;
+                    .with_context(|| {
+                        format!("failed to parse conversation file {}", path.display())
+                    })?;
                 Ok(Some(conversation.into_state()))
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -43,22 +48,23 @@ impl JsonConversationStore {
         fs::create_dir_all(&self.root)
             .await
             .with_context(|| format!("failed to create {}", self.root.display()))?;
-        let path = self.conversation_path(&conversation.history.id);
+        let path = self.conversation_path(&conversation.history().id);
         let text = serde_json::to_string_pretty(&conversation.persisted_record())?;
         self.write_text_atomically(&path, &text).await?;
         Ok(())
     }
 
     pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
-        self.delete_file_if_exists(&self.conversation_path(conversation_id)).await
+        self.delete_file_if_exists(&self.conversation_path(conversation_id))
+            .await
     }
 
-    pub async fn load_events(&self, conversation_id: &str) -> Result<Vec<TurnEvent>> {
+    pub async fn load_events(&self, conversation_id: &str) -> Result<Vec<EventMsg>> {
         let path = self.event_path(conversation_id);
         self.load_events_from_path(&path).await
     }
 
-    pub async fn append_events(&self, conversation_id: &str, events: &[TurnEvent]) -> Result<()> {
+    pub async fn append_events(&self, conversation_id: &str, events: &[EventMsg]) -> Result<()> {
         if events.is_empty() {
             return Ok(());
         }
@@ -88,25 +94,31 @@ impl JsonConversationStore {
         Ok(())
     }
 
-    pub async fn append_event(&self, conversation_id: &str, event: &TurnEvent) -> Result<()> {
-        self.append_events(conversation_id, std::slice::from_ref(event)).await
+    pub async fn append_event(&self, conversation_id: &str, event: &EventMsg) -> Result<()> {
+        self.append_events(conversation_id, std::slice::from_ref(event))
+            .await
     }
 
     pub async fn delete_events(&self, conversation_id: &str) -> Result<()> {
-        self.delete_file_if_exists(&self.event_path(conversation_id)).await
+        self.delete_file_if_exists(&self.event_path(conversation_id))
+            .await
     }
 
     fn conversation_path(&self, conversation_id: &str) -> PathBuf {
-        self.root
-            .join(format!("{}.conversation.json", sanitize_conversation_id(conversation_id)))
+        self.root.join(format!(
+            "{}.conversation.json",
+            sanitize_conversation_id(conversation_id)
+        ))
     }
 
     fn event_path(&self, conversation_id: &str) -> PathBuf {
-        self.root
-            .join(format!("{}.events.json", sanitize_conversation_id(conversation_id)))
+        self.root.join(format!(
+            "{}.events.json",
+            sanitize_conversation_id(conversation_id)
+        ))
     }
 
-    async fn load_events_from_path(&self, path: &Path) -> Result<Vec<TurnEvent>> {
+    async fn load_events_from_path(&self, path: &Path) -> Result<Vec<EventMsg>> {
         match self.read_event_log_text(path).await? {
             Some(text) => self.parse_event_log_text(path, &text),
             None => Ok(Vec::new()),
@@ -121,7 +133,7 @@ impl JsonConversationStore {
         }
     }
 
-    fn parse_event_log_text(&self, path: &Path, text: &str) -> Result<Vec<TurnEvent>> {
+    fn parse_event_log_text(&self, path: &Path, text: &str) -> Result<Vec<EventMsg>> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return Ok(Vec::new());
@@ -133,7 +145,7 @@ impl JsonConversationStore {
             if line.is_empty() {
                 continue;
             }
-            let event = serde_json::from_str::<TurnEvent>(line).with_context(|| {
+            let event = serde_json::from_str::<EventMsg>(line).with_context(|| {
                 format!(
                     "failed to parse event file {} at line {}",
                     path.display(),
@@ -167,9 +179,13 @@ impl JsonConversationStore {
                 .await
                 .with_context(|| format!("failed to replace {}", path.display()))?;
         }
-        fs::rename(&temp_path, path)
-            .await
-            .with_context(|| format!("failed to rename {} to {}", temp_path.display(), path.display()))?;
+        fs::rename(&temp_path, path).await.with_context(|| {
+            format!(
+                "failed to rename {} to {}",
+                temp_path.display(),
+                path.display()
+            )
+        })?;
         Ok(())
     }
 }
@@ -209,7 +225,7 @@ mod tests {
                     cloned
                         .append_event(
                             conversation_id,
-                            &TurnEvent::TurnStarted {
+                            &EventMsg::TurnStarted {
                                 turn_id: format!("turn-{index}-{item}"),
                                 conversation_id: conversation_id.to_string(),
                                 user_input: format!("message-{index}-{item}"),
@@ -225,7 +241,10 @@ mod tests {
             task.await.expect("append task");
         }
 
-        let events = store.load_events(conversation_id).await.expect("load events");
+        let events = store
+            .load_events(conversation_id)
+            .await
+            .expect("load events");
         assert_eq!(events.len(), 80);
 
         let _ = fs::remove_dir_all(root).await;
@@ -240,8 +259,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("cloudagent-conversation-test-{unique}"));
         let store = JsonConversationStore::new(&root);
 
-        let mut conversation = ConversationState::new(ConversationHistory::new("default", "system"));
-        conversation.history.push_user_message("hello");
+        let mut conversation =
+            ConversationState::new(ConversationHistory::new("default", "system"));
+        conversation.context_mut().record_user_message("hello");
         conversation.set_pending_request(
             RequestId::Integer(1),
             ServerRequest::ToolApproval {
@@ -265,7 +285,7 @@ mod tests {
             .expect("load conversation")
             .expect("conversation exists");
 
-        assert_eq!(loaded.history.messages.len(), 2);
+        assert_eq!(loaded.history().messages.len(), 2);
         assert_eq!(loaded.pending_requests.len(), 1);
 
         let _ = fs::remove_dir_all(root).await;

@@ -1,20 +1,44 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    HistoryEntry, RequestId, ServerRequest, ThreadItem, TurnItemKind,
-    UserTurnInput,
+    HistoryEntry, RequestId, ServerRequest, ThreadItem, TurnItemKind, UserTurnInput,
 };
 
 #[derive(Debug, Clone)]
 pub(crate) enum ItemDispatch {
-    AssistantStarted { turn_id: String, item_id: String },
-    ReasoningStarted { item_id: String, title: String },
-    ControlStarted { item_id: String, kind: TurnItemKind, title: String },
-    AssistantDelta { item_id: String, delta: String },
-    ReasoningDelta { item_id: String, delta: String },
-    ControlDelta { item_id: String, delta: String },
-    AssistantCompleted { item: ThreadItem },
-    ReasoningCompleted { item: ThreadItem },
-    ControlCompleted { item: ThreadItem },
+    AssistantStarted {
+        turn_id: String,
+        item_id: String,
+    },
+    ReasoningStarted {
+        item_id: String,
+        title: String,
+    },
+    ControlStarted {
+        item_id: String,
+        kind: TurnItemKind,
+        title: String,
+    },
+    AssistantDelta {
+        item_id: String,
+        delta: String,
+    },
+    ReasoningDelta {
+        item_id: String,
+        delta: String,
+    },
+    ControlDelta {
+        item_id: String,
+        delta: String,
+    },
+    AssistantCompleted {
+        item: ThreadItem,
+    },
+    ReasoningCompleted {
+        item: ThreadItem,
+    },
+    ControlCompleted {
+        item: ThreadItem,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +73,11 @@ pub(crate) enum ServerAction {
     PushErrorCell(String),
     ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
-    ShowServerRequestPrompt { title: String, detail: String, notice: String },
+    ShowServerRequestPrompt {
+        title: String,
+        detail: String,
+        notice: String,
+    },
 }
 
 pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageReduce {
@@ -87,17 +115,28 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     };
                     actions.push(ServerAction::SetStatusNotice(Some(notice)));
                 }
-                AppServerNotification::ServerRequestResolved {
-                    decision,
-                    ..
-                } => {
+                AppServerNotification::ServerRequestResolved { decision, .. } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Running));
                     actions.push(ServerAction::SetPendingServerRequest(None));
                     actions.push(ServerAction::ClearServerRequestView);
                     actions.push(ServerAction::SetStatusNotice(Some(if decision.approved {
-                        format!("Request approved{}", decision.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default())
+                        format!(
+                            "Request approved{}",
+                            decision
+                                .reason
+                                .as_deref()
+                                .map(|r| format!(": {r}"))
+                                .unwrap_or_default()
+                        )
                     } else {
-                        format!("Request denied{}", decision.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default())
+                        format!(
+                            "Request denied{}",
+                            decision
+                                .reason
+                                .as_deref()
+                                .map(|r| format!(": {r}"))
+                                .unwrap_or_default()
+                        )
                     })));
                 }
                 AppServerNotification::TurnCompleted { .. } => {
@@ -139,7 +178,9 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
         }) => match request {
             ServerRequest::ToolApproval { request } => {
                 actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
-                actions.push(ServerAction::SetPendingServerRequest(Some(request_id.clone())));
+                actions.push(ServerAction::SetPendingServerRequest(Some(
+                    request_id.clone(),
+                )));
                 actions.push(ServerAction::ShowServerRequestPrompt {
                     title: format!("tool `{}` wants to run", request.tool_name),
                     detail: format!(
@@ -149,12 +190,10 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     notice: format!("Action required for {}", request.tool_name),
                 });
             }
-        }
+        },
     }
 
-    ServerMessageReduce {
-        actions,
-    }
+    ServerMessageReduce { actions }
 }
 
 pub(crate) fn apply_ui_event(
@@ -214,10 +253,12 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             kind,
             title,
             ..
-        } if *kind == TurnItemKind::Reasoning && title.is_some() => Some(ItemDispatch::ReasoningStarted {
-            item_id: item_id.clone(),
-            title: title.clone().unwrap_or_default(),
-        }),
+        } if *kind == TurnItemKind::Reasoning && title.is_some() => {
+            Some(ItemDispatch::ReasoningStarted {
+                item_id: item_id.clone(),
+                title: title.clone().unwrap_or_default(),
+            })
+        }
         AppServerNotification::ItemStarted {
             item_id,
             kind,
@@ -232,45 +273,37 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
                 title: title.clone().unwrap_or_default(),
             })
         }
-        AppServerNotification::AgentMessageDelta {
-            item_id,
-            delta,
-            ..
-        } => Some(ItemDispatch::AssistantDelta {
-            item_id: item_id.clone(),
-            delta: delta.clone(),
-        }),
-        AppServerNotification::ReasoningSummaryTextDelta {
-            item_id,
-            delta,
-            ..
-        } => Some(ItemDispatch::ReasoningDelta {
-            item_id: item_id.clone(),
-            delta: delta.clone(),
-        }),
-        AppServerNotification::ReasoningTextDelta {
-            item_id,
-            delta,
-            ..
-        } => Some(ItemDispatch::ReasoningDelta {
-            item_id: item_id.clone(),
-            delta: delta.clone(),
-        }),
-        AppServerNotification::CommandExecutionOutputDelta {
-            item_id,
-            delta,
-            ..
-        } => Some(ItemDispatch::ControlDelta {
-            item_id: item_id.clone(),
-            delta: delta.clone(),
-        }),
+        AppServerNotification::AgentMessageDelta { item_id, delta, .. } => {
+            Some(ItemDispatch::AssistantDelta {
+                item_id: item_id.clone(),
+                delta: delta.clone(),
+            })
+        }
+        AppServerNotification::ReasoningSummaryTextDelta { item_id, delta, .. } => {
+            Some(ItemDispatch::ReasoningDelta {
+                item_id: item_id.clone(),
+                delta: delta.clone(),
+            })
+        }
+        AppServerNotification::ReasoningTextDelta { item_id, delta, .. } => {
+            Some(ItemDispatch::ReasoningDelta {
+                item_id: item_id.clone(),
+                delta: delta.clone(),
+            })
+        }
+        AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. } => {
+            Some(ItemDispatch::ControlDelta {
+                item_id: item_id.clone(),
+                delta: delta.clone(),
+            })
+        }
         AppServerNotification::ItemCompleted { item, .. } => match item {
-            ThreadItem::AgentMessage { .. } => Some(ItemDispatch::AssistantCompleted {
-                item: item.clone(),
-            }),
-            ThreadItem::Reasoning { .. } => Some(ItemDispatch::ReasoningCompleted {
-                item: item.clone(),
-            }),
+            ThreadItem::AgentMessage { .. } => {
+                Some(ItemDispatch::AssistantCompleted { item: item.clone() })
+            }
+            ThreadItem::Reasoning { .. } => {
+                Some(ItemDispatch::ReasoningCompleted { item: item.clone() })
+            }
             ThreadItem::CommandExecution { .. } | ThreadItem::ToolResult { .. } => {
                 Some(ItemDispatch::ControlCompleted { item: item.clone() })
             }

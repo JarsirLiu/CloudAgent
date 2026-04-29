@@ -1,12 +1,12 @@
 use crate::conversation::{ConversationHistory, ThreadItem};
 use crate::tool::{CommandExecutionStatus, ToolEvent};
-use crate::turn::{AgentTurnOutput, TurnEvent, TurnItemKind, TurnState};
+use crate::turn::{AgentTurnOutput, EventMsg, TurnItemKind, TurnState};
 use std::collections::HashMap;
 
 pub fn agent_turn_output_from_events(
     turn_id: String,
     final_response: String,
-    events: Vec<TurnEvent>,
+    events: Vec<EventMsg>,
     history: &ConversationHistory,
     model_name: Option<String>,
     state: TurnState,
@@ -23,13 +23,13 @@ pub fn agent_turn_output_from_events(
     }
 }
 
-pub fn tool_events_from_turn_events(events: &[TurnEvent]) -> Vec<ToolEvent> {
+pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
     let mut active_tools: HashMap<String, (String, String)> = HashMap::new();
     let mut tool_events = Vec::new();
 
     for event in events {
         match event {
-            TurnEvent::ItemStarted {
+            EventMsg::ItemStarted {
                 item_id,
                 kind,
                 title,
@@ -43,7 +43,7 @@ pub fn tool_events_from_turn_events(events: &[TurnEvent]) -> Vec<ToolEvent> {
                     ),
                 );
             }
-            TurnEvent::ItemDelta { item_id, delta, .. } => {
+            EventMsg::ItemDelta { item_id, delta, .. } => {
                 if let Some((_, summary)) = active_tools.get_mut(item_id) {
                     if !summary.is_empty() {
                         summary.push('\n');
@@ -51,7 +51,7 @@ pub fn tool_events_from_turn_events(events: &[TurnEvent]) -> Vec<ToolEvent> {
                     summary.push_str(delta);
                 }
             }
-            TurnEvent::ItemCompleted { item, .. } => match item {
+            EventMsg::ItemCompleted { item, .. } => match item {
                 ThreadItem::CommandExecution {
                     id,
                     tool_name,
@@ -110,15 +110,15 @@ pub fn tool_events_from_turn_events(events: &[TurnEvent]) -> Vec<ToolEvent> {
                 | ThreadItem::AgentMessage { .. }
                 | ThreadItem::Reasoning { .. } => {}
             },
-            TurnEvent::TurnStarted { .. }
-            | TurnEvent::ModelRequestStarted { .. }
-            | TurnEvent::ModelResponseReceived { .. }
-            | TurnEvent::ItemStarted { .. }
-            | TurnEvent::ServerRequestRequested { .. }
-            | TurnEvent::ServerRequestResolved { .. }
-            | TurnEvent::TurnCompleted { .. }
-            | TurnEvent::TurnFailed { .. }
-            | TurnEvent::TurnCancelled { .. } => {}
+            EventMsg::TurnStarted { .. }
+            | EventMsg::ModelRequestStarted { .. }
+            | EventMsg::ModelResponseReceived { .. }
+            | EventMsg::ItemStarted { .. }
+            | EventMsg::ServerRequestRequested { .. }
+            | EventMsg::ServerRequestResolved { .. }
+            | EventMsg::TurnCompleted { .. }
+            | EventMsg::TurnFailed { .. }
+            | EventMsg::TurnCancelled { .. } => {}
         }
     }
 

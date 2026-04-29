@@ -1,5 +1,5 @@
 use crate::conversation::ThreadItem;
-use crate::turn::{TurnEvent, TurnId, TurnItemDeltaKind};
+use crate::turn::{EventMsg, TurnId, TurnItemDeltaKind};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EventDelivery {
@@ -46,9 +46,9 @@ pub enum CoreTranscriptEvent {
     },
 }
 
-pub fn core_transcript_event_from_turn_event(event: &TurnEvent) -> Option<CoreTranscriptEvent> {
+pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTranscriptEvent> {
     match event {
-        TurnEvent::ItemDelta {
+        EventMsg::ItemDelta {
             turn_id,
             item_id,
             kind,
@@ -73,29 +73,27 @@ pub fn core_transcript_event_from_turn_event(event: &TurnEvent) -> Option<CoreTr
             }),
             TurnItemDeltaKind::ToolOutput | TurnItemDeltaKind::JsonPatch => None,
         },
-        TurnEvent::ItemCompleted { turn_id, item, .. } => {
-            Some(CoreTranscriptEvent::ItemCompleted {
-                turn_id: turn_id.clone(),
-                item: item.clone(),
-            })
-        }
-        TurnEvent::TurnCompleted { turn_id, .. } => Some(CoreTranscriptEvent::TurnCompleted {
+        EventMsg::ItemCompleted { turn_id, item, .. } => Some(CoreTranscriptEvent::ItemCompleted {
+            turn_id: turn_id.clone(),
+            item: item.clone(),
+        }),
+        EventMsg::TurnCompleted { turn_id, .. } => Some(CoreTranscriptEvent::TurnCompleted {
             turn_id: turn_id.clone(),
         }),
-        TurnEvent::TurnStarted { .. }
-        | TurnEvent::ModelRequestStarted { .. }
-        | TurnEvent::ModelResponseReceived { .. }
-        | TurnEvent::ItemStarted { .. }
-        | TurnEvent::ServerRequestRequested { .. }
-        | TurnEvent::ServerRequestResolved { .. }
-        | TurnEvent::TurnFailed { .. }
-        | TurnEvent::TurnCancelled { .. } => None,
+        EventMsg::TurnStarted { .. }
+        | EventMsg::ModelRequestStarted { .. }
+        | EventMsg::ModelResponseReceived { .. }
+        | EventMsg::ItemStarted { .. }
+        | EventMsg::ServerRequestRequested { .. }
+        | EventMsg::ServerRequestResolved { .. }
+        | EventMsg::TurnFailed { .. }
+        | EventMsg::TurnCancelled { .. } => None,
     }
 }
 
-pub fn classify_turn_event(event: &TurnEvent) -> (EventStream, EventDelivery) {
+pub fn classify_event_msg(event: &EventMsg) -> (EventStream, EventDelivery) {
     match event {
-        TurnEvent::ItemDelta { kind, .. } => match kind {
+        EventMsg::ItemDelta { kind, .. } => match kind {
             TurnItemDeltaKind::Text
             | TurnItemDeltaKind::ReasoningSummary
             | TurnItemDeltaKind::ReasoningText => {
@@ -104,16 +102,16 @@ pub fn classify_turn_event(event: &TurnEvent) -> (EventStream, EventDelivery) {
             TurnItemDeltaKind::ToolOutput => (EventStream::Control, EventDelivery::BestEffort),
             TurnItemDeltaKind::JsonPatch => (EventStream::Diagnostic, EventDelivery::InternalOnly),
         },
-        TurnEvent::ItemCompleted { .. } | TurnEvent::TurnCompleted { .. } => {
+        EventMsg::ItemCompleted { .. } | EventMsg::TurnCompleted { .. } => {
             (EventStream::CoreTranscript, EventDelivery::Lossless)
         }
-        TurnEvent::ItemStarted { .. }
-        | TurnEvent::ServerRequestRequested { .. }
-        | TurnEvent::ServerRequestResolved { .. }
-        | TurnEvent::TurnStarted { .. }
-        | TurnEvent::TurnFailed { .. }
-        | TurnEvent::TurnCancelled { .. } => (EventStream::Control, EventDelivery::Lossless),
-        TurnEvent::ModelRequestStarted { .. } | TurnEvent::ModelResponseReceived { .. } => {
+        EventMsg::ItemStarted { .. }
+        | EventMsg::ServerRequestRequested { .. }
+        | EventMsg::ServerRequestResolved { .. }
+        | EventMsg::TurnStarted { .. }
+        | EventMsg::TurnFailed { .. }
+        | EventMsg::TurnCancelled { .. } => (EventStream::Control, EventDelivery::Lossless),
+        EventMsg::ModelRequestStarted { .. } | EventMsg::ModelResponseReceived { .. } => {
             (EventStream::Diagnostic, EventDelivery::BestEffort)
         }
     }

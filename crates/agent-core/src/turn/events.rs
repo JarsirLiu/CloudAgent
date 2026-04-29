@@ -22,9 +22,7 @@ pub struct ServerRequestDecision {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type", rename_all = "snake_case")]
 pub enum ServerRequest {
-    ToolApproval {
-        request: ToolApprovalRequest,
-    },
+    ToolApproval { request: ToolApprovalRequest },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -62,7 +60,7 @@ pub enum TurnItemDeltaKind {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum TurnEvent {
+pub enum EventMsg {
     TurnStarted {
         turn_id: TurnId,
         conversation_id: String,

@@ -45,4 +45,3 @@ pub(crate) fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
     });
     rx
 }
-

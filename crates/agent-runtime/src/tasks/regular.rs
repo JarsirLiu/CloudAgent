@@ -1,10 +1,10 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
-use agent_core::ConversationHistory;
+use agent_core::{ContextManager, ConversationHistory};
 use agent_protocol::{
-    CommandExecutionStatus, ServerRequest, ServerRequestDecision, StructuredToolResult,
-    ThreadItem, ToolApprovalRequest, ToolResult, TurnEvent, TurnItemDeltaKind, TurnItemKind,
-    TurnState, WriteFileStatus,
+    CommandExecutionStatus, EventMsg, ServerRequest, ServerRequestDecision, StructuredToolResult,
+    ThreadItem, ToolApprovalRequest, ToolResult, TurnItemDeltaKind, TurnItemKind, TurnState,
+    WriteFileStatus,
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct TurnOutcome {
     pub(crate) turn_id: String,
     pub(crate) final_response: String,
-    pub(crate) events: Vec<TurnEvent>,
+    pub(crate) events: Vec<EventMsg>,
     pub(crate) history: ConversationHistory,
     pub(crate) model_name: Option<String>,
     pub(crate) state: TurnState,
@@ -23,7 +23,7 @@ pub(crate) struct RegularTurnTask;
 
 impl<E, F, Fut> RuntimeTask<E, F, Fut> for RegularTurnTask
 where
-    E: FnMut(&TurnEvent) + Send,
+    E: FnMut(&EventMsg) + Send,
     F: Fn(ServerRequest) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
 {
@@ -60,11 +60,11 @@ pub(crate) async fn execute_regular_turn<E, F, Fut>(
     approval: F,
 ) -> Result<TurnOutcome>
 where
-    E: FnMut(&TurnEvent) + Send,
+    E: FnMut(&EventMsg) + Send,
     F: Fn(ServerRequest) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
 {
-    let mut history = history;
+    let mut context_manager = ContextManager::from_history(history);
     let mut events = Vec::new();
     let mut last_model_name = None;
     let mut assistant_item_seq: usize = 0;
@@ -75,7 +75,7 @@ where
             emit_event(
                 &mut events,
                 on_event,
-                TurnEvent::TurnCancelled {
+                EventMsg::TurnCancelled {
                     turn_id: turn_id.to_string(),
                     reason: "interrupted by client".to_string(),
                 },
@@ -84,7 +84,7 @@ where
                 turn_id: turn_id.to_string(),
                 final_response: "Turn cancelled.".to_string(),
                 events,
-                history,
+                history: context_manager.history().clone(),
                 model_name: last_model_name,
                 state: TurnState::Cancelled,
             });
@@ -93,9 +93,9 @@ where
         emit_event(
             &mut events,
             on_event,
-            TurnEvent::ModelRequestStarted {
+            EventMsg::ModelRequestStarted {
                 turn_id: turn_id.to_string(),
-                message_count: history.messages.len(),
+                message_count: context_manager.history().messages.len(),
                 tool_count: tool_specs.len(),
             },
         );
@@ -104,8 +104,7 @@ where
         let response = runtime
             .complete_model_request_streaming(
                 &cancellation_token,
-                runtime.context_manager.build_model_request(
-                    &history,
+                context_manager.build_current_model_request(
                     tool_specs.clone(),
                     runtime.config.llm.temperature,
                 ),
@@ -119,7 +118,7 @@ where
                         emit_event(
                             &mut events,
                             on_event,
-                            TurnEvent::ItemStarted {
+                            EventMsg::ItemStarted {
                                 turn_id: turn_id.to_string(),
                                 item_id: id.clone(),
                                 kind: TurnItemKind::AssistantMessage,
@@ -131,7 +130,7 @@ where
                     emit_event(
                         &mut events,
                         on_event,
-                        TurnEvent::ItemDelta {
+                        EventMsg::ItemDelta {
                             turn_id: turn_id.to_string(),
                             item_id: item_id.clone(),
                             kind: TurnItemDeltaKind::Text,
@@ -147,7 +146,7 @@ where
             emit_event(
                 &mut events,
                 on_event,
-                TurnEvent::ItemCompleted {
+                EventMsg::ItemCompleted {
                     turn_id: turn_id.to_string(),
                     item_id: item_id.clone(),
                     item: ThreadItem::AgentMessage {
@@ -175,7 +174,7 @@ where
         emit_event(
             &mut events,
             on_event,
-            TurnEvent::ModelResponseReceived {
+            EventMsg::ModelResponseReceived {
                 turn_id: turn_id.to_string(),
                 model_name: response.model_name.clone(),
                 has_content: response.content.is_some(),
@@ -183,8 +182,11 @@ where
             },
         );
 
-        history.push_assistant_message(response.content.clone(), tool_calls.clone());
-        runtime.state.save_history(history.clone()).await;
+        context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());
+        runtime
+            .state
+            .save_history(context_manager.history().clone())
+            .await;
 
         if tool_calls.is_empty() {
             let final_response = response
@@ -203,7 +205,7 @@ where
             emit_event(
                 &mut events,
                 on_event,
-                TurnEvent::TurnCompleted {
+                EventMsg::TurnCompleted {
                     turn_id: turn_id.to_string(),
                     final_response: final_response.clone(),
                 },
@@ -212,7 +214,7 @@ where
                 turn_id: turn_id.to_string(),
                 final_response,
                 events,
-                history,
+                history: context_manager.history().clone(),
                 model_name: last_model_name,
                 state: TurnState::Completed,
             });
@@ -222,11 +224,12 @@ where
             .context
             .tool_context(conversation_id.to_string(), cancellation_token.clone());
         for call in tool_calls {
-            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
+            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await
+            {
                 emit_event(
                     &mut events,
                     on_event,
-                    TurnEvent::TurnCancelled {
+                    EventMsg::TurnCancelled {
                         turn_id: turn_id.to_string(),
                         reason: "interrupted by client".to_string(),
                     },
@@ -235,7 +238,7 @@ where
                     turn_id: turn_id.to_string(),
                     final_response: "Turn cancelled.".to_string(),
                     events,
-                    history,
+                    history: context_manager.history().clone(),
                     model_name: last_model_name,
                     state: TurnState::Cancelled,
                 });
@@ -250,7 +253,7 @@ where
             emit_event(
                 &mut events,
                 on_event,
-                TurnEvent::ItemStarted {
+                EventMsg::ItemStarted {
                     turn_id: turn_id.to_string(),
                     item_id: tool_item_id.clone(),
                     kind: tool_item_kind,
@@ -267,17 +270,20 @@ where
                     .await;
                 let request = ServerRequest::ToolApproval {
                     request: ToolApprovalRequest {
-                    turn_id: turn_id.to_string(),
-                    tool_call_id: call.id.clone(),
-                    tool_name: call.name.clone(),
-                    reason: format!("Tool `{}` can modify files or execute commands.", call.name),
-                    arguments_preview: summarize_arguments(&call.arguments),
+                        turn_id: turn_id.to_string(),
+                        tool_call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        reason: format!(
+                            "Tool `{}` can modify files or execute commands.",
+                            call.name
+                        ),
+                        arguments_preview: summarize_arguments(&call.arguments),
                     },
                 };
                 emit_event(
                     &mut events,
                     on_event,
-                    TurnEvent::ServerRequestRequested {
+                    EventMsg::ServerRequestRequested {
                         turn_id: turn_id.to_string(),
                         request: request.clone(),
                     },
@@ -292,7 +298,7 @@ where
                 emit_event(
                     &mut events,
                     on_event,
-                    TurnEvent::ServerRequestResolved {
+                    EventMsg::ServerRequestResolved {
                         turn_id: turn_id.to_string(),
                         request: request.clone(),
                         decision: decision.clone(),
@@ -308,12 +314,16 @@ where
                         content: format!("Tool execution skipped: {reason}"),
                         summary: "tool execution skipped".to_string(),
                         is_error: true,
-                        structured: denied_tool_result(call.name.as_str(), &call.arguments, reason.clone()),
+                        structured: denied_tool_result(
+                            call.name.as_str(),
+                            &call.arguments,
+                            reason.clone(),
+                        ),
                     };
                     emit_event(
                         &mut events,
                         on_event,
-                        TurnEvent::ItemDelta {
+                        EventMsg::ItemDelta {
                             turn_id: turn_id.to_string(),
                             item_id: tool_item_id.clone(),
                             kind: TurnItemDeltaKind::ToolOutput,
@@ -323,14 +333,22 @@ where
                     emit_event(
                         &mut events,
                         on_event,
-                        TurnEvent::ItemCompleted {
+                        EventMsg::ItemCompleted {
                             turn_id: turn_id.to_string(),
                             item_id: tool_item_id.clone(),
-                            item: denied_thread_item(&tool_item_id, &call.name, &call.arguments, &reason),
+                            item: denied_thread_item(
+                                &tool_item_id,
+                                &call.name,
+                                &call.arguments,
+                                &reason,
+                            ),
                         },
                     );
-                    history.push_tool_result(result);
-                    runtime.state.save_history(history.clone()).await;
+                    context_manager.record_tool_result(result);
+                    runtime
+                        .state
+                        .save_history(context_manager.history().clone())
+                        .await;
                     // Stop processing the remaining tool calls from the same assistant output.
                     // Let the model consume this denial result first in the next roundtrip.
                     break;
@@ -340,11 +358,12 @@ where
             let result = runtime
                 .execute_tool_call(&cancellation_token, call.clone(), &tool_ctx)
                 .await?;
-            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
+            if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await
+            {
                 emit_event(
                     &mut events,
                     on_event,
-                    TurnEvent::TurnCancelled {
+                    EventMsg::TurnCancelled {
                         turn_id: turn_id.to_string(),
                         reason: "interrupted by client".to_string(),
                     },
@@ -353,7 +372,7 @@ where
                     turn_id: turn_id.to_string(),
                     final_response: "Turn cancelled.".to_string(),
                     events,
-                    history,
+                    history: context_manager.history().clone(),
                     model_name: last_model_name,
                     state: TurnState::Cancelled,
                 });
@@ -361,7 +380,7 @@ where
             emit_event(
                 &mut events,
                 on_event,
-                TurnEvent::ItemDelta {
+                EventMsg::ItemDelta {
                     turn_id: turn_id.to_string(),
                     item_id: tool_item_id.clone(),
                     kind: TurnItemDeltaKind::ToolOutput,
@@ -371,14 +390,17 @@ where
             emit_event(
                 &mut events,
                 on_event,
-                TurnEvent::ItemCompleted {
+                EventMsg::ItemCompleted {
                     turn_id: turn_id.to_string(),
                     item_id: tool_item_id.clone(),
                     item: thread_item_from_tool_result(&tool_item_id, &call.name, &result),
                 },
             );
-            history.push_tool_result(result);
-            runtime.state.save_history(history.clone()).await;
+            context_manager.record_tool_result(result);
+            runtime
+                .state
+                .save_history(context_manager.history().clone())
+                .await;
         }
     }
 
@@ -392,12 +414,15 @@ where
         &final_response,
         &mut assistant_item_seq,
     );
-    history.push_assistant_message(Some(final_response.clone()), Vec::new());
-    runtime.state.save_history(history.clone()).await;
+    context_manager.record_assistant_message(Some(final_response.clone()), Vec::new());
+    runtime
+        .state
+        .save_history(context_manager.history().clone())
+        .await;
     emit_event(
         &mut events,
         on_event,
-        TurnEvent::TurnCompleted {
+        EventMsg::TurnCompleted {
             turn_id: turn_id.to_string(),
             final_response: final_response.clone(),
         },
@@ -406,7 +431,7 @@ where
         turn_id: turn_id.to_string(),
         final_response,
         events,
-        history,
+        history: context_manager.history().clone(),
         model_name: last_model_name,
         state: TurnState::Completed,
     })
@@ -478,8 +503,8 @@ fn denied_thread_item(
 }
 
 fn emit_assistant_item(
-    events: &mut Vec<TurnEvent>,
-    on_event: &mut impl FnMut(&TurnEvent),
+    events: &mut Vec<EventMsg>,
+    on_event: &mut impl FnMut(&EventMsg),
     turn_id: &str,
     content: &str,
     assistant_item_seq: &mut usize,
@@ -489,7 +514,7 @@ fn emit_assistant_item(
     emit_event(
         events,
         on_event,
-        TurnEvent::ItemStarted {
+        EventMsg::ItemStarted {
             turn_id: turn_id.to_string(),
             item_id: assistant_item_id.clone(),
             kind: TurnItemKind::AssistantMessage,
@@ -499,7 +524,7 @@ fn emit_assistant_item(
     emit_event(
         events,
         on_event,
-        TurnEvent::ItemDelta {
+        EventMsg::ItemDelta {
             turn_id: turn_id.to_string(),
             item_id: assistant_item_id.clone(),
             kind: TurnItemDeltaKind::Text,
@@ -509,7 +534,7 @@ fn emit_assistant_item(
     emit_event(
         events,
         on_event,
-        TurnEvent::ItemCompleted {
+        EventMsg::ItemCompleted {
             turn_id: turn_id.to_string(),
             item_id: assistant_item_id.clone(),
             item: ThreadItem::AgentMessage {
@@ -522,7 +547,10 @@ fn emit_assistant_item(
 
 fn tool_item_title(call: &agent_core::ToolCall) -> String {
     if call.name == "shell_command"
-        && let Some(command) = call.arguments.get("command").and_then(|value| value.as_str())
+        && let Some(command) = call
+            .arguments
+            .get("command")
+            .and_then(|value| value.as_str())
         && !command.trim().is_empty()
     {
         return command.trim().to_string();

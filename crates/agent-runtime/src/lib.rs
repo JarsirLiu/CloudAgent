@@ -2,9 +2,9 @@ mod state;
 mod tasks;
 
 use agent_core::{
-    agent_turn_output_from_events, AgentContext, AgentTurnOutput, ChatModel, ContextManager,
-    ConversationHistory, ConversationState, ExecutionPolicy, ModelRequest, ModelResponse, ToolCall,
-    ToolExecutor, ToolSpec,
+    AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
+    ExecutionPolicy, ModelRequest, ModelResponse, ToolCall, ToolExecutor, ToolSpec,
+    agent_turn_output_from_events,
 };
 use agent_tools::ToolRegistry;
 use anyhow::{Context, Result, bail};
@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 
 pub use agent_core::ConversationMessage;
 pub use agent_protocol::{
-    ConversationSnapshot, ConversationStatus, RequestId, ServerRequest, ServerRequestDecision,
-    ThreadItem, TurnEvent, TurnItemKind, TurnState,
+    ConversationSnapshot, ConversationStatus, EventMsg, RequestId, ServerRequest,
+    ServerRequestDecision, ThreadItem, TurnItemKind, TurnState,
 };
 
 const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
@@ -36,7 +36,6 @@ pub fn crate_name() -> &'static str {
 pub struct AgentRuntime {
     config: AgentConfig,
     context: AgentContext,
-    context_manager: ContextManager,
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
     tools: Arc<dyn ToolExecutor>,
@@ -61,7 +60,6 @@ impl AgentRuntime {
         Ok(Self {
             config,
             context,
-            context_manager: ContextManager::new(),
             policy,
             model,
             tools,
@@ -112,7 +110,7 @@ impl AgentRuntime {
         approval: F,
     ) -> Result<AgentTurnOutput>
     where
-        E: FnMut(&TurnEvent) + Send,
+        E: FnMut(&EventMsg) + Send,
         F: Fn(ServerRequest) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
@@ -132,7 +130,11 @@ impl AgentRuntime {
         &self,
         conversation_id: &str,
     ) -> Result<ConversationHistory> {
-        Ok(self.conversation_snapshot(conversation_id).await?.history)
+        Ok(self
+            .conversation_snapshot(conversation_id)
+            .await?
+            .history()
+            .clone())
     }
 
     pub async fn conversation_snapshot(&self, conversation_id: &str) -> Result<ConversationState> {
@@ -141,7 +143,7 @@ impl AgentRuntime {
         }
         if let Some(mut conversation) = self.store.load_conversation(conversation_id).await? {
             conversation
-                .history
+                .context_mut()
                 .ensure_system_prompt(self.config.runtime.system_prompt.clone());
             return Ok(conversation);
         }
@@ -244,21 +246,24 @@ impl AgentRuntime {
         approval: F,
     ) -> Result<TurnOutcome>
     where
-        E: FnMut(&TurnEvent) + Send,
+        E: FnMut(&EventMsg) + Send,
         F: Fn(ServerRequest) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
-        let (persist_tx, mut persist_rx) = mpsc::unbounded_channel::<TurnEvent>();
+        let (persist_tx, mut persist_rx) = mpsc::unbounded_channel::<EventMsg>();
         let store = self.store.clone();
         let persisted_conversation_id = conversation_id.to_string();
         let persist_task = tokio::spawn(async move {
             while let Some(event) = persist_rx.recv().await {
-                store.append_event(&persisted_conversation_id, &event).await?;
+                store
+                    .append_event(&persisted_conversation_id, &event)
+                    .await?;
             }
             Result::<()>::Ok(())
         });
-        let mut event_sink = |event: &TurnEvent| {
-            self.state.append_conversation_event(conversation_id, event.clone());
+        let mut event_sink = |event: &EventMsg| {
+            self.state
+                .append_conversation_event(conversation_id, event.clone());
             let _ = persist_tx.send(event.clone());
             on_event(event);
         };
@@ -278,7 +283,7 @@ impl AgentRuntime {
         emit_event(
             &mut events,
             &mut event_sink,
-            TurnEvent::TurnStarted {
+            EventMsg::TurnStarted {
                 turn_id: turn_id.clone(),
                 conversation_id: conversation_id.to_string(),
                 user_input: user_input.to_string(),
@@ -288,7 +293,7 @@ impl AgentRuntime {
             emit_event(
                 &mut events,
                 &mut event_sink,
-                TurnEvent::TurnCancelled {
+                EventMsg::TurnCancelled {
                     turn_id: turn_id.clone(),
                     reason: "interrupted by client".to_string(),
                 },
@@ -333,7 +338,7 @@ impl AgentRuntime {
                     emit_event(
                         &mut events,
                         &mut event_sink,
-                        TurnEvent::TurnCancelled {
+                        EventMsg::TurnCancelled {
                             turn_id: turn_id.clone(),
                             reason: "interrupted by client".to_string(),
                         },
@@ -359,7 +364,7 @@ impl AgentRuntime {
                 emit_event(
                     &mut events,
                     &mut event_sink,
-                    TurnEvent::TurnFailed {
+                    EventMsg::TurnFailed {
                         turn_id: turn_id.clone(),
                         error: error_text.clone(),
                     },
@@ -386,18 +391,19 @@ impl AgentRuntime {
             return Ok(history);
         }
 
-        let mut conversation = if let Some(conversation) = self.store.load_conversation(conversation_id).await? {
-            conversation
-        } else {
-            ConversationState::new(ConversationHistory::new(
-                conversation_id.to_string(),
-                self.config.runtime.system_prompt.clone(),
-            ))
-        };
+        let mut conversation =
+            if let Some(conversation) = self.store.load_conversation(conversation_id).await? {
+                conversation
+            } else {
+                ConversationState::new(ConversationHistory::new(
+                    conversation_id.to_string(),
+                    self.config.runtime.system_prompt.clone(),
+                ))
+            };
         conversation
-            .history
+            .context_mut()
             .ensure_system_prompt(self.config.runtime.system_prompt.clone());
-        let history = conversation.history.clone();
+        let history = conversation.history().clone();
         self.state.save_conversation(conversation).await;
         Ok(history)
     }
@@ -842,9 +848,9 @@ fn next_turn_id() -> String {
     format!("turn-{now}")
 }
 
-pub(crate) fn emit_event<E>(events: &mut Vec<TurnEvent>, on_event: &mut E, event: TurnEvent)
+pub(crate) fn emit_event<E>(events: &mut Vec<EventMsg>, on_event: &mut E, event: EventMsg)
 where
-    E: FnMut(&TurnEvent),
+    E: FnMut(&EventMsg),
 {
     events.push(event.clone());
     on_event(&event);

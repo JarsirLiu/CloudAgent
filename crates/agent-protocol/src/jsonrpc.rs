@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 pub use agent_core::RequestId;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]

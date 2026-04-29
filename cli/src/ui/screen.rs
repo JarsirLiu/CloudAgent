@@ -2,11 +2,11 @@ use crate::app::TuiApp;
 use crate::state::selectors::status_text_from_mode;
 use crate::ui::widgets::welcome::WelcomeScreen;
 use agent_protocol::FrontendMode;
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::Frame;
 
 pub(crate) fn render_app(app: &mut TuiApp, frame: &mut Frame) {
     let area = frame.area();
@@ -174,7 +174,8 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
     )));
 
     frame.render_widget(
-        WelcomeScreen::new(app.run_state.history_loaded, current_status_text(app)).render(left_inner),
+        WelcomeScreen::new(app.run_state.history_loaded, current_status_text(app))
+            .render(left_inner),
         left_inner,
     );
     frame.render_widget(
@@ -245,4 +246,3 @@ fn centered_column(area: Rect, max_width: u16) -> Rect {
         height: area.height,
     }
 }
-

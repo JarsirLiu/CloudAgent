@@ -5,4 +5,3 @@ pub mod transport;
 pub mod ui;
 
 pub use app::{ConsoleConfig, ConsoleConnection, run_console};
-

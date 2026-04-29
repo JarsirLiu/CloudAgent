@@ -5,8 +5,8 @@ use anyhow::Result;
 use crossterm::cursor::MoveTo;
 use crossterm::execute;
 use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use std::io;
 
 pub(crate) use events::{UiEvent, spawn_tui_event_loop};

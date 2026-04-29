@@ -1,5 +1,5 @@
-use agent_core::{core_transcript_event_from_turn_event, CoreTranscriptEvent};
-use agent_protocol::{AppServerNotification, FrontendMode, TurnEvent, TurnItemDeltaKind, TurnState};
+use agent_core::{CoreTranscriptEvent, core_transcript_event_from_event_msg};
+use agent_protocol::{AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnState};
 
 pub(crate) struct ConversationNotificationProjector {
     conversation_id: String,
@@ -14,17 +14,17 @@ impl ConversationNotificationProjector {
         }
     }
 
-    pub(crate) fn project_turn_event(&mut self, event: &TurnEvent) -> Vec<AppServerNotification> {
-        if let Some(core_event) = core_transcript_event_from_turn_event(event) {
+    pub(crate) fn project_turn_event(&mut self, event: &EventMsg) -> Vec<AppServerNotification> {
+        if let Some(core_event) = core_transcript_event_from_event_msg(event) {
             return self.project_core_transcript_event(core_event);
         }
 
         match event {
-            TurnEvent::TurnStarted { turn_id, .. } => vec![AppServerNotification::TurnStarted {
+            EventMsg::TurnStarted { turn_id, .. } => vec![AppServerNotification::TurnStarted {
                 conversation_id: self.conversation_id.clone(),
                 turn_id: turn_id.clone(),
             }],
-            TurnEvent::ItemStarted {
+            EventMsg::ItemStarted {
                 turn_id,
                 item_id,
                 kind,
@@ -36,7 +36,7 @@ impl ConversationNotificationProjector {
                 kind: kind.clone(),
                 title: title.clone(),
             }],
-            TurnEvent::ItemDelta {
+            EventMsg::ItemDelta {
                 turn_id,
                 item_id,
                 kind,
@@ -55,16 +55,16 @@ impl ConversationNotificationProjector {
                 }
                 TurnItemDeltaKind::JsonPatch => Vec::new(),
             },
-            TurnEvent::ItemCompleted { .. } => Vec::new(),
-            TurnEvent::ServerRequestRequested { turn_id, request } => {
+            EventMsg::ItemCompleted { .. } => Vec::new(),
+            EventMsg::ServerRequestRequested { turn_id, request } => {
                 vec![AppServerNotification::ServerRequestRequested {
                     conversation_id: self.conversation_id.clone(),
                     turn_id: turn_id.clone(),
                     request: request.clone(),
                 }]
             }
-            TurnEvent::TurnCompleted { .. } => Vec::new(),
-            TurnEvent::TurnFailed { turn_id, error } => {
+            EventMsg::TurnCompleted { .. } => Vec::new(),
+            EventMsg::TurnFailed { turn_id, error } => {
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnFailed {
                         conversation_id: self.conversation_id.clone(),
@@ -73,7 +73,7 @@ impl ConversationNotificationProjector {
                     });
                 Vec::new()
             }
-            TurnEvent::TurnCancelled { turn_id, reason } => {
+            EventMsg::TurnCancelled { turn_id, reason } => {
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnCancelled {
                         conversation_id: self.conversation_id.clone(),
@@ -82,9 +82,9 @@ impl ConversationNotificationProjector {
                     });
                 Vec::new()
             }
-            TurnEvent::ServerRequestResolved { .. }
-            | TurnEvent::ModelRequestStarted { .. }
-            | TurnEvent::ModelResponseReceived { .. } => Vec::new(),
+            EventMsg::ServerRequestResolved { .. }
+            | EventMsg::ModelRequestStarted { .. }
+            | EventMsg::ModelResponseReceived { .. } => Vec::new(),
         }
     }
 
@@ -169,13 +169,13 @@ impl ConversationNotificationProjector {
 #[cfg(test)]
 mod tests {
     use super::ConversationNotificationProjector;
-    use agent_protocol::{AppServerNotification, FrontendMode, TurnEvent, TurnState};
+    use agent_protocol::{AppServerNotification, EventMsg, FrontendMode, TurnState};
 
     #[test]
     fn terminal_notifications_are_deferred_until_finish() {
         let mut projector = ConversationNotificationProjector::new("default");
 
-        let immediate = projector.project_turn_event(&TurnEvent::TurnCompleted {
+        let immediate = projector.project_turn_event(&EventMsg::TurnCompleted {
             turn_id: "turn-1".to_string(),
             final_response: "done".to_string(),
         });
@@ -189,7 +189,10 @@ mod tests {
         ));
         assert!(matches!(
             &flushed[1],
-            AppServerNotification::FrontendStateChanged { mode: FrontendMode::Idle, .. }
+            AppServerNotification::FrontendStateChanged {
+                mode: FrontendMode::Idle,
+                ..
+            }
         ));
     }
 }

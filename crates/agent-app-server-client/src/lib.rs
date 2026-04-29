@@ -2,7 +2,7 @@ mod in_process;
 mod stdio;
 
 use agent_protocol::{
-    classify_notification, AppServerMessage, AppServerNotification, NotificationDelivery,
+    AppServerMessage, AppServerNotification, NotificationDelivery, classify_notification,
 };
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -67,7 +67,9 @@ pub(crate) fn event_requires_delivery(event: &AppServerEvent) -> bool {
 fn app_server_message_requires_delivery(message: &AppServerMessage) -> bool {
     match message {
         AppServerMessage::Request(_) => true,
-        AppServerMessage::Notification(notification) => notification_requires_delivery(notification),
+        AppServerMessage::Notification(notification) => {
+            notification_requires_delivery(notification)
+        }
     }
 }
 
@@ -129,10 +131,12 @@ mod tests {
     };
 
     fn info_event(message: &str) -> AppServerEvent {
-        AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::Info {
-            conversation_id: "default".to_string(),
-            message: message.to_string(),
-        }))
+        AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::Info {
+                conversation_id: "default".to_string(),
+                message: message.to_string(),
+            },
+        ))
     }
 
     fn text_delta_event(delta: &str) -> AppServerEvent {
@@ -158,13 +162,15 @@ mod tests {
     }
 
     fn item_started_event() -> AppServerEvent {
-        AppServerEvent::Message(AppServerMessage::Notification(AppServerNotification::ItemStarted {
-            conversation_id: "default".to_string(),
-            turn_id: "turn-1".to_string(),
-            item_id: "tool:1".to_string(),
-            kind: TurnItemKind::CommandExecution,
-            title: Some("pwd".to_string()),
-        }))
+        AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::ItemStarted {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:1".to_string(),
+                kind: TurnItemKind::CommandExecution,
+                title: Some("pwd".to_string()),
+            },
+        ))
     }
 
     fn item_completed_event() -> AppServerEvent {
@@ -208,7 +214,9 @@ mod tests {
     #[tokio::test]
     async fn non_critical_events_drop_when_queue_is_full() {
         let (tx, mut rx) = mpsc::channel(1);
-        tx.send(info_event("already queued")).await.expect("seed queue");
+        tx.send(info_event("already queued"))
+            .await
+            .expect("seed queue");
         let mut skipped = 0usize;
 
         assert!(forward_event(&tx, &mut skipped, info_event("drop me")).await);
@@ -226,7 +234,9 @@ mod tests {
     #[tokio::test]
     async fn lossless_events_flush_lag_marker_before_delivery() {
         let (tx, mut rx) = mpsc::channel(1);
-        tx.send(info_event("already queued")).await.expect("seed queue");
+        tx.send(info_event("already queued"))
+            .await
+            .expect("seed queue");
         let mut skipped = 0usize;
 
         assert!(forward_event(&tx, &mut skipped, info_event("drop me")).await);
@@ -271,7 +281,9 @@ mod tests {
         assert!(event_requires_delivery(&server_request_event()));
         assert!(!event_requires_delivery(&command_output_event("D:\\work")));
         assert!(!event_requires_delivery(&info_event("cosmetic")));
-        assert!(!event_requires_delivery(&AppServerEvent::Lagged { skipped: 1 }));
+        assert!(!event_requires_delivery(&AppServerEvent::Lagged {
+            skipped: 1
+        }));
         assert!(!event_requires_delivery(&AppServerEvent::Disconnected {
             message: "bye".to_string()
         }));
