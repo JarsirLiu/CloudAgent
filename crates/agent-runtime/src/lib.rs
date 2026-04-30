@@ -6,7 +6,7 @@ use agent_core::{
     AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
     ConversationTurn, ExecutionPolicy, ModelRequest, ModelResponse, RolloutItem, ToolCall,
     ToolExecutor, ToolSpec, agent_turn_output_from_events, build_turns_from_rollout_items,
-    flatten_conversation_turns,
+    conversation_history_from_rollout_items, flatten_conversation_turns,
 };
 use agent_tools::ToolRegistry;
 use anyhow::{Context, Result, bail};
@@ -404,6 +404,21 @@ impl AgentRuntime {
 
     async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory> {
         if let Some(history) = self.state.history(conversation_id).await {
+            return Ok(history);
+        }
+
+        self.rollout_recorder.flush().await?;
+        let rollout_items = self.store.load_rollout_items(conversation_id).await?;
+        if rollout_items
+            .iter()
+            .any(|item| matches!(item, RolloutItem::ResponseItem { .. }))
+        {
+            let history = conversation_history_from_rollout_items(
+                conversation_id.to_string(),
+                self.config.runtime.system_prompt.clone(),
+                &rollout_items,
+            );
+            self.save_history(history.clone()).await?;
             return Ok(history);
         }
 

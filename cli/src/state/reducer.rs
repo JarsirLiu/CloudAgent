@@ -1,6 +1,6 @@
 use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    RequestId, ServerRequest, TranscriptItem, TurnItemKind, UserTurnInput,
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
+    FrontendMode, RequestId, ServerRequest, TranscriptItem, TurnItemKind, UserTurnInput,
 };
 
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ pub(crate) enum ServerAction {
     SetHistoryLoaded(bool),
     ClearServerRequestView,
     ClearLastToolName,
-    ReplaceHistory(Vec<TranscriptItem>),
+    ReplaceHistory(Vec<ConversationTurn>),
     PushErrorCell(String),
     ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
@@ -93,16 +93,18 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     actions.push(ServerAction::SetStatusNotice(None));
                 }
                 AppServerNotification::ConversationHistory { turns, .. } => {
-                    let messages = turns
-                        .iter()
-                        .flat_map(|turn| turn.items.iter().cloned())
-                        .collect::<Vec<_>>();
-                    actions.push(ServerAction::SetLastMessageCount(messages.len()));
+                    let message_count = turns.iter().map(|turn| turn.items.len()).sum();
+                    actions.push(ServerAction::SetLastMessageCount(message_count));
                     actions.push(ServerAction::SetStatusNotice(Some(
                         "Workspace context ready".to_string(),
                     )));
                     actions.push(ServerAction::SetHistoryLoaded(true));
-                    actions.push(ServerAction::ReplaceHistory(messages));
+                    actions.push(ServerAction::ReplaceHistory(turns.clone()));
+                }
+                AppServerNotification::ConversationNotifications { messages, .. } => {
+                    for entry in messages {
+                        actions.extend(apply_server_message(&entry.message).actions);
+                    }
                 }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
@@ -328,5 +330,66 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             TranscriptItem::UserMessage { .. } | TranscriptItem::SystemMessage { .. } => None,
         },
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_protocol::{SequencedAppServerMessage, TurnState};
+
+    #[test]
+    fn conversation_notifications_replay_uses_normal_reducer_path() {
+        let message =
+            AppServerMessage::Notification(AppServerNotification::ConversationNotifications {
+                conversation_id: "default".to_string(),
+                from_sequence: 1,
+                messages: vec![SequencedAppServerMessage {
+                    sequence: 1,
+                    message: AppServerMessage::Notification(AppServerNotification::TurnCompleted {
+                        conversation_id: "default".to_string(),
+                        turn_id: "turn-1".to_string(),
+                    }),
+                }],
+            });
+
+        let reduced = apply_server_message(&message);
+
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(action, ServerAction::TurnDispatch(TurnDispatch::Completed))
+        }));
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(
+                action,
+                ServerAction::SetMode(agent_protocol::FrontendMode::Idle)
+            )
+        }));
+    }
+
+    #[test]
+    fn conversation_history_action_preserves_turns() {
+        let message = AppServerMessage::Notification(AppServerNotification::ConversationHistory {
+            conversation_id: "default".to_string(),
+            turns: vec![ConversationTurn {
+                id: "turn-1".to_string(),
+                state: TurnState::Completed,
+                items: vec![TranscriptItem::AgentMessage {
+                    id: "assistant:1".to_string(),
+                    text: "hello".to_string(),
+                }],
+                rollout_start_index: 0,
+                rollout_end_index: 1,
+            }],
+        });
+
+        let reduced = apply_server_message(&message);
+
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(
+                action,
+                ServerAction::ReplaceHistory(turns)
+                    if turns.len() == 1 && turns[0].id == "turn-1"
+            )
+        }));
     }
 }

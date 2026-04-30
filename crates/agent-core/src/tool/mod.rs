@@ -61,6 +61,7 @@ pub enum StructuredToolResult {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandExecutionStatus {
+    InProgress,
     Completed,
     Failed,
     Declined,
@@ -69,6 +70,7 @@ pub enum CommandExecutionStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum WriteFileStatus {
+    InProgress,
     Completed,
     Declined,
     Failed,

@@ -1,5 +1,5 @@
 use agent_protocol::{
-    CommandExecutionStatus, StructuredToolResult, TranscriptItem, WriteFileStatus,
+    CommandExecutionStatus, ConversationTurn, StructuredToolResult, TranscriptItem, WriteFileStatus,
 };
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
@@ -272,6 +272,18 @@ impl Transcript {
         }
     }
 
+    pub fn replace_with_turns(&mut self, turns: &[ConversationTurn]) {
+        self.cells.clear();
+        for turn in turns {
+            for message in &turn.items {
+                let cell = render_history_entry(message);
+                if !cell.is_empty() {
+                    self.cells.push(cell);
+                }
+            }
+        }
+    }
+
     pub fn push(&mut self, cell: HistoryCell) -> usize {
         self.cells.push(cell);
         self.cells.len().saturating_sub(1)
@@ -380,6 +392,7 @@ fn summarize_command_execution(
     exit_code: Option<i32>,
 ) -> String {
     let status_text = match status {
+        CommandExecutionStatus::InProgress => "running",
         CommandExecutionStatus::Completed => "completed",
         CommandExecutionStatus::Failed => "failed",
         CommandExecutionStatus::Declined => "declined",
@@ -404,6 +417,7 @@ fn summarize_tool_content(
     }) = structured
     {
         let status_text = match status {
+            CommandExecutionStatus::InProgress => "running",
             CommandExecutionStatus::Completed => "completed",
             CommandExecutionStatus::Failed => "failed",
             CommandExecutionStatus::Declined => "declined",
@@ -434,6 +448,7 @@ fn summarize_tool_content(
     }) = structured
     {
         let status_text = match status {
+            WriteFileStatus::InProgress => "writing",
             WriteFileStatus::Completed => "wrote",
             WriteFileStatus::Declined => "declined",
             WriteFileStatus::Failed => "failed",

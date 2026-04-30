@@ -24,9 +24,9 @@ pub use events::{
 pub use policy::ExecutionPolicy;
 pub use projection::{
     ConversationHistoryBuilder, TranscriptBuilder, agent_turn_output_from_events,
-    build_turns_from_rollout_items, flatten_conversation_turns, tool_events_from_turn_events,
-    transcript_item_from_response_item, transcript_items_from_response_items,
-    transcript_items_from_rollout_items,
+    build_turns_from_rollout_items, conversation_history_from_rollout_items,
+    flatten_conversation_turns, tool_events_from_turn_events, transcript_item_from_response_item,
+    transcript_items_from_response_items, transcript_items_from_rollout_items,
 };
 pub use protocol::RequestId;
 pub use rollout::RolloutItem;

@@ -4,8 +4,8 @@ use crate::conversation_subscriptions::ConversationSubscriptions;
 use crate::server_request_coordinator::ServerRequestCoordinator;
 use agent_core::ConversationTurn;
 use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest,
-    ServerRequestDecision,
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest,
+    SequencedAppServerMessage, ServerRequest, ServerRequestDecision,
 };
 use agent_runtime::AgentRuntime;
 use anyhow::{Result, anyhow};
@@ -20,6 +20,8 @@ pub(crate) struct ServerState {
     server_requests: ServerRequestCoordinator,
     turn_tasks: Vec<JoinHandle<()>>,
     active_listeners: HashMap<String, ConversationListenerHandle>,
+    message_log: Vec<SequencedAppServerMessage>,
+    next_message_sequence: u64,
 }
 
 impl ServerState {
@@ -29,6 +31,8 @@ impl ServerState {
             server_requests: ServerRequestCoordinator::new(),
             turn_tasks: Vec::new(),
             active_listeners: HashMap::new(),
+            message_log: Vec::new(),
+            next_message_sequence: 1,
         }
     }
 
@@ -58,6 +62,45 @@ impl ServerState {
         conversation_id: &str,
     ) -> Option<ConversationListenerHandle> {
         self.active_listeners.get(conversation_id).cloned()
+    }
+
+    pub(crate) fn record_message(&mut self, message: AppServerMessage) {
+        if !should_record_message(&message) {
+            return;
+        }
+        let sequence = self.next_message_sequence;
+        self.next_message_sequence = self.next_message_sequence.saturating_add(1);
+        self.message_log
+            .push(SequencedAppServerMessage { sequence, message });
+    }
+
+    pub(crate) fn messages_after(
+        &self,
+        conversation_id: &str,
+        after_sequence: u64,
+    ) -> Vec<SequencedAppServerMessage> {
+        self.message_log
+            .iter()
+            .filter(|entry| {
+                entry.sequence > after_sequence
+                    && entry.message.conversation_id() == Some(conversation_id)
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+fn should_record_message(message: &AppServerMessage) -> bool {
+    match message {
+        AppServerMessage::Request(_) => true,
+        AppServerMessage::Notification(notification) => !matches!(
+            notification,
+            AppServerNotification::ConversationStatus { .. }
+                | AppServerNotification::ConversationHistory { .. }
+                | AppServerNotification::ConversationNotifications { .. }
+                | AppServerNotification::ConversationSubscriptionChanged { .. }
+                | AppServerNotification::Info { .. }
+        ),
     }
 }
 
@@ -157,6 +200,25 @@ pub(crate) async fn handle_command(
                 AppServerNotification::ConversationHistory {
                     conversation_id,
                     turns,
+                },
+            )
+            .await;
+        }
+        AppClientCommand::RequestConversationNotifications {
+            conversation_id,
+            after_sequence,
+        } => {
+            let messages = {
+                let state = state.lock().await;
+                state.messages_after(&conversation_id, after_sequence)
+            };
+            send_ephemeral_notification(
+                event_tx,
+                &state,
+                AppServerNotification::ConversationNotifications {
+                    conversation_id,
+                    from_sequence: after_sequence.saturating_add(1),
+                    messages,
                 },
             )
             .await;
@@ -396,9 +458,9 @@ fn merge_active_turn(turns: &mut Vec<ConversationTurn>, active_turn: Option<Conv
 
 #[cfg(test)]
 mod tests {
-    use super::merge_active_turn;
+    use super::{ServerState, merge_active_turn};
     use agent_core::{ConversationTurn, TranscriptItem};
-    use agent_protocol::TurnState;
+    use agent_protocol::{AppServerMessage, AppServerNotification, TurnState};
 
     #[test]
     fn active_turn_snapshot_replaces_matching_rollout_turn() {
@@ -421,6 +483,51 @@ mod tests {
 
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[1].id, "turn-2");
+    }
+
+    #[test]
+    fn notification_log_replays_by_conversation_and_sequence() {
+        let mut state = ServerState::new("default".to_string());
+        state.record_message(AppServerMessage::Notification(
+            AppServerNotification::TurnStarted {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+            },
+        ));
+        state.record_message(AppServerMessage::Notification(
+            AppServerNotification::TurnStarted {
+                conversation_id: "other".to_string(),
+                turn_id: "turn-2".to_string(),
+            },
+        ));
+        state.record_message(AppServerMessage::Notification(
+            AppServerNotification::TurnCompleted {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+            },
+        ));
+
+        let replay = state.messages_after("default", 1);
+
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].sequence, 3);
+        assert!(matches!(
+            replay[0].message,
+            AppServerMessage::Notification(AppServerNotification::TurnCompleted { .. })
+        ));
+    }
+
+    #[test]
+    fn notification_log_skips_snapshot_notifications() {
+        let mut state = ServerState::new("default".to_string());
+        state.record_message(AppServerMessage::Notification(
+            AppServerNotification::ConversationHistory {
+                conversation_id: "default".to_string(),
+                turns: Vec::new(),
+            },
+        ));
+
+        assert!(state.messages_after("default", 0).is_empty());
     }
 
     fn turn(id: &str, text: &str) -> ConversationTurn {
@@ -448,6 +555,27 @@ pub(crate) async fn send_notification(
             .subscriptions
             .is_subscribed(notification.conversation_id())
     };
+    let message = AppServerMessage::Notification(notification);
+    {
+        let mut state = state.lock().await;
+        state.record_message(message.clone());
+    }
+    if subscribed {
+        let _ = event_tx.send(message);
+    }
+}
+
+pub(crate) async fn send_ephemeral_notification(
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    notification: AppServerNotification,
+) {
+    let subscribed = {
+        let state = state.lock().await;
+        state
+            .subscriptions
+            .is_subscribed(notification.conversation_id())
+    };
     if subscribed {
         let _ = event_tx.send(AppServerMessage::Notification(notification));
     }
@@ -462,7 +590,12 @@ async fn send_request(
         let state = state.lock().await;
         state.subscriptions.is_subscribed(request.conversation_id())
     };
+    let message = AppServerMessage::Request(request);
+    {
+        let mut state = state.lock().await;
+        state.record_message(message.clone());
+    }
     if subscribed {
-        let _ = event_tx.send(AppServerMessage::Request(request));
+        let _ = event_tx.send(message);
     }
 }

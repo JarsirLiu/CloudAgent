@@ -261,9 +261,12 @@ fn rebuild_transcript_from_history(app: &mut TuiApp) {
     if !history_snapshot.is_empty() {
         app.transcript_state
             .transcript
-            .replace_with_history(&history_snapshot);
-        app.transcript_state.last_copyable_output =
-            history_snapshot.iter().rev().find_map(|entry| {
+            .replace_with_turns(&history_snapshot);
+        app.transcript_state.last_copyable_output = history_snapshot
+            .iter()
+            .rev()
+            .flat_map(|turn| turn.items.iter().rev())
+            .find_map(|entry| {
                 if let agent_protocol::TranscriptItem::AgentMessage { text, .. } = entry {
                     (!text.trim().is_empty()).then(|| text.clone())
                 } else {

@@ -643,36 +643,52 @@ mod tests {
         execute_server_action(
             &mut app,
             ServerAction::ReplaceHistory(vec![
-                TranscriptItem::UserMessage {
-                    id: "user:old".to_string(),
-                    text: "old question".to_string(),
+                ConversationTurn {
+                    id: "turn-old".to_string(),
+                    state: agent_protocol::TurnState::Completed,
+                    rollout_start_index: 0,
+                    rollout_end_index: 1,
+                    items: vec![
+                        TranscriptItem::UserMessage {
+                            id: "user:old".to_string(),
+                            text: "old question".to_string(),
+                        },
+                        TranscriptItem::AgentMessage {
+                            id: "assistant:old".to_string(),
+                            text: "old answer".to_string(),
+                        },
+                    ],
                 },
-                TranscriptItem::AgentMessage {
-                    id: "assistant:old".to_string(),
-                    text: "old answer".to_string(),
-                },
-                TranscriptItem::UserMessage {
-                    id: "user:where".to_string(),
-                    text: "where am i".to_string(),
-                },
-                TranscriptItem::ToolResult {
-                    id: "call-1".to_string(),
-                    tool_name: "shell_command".to_string(),
-                    content: "D:\\learn\\gifti\\cloudagent".to_string(),
-                    summary: "D:\\learn\\gifti\\cloudagent".to_string(),
-                    structured: Some(StructuredToolResult::CommandExecution {
-                        command: "pwd".to_string(),
-                        current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
-                        status: CommandExecutionStatus::Completed,
-                        exit_code: Some(0),
-                        success: Some(true),
-                        stdout: Some("D:\\learn\\gifti\\cloudagent".to_string()),
-                        stderr: Some(String::new()),
-                    }),
-                },
-                TranscriptItem::AgentMessage {
-                    id: "assistant:cwd".to_string(),
-                    text: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
+                ConversationTurn {
+                    id: "turn-where".to_string(),
+                    state: agent_protocol::TurnState::Completed,
+                    rollout_start_index: 2,
+                    rollout_end_index: 4,
+                    items: vec![
+                        TranscriptItem::UserMessage {
+                            id: "user:where".to_string(),
+                            text: "where am i".to_string(),
+                        },
+                        TranscriptItem::ToolResult {
+                            id: "call-1".to_string(),
+                            tool_name: "shell_command".to_string(),
+                            content: "D:\\learn\\gifti\\cloudagent".to_string(),
+                            summary: "D:\\learn\\gifti\\cloudagent".to_string(),
+                            structured: Some(StructuredToolResult::CommandExecution {
+                                command: "pwd".to_string(),
+                                current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
+                                status: CommandExecutionStatus::Completed,
+                                exit_code: Some(0),
+                                success: Some(true),
+                                stdout: Some("D:\\learn\\gifti\\cloudagent".to_string()),
+                                stderr: Some(String::new()),
+                            }),
+                        },
+                        TranscriptItem::AgentMessage {
+                            id: "assistant:cwd".to_string(),
+                            text: "current directory is D:\\learn\\gifti\\cloudagent".to_string(),
+                        },
+                    ],
                 },
             ]),
         );

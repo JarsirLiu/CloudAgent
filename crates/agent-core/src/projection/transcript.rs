@@ -1,7 +1,7 @@
 use crate::conversation::{ConversationTurn, ResponseItem, TranscriptItem};
 use crate::rollout::RolloutItem;
 use crate::tool::StructuredToolResult;
-use crate::turn::{EventMsg, TurnState};
+use crate::turn::{EventMsg, TurnItemDeltaKind, TurnItemKind, TurnState};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -122,6 +122,25 @@ impl ConversationHistoryBuilder {
                     text: user_input.clone(),
                 });
             }
+            EventMsg::ItemStarted {
+                turn_id,
+                item_id,
+                kind,
+                title,
+            } => {
+                if let Some(item) = transcript_item_from_item_start(item_id, kind, title.as_deref())
+                {
+                    self.upsert_item_in_turn_id_allow_empty(turn_id, item);
+                }
+            }
+            EventMsg::ItemDelta {
+                turn_id,
+                item_id,
+                kind,
+                delta,
+            } => {
+                self.append_delta_to_item(turn_id, item_id, kind, delta);
+            }
             EventMsg::ItemCompleted { turn_id, item, .. } => {
                 self.upsert_item_in_turn_id(turn_id, item.clone());
             }
@@ -150,10 +169,35 @@ impl ConversationHistoryBuilder {
             }
             EventMsg::ModelRequestStarted { .. }
             | EventMsg::ModelResponseReceived { .. }
-            | EventMsg::ItemStarted { .. }
-            | EventMsg::ItemDelta { .. }
             | EventMsg::ServerRequestRequested { .. }
             | EventMsg::ServerRequestResolved { .. } => {}
+        }
+    }
+
+    fn append_delta_to_item(
+        &mut self,
+        turn_id: &str,
+        item_id: &str,
+        kind: &TurnItemDeltaKind,
+        delta: &str,
+    ) {
+        if delta.is_empty() {
+            return;
+        }
+        if self
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.id == turn_id)
+        {
+            let current_rollout_index = self.current_rollout_index;
+            if let Some(turn) = self.current_turn.as_mut() {
+                turn.append_delta(item_id, kind, delta, current_rollout_index);
+            }
+            return;
+        }
+
+        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
+            append_delta_to_completed_turn(turn, item_id, kind, delta, self.current_rollout_index);
         }
     }
 
@@ -190,6 +234,10 @@ impl ConversationHistoryBuilder {
         if transcript_item_is_empty(&item) {
             return;
         }
+        self.upsert_item_in_turn_id_allow_empty(turn_id, item);
+    }
+
+    fn upsert_item_in_turn_id_allow_empty(&mut self, turn_id: &str, item: TranscriptItem) {
         if self
             .current_turn
             .as_ref()
@@ -219,6 +267,20 @@ impl PendingConversationTurn {
         self.positions.insert(id, self.items.len());
         self.items.push(item);
     }
+
+    fn append_delta(
+        &mut self,
+        item_id: &str,
+        kind: &TurnItemDeltaKind,
+        delta: &str,
+        rollout_index: usize,
+    ) {
+        let Some(index) = self.positions.get(item_id).copied() else {
+            return;
+        };
+        append_delta_to_transcript_item(&mut self.items[index], kind, delta);
+        self.rollout_end_index = rollout_index;
+    }
 }
 
 fn upsert_completed_turn_item(
@@ -236,6 +298,110 @@ fn upsert_completed_turn_item(
         turn.items.push(item);
     }
     turn.rollout_end_index = rollout_index;
+}
+
+fn append_delta_to_completed_turn(
+    turn: &mut ConversationTurn,
+    item_id: &str,
+    kind: &TurnItemDeltaKind,
+    delta: &str,
+    rollout_index: usize,
+) {
+    let Some(item) = turn.items.iter_mut().find(|item| item.id() == item_id) else {
+        return;
+    };
+    append_delta_to_transcript_item(item, kind, delta);
+    turn.rollout_end_index = rollout_index;
+}
+
+fn append_delta_to_transcript_item(
+    item: &mut TranscriptItem,
+    kind: &TurnItemDeltaKind,
+    delta: &str,
+) {
+    match (item, kind) {
+        (TranscriptItem::AgentMessage { text, .. }, TurnItemDeltaKind::Text)
+        | (TranscriptItem::Reasoning { text, .. }, TurnItemDeltaKind::ReasoningSummary)
+        | (TranscriptItem::Reasoning { text, .. }, TurnItemDeltaKind::ReasoningText) => {
+            text.push_str(delta);
+        }
+        (
+            TranscriptItem::CommandExecution {
+                summary, stdout, ..
+            },
+            TurnItemDeltaKind::CommandExecutionOutput,
+        ) => {
+            if let Some(stdout) = stdout {
+                stdout.push_str(delta);
+            } else {
+                *stdout = Some(delta.to_string());
+            }
+            summary.push_str(delta);
+        }
+        (TranscriptItem::FileChange { summary, .. }, TurnItemDeltaKind::FileChangeOutput) => {
+            summary.push_str(delta);
+        }
+        (
+            TranscriptItem::ToolResult {
+                summary, content, ..
+            },
+            TurnItemDeltaKind::ToolOutput,
+        ) => {
+            summary.push_str(delta);
+            content.push_str(delta);
+        }
+        _ => {}
+    }
+}
+
+fn transcript_item_from_item_start(
+    item_id: &str,
+    kind: &TurnItemKind,
+    title: Option<&str>,
+) -> Option<TranscriptItem> {
+    let title = title.unwrap_or_default().to_string();
+    match kind {
+        TurnItemKind::AssistantMessage => Some(TranscriptItem::AgentMessage {
+            id: item_id.to_string(),
+            text: String::new(),
+        }),
+        TurnItemKind::Reasoning => Some(TranscriptItem::Reasoning {
+            id: item_id.to_string(),
+            title: if title.is_empty() {
+                "reasoning".to_string()
+            } else {
+                title
+            },
+            text: String::new(),
+        }),
+        TurnItemKind::CommandExecution => Some(TranscriptItem::CommandExecution {
+            id: item_id.to_string(),
+            tool_name: "shell_command".to_string(),
+            command: title,
+            current_directory: String::new(),
+            status: crate::tool::CommandExecutionStatus::InProgress,
+            exit_code: None,
+            stdout: Some(String::new()),
+            stderr: None,
+            summary: String::new(),
+        }),
+        TurnItemKind::FileChange => Some(TranscriptItem::FileChange {
+            id: item_id.to_string(),
+            tool_name: "write_file".to_string(),
+            path: title,
+            status: crate::tool::WriteFileStatus::InProgress,
+            bytes_written: 0,
+            summary: String::new(),
+        }),
+        TurnItemKind::ToolCall | TurnItemKind::ToolResult => Some(TranscriptItem::ToolResult {
+            id: item_id.to_string(),
+            tool_name: title,
+            content: String::new(),
+            summary: String::new(),
+            structured: None,
+        }),
+        TurnItemKind::UserMessage | TurnItemKind::SystemNote => None,
+    }
 }
 
 impl From<&PendingConversationTurn> for ConversationTurn {
@@ -288,6 +454,55 @@ pub fn transcript_items_from_response_items(items: &[ResponseItem]) -> Vec<Trans
         builder.push_response_item(item);
     }
     flatten_conversation_turns(&builder.finish())
+}
+
+pub fn conversation_history_from_rollout_items(
+    conversation_id: impl Into<String>,
+    system_prompt: impl Into<String>,
+    items: &[RolloutItem],
+) -> crate::conversation::ConversationHistory {
+    let mut history = crate::conversation::ConversationHistory::new(conversation_id, system_prompt);
+    for item in items {
+        let RolloutItem::ResponseItem { item } = item else {
+            continue;
+        };
+        match item {
+            ResponseItem::System { content } => {
+                history.messages[0] = ResponseItem::System {
+                    content: content.clone(),
+                };
+            }
+            ResponseItem::User { content } => {
+                history.turn_count += 1;
+                history.messages.push(ResponseItem::User {
+                    content: content.clone(),
+                });
+            }
+            ResponseItem::Assistant {
+                content,
+                tool_calls,
+            } => {
+                history.messages.push(ResponseItem::Assistant {
+                    content: content.clone(),
+                    tool_calls: tool_calls.clone(),
+                });
+            }
+            ResponseItem::Tool {
+                tool_call_id,
+                name,
+                content,
+                structured,
+            } => {
+                history.messages.push(ResponseItem::Tool {
+                    tool_call_id: tool_call_id.clone(),
+                    name: name.clone(),
+                    content: content.clone(),
+                    structured: structured.clone(),
+                });
+            }
+        }
+    }
+    history
 }
 
 pub fn flatten_conversation_turns(turns: &[ConversationTurn]) -> Vec<TranscriptItem> {
@@ -442,6 +657,116 @@ mod tests {
         assert!(matches!(
             &transcript[1],
             TranscriptItem::AgentMessage { text, .. } if text == "hello"
+        ));
+    }
+
+    #[test]
+    fn active_turn_snapshot_projects_started_delta_before_completion() {
+        let mut builder = ConversationHistoryBuilder::new();
+
+        for item in [
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "hi".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:turn-1:0".to_string(),
+                kind: TurnItemKind::AssistantMessage,
+                title: Some("assistant_message".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemDelta {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:turn-1:0".to_string(),
+                kind: TurnItemDeltaKind::Text,
+                delta: "partial".to_string(),
+            }),
+        ] {
+            builder.push_rollout_item(&item);
+        }
+
+        let snapshot = builder.active_turn_snapshot().expect("active turn");
+
+        assert!(matches!(
+            &snapshot.items[..],
+            [
+                TranscriptItem::UserMessage { text: user, .. },
+                TranscriptItem::AgentMessage { text: assistant, .. },
+            ] if user == "hi" && assistant == "partial"
+        ));
+    }
+
+    #[test]
+    fn item_completed_replaces_streamed_delta_projection() {
+        let turns = build_turns_from_rollout_items(&[
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "hi".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:turn-1:0".to_string(),
+                kind: TurnItemKind::AssistantMessage,
+                title: Some("assistant_message".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemDelta {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:turn-1:0".to_string(),
+                kind: TurnItemDeltaKind::Text,
+                delta: "partial".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemCompleted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:turn-1:0".to_string(),
+                item: TranscriptItem::AgentMessage {
+                    id: "assistant:turn-1:0".to_string(),
+                    text: "final".to_string(),
+                },
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ]);
+
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { .. },
+                TranscriptItem::AgentMessage { text, .. },
+            ] if text == "final"
+        ));
+    }
+
+    #[test]
+    fn conversation_history_rebuilds_model_messages_from_rollout_response_items() {
+        let history = conversation_history_from_rollout_items(
+            "default",
+            "system prompt",
+            &[
+                RolloutItem::from(ResponseItem::User {
+                    content: "hi".to_string(),
+                }),
+                RolloutItem::from(ResponseItem::Assistant {
+                    content: Some("hello".to_string()),
+                    tool_calls: Vec::new(),
+                }),
+            ],
+        );
+
+        assert_eq!(history.id, "default");
+        assert_eq!(history.turn_count, 1);
+        assert!(matches!(
+            &history.messages[..],
+            [
+                ResponseItem::System { content: system },
+                ResponseItem::User { content: user },
+                ResponseItem::Assistant {
+                    content: Some(assistant),
+                    ..
+                },
+            ] if system == "system prompt" && user == "hi" && assistant == "hello"
         ));
     }
 
