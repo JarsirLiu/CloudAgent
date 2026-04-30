@@ -39,7 +39,6 @@ impl ConversationHistoryBuilder {
                     text: summary.clone(),
                 });
             }
-            RolloutItem::SessionMeta { .. } => {}
         }
     }
 

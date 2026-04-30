@@ -66,9 +66,7 @@ impl JsonConversationStore {
             .into_iter()
             .filter_map(|item| match item {
                 RolloutItem::EventMsg { event } => Some(event),
-                RolloutItem::ResponseItem { .. }
-                | RolloutItem::Compacted { .. }
-                | RolloutItem::SessionMeta { .. } => None,
+                RolloutItem::ResponseItem { .. } | RolloutItem::Compacted { .. } => None,
             })
             .collect())
     }
