@@ -61,14 +61,7 @@ impl ToolExecutor for ToolRegistry {
         let call_name = call.name.clone();
         let call_args = call.arguments.clone();
         let Some(tool) = self.tools.get(&call.name) else {
-            return Ok(ToolResult {
-                tool_call_id: call.id,
-                name: call.name,
-                content: "Tool not found".to_string(),
-                summary: "tool lookup failed".to_string(),
-                is_error: true,
-                structured: None,
-            });
+            bail!("tool `{}` is not registered", call.name);
         };
 
         match tool.invoke(call.arguments, ctx).await {
@@ -575,4 +568,37 @@ fn resolve_workspace_path(workspace_root: &Path, value: Option<&str>) -> Result<
     }
 
     Ok(candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_core::{ToolCall, ToolExecutionContext, ToolExecutor};
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn unknown_tool_is_rejected_by_registry() {
+        let registry = ToolRegistry::new(1024);
+        let ctx = ToolExecutionContext {
+            conversation_id: "default".to_string(),
+            workspace_root: std::env::current_dir().expect("current dir"),
+            default_shell_timeout_ms: 1_000,
+            cancellation_token: CancellationToken::new(),
+            output_tx: None,
+        };
+
+        let err = registry
+            .execute(
+                ToolCall {
+                    id: "call-missing".to_string(),
+                    name: "missing_tool".to_string(),
+                    arguments: json!({}),
+                },
+                &ctx,
+            )
+            .await
+            .expect_err("missing tool should not be converted into a ToolResult");
+
+        assert!(err.to_string().contains("missing_tool"));
+    }
 }

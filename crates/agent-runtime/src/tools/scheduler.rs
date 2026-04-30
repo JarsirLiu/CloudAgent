@@ -2,8 +2,8 @@ use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{ContextManager, RolloutItem};
 use agent_protocol::{
     CommandExecutionStatus, EventMsg, ServerRequest, ServerRequestDecision, StructuredToolResult,
-    ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TranscriptItem, TurnState,
-    WriteFileStatus,
+    ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TranscriptItem, TurnItemDeltaKind,
+    TurnItemKind, TurnState, WriteFileStatus,
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -62,22 +62,28 @@ impl<'a> ToolBatchRunner<'a> {
             }
 
             let tool_item_id = format!("tool:{}", call.id);
+            let Some(spec) = self.spec_for(&call) else {
+                self.emit_missing_tool(&call, &tool_item_id, context_manager, events, on_event)
+                    .await?;
+                continue;
+            };
+
             emit_event(
                 events,
                 on_event,
                 EventMsg::ItemStarted {
                     turn_id: self.turn_id.to_string(),
                     item_id: tool_item_id.clone(),
-                    kind: self.spec_for(&call).item_kind.clone(),
+                    kind: spec.item_kind.clone(),
                     title: Some(tool_item_title(&call)),
                 },
             );
 
-            let spec = self.spec_for(&call);
             if spec.requires_approval && !self.runtime.is_tool_approved_for_session(&call) {
                 let approved = self
                     .request_approval(
                         &call,
+                        spec,
                         &tool_item_id,
                         context_manager,
                         events,
@@ -111,7 +117,7 @@ impl<'a> ToolBatchRunner<'a> {
                             EventMsg::ItemDelta {
                                 turn_id: self.turn_id.to_string(),
                                 item_id: tool_item_id.clone(),
-                                kind: self.spec_for(&call).delta_kind.clone(),
+                                kind: spec.delta_kind.clone(),
                                 delta: rendered,
                             },
                         );
@@ -131,7 +137,7 @@ impl<'a> ToolBatchRunner<'a> {
                     EventMsg::ItemDelta {
                         turn_id: self.turn_id.to_string(),
                         item_id: tool_item_id.clone(),
-                        kind: self.spec_for(&call).delta_kind.clone(),
+                        kind: spec.delta_kind.clone(),
                         delta: result.summary.clone(),
                     },
                 );
@@ -154,6 +160,7 @@ impl<'a> ToolBatchRunner<'a> {
     async fn request_approval<E, F, Fut>(
         &self,
         call: &ToolCall,
+        spec: &ToolSpec,
         tool_item_id: &str,
         context_manager: &mut ContextManager,
         events: &mut Vec<EventMsg>,
@@ -178,8 +185,7 @@ impl<'a> ToolBatchRunner<'a> {
                 turn_id: self.turn_id.to_string(),
                 tool_call_id: call.id.clone(),
                 tool_name: call.name.clone(),
-                reason: self
-                    .spec_for(call)
+                reason: spec
                     .approval_reason
                     .clone()
                     .unwrap_or_else(|| format!("Tool `{}` requires approval.", call.name)),
@@ -238,7 +244,7 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemDelta {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
-                kind: self.spec_for(call).delta_kind.clone(),
+                kind: spec.delta_kind.clone(),
                 delta: format!("Tool execution skipped: {reason}"),
             },
         );
@@ -290,21 +296,60 @@ impl<'a> ToolBatchRunner<'a> {
         );
     }
 
-    fn spec_for(&self, call: &ToolCall) -> ToolSpec {
-        self.tool_specs
-            .iter()
-            .find(|spec| spec.name == call.name)
-            .cloned()
-            .unwrap_or_else(|| ToolSpec {
-                name: call.name.clone(),
-                description: "Unknown tool".to_string(),
-                parameters: serde_json::json!({"type": "object"}),
-                mutating: false,
-                requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
-                approval_reason: None,
-            })
+    async fn emit_missing_tool<E>(
+        &self,
+        call: &ToolCall,
+        tool_item_id: &str,
+        context_manager: &mut ContextManager,
+        events: &mut Vec<EventMsg>,
+        on_event: &mut E,
+    ) -> Result<()>
+    where
+        E: FnMut(&EventMsg) + Send,
+    {
+        let message = format!("Tool `{}` is not registered.", call.name);
+        emit_event(
+            events,
+            on_event,
+            EventMsg::ItemStarted {
+                turn_id: self.turn_id.to_string(),
+                item_id: tool_item_id.to_string(),
+                kind: TurnItemKind::ToolCall,
+                title: Some(call.name.clone()),
+            },
+        );
+        emit_event(
+            events,
+            on_event,
+            EventMsg::ItemDelta {
+                turn_id: self.turn_id.to_string(),
+                item_id: tool_item_id.to_string(),
+                kind: TurnItemDeltaKind::ToolOutput,
+                delta: message.clone(),
+            },
+        );
+        let result = ToolResult {
+            tool_call_id: call.id.clone(),
+            name: call.name.clone(),
+            content: message,
+            summary: "tool lookup failed".to_string(),
+            is_error: true,
+            structured: None,
+        };
+        emit_event(
+            events,
+            on_event,
+            EventMsg::ItemCompleted {
+                turn_id: self.turn_id.to_string(),
+                item_id: tool_item_id.to_string(),
+                item: transcript_item_from_tool_result(tool_item_id, &call.name, &result),
+            },
+        );
+        self.record_tool_result(context_manager, result).await
+    }
+
+    fn spec_for(&self, call: &ToolCall) -> Option<&ToolSpec> {
+        self.tool_specs.iter().find(|spec| spec.name == call.name)
     }
 }
 
