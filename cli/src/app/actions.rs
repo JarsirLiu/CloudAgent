@@ -102,8 +102,6 @@ pub(crate) fn handle_tui_input(
                     content.clone(),
                     HistoryTone::User,
                 ));
-                app.run_state.last_message_count =
-                    app.run_state.last_message_count.saturating_add(1);
             }
             client.send_command(command)?;
         }
@@ -154,9 +152,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         }
         ServerAction::SetStatusNotice(notice) => {
             app.run_state.status_notice = notice;
-        }
-        ServerAction::SetLastMessageCount(count) => {
-            app.run_state.last_message_count = count;
         }
         ServerAction::SetHistoryLoaded(loaded) => {
             app.run_state.history_loaded = loaded;

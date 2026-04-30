@@ -305,7 +305,6 @@ impl TuiApp {
                 .active_cell
                 .as_ref()
                 .map(|c| c.body.clone());
-            self.run_state.last_message_count = self.run_state.last_message_count.saturating_add(1);
             self.flush_active_cell_to_transcript();
         } else {
             self.clear_active_cell();

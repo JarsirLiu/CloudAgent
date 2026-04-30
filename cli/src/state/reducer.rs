@@ -71,7 +71,6 @@ pub(crate) struct ServerMessageReduce {
 pub(crate) enum ServerAction {
     SetMode(FrontendMode),
     SetStatusNotice(Option<String>),
-    SetLastMessageCount(usize),
     SetHistoryLoaded(bool),
     ClearCurrentTurnUsage,
     SetTokenUsage {
@@ -106,13 +105,10 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 AppServerNotification::TurnStarted { .. } => {
                     actions.push(ServerAction::ClearCurrentTurnUsage);
                 }
-                AppServerNotification::ConversationStatus { snapshot, .. } => {
-                    actions.push(ServerAction::SetLastMessageCount(snapshot.message_count));
+                AppServerNotification::ConversationStatus { .. } => {
                     actions.push(ServerAction::SetStatusNotice(None));
                 }
                 AppServerNotification::ConversationHistory { turns, .. } => {
-                    let message_count = visible_message_count_from_turns(turns);
-                    actions.push(ServerAction::SetLastMessageCount(message_count));
                     actions.push(ServerAction::SetStatusNotice(Some(
                         "Workspace context ready".to_string(),
                     )));
@@ -218,22 +214,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     }
 
     ServerMessageReduce { actions }
-}
-
-fn visible_message_count_from_turns(turns: &[ConversationTurn]) -> usize {
-    turns
-        .iter()
-        .flat_map(|turn| turn.items.iter())
-        .filter(|item| match item {
-            TranscriptItem::UserMessage { text, .. }
-            | TranscriptItem::AgentMessage { text, .. } => !text.trim().is_empty(),
-            TranscriptItem::SystemMessage { .. }
-            | TranscriptItem::Reasoning { .. }
-            | TranscriptItem::CommandExecution { .. }
-            | TranscriptItem::FileChange { .. }
-            | TranscriptItem::ToolResult { .. } => false,
-        })
-        .count()
 }
 
 pub(crate) fn apply_ui_event(
@@ -396,9 +376,6 @@ mod tests {
                 ServerAction::ReplaceHistory(turns)
                     if turns.len() == 1 && turns[0].id == "turn-1"
             )
-        }));
-        assert!(reduced.actions.iter().any(|action| {
-            matches!(action, ServerAction::SetLastMessageCount(count) if *count == 2)
         }));
     }
 
