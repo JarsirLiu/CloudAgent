@@ -1,9 +1,11 @@
 use agent_core::{CoreTranscriptEvent, core_transcript_event_from_event_msg};
 use agent_protocol::{AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnState};
+use std::collections::HashMap;
 
 pub(crate) struct ConversationNotificationProjector {
     conversation_id: String,
     deferred_terminal_notifications: Vec<AppServerNotification>,
+    active_items: HashMap<String, String>,
 }
 
 impl ConversationNotificationProjector {
@@ -11,6 +13,7 @@ impl ConversationNotificationProjector {
         Self {
             conversation_id: conversation_id.into(),
             deferred_terminal_notifications: Vec::new(),
+            active_items: HashMap::new(),
         }
     }
 
@@ -29,13 +32,16 @@ impl ConversationNotificationProjector {
                 item_id,
                 kind,
                 title,
-            } => vec![AppServerNotification::ItemStarted {
-                conversation_id: self.conversation_id.clone(),
-                turn_id: turn_id.clone(),
-                item_id: item_id.clone(),
-                kind: kind.clone(),
-                title: title.clone(),
-            }],
+            } => {
+                self.active_items.insert(item_id.clone(), turn_id.clone());
+                vec![AppServerNotification::ItemStarted {
+                    conversation_id: self.conversation_id.clone(),
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    kind: kind.clone(),
+                    title: title.clone(),
+                }]
+            }
             EventMsg::ItemDelta {
                 turn_id,
                 item_id,
@@ -46,6 +52,9 @@ impl ConversationNotificationProjector {
                 | TurnItemDeltaKind::ReasoningSummary
                 | TurnItemDeltaKind::ReasoningText => Vec::new(),
                 TurnItemDeltaKind::CommandExecutionOutput => {
+                    if let Some(error) = self.validate_active_item(turn_id, item_id) {
+                        return vec![error];
+                    }
                     vec![AppServerNotification::CommandExecutionOutputDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
@@ -54,6 +63,9 @@ impl ConversationNotificationProjector {
                     }]
                 }
                 TurnItemDeltaKind::ToolOutput => {
+                    if let Some(error) = self.validate_active_item(turn_id, item_id) {
+                        return vec![error];
+                    }
                     vec![AppServerNotification::ToolOutputDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
@@ -62,6 +74,9 @@ impl ConversationNotificationProjector {
                     }]
                 }
                 TurnItemDeltaKind::FileChangeOutput => {
+                    if let Some(error) = self.validate_active_item(turn_id, item_id) {
+                        return vec![error];
+                    }
                     vec![AppServerNotification::FileChangeOutputDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
@@ -110,6 +125,11 @@ impl ConversationNotificationProjector {
     ) -> Vec<AppServerNotification> {
         match event {
             CoreTranscriptEvent::TurnCompleted { turn_id } => {
+                if let Some(error) = self.active_items_not_closed_error(&turn_id) {
+                    self.deferred_terminal_notifications.push(error);
+                }
+                self.active_items
+                    .retain(|_, active_turn_id| active_turn_id != &turn_id);
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnCompleted {
                         conversation_id: self.conversation_id.clone(),
@@ -118,52 +138,134 @@ impl ConversationNotificationProjector {
                 Vec::new()
             }
             CoreTranscriptEvent::ItemCompleted { turn_id, item } => {
-                vec![AppServerNotification::ItemCompleted {
+                let item_id = item.id().to_string();
+                let lifecycle_error = self.validate_active_item(&turn_id, &item_id);
+                self.active_items.remove(&item_id);
+                let mut notifications = Vec::new();
+                if let Some(error) = lifecycle_error {
+                    notifications.push(error);
+                }
+                notifications.push(AppServerNotification::ItemCompleted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id,
                     item,
-                }]
+                });
+                notifications
             }
             CoreTranscriptEvent::AgentMessageDelta {
                 turn_id,
                 item_id,
                 delta,
-            } => vec![AppServerNotification::AgentMessageDelta {
-                conversation_id: self.conversation_id.clone(),
+            } => self.project_core_delta(
                 turn_id,
                 item_id,
                 delta,
-            }],
+                |conversation_id, turn_id, item_id, delta| {
+                    AppServerNotification::AgentMessageDelta {
+                        conversation_id,
+                        turn_id,
+                        item_id,
+                        delta,
+                    }
+                },
+            ),
             CoreTranscriptEvent::PlanDelta {
                 turn_id,
                 item_id,
                 delta,
-            } => vec![AppServerNotification::PlanDelta {
-                conversation_id: self.conversation_id.clone(),
+            } => self.project_core_delta(
                 turn_id,
                 item_id,
                 delta,
-            }],
+                |conversation_id, turn_id, item_id, delta| AppServerNotification::PlanDelta {
+                    conversation_id,
+                    turn_id,
+                    item_id,
+                    delta,
+                },
+            ),
             CoreTranscriptEvent::ReasoningSummaryTextDelta {
                 turn_id,
                 item_id,
                 delta,
-            } => vec![AppServerNotification::ReasoningSummaryTextDelta {
-                conversation_id: self.conversation_id.clone(),
+            } => self.project_core_delta(
                 turn_id,
                 item_id,
                 delta,
-            }],
+                |conversation_id, turn_id, item_id, delta| {
+                    AppServerNotification::ReasoningSummaryTextDelta {
+                        conversation_id,
+                        turn_id,
+                        item_id,
+                        delta,
+                    }
+                },
+            ),
             CoreTranscriptEvent::ReasoningTextDelta {
                 turn_id,
                 item_id,
                 delta,
-            } => vec![AppServerNotification::ReasoningTextDelta {
-                conversation_id: self.conversation_id.clone(),
+            } => self.project_core_delta(
                 turn_id,
                 item_id,
                 delta,
-            }],
+                |conversation_id, turn_id, item_id, delta| {
+                    AppServerNotification::ReasoningTextDelta {
+                        conversation_id,
+                        turn_id,
+                        item_id,
+                        delta,
+                    }
+                },
+            ),
+        }
+    }
+
+    fn project_core_delta(
+        &self,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+        build: impl FnOnce(String, String, String, String) -> AppServerNotification,
+    ) -> Vec<AppServerNotification> {
+        if let Some(error) = self.validate_active_item(&turn_id, &item_id) {
+            return vec![error];
+        }
+        vec![build(self.conversation_id.clone(), turn_id, item_id, delta)]
+    }
+
+    fn validate_active_item(&self, turn_id: &str, item_id: &str) -> Option<AppServerNotification> {
+        match self.active_items.get(item_id) {
+            Some(active_turn_id) if active_turn_id == turn_id => None,
+            Some(active_turn_id) => Some(self.lifecycle_error(format!(
+                "item `{item_id}` belongs to turn `{active_turn_id}` but received event for turn `{turn_id}`"
+            ))),
+            None => Some(self.lifecycle_error(format!(
+                "item `{item_id}` received lifecycle event before item start"
+            ))),
+        }
+    }
+
+    fn active_items_not_closed_error(&self, turn_id: &str) -> Option<AppServerNotification> {
+        let dangling = self
+            .active_items
+            .iter()
+            .filter_map(|(item_id, active_turn_id)| {
+                (active_turn_id == turn_id).then(|| item_id.as_str())
+            })
+            .collect::<Vec<_>>();
+        (!dangling.is_empty()).then(|| {
+            self.lifecycle_error(format!(
+                "turn `{turn_id}` completed with active items: {}",
+                dangling.join(", ")
+            ))
+        })
+    }
+
+    fn lifecycle_error(&self, message: String) -> AppServerNotification {
+        AppServerNotification::Error {
+            conversation_id: self.conversation_id.clone(),
+            message,
         }
     }
 
@@ -186,7 +288,8 @@ impl ConversationNotificationProjector {
 mod tests {
     use super::ConversationNotificationProjector;
     use agent_protocol::{
-        AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnState,
+        AppServerNotification, EventMsg, FrontendMode, TranscriptItem, TurnItemDeltaKind,
+        TurnItemKind, TurnState,
     };
 
     #[test]
@@ -217,6 +320,12 @@ mod tests {
     fn file_change_output_delta_projects_to_file_change_notification() {
         let mut projector = ConversationNotificationProjector::new("default");
 
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:write".to_string(),
+            kind: TurnItemKind::FileChange,
+            title: Some("write_file".to_string()),
+        });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "tool:write".to_string(),
@@ -236,6 +345,12 @@ mod tests {
     fn command_execution_output_delta_projects_to_command_notification() {
         let mut projector = ConversationNotificationProjector::new("default");
 
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:shell".to_string(),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("shell_command".to_string()),
+        });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "tool:shell".to_string(),
@@ -255,6 +370,12 @@ mod tests {
     fn generic_tool_output_delta_projects_to_tool_notification() {
         let mut projector = ConversationNotificationProjector::new("default");
 
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:custom".to_string(),
+            kind: TurnItemKind::ToolCall,
+            title: Some("custom_tool".to_string()),
+        });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "tool:custom".to_string(),
@@ -268,5 +389,79 @@ mod tests {
             AppServerNotification::ToolOutputDelta { item_id, delta, .. }
                 if item_id == "tool:custom" && delta == "custom output"
         ));
+    }
+
+    #[test]
+    fn delta_without_started_reports_lifecycle_error() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:missing".to_string(),
+            kind: TurnItemDeltaKind::Text,
+            delta: "hello".to_string(),
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::Error { message, .. }
+                if message.contains("before item start")
+        ));
+    }
+
+    #[test]
+    fn item_completed_clears_active_lifecycle() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            kind: TurnItemKind::AssistantMessage,
+            title: Some("assistant_message".to_string()),
+        });
+        let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            item: TranscriptItem::AgentMessage {
+                id: "assistant:1".to_string(),
+                text: "done".to_string(),
+            },
+        });
+        let terminal = projector.project_turn_event(&EventMsg::TurnCompleted {
+            turn_id: "turn-1".to_string(),
+        });
+        let flushed = projector.finish_turn(TurnState::Completed);
+
+        assert_eq!(completed.len(), 1);
+        assert!(terminal.is_empty());
+        assert_eq!(flushed.len(), 2);
+        assert!(
+            !flushed
+                .iter()
+                .any(|notification| matches!(notification, AppServerNotification::Error { .. }))
+        );
+    }
+
+    #[test]
+    fn turn_completed_reports_dangling_active_items() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            kind: TurnItemKind::AssistantMessage,
+            title: Some("assistant_message".to_string()),
+        });
+        projector.project_turn_event(&EventMsg::TurnCompleted {
+            turn_id: "turn-1".to_string(),
+        });
+        let flushed = projector.finish_turn(TurnState::Completed);
+
+        assert!(flushed.iter().any(|notification| matches!(
+            notification,
+            AppServerNotification::Error { message, .. }
+                if message.contains("completed with active items")
+        )));
     }
 }
