@@ -68,7 +68,6 @@ impl JsonConversationStore {
                 RolloutItem::EventMsg { event } => Some(event),
                 RolloutItem::ResponseItem { .. }
                 | RolloutItem::Compacted { .. }
-                | RolloutItem::TurnContext { .. }
                 | RolloutItem::SessionMeta { .. } => None,
             })
             .collect())

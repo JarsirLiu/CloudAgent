@@ -42,7 +42,7 @@ impl ConversationHistoryBuilder {
                     false,
                 );
             }
-            RolloutItem::TurnContext { .. } | RolloutItem::SessionMeta { .. } => {}
+            RolloutItem::SessionMeta { .. } => {}
         }
     }
 

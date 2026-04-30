@@ -8,7 +8,6 @@ pub enum RolloutItem {
     EventMsg { event: EventMsg },
     ResponseItem { item: ResponseItem },
     Compacted { summary: String },
-    TurnContext { turn_id: String },
     SessionMeta { conversation_id: String },
 }
 
