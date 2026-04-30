@@ -140,8 +140,4 @@ impl InputPane {
     pub fn composer_is_empty(&self) -> bool {
         self.view_stack.is_empty() && self.composer.is_empty()
     }
-
-    pub fn has_composer_text(&self) -> bool {
-        !self.composer.is_empty()
-    }
 }

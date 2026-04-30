@@ -238,6 +238,10 @@ impl TuiApp {
         render_app(self, frame);
     }
 
+    fn needs_animation_frame(&self) -> bool {
+        self.console_state.mode == FrontendMode::Running
+    }
+
     fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
         let content_width = self.transcript_state.viewport_width.max(20);
         let total = self
@@ -501,13 +505,16 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     })?;
     let mut terminal = TerminalGuard::new()?;
     let mut events = spawn_tui_event_loop();
+    let mut needs_redraw = true;
 
     loop {
-        terminal.terminal.draw(|frame| app.render(frame))?;
-
-        tokio::select! {
+        if needs_redraw {
+            terminal.terminal.draw(|frame| app.render(frame))?;
+        }
+        let redraw_after_event = tokio::select! {
             Some(event) = client.next_event() => {
                 app.handle_client_event(event);
+                true
             }
             Some(event) = events.recv() => {
                 match event {
@@ -517,17 +524,21 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                                 break;
                             }
                         }
+                        true
                     }
                     UiEvent::MouseScroll { up } => {
                         app.handle_mouse_scroll(up);
+                        true
                     }
+                    UiEvent::Resize => true,
                     UiEvent::Tick => {
-                        // Active-cell rendering is event-driven; periodic ticks only keep UI responsive.
+                        app.needs_animation_frame()
                     }
                 }
             }
             else => break,
-        }
+        };
+        needs_redraw = redraw_after_event;
 
         if app.run_state.should_exit {
             break;

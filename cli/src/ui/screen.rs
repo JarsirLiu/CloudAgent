@@ -174,12 +174,8 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
     )));
 
     frame.render_widget(
-        WelcomeScreen::new(
-            app.run_state.history_loaded,
-            current_status_text(app),
-            !app.input_pane.has_composer_text(),
-        )
-        .render(left_inner),
+        WelcomeScreen::new(app.run_state.history_loaded, current_status_text(app))
+            .render(left_inner),
         left_inner,
     );
     frame.render_widget(

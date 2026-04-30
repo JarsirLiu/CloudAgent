@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 pub(crate) enum UiEvent {
     Key(KeyEvent),
     MouseScroll { up: bool },
+    Resize,
     Tick,
 }
 
@@ -28,6 +29,11 @@ pub(crate) fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
                         if let Some(up) = scroll
                             && tx.send(UiEvent::MouseScroll { up }).is_err()
                         {
+                            break;
+                        }
+                    }
+                    Ok(CEvent::Resize(_, _)) => {
+                        if tx.send(UiEvent::Resize).is_err() {
                             break;
                         }
                     }
