@@ -49,27 +49,19 @@ pub fn status_line(
             .iter()
             .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
             .sum();
-        let available_meta = width.saturating_sub(current_width + 5);
+        let separator_width = 3usize;
+        let terminal_wrap_guard = 1usize;
+        let available_meta =
+            width.saturating_sub(current_width + separator_width + terminal_wrap_guard);
         if available_meta == 0 {
             return Line::from(spans);
-        }
-        let mut meta_text = String::new();
-        let mut used = 0usize;
-        for ch in meta.chars() {
-            let w = UnicodeWidthStr::width(ch.encode_utf8(&mut [0; 4]));
-            if used + w > available_meta {
-                meta_text.push_str("...");
-                break;
-            }
-            meta_text.push(ch);
-            used += w;
         }
         spans.push(Span::styled(
             " · ",
             Style::default().fg(Color::Rgb(60, 60, 70)),
         ));
         spans.push(Span::styled(
-            meta_text,
+            truncate_single_line(meta, available_meta),
             Style::default().fg(Color::Rgb(95, 105, 120)),
         ));
     }
@@ -93,11 +85,19 @@ fn truncate_single_line(input: &str, max_width: usize) -> String {
     if max_width == 0 {
         return String::new();
     }
+    if UnicodeWidthStr::width(input) <= max_width {
+        return input.to_string();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
     let mut out = String::new();
     let mut used = 0usize;
+    let content_limit = max_width - 3;
     for ch in input.chars() {
         let w = UnicodeWidthStr::width(ch.encode_utf8(&mut [0; 4]));
-        if used + w > max_width.saturating_sub(3) {
+        if used + w > content_limit {
             out.push_str("...");
             return out;
         }
@@ -105,4 +105,36 @@ fn truncate_single_line(input: &str, max_width: usize) -> String {
         used += w;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line_width(line: &Line<'_>) -> usize {
+        line.spans
+            .iter()
+            .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+            .sum()
+    }
+
+    #[test]
+    fn status_line_never_exceeds_available_width() {
+        let line = status_line(
+            FrontendMode::Running,
+            "Request approved:",
+            "3 msgs · in 1.3k tokens out 93 tokens cached 0 tokens total 1.4k tokens",
+            58,
+        );
+
+        assert!(line_width(&line) < 58);
+    }
+
+    #[test]
+    fn truncate_single_line_counts_ellipsis_inside_budget() {
+        let truncated = truncate_single_line("abcdef", 5);
+
+        assert_eq!(truncated, "ab...");
+        assert_eq!(UnicodeWidthStr::width(truncated.as_str()), 5);
+    }
 }
