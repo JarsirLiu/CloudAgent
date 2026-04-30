@@ -190,6 +190,8 @@ impl AgentRuntime {
             self.context.workspace_root.clone(),
             model_shell_name(),
             now.format("%Y-%m-%d").to_string(),
+            now.format("%H:%M:%S").to_string(),
+            now.to_rfc3339(),
             now.offset().to_string(),
         )
     }

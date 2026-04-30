@@ -30,9 +30,6 @@ pub struct ServerRequestState {
 #[derive(Default)]
 pub struct TranscriptState {
     pub transcript: Transcript,
-    pub scroll: usize,
-    pub viewport_height: usize,
-    pub viewport_width: usize,
     pub active_item_id: Option<String>,
     pub active_item_kind: Option<agent_protocol::TurnItemKind>,
     pub active_cell: Option<HistoryCell>,

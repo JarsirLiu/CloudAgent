@@ -1,4 +1,5 @@
 use crate::input::intent::ComposerIntent;
+use crate::terminal::Frame;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::chat_composer::ChatComposer;
 use crate::ui::widgets::footer::{hint_line, status_line};
@@ -6,7 +7,6 @@ pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use agent_protocol::{FrontendMode, RequestId, ServerRequestDecisionKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};

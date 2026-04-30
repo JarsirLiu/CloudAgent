@@ -7,17 +7,17 @@ use crate::app::parse::{ParsedInput, parse_line};
 use crate::input::intent::ComposerIntent;
 use crate::state::reducer::{TurnDispatch, apply_server_message};
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
-use crate::terminal::{TerminalGuard, UiEvent, spawn_tui_event_loop};
+use crate::terminal::{Frame, ScrollbackSurface, TerminalGuard, UiEvent, spawn_tui_event_loop};
 use crate::transport::client::create_client;
-use crate::ui::screen::render_app;
+use crate::ui::screen::{desired_app_height, render_app};
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
 use agent_app_server_client::AppServerEvent;
 use agent_protocol::{AppClientCommand, AppServerMessage, FrontendMode, TurnItemKind};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use ratatui::Frame;
+use crossterm::event::KeyEvent;
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
 use std::sync::Arc;
@@ -60,6 +60,8 @@ pub(crate) struct TuiApp {
     pub(crate) input_pane: InputPane,
     pub(crate) welcome_animation_frame: u64,
     welcome_animation_pause_ticks: u8,
+    pending_history_cells: VecDeque<HistoryCell>,
+    pending_history_rebuild: bool,
 }
 
 impl TuiApp {
@@ -74,13 +76,38 @@ impl TuiApp {
             input_pane: InputPane::new(),
             welcome_animation_frame: 0,
             welcome_animation_pause_ticks: 0,
+            pending_history_cells: VecDeque::new(),
+            pending_history_rebuild: false,
         }
     }
 
     pub(crate) fn push_cell(&mut self, cell: HistoryCell) {
-        self.preserve_scroll_on_content_change(|this| {
-            this.transcript_state.transcript.push(cell);
-        });
+        self.transcript_state.transcript.push(cell.clone());
+        self.pending_history_cells.push_back(cell);
+    }
+
+    pub(crate) fn replace_history_cells(&mut self, cells: Vec<HistoryCell>) {
+        self.transcript_state
+            .transcript
+            .replace_cells(cells.clone());
+        self.pending_history_cells = cells.into();
+        self.pending_history_rebuild = true;
+    }
+
+    pub(crate) fn drain_pending_history_cells(&mut self) -> Vec<HistoryCell> {
+        self.pending_history_cells.drain(..).collect()
+    }
+
+    pub(crate) fn clear_pending_history_cells(&mut self) {
+        self.pending_history_cells.clear();
+    }
+
+    pub(crate) fn take_pending_history_rebuild(&mut self) -> bool {
+        std::mem::take(&mut self.pending_history_rebuild)
+    }
+
+    pub(crate) fn history_cells(&self) -> &[HistoryCell] {
+        self.transcript_state.transcript.cells()
     }
 
     pub(crate) fn reset_local_view(&mut self) {
@@ -92,6 +119,8 @@ impl TuiApp {
         self.input_pane.clear_views();
         self.welcome_animation_frame = 0;
         self.welcome_animation_pause_ticks = 0;
+        self.pending_history_cells.clear();
+        self.pending_history_rebuild = false;
     }
 
     pub(crate) fn set_mode(&mut self, mode: FrontendMode) {
@@ -149,53 +178,6 @@ impl TuiApp {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
-        if matches!(key.kind, KeyEventKind::Press) {
-            let page_step = self.page_scroll_step();
-            match key.code {
-                KeyCode::PageUp => {
-                    self.transcript_state.scroll = self
-                        .transcript_state
-                        .scroll
-                        .saturating_add(page_step)
-                        .min(self.max_transcript_scroll(self.transcript_state.viewport_height));
-                    return None;
-                }
-                KeyCode::PageDown => {
-                    self.transcript_state.scroll =
-                        self.transcript_state.scroll.saturating_sub(page_step);
-                    return None;
-                }
-                KeyCode::Home => {
-                    self.transcript_state.scroll =
-                        self.max_transcript_scroll(self.transcript_state.viewport_height);
-                    return None;
-                }
-                KeyCode::End => {
-                    self.transcript_state.scroll = 0;
-                    return None;
-                }
-                _ => {}
-            }
-        }
-
-        if matches!(key.kind, KeyEventKind::Press) && self.input_pane.composer_is_empty() {
-            match key.code {
-                KeyCode::Up => {
-                    self.transcript_state.scroll = self
-                        .transcript_state
-                        .scroll
-                        .saturating_add(1)
-                        .min(self.max_transcript_scroll(self.transcript_state.viewport_height));
-                    return None;
-                }
-                KeyCode::Down => {
-                    self.transcript_state.scroll = self.transcript_state.scroll.saturating_sub(1);
-                    return None;
-                }
-                _ => {}
-            }
-        }
-
         match self.input_pane.handle_key(key)? {
             InputPaneAction::Composer(ComposerIntent::Submit(text)) => Some(parse_line(
                 &text,
@@ -236,20 +218,6 @@ impl TuiApp {
         }
     }
 
-    fn handle_mouse_scroll(&mut self, up: bool) {
-        let step = 3usize;
-        if up {
-            self.transcript_state.scroll = self
-                .transcript_state
-                .scroll
-                .saturating_add(step)
-                .min(self.max_transcript_scroll(self.transcript_state.viewport_height));
-        } else {
-            self.transcript_state.scroll = self.transcript_state.scroll.saturating_sub(step);
-        }
-        self.clamp_transcript_scroll();
-    }
-
     fn render(&mut self, frame: &mut Frame) {
         render_app(self, frame);
     }
@@ -285,58 +253,6 @@ impl TuiApp {
             return true;
         }
         false
-    }
-
-    fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
-        let content_width = self.transcript_state.viewport_width.max(20);
-        let total = self
-            .transcript_state
-            .transcript
-            .total_lines_with_tail(content_width, self.transcript_state.active_cell.as_ref());
-        total.saturating_sub(viewport_height)
-    }
-
-    fn total_transcript_lines(&self) -> usize {
-        self.transcript_state.transcript.total_lines_with_tail(
-            self.transcript_state.viewport_width.max(20),
-            self.transcript_state.active_cell.as_ref(),
-        )
-    }
-
-    pub(crate) fn clamp_transcript_scroll(&mut self) {
-        self.transcript_state.scroll = self
-            .transcript_state
-            .scroll
-            .min(self.max_transcript_scroll(self.transcript_state.viewport_height));
-    }
-
-    fn preserve_scroll_on_content_change<F>(&mut self, mutate: F)
-    where
-        F: FnOnce(&mut Self),
-    {
-        let was_scrolling_history = self.transcript_state.scroll > 0;
-        let before_lines = if was_scrolling_history {
-            self.total_transcript_lines()
-        } else {
-            0
-        };
-        mutate(self);
-        if was_scrolling_history {
-            let after_lines = self.total_transcript_lines();
-            let appended_lines = after_lines.saturating_sub(before_lines);
-            self.transcript_state.scroll =
-                self.transcript_state.scroll.saturating_add(appended_lines);
-        } else {
-            self.transcript_state.scroll = 0;
-        }
-        self.clamp_transcript_scroll();
-    }
-
-    fn page_scroll_step(&self) -> usize {
-        self.transcript_state
-            .viewport_height
-            .saturating_sub(2)
-            .clamp(6, 18)
     }
 
     pub(crate) fn handle_assistant_item_started(&mut self, turn_id: &str, item_id: &str) {
@@ -526,9 +442,7 @@ impl TuiApp {
             return;
         };
         if !cell.body.trim().is_empty() {
-            self.preserve_scroll_on_content_change(|this| {
-                this.transcript_state.transcript.push(cell);
-            });
+            self.push_cell(cell);
         }
         self.clear_active_cell();
     }
@@ -549,12 +463,22 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         conversation_id: conversation_id.clone(),
     })?;
     let mut terminal = TerminalGuard::new()?;
+    let mut surface = ScrollbackSurface::new();
     let mut events = spawn_tui_event_loop();
     let mut needs_redraw = true;
 
     loop {
         if needs_redraw {
-            terminal.terminal.draw(|frame| app.render(frame))?;
+            if app.take_pending_history_rebuild() {
+                surface.replace_all(&mut terminal, app.history_cells())?;
+                app.clear_pending_history_cells();
+            } else {
+                surface.reflow_if_width_changed(&mut terminal, app.history_cells())?;
+            }
+            let pending_history_lines =
+                surface.pending_lines(&terminal, app.drain_pending_history_cells())?;
+            let height = desired_app_height(&app, terminal.terminal.size()?.width).max(1);
+            terminal.draw_with_history(height, pending_history_lines, |frame| app.render(frame))?;
         }
         let redraw_after_event = tokio::select! {
             Some(event) = client.next_event() => {
@@ -575,10 +499,6 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                     UiEvent::Paste(text) => {
                         app.pause_welcome_animation_for_input();
                         let _ = app.input_pane.handle_paste(&text);
-                        true
-                    }
-                    UiEvent::MouseScroll { up } => {
-                        app.handle_mouse_scroll(up);
                         true
                     }
                     UiEvent::Resize => true,

@@ -231,6 +231,10 @@ impl Transcript {
         self.cells.len().saturating_sub(1)
     }
 
+    pub fn replace_cells(&mut self, cells: Vec<HistoryCell>) {
+        self.cells = cells;
+    }
+
     pub fn cells(&self) -> &[HistoryCell] {
         &self.cells
     }
@@ -239,48 +243,12 @@ impl Transcript {
         self.cells.is_empty()
     }
 
-    pub fn render_lines_with_tail(
-        &self,
-        width: usize,
-        height: usize,
-        scroll: usize,
-        tail: Option<&HistoryCell>,
-    ) -> Vec<Line<'static>> {
-        let mut all_lines = Vec::new();
-        for cell in &self.cells {
-            let lines = cell.to_lines_with_mode(width);
-            all_lines.extend(lines);
-        }
-        if let Some(cell) = tail {
-            all_lines.extend(cell.to_lines_with_mode(width));
-        }
-        let total = all_lines.len();
-        if total == 0 {
-            return vec![];
-        }
-        let end = total.saturating_sub(scroll);
-        let start = end.saturating_sub(height);
-        all_lines
-            .into_iter()
-            .skip(start)
-            .take(end - start)
-            .collect()
-    }
-
     pub fn total_lines(&self, width: usize) -> usize {
         self.cells
             .iter()
             .enumerate()
             .map(|(_, cell)| cell.to_lines_with_mode(width).len())
             .sum()
-    }
-
-    pub fn total_lines_with_tail(&self, width: usize, tail: Option<&HistoryCell>) -> usize {
-        let mut total = self.total_lines(width);
-        if let Some(cell) = tail {
-            total += cell.to_lines_with_mode(width).len();
-        }
-        total
     }
 }
 

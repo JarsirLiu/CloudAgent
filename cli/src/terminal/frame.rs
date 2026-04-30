@@ -1,7 +1,6 @@
 use anyhow::Result;
-use ratatui::Frame;
 
-use crate::terminal::TerminalGuard;
+use crate::terminal::{Frame, TerminalGuard};
 
 #[allow(dead_code)]
 pub(crate) fn draw_frame(

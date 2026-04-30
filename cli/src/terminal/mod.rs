@@ -1,80 +1,39 @@
+pub mod custom_terminal;
 pub mod events;
-pub mod frame;
+mod inline_viewport;
+mod insert_history;
+pub mod surface;
 
 use anyhow::Result;
-use crossterm::cursor::MoveTo;
+use crossterm::SynchronizedUpdate;
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
-use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
-use ratatui::Terminal;
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
-use std::io;
+use ratatui::text::Line;
+use std::io::{self, stdout};
 use std::panic;
 use std::sync::Once;
 
+pub(crate) use custom_terminal::Frame;
 pub(crate) use events::{UiEvent, spawn_tui_event_loop};
+pub(crate) use surface::ScrollbackSurface;
+
+use inline_viewport::update_inline_viewport;
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 
 pub(crate) struct TerminalGuard {
-    pub(crate) terminal: Terminal<CrosstermBackend<io::Stdout>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EnableAlternateScroll;
-
-impl crossterm::Command for EnableAlternateScroll {
-    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        write!(f, "\x1b[?1007h")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> Result<(), std::io::Error> {
-        Err(std::io::Error::other(
-            "EnableAlternateScroll requires ANSI execution",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DisableAlternateScroll;
-
-impl crossterm::Command for DisableAlternateScroll {
-    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        write!(f, "\x1b[?1007l")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> Result<(), std::io::Error> {
-        Err(std::io::Error::other(
-            "DisableAlternateScroll requires ANSI execution",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
+    pub(crate) terminal: custom_terminal::Terminal<CrosstermBackend<io::Stdout>>,
 }
 
 pub(crate) fn init() -> Result<TerminalGuard> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     let init_result = (|| -> Result<TerminalGuard> {
-        let _ = execute!(stdout, EnableAlternateScroll);
-        execute!(
-            stdout,
-            EnableBracketedPaste,
-            Clear(ClearType::All),
-            MoveTo(0, 0)
-        )?;
+        execute!(stdout, EnableBracketedPaste)?;
         let backend = CrosstermBackend::new(io::stdout());
-        let terminal = Terminal::new(backend)?;
+        let terminal = custom_terminal::Terminal::new(backend)?;
         Ok(TerminalGuard { terminal })
     })();
     if init_result.is_err() {
@@ -84,7 +43,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
 }
 
 pub(crate) fn restore() -> Result<()> {
-    let _ = execute!(io::stdout(), DisableBracketedPaste, DisableAlternateScroll);
+    let _ = execute!(io::stdout(), DisableBracketedPaste);
     disable_raw_mode()?;
     Ok(())
 }
@@ -102,6 +61,21 @@ pub fn install_panic_hook() {
 impl TerminalGuard {
     pub(crate) fn new() -> Result<Self> {
         init()
+    }
+
+    pub(crate) fn draw_with_history(
+        &mut self,
+        height: u16,
+        pending_history_lines: Vec<Line<'static>>,
+        render: impl FnOnce(&mut Frame),
+    ) -> Result<()> {
+        stdout().sync_update(|_| {
+            update_inline_viewport(self, height)?;
+            insert_history::insert_history_lines(&mut self.terminal, pending_history_lines)?;
+            self.terminal.draw(render)?;
+            Ok::<(), anyhow::Error>(())
+        })??;
+        Ok(())
     }
 }
 

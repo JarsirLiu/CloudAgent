@@ -1,42 +1,51 @@
 use crate::app::TuiApp;
 use crate::state::selectors::status_text_from_mode;
+use crate::terminal::Frame;
 use crate::ui::widgets::welcome::WelcomeScreen;
-use agent_protocol::FrontendMode;
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
+const WELCOME_HEIGHT: u16 = 27;
+const MAX_CONTENT_WIDTH: u16 = 140;
+
 pub(crate) fn render_app(app: &mut TuiApp, frame: &mut Frame) {
     let area = frame.area();
-    let content = centered_column(area, 112);
+    let content = centered_column(area, MAX_CONTENT_WIDTH);
     let bottom_height = app
         .input_pane
         .desired_height(app.console_state.mode, content.width)
-        .clamp(6, content.height.saturating_sub(10).max(6));
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(8),
-            Constraint::Length(bottom_height),
-        ])
-        .split(content);
+        .min(content.height)
+        .max(1);
 
-    frame.render_widget(header_block(app), sections[0]);
-    if app.transcript_state.transcript.is_empty() {
-        render_welcome(app, frame, sections[1]);
+    let input_area = if should_show_welcome(app) && content.height > bottom_height + 2 {
+        let welcome_height = WELCOME_HEIGHT.min(content.height.saturating_sub(bottom_height));
+        let [welcome_area, input_area] = Layout::vertical([
+            Constraint::Length(welcome_height),
+            Constraint::Min(bottom_height),
+        ])
+        .areas(content);
+        render_welcome(app, frame, welcome_area);
+        input_area
+    } else if let Some(active_height) = active_cell_height(app, content.width)
+        && content.height > bottom_height + 1
+    {
+        let active_height = active_height.min(content.height.saturating_sub(bottom_height));
+        let [active_area, input_area] = Layout::vertical([
+            Constraint::Length(active_height),
+            Constraint::Min(bottom_height),
+        ])
+        .areas(content);
+        render_active_cell(app, frame, active_area);
+        input_area
     } else {
-        app.transcript_state.viewport_height = sections[1].height.saturating_sub(0) as usize;
-        app.transcript_state.viewport_width = sections[1].width.saturating_sub(4) as usize;
-        app.clamp_transcript_scroll();
-        frame.render_widget(transcript_panel(app, sections[1]), sections[1]);
-    }
+        content
+    };
 
     let bottom = app.input_pane.render(
         frame,
-        sections[2],
+        input_area,
         app.console_state.mode,
         &current_status_text(app),
         &status_meta_text(app),
@@ -47,61 +56,19 @@ pub(crate) fn render_app(app: &mut TuiApp, frame: &mut Frame) {
     }
 }
 
-fn header_block(app: &TuiApp) -> Paragraph<'static> {
-    let status = match app.console_state.mode {
-        FrontendMode::Idle => ("ready", Color::Green),
-        FrontendMode::Running => ("working", Color::Cyan),
-        FrontendMode::WaitingForServerRequest => ("action", Color::Yellow),
-    };
-
-    let scroll_hint = if app.transcript_state.scroll > 0 {
-        format!("scroll +{}", app.transcript_state.scroll)
+pub(crate) fn desired_app_height(app: &TuiApp, width: u16) -> u16 {
+    let content_width = width.min(MAX_CONTENT_WIDTH);
+    let input_height = app
+        .input_pane
+        .desired_height(app.console_state.mode, content_width)
+        .max(1);
+    if should_show_welcome(app) {
+        input_height.saturating_add(WELCOME_HEIGHT)
+    } else if let Some(active_height) = active_cell_height(app, content_width) {
+        input_height.saturating_add(active_height)
     } else {
-        "live".to_string()
-    };
-    let tool_text = app
-        .run_state
-        .last_tool_name
-        .as_ref()
-        .map(|tool| format!("tool {tool}"));
-
-    let mut spans = vec![
-        Span::styled(
-            "── CloudAgent",
-            Style::default()
-                .fg(Color::LightRed)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("state {}", status.0),
-            Style::default().fg(status.1).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("{} msgs", app.run_state.last_message_count),
-            Style::default().fg(Color::Rgb(130, 140, 160)),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            app.connection_label.clone(),
-            Style::default().fg(Color::Rgb(90, 110, 140)),
-        ),
-        Span::raw("  "),
-        Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
-    ];
-    if let Some(tool_text) = tool_text {
-        let insert_at = spans.len().saturating_sub(2);
-        spans.splice(
-            insert_at..insert_at,
-            [
-                Span::raw("  "),
-                Span::styled(tool_text, Style::default().fg(Color::Rgb(130, 140, 160))),
-            ],
-        );
+        input_height
     }
-
-    Paragraph::new(Text::from(vec![Line::from(spans)]))
 }
 
 fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
@@ -183,18 +150,40 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
     );
 }
 
-fn transcript_panel(app: &TuiApp, area: Rect) -> Paragraph<'static> {
+fn should_show_welcome(app: &TuiApp) -> bool {
+    app.transcript_state.transcript.is_empty() && app.run_state.history_loaded
+}
+
+fn active_cell_height(app: &TuiApp, width: u16) -> Option<u16> {
+    let active = app.transcript_state.active_cell.as_ref()?;
+    if active.body.trim().is_empty() {
+        return None;
+    }
+    let render_width = width.saturating_sub(4).max(40) as usize;
+    Some(active.to_lines_with_mode(render_width).len().max(1) as u16)
+}
+
+fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
+    let Some(active) = app.transcript_state.active_cell.as_ref() else {
+        return;
+    };
+    if active.body.trim().is_empty() {
+        return;
+    }
     let inner = area.inner(Margin {
-        vertical: 0,
         horizontal: 2,
+        vertical: 0,
     });
-    let lines = app.transcript_state.transcript.render_lines_with_tail(
-        inner.width as usize,
-        inner.height as usize,
-        app.transcript_state.scroll,
-        app.transcript_state.active_cell.as_ref(),
+    let render_width = inner.width.max(40) as usize;
+    let mut lines = active.to_lines_with_mode(render_width);
+    let max_lines = inner.height as usize;
+    if lines.len() > max_lines {
+        lines = lines[lines.len() - max_lines..].to_vec();
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        inner,
     );
-    Paragraph::new(Text::from(lines)).block(Block::default())
 }
 
 fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
@@ -220,18 +209,13 @@ fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
 fn status_meta_text(app: &TuiApp) -> String {
     let mut parts = vec![format!("{} msgs", app.run_state.last_message_count)];
     if let Some(usage) = &app.run_state.last_turn_usage {
-        let mut token_text = format!(
-            "in {} out {} cached {}",
+        parts.push(format!(
+            "in {} out {} cached {} total {}",
             format_tokens(usage.input_tokens),
             format_tokens(usage.output_tokens),
-            format_tokens(usage.cached_input_tokens)
-        );
-        if let Some(total) = &app.run_state.total_turn_usage {
-            token_text.push_str(&format!(" total {}", format_tokens(total.total_tokens)));
-        }
-        parts.push(token_text);
-    } else if let Some(total) = &app.run_state.total_turn_usage {
-        parts.push(format!("total {}", format_tokens(total.total_tokens)));
+            format_tokens(usage.cached_input_tokens),
+            format_tokens(usage.total_tokens)
+        ));
     }
     if let (Some(total), Some(window)) = (
         &app.run_state.total_turn_usage,

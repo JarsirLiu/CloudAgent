@@ -3,7 +3,7 @@ use crate::app::effects::copy_text_to_clipboard;
 use crate::app::parse::ParsedInput;
 use crate::input::slash_command::slash_command_help_text;
 use crate::state::reducer::{ItemDispatch, ServerAction};
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
+use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone, render_history_entry};
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
     AppClientCommand, FrontendMode, ServerRequestDecision, ServerRequestDecisionKind,
@@ -94,6 +94,8 @@ pub(crate) fn handle_tui_input(
                 app.console_state.mode = FrontendMode::Running;
                 app.run_state.status_notice = Some("Submitting turn".to_string());
                 app.run_state.last_turn_usage = None;
+                app.run_state.total_turn_usage = None;
+                app.run_state.model_context_window = None;
                 app.input_pane.clear_views();
                 app.push_cell(HistoryCell::from_message(
                     "you",
@@ -161,6 +163,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         }
         ServerAction::ClearCurrentTurnUsage => {
             app.run_state.last_turn_usage = None;
+            app.run_state.total_turn_usage = None;
+            app.run_state.model_context_window = None;
         }
         ServerAction::SetTokenUsage {
             last_usage,
@@ -323,9 +327,13 @@ fn rebuild_transcript_from_history(app: &mut TuiApp) {
 
     let history_snapshot = app.run_state.history_snapshot.clone().unwrap_or_default();
     if !history_snapshot.is_empty() {
-        app.transcript_state
-            .transcript
-            .replace_with_turns(&history_snapshot);
+        let cells = history_snapshot
+            .iter()
+            .flat_map(|turn| turn.items.iter())
+            .map(render_history_entry)
+            .filter(|cell| !cell.is_empty())
+            .collect::<Vec<_>>();
+        app.replace_history_cells(cells);
         app.transcript_state.last_copyable_output = history_snapshot
             .iter()
             .rev()
@@ -339,5 +347,4 @@ fn rebuild_transcript_from_history(app: &mut TuiApp) {
             });
     }
     app.run_state.history_loaded = app.run_state.history_snapshot.is_some();
-    app.clamp_transcript_scroll();
 }

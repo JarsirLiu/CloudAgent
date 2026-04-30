@@ -182,6 +182,8 @@ mod tests {
             r"D:\learn\gifti\cloudagent",
             "powershell",
             "2026-04-30",
+            "19:16:01",
+            "2026-04-30T19:16:01+08:00",
             "+08:00",
         );
         let request =
