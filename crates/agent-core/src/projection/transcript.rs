@@ -34,13 +34,10 @@ impl ConversationHistoryBuilder {
             RolloutItem::EventMsg { event } => self.push_event_msg(event),
             RolloutItem::ResponseItem { item } => self.push_response_item(item),
             RolloutItem::Compacted { summary } => {
-                self.push_unique_item(
-                    TranscriptItem::SystemMessage {
-                        id: "compacted".to_string(),
-                        text: summary.clone(),
-                    },
-                    false,
-                );
+                self.upsert_item_in_current_turn(TranscriptItem::SystemMessage {
+                    id: format!("compacted:{}", self.current_rollout_index),
+                    text: summary.clone(),
+                });
             }
             RolloutItem::SessionMeta { .. } => {}
         }
@@ -58,18 +55,22 @@ impl ConversationHistoryBuilder {
             .or_else(|| self.turns.last().cloned())
     }
 
+    fn new_turn(&self, id: String, opened_explicitly: bool) -> PendingConversationTurn {
+        PendingConversationTurn {
+            id,
+            state: TurnState::Running,
+            items: Vec::new(),
+            positions: HashMap::new(),
+            rollout_start_index: self.current_rollout_index,
+            rollout_end_index: self.current_rollout_index,
+            opened_explicitly,
+        }
+    }
+
     fn ensure_turn(&mut self) -> &mut PendingConversationTurn {
         if self.current_turn.is_none() {
             let id = format!("turn-{}", self.turns.len() + 1);
-            self.current_turn = Some(PendingConversationTurn {
-                id,
-                state: TurnState::Running,
-                items: Vec::new(),
-                positions: HashMap::new(),
-                rollout_start_index: self.current_rollout_index,
-                rollout_end_index: self.current_rollout_index,
-                opened_explicitly: false,
-            });
+            self.current_turn = Some(self.new_turn(id, false));
         }
         self.current_turn
             .as_mut()
@@ -87,8 +88,16 @@ impl ConversationHistoryBuilder {
     }
 
     fn push_response_item(&mut self, item: &ResponseItem) {
-        if let Some(item) = transcript_item_from_response_item(item) {
-            self.push_unique_item(item, false);
+        if self
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.opened_explicitly)
+        {
+            return;
+        }
+        if let Some(mut item) = transcript_item_from_response_item(item) {
+            assign_response_item_id(&mut item, self.current_rollout_index);
+            self.upsert_item_in_current_turn(item);
         }
     }
 
@@ -105,46 +114,40 @@ impl ConversationHistoryBuilder {
                     .is_some_and(|turn| turn.opened_explicitly)
                 {
                     self.finish_current_turn();
+                } else {
+                    self.current_turn = None;
                 }
-                let turn = self.ensure_turn();
-                turn.id = turn_id.clone();
-                turn.opened_explicitly = true;
-                self.push_unique_item(
-                    TranscriptItem::UserMessage {
-                        id: String::new(),
-                        text: user_input.clone(),
-                    },
-                    false,
-                );
+                self.current_turn = Some(self.new_turn(turn_id.clone(), true));
+                self.upsert_item_in_current_turn(TranscriptItem::UserMessage {
+                    id: format!("user:{turn_id}"),
+                    text: user_input.clone(),
+                });
             }
-            EventMsg::ItemCompleted { item, .. } => {
-                self.push_unique_item(item.clone(), true);
+            EventMsg::ItemCompleted { turn_id, item, .. } => {
+                self.upsert_item_in_turn_id(turn_id, item.clone());
             }
-            EventMsg::TurnFailed { error, .. } => {
-                self.push_unique_item(
+            EventMsg::TurnFailed { turn_id, error } => {
+                self.upsert_item_in_turn_id(
+                    turn_id,
                     TranscriptItem::SystemMessage {
-                        id: "turn_failed".to_string(),
+                        id: format!("turn_failed:{turn_id}"),
                         text: error.clone(),
                     },
-                    false,
                 );
-                self.set_current_turn_state(TurnState::Failed);
-                self.finish_current_turn();
+                self.set_turn_state(turn_id, TurnState::Failed, true);
             }
-            EventMsg::TurnCancelled { reason, .. } => {
-                self.push_unique_item(
+            EventMsg::TurnCancelled { turn_id, reason } => {
+                self.upsert_item_in_turn_id(
+                    turn_id,
                     TranscriptItem::SystemMessage {
-                        id: "turn_cancelled".to_string(),
+                        id: format!("turn_cancelled:{turn_id}"),
                         text: reason.clone(),
                     },
-                    false,
                 );
-                self.set_current_turn_state(TurnState::Cancelled);
-                self.finish_current_turn();
+                self.set_turn_state(turn_id, TurnState::Cancelled, true);
             }
-            EventMsg::TurnCompleted { .. } => {
-                self.set_current_turn_state(TurnState::Completed);
-                self.finish_current_turn();
+            EventMsg::TurnCompleted { turn_id } => {
+                self.set_turn_state(turn_id, TurnState::Completed, true);
             }
             EventMsg::ModelRequestStarted { .. }
             | EventMsg::ModelResponseReceived { .. }
@@ -155,27 +158,85 @@ impl ConversationHistoryBuilder {
         }
     }
 
-    fn set_current_turn_state(&mut self, state: TurnState) {
-        self.ensure_turn().state = state;
-    }
-
-    fn push_unique_item(&mut self, item: TranscriptItem, replace_existing: bool) {
-        if transcript_item_is_empty(&item) {
-            return;
-        }
-        let key = transcript_item_key(&item);
-        let current_rollout_index = self.current_rollout_index;
-        let turn = self.ensure_turn();
-        turn.rollout_end_index = current_rollout_index;
-        if let Some(index) = turn.positions.get(&key).copied() {
-            if replace_existing {
-                turn.items[index] = item;
+    fn set_turn_state(&mut self, turn_id: &str, state: TurnState, finish_if_current: bool) {
+        if self
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.id == turn_id)
+        {
+            if let Some(turn) = self.current_turn.as_mut() {
+                turn.state = state;
+            }
+            if finish_if_current {
+                self.finish_current_turn();
             }
             return;
         }
-        turn.positions.insert(key, turn.items.len());
+
+        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
+            turn.state = state;
+        }
+    }
+
+    fn upsert_item_in_current_turn(&mut self, item: TranscriptItem) {
+        if transcript_item_is_empty(&item) {
+            return;
+        }
+        let current_rollout_index = self.current_rollout_index;
+        let turn = self.ensure_turn();
+        turn.upsert_item(item, current_rollout_index);
+    }
+
+    fn upsert_item_in_turn_id(&mut self, turn_id: &str, item: TranscriptItem) {
+        if transcript_item_is_empty(&item) {
+            return;
+        }
+        if self
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.id == turn_id)
+        {
+            let current_rollout_index = self.current_rollout_index;
+            if let Some(turn) = self.current_turn.as_mut() {
+                turn.upsert_item(item, current_rollout_index);
+            }
+            return;
+        }
+
+        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
+            upsert_completed_turn_item(turn, item, self.current_rollout_index);
+        }
+    }
+}
+
+impl PendingConversationTurn {
+    fn upsert_item(&mut self, item: TranscriptItem, rollout_index: usize) {
+        self.rollout_end_index = rollout_index;
+        let id = item.id().to_string();
+        if let Some(index) = self.positions.get(&id).copied() {
+            self.items[index] = item;
+            return;
+        }
+        self.positions.insert(id, self.items.len());
+        self.items.push(item);
+    }
+}
+
+fn upsert_completed_turn_item(
+    turn: &mut ConversationTurn,
+    item: TranscriptItem,
+    rollout_index: usize,
+) {
+    if let Some(existing) = turn
+        .items
+        .iter_mut()
+        .find(|existing| existing.id() == item.id())
+    {
+        *existing = item;
+    } else {
         turn.items.push(item);
     }
+    turn.rollout_end_index = rollout_index;
 }
 
 impl From<&PendingConversationTurn> for ConversationTurn {
@@ -223,7 +284,8 @@ pub fn transcript_items_from_rollout_items(items: &[RolloutItem]) -> Vec<Transcr
 
 pub fn transcript_items_from_response_items(items: &[ResponseItem]) -> Vec<TranscriptItem> {
     let mut builder = ConversationHistoryBuilder::new();
-    for item in items {
+    for (index, item) in items.iter().enumerate() {
+        builder.current_rollout_index = index;
         builder.push_response_item(item);
     }
     flatten_conversation_turns(&builder.finish())
@@ -312,30 +374,18 @@ fn transcript_item_from_tool_response(
     }
 }
 
-fn transcript_item_key(item: &TranscriptItem) -> String {
-    match item {
-        TranscriptItem::SystemMessage { text, .. } => format!("system:{text}"),
-        TranscriptItem::UserMessage { text, .. } => format!("user:{text}"),
-        TranscriptItem::AgentMessage { text, .. } => format!("agent:{text}"),
-        TranscriptItem::CommandExecution {
-            tool_name,
-            command,
-            current_directory,
-            ..
-        } => format!("command:{tool_name}:{command}:{current_directory}"),
-        TranscriptItem::FileChange {
-            tool_name,
-            path,
-            summary,
-            ..
-        } => format!("file:{tool_name}:{path}:{summary}"),
-        TranscriptItem::ToolResult {
-            tool_name,
-            content,
-            summary,
-            ..
-        } => format!("tool:{tool_name}:{content}:{summary}"),
-        TranscriptItem::Reasoning { title, text, .. } => format!("reasoning:{title}:{text}"),
+fn assign_response_item_id(item: &mut TranscriptItem, rollout_index: usize) {
+    let id = match item {
+        TranscriptItem::SystemMessage { id, .. }
+        | TranscriptItem::UserMessage { id, .. }
+        | TranscriptItem::AgentMessage { id, .. }
+        | TranscriptItem::CommandExecution { id, .. }
+        | TranscriptItem::FileChange { id, .. }
+        | TranscriptItem::ToolResult { id, .. }
+        | TranscriptItem::Reasoning { id, .. } => id,
+    };
+    if id.is_empty() {
+        *id = format!("response:{rollout_index}");
     }
 }
 
@@ -509,5 +559,139 @@ mod tests {
                 TranscriptItem::AgentMessage { text: two, .. }
             ] if second == "second" && two == "two"
         ));
+    }
+
+    #[test]
+    fn same_assistant_text_keeps_distinct_items_by_id() {
+        let items = vec![
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "repeat".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemCompleted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant-1".to_string(),
+                item: TranscriptItem::AgentMessage {
+                    id: "assistant-1".to_string(),
+                    text: "same".to_string(),
+                },
+            }),
+            RolloutItem::from(EventMsg::ItemCompleted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant-2".to_string(),
+                item: TranscriptItem::AgentMessage {
+                    id: "assistant-2".to_string(),
+                    text: "same".to_string(),
+                },
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0]
+                .items
+                .iter()
+                .filter(|item| matches!(item, TranscriptItem::AgentMessage { text, .. } if text == "same"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn late_item_completed_updates_original_turn_by_turn_id() {
+        let items = vec![
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "first".to_string(),
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-2".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "second".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemCompleted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant-late".to_string(),
+                item: TranscriptItem::AgentMessage {
+                    id: "assistant-late".to_string(),
+                    text: "late answer".to_string(),
+                },
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-2".to_string(),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { text: first, .. },
+                TranscriptItem::AgentMessage { text: answer, .. }
+            ] if first == "first" && answer == "late answer"
+        ));
+        assert!(matches!(
+            &turns[1].items[..],
+            [TranscriptItem::UserMessage { text, .. }] if text == "second"
+        ));
+    }
+
+    #[test]
+    fn same_tool_summary_keeps_distinct_items_by_id() {
+        let command_item = |id: &str| TranscriptItem::CommandExecution {
+            id: id.to_string(),
+            tool_name: "shell_command".to_string(),
+            command: "pwd".to_string(),
+            current_directory: "D:\\work".to_string(),
+            status: CommandExecutionStatus::Completed,
+            exit_code: Some(0),
+            stdout: Some("D:\\work".to_string()),
+            stderr: Some(String::new()),
+            summary: "D:\\work".to_string(),
+        };
+        let items = vec![
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "twice".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemCompleted {
+                turn_id: "turn-1".to_string(),
+                item_id: "tool-1".to_string(),
+                item: command_item("tool-1"),
+            }),
+            RolloutItem::from(EventMsg::ItemCompleted {
+                turn_id: "turn-1".to_string(),
+                item_id: "tool-2".to_string(),
+                item: command_item("tool-2"),
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0]
+                .items
+                .iter()
+                .filter(|item| matches!(item, TranscriptItem::CommandExecution { summary, .. } if summary == "D:\\work"))
+                .count(),
+            2
+        );
     }
 }

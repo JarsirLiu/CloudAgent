@@ -50,6 +50,20 @@ pub enum TranscriptItem {
     },
 }
 
+impl TranscriptItem {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::SystemMessage { id, .. }
+            | Self::UserMessage { id, .. }
+            | Self::AgentMessage { id, .. }
+            | Self::CommandExecution { id, .. }
+            | Self::FileChange { id, .. }
+            | Self::ToolResult { id, .. }
+            | Self::Reasoning { id, .. } => id,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationTurn {
     pub id: String,
