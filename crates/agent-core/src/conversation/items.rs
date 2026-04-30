@@ -26,6 +26,8 @@ pub enum TranscriptItem {
         exit_code: Option<i32>,
         stdout: Option<String>,
         stderr: Option<String>,
+        aggregated_output: Option<String>,
+        duration_ms: Option<u64>,
         summary: String,
     },
     FileChange {

@@ -383,6 +383,8 @@ fn transcript_item_from_item_start(
             exit_code: None,
             stdout: Some(String::new()),
             stderr: None,
+            aggregated_output: None,
+            duration_ms: None,
             summary: String::new(),
         }),
         TurnItemKind::FileChange => Some(TranscriptItem::FileChange {
@@ -554,6 +556,8 @@ fn transcript_item_from_tool_response(
             exit_code,
             stdout,
             stderr,
+            aggregated_output,
+            duration_ms,
             ..
         }) => TranscriptItem::CommandExecution {
             id: tool_call_id.to_string(),
@@ -564,6 +568,8 @@ fn transcript_item_from_tool_response(
             exit_code: *exit_code,
             stdout: stdout.clone(),
             stderr: stderr.clone(),
+            aggregated_output: aggregated_output.clone(),
+            duration_ms: *duration_ms,
             summary: content.to_string(),
         },
         Some(StructuredToolResult::WriteFile {
@@ -784,6 +790,8 @@ mod tests {
                 success: Some(true),
                 stdout: Some("D:\\learn\\gifti\\cloudagent".to_string()),
                 stderr: Some(String::new()),
+                aggregated_output: Some("D:\\learn\\gifti\\cloudagent".to_string()),
+                duration_ms: Some(1),
             }),
         })
         .expect("tool response should project");
@@ -983,6 +991,8 @@ mod tests {
             exit_code: Some(0),
             stdout: Some("D:\\work".to_string()),
             stderr: Some(String::new()),
+            aggregated_output: Some("D:\\work".to_string()),
+            duration_ms: Some(1),
             summary: "D:\\work".to_string(),
         };
         let items = vec![

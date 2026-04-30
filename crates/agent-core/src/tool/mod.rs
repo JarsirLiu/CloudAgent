@@ -1,4 +1,5 @@
 use crate::context::ToolExecutionContext;
+use crate::turn::{TurnItemDeltaKind, TurnItemKind};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,9 @@ pub struct ToolSpec {
     pub parameters: Value,
     pub mutating: bool,
     pub requires_approval: bool,
+    pub item_kind: TurnItemKind,
+    pub delta_kind: TurnItemDeltaKind,
+    pub approval_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -53,6 +57,8 @@ pub enum StructuredToolResult {
         success: Option<bool>,
         stdout: Option<String>,
         stderr: Option<String>,
+        aggregated_output: Option<String>,
+        duration_ms: Option<u64>,
     },
     ListDirectory {
         path: String,

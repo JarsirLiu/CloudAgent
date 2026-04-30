@@ -11,6 +11,7 @@ pub(crate) struct ServerRequestCoordinator {
 
 #[derive(Debug)]
 pub(crate) struct PendingServerRequest {
+    pub(crate) conversation_id: String,
     pub(crate) turn_id: TurnId,
     pub(crate) request: ServerRequest,
     pub(crate) reply_tx: oneshot::Sender<ServerRequestDecision>,
@@ -31,6 +32,7 @@ impl ServerRequestCoordinator {
     pub(crate) fn insert_pending(
         &mut self,
         request_id: RequestId,
+        conversation_id: String,
         turn_id: TurnId,
         request: ServerRequest,
         reply_tx: oneshot::Sender<ServerRequestDecision>,
@@ -38,11 +40,28 @@ impl ServerRequestCoordinator {
         self.pending.insert(
             request_id,
             PendingServerRequest {
+                conversation_id,
                 turn_id,
                 request,
                 reply_tx,
             },
         );
+    }
+
+    pub(crate) fn pending_for_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Vec<(RequestId, ServerRequest)> {
+        let mut requests = self
+            .pending
+            .iter()
+            .filter_map(|(request_id, pending)| {
+                (pending.conversation_id == conversation_id)
+                    .then_some((request_id.clone(), pending.request.clone()))
+            })
+            .collect::<Vec<_>>();
+        requests.sort_by(|(left, _), (right, _)| format!("{left:?}").cmp(&format!("{right:?}")));
+        requests
     }
 
     pub(crate) fn resolve(

@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -119,6 +120,8 @@ fn structured_failure_result(tool_name: &str, arguments: &Value) -> Option<Struc
                 success: Some(false),
                 stdout: None,
                 stderr: None,
+                aggregated_output: None,
+                duration_ms: None,
             })
         }
         "write_file" => {
@@ -192,6 +195,9 @@ impl LocalTool for ShellCommandTool {
             }),
             mutating: true,
             requires_approval: true,
+            item_kind: agent_protocol::TurnItemKind::CommandExecution,
+            delta_kind: agent_protocol::TurnItemDeltaKind::CommandExecutionOutput,
+            approval_reason: Some("Shell commands can inspect or modify the workspace.".to_string()),
         }
     }
 
@@ -203,6 +209,7 @@ impl LocalTool for ShellCommandTool {
             .timeout_ms
             .unwrap_or(ctx.default_shell_timeout_ms)
             .max(1_000);
+        let started_at = Instant::now();
 
         let mut command = if cfg!(windows) {
             let mut cmd = Command::new("powershell");
@@ -267,6 +274,7 @@ impl LocalTool for ShellCommandTool {
         let stderr = String::from_utf8_lossy(&stderr_task.await??)
             .trim()
             .to_string();
+        let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
         let exit_code = status.code().unwrap_or(-1);
         let current_directory = workdir.display().to_string();
@@ -278,6 +286,7 @@ impl LocalTool for ShellCommandTool {
             &stdout,
             &stderr,
         );
+        let aggregated_output = content.clone();
         let summary = shell_summary(
             &args.command,
             &current_directory,
@@ -301,6 +310,8 @@ impl LocalTool for ShellCommandTool {
                 success: Some(status.success()),
                 stdout: Some(stdout),
                 stderr: Some(stderr),
+                aggregated_output: Some(aggregated_output),
+                duration_ms: Some(duration_ms),
             }),
         })
     }
@@ -378,6 +389,9 @@ impl LocalTool for ListDirTool {
             }),
             mutating: false,
             requires_approval: false,
+            item_kind: agent_protocol::TurnItemKind::ToolCall,
+            delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+            approval_reason: None,
         }
     }
 
@@ -443,6 +457,9 @@ impl LocalTool for ReadFileTool {
             }),
             mutating: false,
             requires_approval: false,
+            item_kind: agent_protocol::TurnItemKind::ToolCall,
+            delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+            approval_reason: None,
         }
     }
 
@@ -496,6 +513,9 @@ impl LocalTool for WriteFileTool {
             }),
             mutating: true,
             requires_approval: true,
+            item_kind: agent_protocol::TurnItemKind::FileChange,
+            delta_kind: agent_protocol::TurnItemDeltaKind::FileChangeOutput,
+            approval_reason: Some("Writing files modifies the workspace.".to_string()),
         }
     }
 

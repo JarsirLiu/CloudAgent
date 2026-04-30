@@ -3,7 +3,7 @@ use crate::ui::widgets::chat_composer::{ChatComposer, ComposerAction};
 use crate::ui::widgets::footer::{divider_line, hint_line, status_line};
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
-use agent_protocol::FrontendMode;
+use agent_protocol::{FrontendMode, ServerRequestDecisionKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Text};
@@ -16,7 +16,10 @@ pub struct InputPane {
 
 pub enum InputPaneAction {
     Composer(ComposerAction),
-    ServerRequestSubmit { approved: bool, reason: String },
+    ServerRequestSubmit {
+        decision: ServerRequestDecisionKind,
+        reason: String,
+    },
 }
 
 impl InputPane {
@@ -39,9 +42,9 @@ impl InputPane {
                     self.view_stack.pop();
                     return Some(InputPaneAction::Composer(ComposerAction::None));
                 }
-                BottomPaneViewAction::ServerRequestSubmit { approved, reason } => {
+                BottomPaneViewAction::ServerRequestSubmit { decision, reason } => {
                     self.view_stack.pop();
-                    return Some(InputPaneAction::ServerRequestSubmit { approved, reason });
+                    return Some(InputPaneAction::ServerRequestSubmit { decision, reason });
                 }
             }
             if view.is_complete() {

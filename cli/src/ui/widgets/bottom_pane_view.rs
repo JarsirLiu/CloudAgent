@@ -1,3 +1,4 @@
+use agent_protocol::ServerRequestDecisionKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -6,7 +7,10 @@ use ratatui::text::Line;
 pub enum BottomPaneViewAction {
     None,
     Close,
-    ServerRequestSubmit { approved: bool, reason: String },
+    ServerRequestSubmit {
+        decision: ServerRequestDecisionKind,
+        reason: String,
+    },
 }
 
 pub trait BottomPaneView {

@@ -1,6 +1,7 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
-    FrontendMode, RequestId, ServerRequest, TranscriptItem, TurnItemKind, UserTurnInput,
+    FrontendMode, RequestId, ServerRequest, ServerRequestDecisionKind, TranscriptItem,
+    TurnItemKind, UserTurnInput,
 };
 
 #[derive(Debug, Clone)]
@@ -51,7 +52,10 @@ pub(crate) enum TurnDispatch {
 #[derive(Debug, Clone)]
 pub(crate) enum UiInputEvent {
     Command(AppClientCommand),
-    ServerRequestAnswer { approved: bool, reason: String },
+    ServerRequestAnswer {
+        decision: ServerRequestDecisionKind,
+        reason: String,
+    },
     LocalCopy,
 }
 
@@ -210,20 +214,31 @@ pub(crate) fn apply_ui_event(
             conversation_id: conversation_id.to_string(),
         }),
         _ if mode == FrontendMode::WaitingForServerRequest => {
-            let approved = matches!(trimmed, "1" | "y" | "Y" | "yes" | "YES");
+            let decision = match trimmed {
+                "2" | "a" | "A" | "all" | "ALL" | "session" | "SESSION" => {
+                    ServerRequestDecisionKind::AcceptForSession
+                }
+                "3" | "n" | "N" | "no" | "NO" => ServerRequestDecisionKind::Decline,
+                _ => ServerRequestDecisionKind::Accept,
+            };
             UiInputEvent::ServerRequestAnswer {
-                approved,
-                reason: if approved {
-                    "approved by console operator".to_string()
-                } else {
-                    "denied by console operator".to_string()
-                },
+                reason: format!("{} by console operator", decision_label(&decision)),
+                decision,
             }
         }
         _ => UiInputEvent::Command(AppClientCommand::SubmitTurn(UserTurnInput {
             conversation_id: conversation_id.to_string(),
             content: trimmed.to_string(),
         })),
+    }
+}
+
+fn decision_label(decision: &ServerRequestDecisionKind) -> &'static str {
+    match decision {
+        ServerRequestDecisionKind::Accept => "approved",
+        ServerRequestDecisionKind::AcceptForSession => "approved for session",
+        ServerRequestDecisionKind::Decline => "denied",
+        ServerRequestDecisionKind::Cancel => "cancelled",
     }
 }
 

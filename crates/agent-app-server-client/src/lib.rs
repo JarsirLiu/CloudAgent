@@ -187,6 +187,8 @@ mod tests {
                     exit_code: Some(0),
                     stdout: Some("D:\\work".to_string()),
                     stderr: Some(String::new()),
+                    aggregated_output: Some("D:\\work".to_string()),
+                    duration_ms: Some(1),
                     summary: "current directory is D:\\work".to_string(),
                 },
             },

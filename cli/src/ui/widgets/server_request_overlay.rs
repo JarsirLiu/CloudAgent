@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::textarea::TextArea;
+use agent_protocol::ServerRequestDecisionKind;
 
 #[derive(Clone, Debug, Default)]
 pub struct ServerRequestInlineState {
@@ -42,32 +43,39 @@ impl BottomPaneView for ServerRequestOverlay {
                 BottomPaneViewAction::None
             }
             KeyCode::Down => {
-                self.selected = self.selected.saturating_add(1).min(1);
+                self.selected = self.selected.saturating_add(1).min(2);
                 BottomPaneViewAction::None
             }
             KeyCode::Char('y') if self.reply.is_empty() => {
                 self.complete = true;
                 BottomPaneViewAction::ServerRequestSubmit {
-                    approved: true,
+                    decision: ServerRequestDecisionKind::Accept,
+                    reason: String::new(),
+                }
+            }
+            KeyCode::Char('a') if self.reply.is_empty() => {
+                self.complete = true;
+                BottomPaneViewAction::ServerRequestSubmit {
+                    decision: ServerRequestDecisionKind::AcceptForSession,
                     reason: String::new(),
                 }
             }
             KeyCode::Char('n') if self.reply.is_empty() => {
                 self.complete = true;
                 BottomPaneViewAction::ServerRequestSubmit {
-                    approved: false,
+                    decision: ServerRequestDecisionKind::Decline,
                     reason: String::new(),
                 }
             }
             KeyCode::Enter => {
                 let reason = self.reply.take_trimmed();
-                let approved = if reason.is_empty() {
-                    self.selected == 0
+                let decision = if reason.is_empty() {
+                    selected_decision(self.selected)
                 } else {
-                    !reason.eq_ignore_ascii_case("n") && !reason.eq_ignore_ascii_case("no")
+                    typed_decision(&reason)
                 };
                 self.complete = true;
-                BottomPaneViewAction::ServerRequestSubmit { approved, reason }
+                BottomPaneViewAction::ServerRequestSubmit { decision, reason }
             }
             _ => {
                 self.reply.handle_key(key);
@@ -82,7 +90,7 @@ impl BottomPaneView for ServerRequestOverlay {
         let title_bg = Color::Rgb(45, 36, 18);
         let separator = "─".repeat(area_width.saturating_sub(4) as usize);
         let reply = if self.reply.is_empty() {
-            "Type y / n, or enter a short reason".to_string()
+            "Type y / a / n, or enter a short reason".to_string()
         } else {
             self.reply.text().to_string()
         };
@@ -144,10 +152,24 @@ impl BottomPaneView for ServerRequestOverlay {
                         "    2."
                     },
                     Style::default()
+                        .fg(Color::Rgb(100, 210, 255))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" Approve for session", option_style(self.selected == 1)),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    if self.selected == 2 {
+                        "  > 3."
+                    } else {
+                        "    3."
+                    },
+                    Style::default()
                         .fg(Color::Rgb(255, 100, 100))
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" Deny", option_style(self.selected == 1)),
+                Span::styled(" Deny", option_style(self.selected == 2)),
             ]),
             Line::raw(""),
             Line::from(vec![
@@ -181,7 +203,7 @@ impl BottomPaneView for ServerRequestOverlay {
                 ),
             ]),
             Line::from(Span::styled(
-                "  Up/Down select  ·  Enter submit  ·  y approve  ·  n deny",
+                "  Up/Down select  ·  Enter submit  ·  y approve  ·  a approve session  ·  n deny",
                 Style::default().fg(Color::Rgb(62, 62, 78)),
             )),
         ]
@@ -210,5 +232,26 @@ impl BottomPaneView for ServerRequestOverlay {
 
     fn is_complete(&self) -> bool {
         self.complete
+    }
+}
+
+fn selected_decision(selected: usize) -> ServerRequestDecisionKind {
+    match selected {
+        0 => ServerRequestDecisionKind::Accept,
+        1 => ServerRequestDecisionKind::AcceptForSession,
+        _ => ServerRequestDecisionKind::Decline,
+    }
+}
+
+fn typed_decision(reason: &str) -> ServerRequestDecisionKind {
+    if reason.eq_ignore_ascii_case("n") || reason.eq_ignore_ascii_case("no") {
+        ServerRequestDecisionKind::Decline
+    } else if reason.eq_ignore_ascii_case("a")
+        || reason.eq_ignore_ascii_case("all")
+        || reason.eq_ignore_ascii_case("session")
+    {
+        ServerRequestDecisionKind::AcceptForSession
+    } else {
+        ServerRequestDecisionKind::Accept
     }
 }

@@ -214,8 +214,8 @@ impl TuiApp {
                 }))
             }
             InputPaneAction::Composer(ComposerAction::None) => None,
-            InputPaneAction::ServerRequestSubmit { approved, reason } => {
-                Some(ParsedInput::ServerRequestAnswer { approved, reason })
+            InputPaneAction::ServerRequestSubmit { decision, reason } => {
+                Some(ParsedInput::ServerRequestAnswer { decision, reason })
             }
         }
     }
@@ -546,7 +546,8 @@ mod tests {
     use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
     use agent_protocol::{
         AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus,
-        ConversationStatus, ConversationTurn, StructuredToolResult, TranscriptItem, TurnItemKind,
+        ConversationStatus, ConversationTurn, ServerRequestDecisionKind, StructuredToolResult,
+        TranscriptItem, TurnItemKind,
     };
     use agent_runtime::AgentRuntime;
     use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
@@ -682,6 +683,8 @@ mod tests {
                                 success: Some(true),
                                 stdout: Some("D:\\learn\\gifti\\cloudagent".to_string()),
                                 stderr: Some(String::new()),
+                                aggregated_output: Some("D:\\learn\\gifti\\cloudagent".to_string()),
+                                duration_ms: Some(1),
                             }),
                         },
                         TranscriptItem::AgentMessage {
@@ -808,7 +811,7 @@ mod tests {
                     &mut app,
                     &client,
                     ParsedInput::ServerRequestAnswer {
-                        approved: true,
+                        decision: ServerRequestDecisionKind::Accept,
                         reason: "ok".to_string(),
                     },
                 )

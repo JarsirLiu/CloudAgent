@@ -18,7 +18,9 @@ use rollout_recorder::RolloutRecorder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use state::RuntimeState;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage::JsonConversationStore;
 use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
@@ -45,6 +47,7 @@ pub struct AgentRuntime {
     state: RuntimeState,
     store: JsonConversationStore,
     rollout_recorder: RolloutRecorder,
+    session_approvals: StdMutex<HashSet<String>>,
 }
 
 impl AgentRuntime {
@@ -71,6 +74,7 @@ impl AgentRuntime {
             state: RuntimeState::new(system_prompt),
             store,
             rollout_recorder,
+            session_approvals: StdMutex::new(HashSet::new()),
         })
     }
 
@@ -276,6 +280,18 @@ impl AgentRuntime {
                     return response;
                 }
             }
+        }
+    }
+
+    pub(crate) fn is_tool_approved_for_session(&self, call: &ToolCall) -> bool {
+        self.session_approvals
+            .lock()
+            .is_ok_and(|approvals| approvals.contains(&tool_approval_key(call)))
+    }
+
+    pub(crate) fn approve_tool_for_session(&self, call: &ToolCall) {
+        if let Ok(mut approvals) = self.session_approvals.lock() {
+            approvals.insert(tool_approval_key(call));
         }
     }
 
@@ -933,4 +949,10 @@ pub(crate) fn summarize_arguments(arguments: &Value) -> String {
     } else {
         rendered
     }
+}
+
+fn tool_approval_key(call: &ToolCall) -> String {
+    let arguments =
+        serde_json::to_string(&call.arguments).unwrap_or_else(|_| call.arguments.to_string());
+    format!("{}:{arguments}", call.name)
 }

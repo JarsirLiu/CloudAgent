@@ -2,8 +2,8 @@ use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{ContextManager, RolloutItem};
 use agent_protocol::{
     CommandExecutionStatus, EventMsg, ServerRequest, ServerRequestDecision, StructuredToolResult,
-    ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TranscriptItem, TurnItemDeltaKind,
-    TurnItemKind, TurnState, WriteFileStatus,
+    ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TranscriptItem, TurnState,
+    WriteFileStatus,
 };
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -68,14 +68,13 @@ impl<'a> ToolBatchRunner<'a> {
                 EventMsg::ItemStarted {
                     turn_id: self.turn_id.to_string(),
                     item_id: tool_item_id.clone(),
-                    kind: tool_item_kind(&call.name),
+                    kind: self.spec_for(&call).item_kind.clone(),
                     title: Some(tool_item_title(&call)),
                 },
             );
 
-            if let Some(spec) = self.tool_specs.iter().find(|spec| spec.name == call.name)
-                && spec.requires_approval
-            {
+            let spec = self.spec_for(&call);
+            if spec.requires_approval && !self.runtime.is_tool_approved_for_session(&call) {
                 let approved = self
                     .request_approval(
                         &call,
@@ -112,7 +111,7 @@ impl<'a> ToolBatchRunner<'a> {
                             EventMsg::ItemDelta {
                                 turn_id: self.turn_id.to_string(),
                                 item_id: tool_item_id.clone(),
-                                kind: tool_delta_kind(&call.name),
+                                kind: self.spec_for(&call).delta_kind.clone(),
                                 delta: rendered,
                             },
                         );
@@ -132,7 +131,7 @@ impl<'a> ToolBatchRunner<'a> {
                     EventMsg::ItemDelta {
                         turn_id: self.turn_id.to_string(),
                         item_id: tool_item_id.clone(),
-                        kind: tool_delta_kind(&call.name),
+                        kind: self.spec_for(&call).delta_kind.clone(),
                         delta: result.summary.clone(),
                     },
                 );
@@ -179,7 +178,11 @@ impl<'a> ToolBatchRunner<'a> {
                 turn_id: self.turn_id.to_string(),
                 tool_call_id: call.id.clone(),
                 tool_name: call.name.clone(),
-                reason: format!("Tool `{}` can modify files or execute commands.", call.name),
+                reason: self
+                    .spec_for(call)
+                    .approval_reason
+                    .clone()
+                    .unwrap_or_else(|| format!("Tool `{}` requires approval.", call.name)),
                 arguments_preview: summarize_arguments(&call.arguments),
             },
         };
@@ -209,6 +212,12 @@ impl<'a> ToolBatchRunner<'a> {
             },
         );
         if decision.is_approved() {
+            if matches!(
+                decision.decision,
+                agent_protocol::ServerRequestDecisionKind::AcceptForSession
+            ) {
+                self.runtime.approve_tool_for_session(call);
+            }
             return Ok(true);
         }
 
@@ -229,7 +238,7 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemDelta {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
-                kind: tool_delta_kind(&call.name),
+                kind: self.spec_for(call).delta_kind.clone(),
                 delta: format!("Tool execution skipped: {reason}"),
             },
         );
@@ -280,6 +289,23 @@ impl<'a> ToolBatchRunner<'a> {
             },
         );
     }
+
+    fn spec_for(&self, call: &ToolCall) -> ToolSpec {
+        self.tool_specs
+            .iter()
+            .find(|spec| spec.name == call.name)
+            .cloned()
+            .unwrap_or_else(|| ToolSpec {
+                name: call.name.clone(),
+                description: "Unknown tool".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+                mutating: false,
+                requires_approval: false,
+                item_kind: agent_protocol::TurnItemKind::ToolCall,
+                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                approval_reason: None,
+            })
+    }
 }
 
 fn transcript_item_from_tool_result(
@@ -295,6 +321,8 @@ fn transcript_item_from_tool_result(
             exit_code,
             stdout,
             stderr,
+            aggregated_output,
+            duration_ms,
             ..
         }) => TranscriptItem::CommandExecution {
             id: item_id.to_string(),
@@ -305,6 +333,8 @@ fn transcript_item_from_tool_result(
             exit_code: *exit_code,
             stdout: stdout.clone(),
             stderr: stderr.clone(),
+            aggregated_output: aggregated_output.clone(),
+            duration_ms: *duration_ms,
             summary: result.summary.clone(),
         },
         Some(StructuredToolResult::WriteFile {
@@ -343,6 +373,8 @@ fn denied_transcript_item(
             exit_code,
             stdout,
             stderr,
+            aggregated_output,
+            duration_ms,
             ..
         }) => TranscriptItem::CommandExecution {
             id: item_id.to_string(),
@@ -353,6 +385,8 @@ fn denied_transcript_item(
             exit_code,
             stdout,
             stderr,
+            aggregated_output,
+            duration_ms,
             summary: "tool execution skipped".to_string(),
         },
         Some(StructuredToolResult::WriteFile {
@@ -374,22 +408,6 @@ fn denied_transcript_item(
             summary: "tool execution skipped".to_string(),
             structured,
         },
-    }
-}
-
-fn tool_item_kind(tool_name: &str) -> TurnItemKind {
-    match tool_name {
-        "shell_command" => TurnItemKind::CommandExecution,
-        "write_file" => TurnItemKind::FileChange,
-        _ => TurnItemKind::ToolCall,
-    }
-}
-
-fn tool_delta_kind(tool_name: &str) -> TurnItemDeltaKind {
-    match tool_name {
-        "shell_command" => TurnItemDeltaKind::CommandExecutionOutput,
-        "write_file" => TurnItemDeltaKind::FileChangeOutput,
-        _ => TurnItemDeltaKind::ToolOutput,
     }
 }
 
@@ -431,6 +449,8 @@ fn denied_tool_result(
                 success: Some(false),
                 stdout: None,
                 stderr: Some(reason),
+                aggregated_output: None,
+                duration_ms: None,
             })
         }
         "write_file" => {

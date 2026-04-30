@@ -141,6 +141,7 @@ pub(crate) async fn handle_command(
             .await;
         }
         AppClientCommand::RequestConversationHistory { conversation_id } => {
+            let requested_conversation_id = conversation_id.clone();
             let active_listener = {
                 let state = state.lock().await;
                 state.active_listener(&conversation_id)
@@ -160,6 +161,8 @@ pub(crate) async fn handle_command(
                 },
             )
             .await;
+            replay_pending_requests_for_conversation(event_tx, &state, &requested_conversation_id)
+                .await;
         }
         AppClientCommand::ResetConversation { conversation_id } => {
             runtime.reset_conversation(&conversation_id).await?;
@@ -182,11 +185,12 @@ pub(crate) async fn handle_command(
                 event_tx,
                 &state,
                 AppServerNotification::ConversationSubscriptionChanged {
-                    conversation_id,
+                    conversation_id: conversation_id.clone(),
                     subscribed: true,
                 },
             )
             .await;
+            replay_pending_requests_for_conversation(event_tx, &state, &conversation_id).await;
         }
         AppClientCommand::UnsubscribeConversation { conversation_id } => {
             {
@@ -299,6 +303,7 @@ fn spawn_turn(
                             let mut state_guard = state.lock().await;
                             state_guard.server_requests.insert_pending(
                                 request_id.clone(),
+                                conversation_id.clone(),
                                 turn_id,
                                 request.clone(),
                                 reply_tx,
@@ -328,6 +333,11 @@ fn spawn_turn(
                 },
             )
             .await;
+
+        {
+            let mut state = state_for_finish.lock().await;
+            state.clear_active_listener(&conversation_id);
+        }
 
         match result {
             Ok(output) => {
@@ -388,8 +398,6 @@ fn spawn_turn(
             }
         }
         let _ = listener_task.await;
-        let mut state = state_for_finish.lock().await;
-        state.clear_active_listener(&conversation_id);
     })
 }
 
@@ -417,6 +425,31 @@ async fn resolve_pending_requests_for_finished_turn(
                 request_id,
                 request,
                 decision,
+            },
+        )
+        .await;
+    }
+}
+
+async fn replay_pending_requests_for_conversation(
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: &str,
+) {
+    let pending = {
+        let state = state.lock().await;
+        state
+            .server_requests
+            .pending_for_conversation(conversation_id)
+    };
+    for (request_id, request) in pending {
+        send_request(
+            event_tx,
+            state,
+            AppServerRequest::ServerRequest {
+                request_id,
+                conversation_id: conversation_id.to_string(),
+                request,
             },
         )
         .await;

@@ -5,8 +5,8 @@ use crate::state::reducer::{ItemDispatch, ServerAction};
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
-    AppClientCommand, FrontendMode, ServerRequestDecision, TranscriptItem, TurnItemKind,
-    UserTurnInput,
+    AppClientCommand, FrontendMode, ServerRequestDecision, ServerRequestDecisionKind,
+    TranscriptItem, TurnItemKind, UserTurnInput,
 };
 use anyhow::Result;
 
@@ -86,7 +86,7 @@ pub(crate) fn handle_tui_input(
             }
             client.send_command(command)?;
         }
-        ParsedInput::ServerRequestAnswer { approved, reason } => {
+        ParsedInput::ServerRequestAnswer { decision, reason } => {
             let Some(request_id) = app.server_request_state.pending_server_request_id.clone()
             else {
                 app.push_cell(HistoryCell::from_message(
@@ -101,8 +101,11 @@ pub(crate) fn handle_tui_input(
             app.input_pane.clear_views();
             app.push_cell(HistoryCell::from_message(
                 "request",
-                if approved { "approved" } else { "denied" },
-                if approved {
+                decision_label(&decision),
+                if matches!(
+                    decision,
+                    ServerRequestDecisionKind::Accept | ServerRequestDecisionKind::AcceptForSession
+                ) {
                     HistoryTone::Agent
                 } else {
                     HistoryTone::Warning
@@ -111,15 +114,23 @@ pub(crate) fn handle_tui_input(
             client.send_command(AppClientCommand::ResolveServerRequest {
                 conversation_id: conversation_id.to_string(),
                 request_id,
-                decision: if approved {
-                    ServerRequestDecision::accept(Some(reason))
-                } else {
-                    ServerRequestDecision::decline(Some(reason))
+                decision: ServerRequestDecision {
+                    decision,
+                    reason: Some(reason),
                 },
             })?;
         }
     }
     Ok(false)
+}
+
+fn decision_label(decision: &ServerRequestDecisionKind) -> &'static str {
+    match decision {
+        ServerRequestDecisionKind::Accept => "approved",
+        ServerRequestDecisionKind::AcceptForSession => "approved for session",
+        ServerRequestDecisionKind::Decline => "denied",
+        ServerRequestDecisionKind::Cancel => "cancelled",
+    }
 }
 
 pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
