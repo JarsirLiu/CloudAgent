@@ -123,13 +123,6 @@ impl InputPane {
         self.composer.cursor_position(inner, mode)
     }
 
-    pub fn should_show_cursor(&self, mode: FrontendMode) -> bool {
-        if self.view_stack.last().is_some() {
-            return true;
-        }
-        mode != FrontendMode::Idle || !self.composer.is_empty()
-    }
-
     pub fn clear_views(&mut self) {
         self.view_stack.clear();
     }

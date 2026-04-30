@@ -42,12 +42,10 @@ pub(crate) fn render_app(app: &mut TuiApp, frame: &mut Frame) {
     );
     frame.render_widget(bottom_widget, sections[2]);
 
-    if app.input_pane.should_show_cursor(app.console_state.mode) {
-        let (x, y) =
-            app.input_pane
-                .cursor_position(sections[2], lines_before, app.console_state.mode);
-        frame.set_cursor_position((x, y));
-    }
+    let (x, y) = app
+        .input_pane
+        .cursor_position(sections[2], lines_before, app.console_state.mode);
+    frame.set_cursor_position((x, y));
 }
 
 fn header_block(app: &TuiApp) -> Paragraph<'static> {
