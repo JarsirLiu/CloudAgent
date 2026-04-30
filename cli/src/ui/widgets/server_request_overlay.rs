@@ -3,6 +3,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::input::intent::ComposerIntent;
+use crate::input::slash_command::{SlashCommand, find_slash_command};
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::textarea::TextArea;
 use agent_protocol::ServerRequestDecisionKind;
@@ -69,6 +71,9 @@ impl BottomPaneView for ServerRequestOverlay {
             }
             KeyCode::Enter => {
                 let reason = self.reply.take_trimmed();
+                if let Some(intent) = slash_intent(&reason) {
+                    return BottomPaneViewAction::Composer(intent);
+                }
                 let decision = if reason.is_empty() {
                     selected_decision(self.selected)
                 } else {
@@ -203,7 +208,7 @@ impl BottomPaneView for ServerRequestOverlay {
                 ),
             ]),
             Line::from(Span::styled(
-                "  Up/Down select  ·  Enter submit  ·  y approve  ·  a approve session  ·  n deny",
+                "  Up/Down select  ·  Enter submit  ·  y approve  ·  a approve session  ·  n deny  ·  / commands",
                 Style::default().fg(Color::Rgb(62, 62, 78)),
             )),
         ]
@@ -211,10 +216,10 @@ impl BottomPaneView for ServerRequestOverlay {
 
     fn cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
         let prompt_width = 10usize;
-        let mut x = area.x
-            + prompt_width as u16
-            + unicode_width::UnicodeWidthStr::width(self.reply.text()) as u16;
-        let mut y = area.y + 8;
+        let content_width = area.width.saturating_sub(prompt_width as u16 + 2).max(1) as usize;
+        let (cursor_row, cursor_col) = self.reply.visual_cursor_position(content_width);
+        let mut x = area.x + (prompt_width + cursor_col) as u16;
+        let mut y = area.y + 9 + cursor_row as u16;
         if area.height > 0 {
             let max_y = area.y + area.height.saturating_sub(1);
             if y > max_y {
@@ -253,5 +258,86 @@ fn typed_decision(reason: &str) -> ServerRequestDecisionKind {
         ServerRequestDecisionKind::AcceptForSession
     } else {
         ServerRequestDecisionKind::Accept
+    }
+}
+
+fn slash_intent(line: &str) -> Option<ComposerIntent> {
+    let command_text = line.strip_prefix('/')?;
+    let mut parts = command_text.splitn(2, char::is_whitespace);
+    let name = parts.next().unwrap_or_default();
+    let args = parts.next().unwrap_or_default().trim();
+    let Some(command) = find_slash_command(name) else {
+        return Some(ComposerIntent::UnknownCommand(name.to_string()));
+    };
+    if !args.is_empty() && !command.supports_inline_args() {
+        return Some(ComposerIntent::UnknownCommand(name.to_string()));
+    }
+    Some(intent_for_command(command))
+}
+
+fn intent_for_command(command: SlashCommand) -> ComposerIntent {
+    match command {
+        SlashCommand::Clear => ComposerIntent::Reset,
+        SlashCommand::Copy => ComposerIntent::Copy,
+        SlashCommand::Help => ComposerIntent::Help,
+        SlashCommand::Interrupt => ComposerIntent::Interrupt,
+        SlashCommand::Exit => ComposerIntent::Exit,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn type_text(overlay: &mut ServerRequestOverlay, text: &str) {
+        for ch in text.chars() {
+            overlay.handle_key_event(key(KeyCode::Char(ch)));
+        }
+    }
+
+    #[test]
+    fn cursor_lands_on_reply_input_line() {
+        let overlay = ServerRequestOverlay::new(ServerRequestInlineState {
+            title: "Run command?".to_string(),
+            detail: "shell_command".to_string(),
+        });
+
+        let (_x, y) = overlay
+            .cursor_position(Rect::new(0, 20, 80, 16))
+            .expect("cursor");
+
+        assert_eq!(y, 29);
+    }
+
+    #[test]
+    fn slash_command_in_request_overlay_dispatches_global_intent() {
+        let mut overlay = ServerRequestOverlay::new(ServerRequestInlineState::default());
+        type_text(&mut overlay, "/interrupt");
+
+        let action = overlay.handle_key_event(key(KeyCode::Enter));
+
+        assert!(matches!(
+            action,
+            BottomPaneViewAction::Composer(ComposerIntent::Interrupt)
+        ));
+    }
+
+    #[test]
+    fn slash_unknown_in_request_overlay_is_not_treated_as_approval_reason() {
+        let mut overlay = ServerRequestOverlay::new(ServerRequestInlineState::default());
+        type_text(&mut overlay, "/wat");
+
+        let action = overlay.handle_key_event(key(KeyCode::Enter));
+
+        assert!(matches!(
+            action,
+            BottomPaneViewAction::Composer(ComposerIntent::UnknownCommand(command))
+                if command == "wat"
+        ));
     }
 }

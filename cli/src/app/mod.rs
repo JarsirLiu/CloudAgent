@@ -4,13 +4,12 @@ mod parse;
 
 use crate::app::actions::{execute_server_action, handle_tui_input};
 use crate::app::parse::{ParsedInput, parse_line};
+use crate::input::intent::ComposerIntent;
 use crate::state::reducer::{TurnDispatch, apply_server_message};
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
-use crate::terminal::frame::draw_spans_at;
 use crate::terminal::{TerminalGuard, UiEvent, spawn_tui_event_loop};
 use crate::transport::client::create_client;
-use crate::ui::screen::{render_app, welcome_animation_line};
-use crate::ui::widgets::chat_composer::ComposerAction;
+use crate::ui::screen::render_app;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
 use agent_app_server_client::AppServerEvent;
@@ -19,7 +18,6 @@ use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::Frame;
-use ratatui::layout::Rect;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
 use std::sync::Arc;
@@ -202,26 +200,33 @@ impl TuiApp {
         }
 
         match self.input_pane.handle_key(key)? {
-            InputPaneAction::Composer(ComposerAction::Submit(text)) => Some(parse_line(
+            InputPaneAction::Composer(ComposerIntent::Submit(text)) => Some(parse_line(
                 &text,
                 &self.conversation_id,
                 self.console_state.mode,
             )),
-            InputPaneAction::Composer(ComposerAction::Interrupt) => {
+            InputPaneAction::Composer(ComposerIntent::Interrupt) => {
                 Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
                     conversation_id: self.conversation_id.clone(),
                 }))
             }
-            InputPaneAction::Composer(ComposerAction::Exit) => {
+            InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
+            InputPaneAction::Composer(ComposerIntent::Help) => Some(ParsedInput::LocalHelp),
+            InputPaneAction::Composer(ComposerIntent::UnknownCommand(command)) => {
+                Some(ParsedInput::LocalInputError(format!(
+                    "Unrecognized command '/{command}'. Type '/' for available commands."
+                )))
+            }
+            InputPaneAction::Composer(ComposerIntent::Exit) => {
                 self.run_state.should_exit = true;
                 Some(ParsedInput::Command(AppClientCommand::Exit))
             }
-            InputPaneAction::Composer(ComposerAction::Reset) => {
+            InputPaneAction::Composer(ComposerIntent::Reset) => {
                 Some(ParsedInput::Command(AppClientCommand::ResetConversation {
                     conversation_id: self.conversation_id.clone(),
                 }))
             }
-            InputPaneAction::Composer(ComposerAction::None) => None,
+            InputPaneAction::Composer(ComposerIntent::None) => None,
             InputPaneAction::ServerRequestSubmit { decision, reason } => {
                 Some(ParsedInput::ServerRequestAnswer { decision, reason })
             }
@@ -564,24 +569,18 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                         }
                         true
                     }
+                    UiEvent::Paste(text) => {
+                        app.pause_welcome_animation_for_input();
+                        let _ = app.input_pane.handle_paste(&text);
+                        true
+                    }
                     UiEvent::MouseScroll { up } => {
                         app.handle_mouse_scroll(up);
                         true
                     }
                     UiEvent::Resize => true,
                     UiEvent::Tick => {
-                        if app.handle_animation_tick() {
-                            let size = terminal.terminal.size()?;
-                            let area = Rect::new(0, 0, size.width, size.height);
-                            if let Some((x, y, spans)) = welcome_animation_line(&app, area) {
-                                draw_spans_at(&mut terminal, x, y, &spans)?;
-                                false
-                            } else {
-                                true
-                            }
-                        } else {
-                            false
-                        }
+                        app.handle_animation_tick()
                     }
                 }
             }
@@ -611,6 +610,7 @@ mod tests {
     };
     use agent_runtime::AgentRuntime;
     use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use serde_json::json;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
@@ -1072,6 +1072,7 @@ mod tests {
         .expect("submit turn");
 
         let mut saw_server_request = false;
+        let mut saw_server_request_cancelled = false;
         let mut saw_turn_cancelled = false;
         while !saw_turn_cancelled {
             let event = timeout(Duration::from_secs(10), client.next_event())
@@ -1083,11 +1084,22 @@ mod tests {
                 AppServerEvent::Message(AppServerMessage::Request(_))
             ) {
                 saw_server_request = true;
-                client
-                    .send_command(AppClientCommand::InterruptTurn {
-                        conversation_id: "default".to_string(),
-                    })
-                    .expect("interrupt turn");
+                let input = app
+                    .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+                    .expect("ctrl+k should produce interrupt input");
+                handle_tui_input("default", &mut app, &client, input)
+                    .expect("ctrl+k interrupt turn");
+            }
+            if matches!(
+                &event,
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::ServerRequestResolved {
+                        decision,
+                        ..
+                    }
+                )) if decision.decision == agent_protocol::ServerRequestDecisionKind::Cancel
+            ) {
+                saw_server_request_cancelled = true;
             }
             if matches!(
                 &event,
@@ -1102,6 +1114,10 @@ mod tests {
         assert!(
             saw_server_request,
             "expected pending server request before interrupt"
+        );
+        assert!(
+            saw_server_request_cancelled,
+            "expected interrupt to cancel the pending server request"
         );
 
         client
@@ -1164,6 +1180,10 @@ mod tests {
             .expect("shutdown restarted client");
 
         let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
+        let debug_cells = rebuilt_cells
+            .iter()
+            .map(|cell| (cell.label.as_str(), cell.body.as_str()))
+            .collect::<Vec<_>>();
         assert!(
             rebuilt_cells
                 .iter()
@@ -1175,6 +1195,12 @@ mod tests {
                 .filter(|cell| cell.body == "帮我看看当前目录")
                 .count(),
             1
+        );
+        assert!(
+            rebuilt_cells
+                .iter()
+                .any(|cell| cell.label == "tool" && cell.body.contains("failed: pwd")),
+            "rebuilt cells: {debug_cells:?}"
         );
         assert!(!rebuilt_cells.iter().any(|cell| cell.label == "request"));
 
@@ -1385,6 +1411,219 @@ mod tests {
             .expect("fake llm server thread panicked")
             .expect("fake llm server");
         assert_eq!(recorded_requests.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn denied_tool_in_multi_tool_batch_still_records_all_tool_results() {
+        let _guard = cli_e2e_test_lock().await;
+        let fixture = TempFixture::new();
+        let responses = vec![
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_denied",
+                                "function": {
+                                    "name": "shell_command",
+                                    "arguments": "{\"command\":\"pwd\"}"
+                                }
+                            },
+                            {
+                                "index": 1,
+                                "id": "call_allowed",
+                                "function": {
+                                    "name": "shell_command",
+                                    "arguments": "{\"command\":\"pwd\"}"
+                                }
+                            }
+                        ]
+                    }
+                }]
+            })]),
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{ "delta": { "content": "done" } }]
+            })]),
+        ];
+        let (base_url, server_thread) = spawn_fake_llm_server(responses);
+        let config = Arc::new(test_config(
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            base_url,
+        ));
+        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let mut client = AppServerClient::in_process(InProcessClientConfig {
+            runtime,
+            conversation_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+
+        client
+            .send_command(AppClientCommand::SubmitTurn(
+                agent_protocol::UserTurnInput {
+                    conversation_id: "default".to_string(),
+                    content: "run two commands".to_string(),
+                },
+            ))
+            .expect("submit turn");
+
+        let mut request_count = 0usize;
+        let mut saw_completed = false;
+        while !saw_completed {
+            let event = timeout(Duration::from_secs(10), client.next_event())
+                .await
+                .expect("timed out waiting for client event")
+                .expect("client event");
+            match event {
+                AppServerEvent::Message(AppServerMessage::Request(
+                    agent_protocol::AppServerRequest::ServerRequest { request_id, .. },
+                )) => {
+                    request_count += 1;
+                    let decision = if request_count == 1 {
+                        agent_protocol::ServerRequestDecision::decline(Some(
+                            "skip first".to_string(),
+                        ))
+                    } else {
+                        agent_protocol::ServerRequestDecision::accept(Some("ok".to_string()))
+                    };
+                    client
+                        .send_command(AppClientCommand::ResolveServerRequest {
+                            conversation_id: "default".to_string(),
+                            request_id,
+                            decision,
+                        })
+                        .expect("resolve request");
+                }
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::TurnCompleted { .. },
+                )) => {
+                    saw_completed = true;
+                }
+                _ => {}
+            }
+        }
+        client.shutdown().await.expect("shutdown client");
+
+        assert_eq!(request_count, 2);
+        let recorded_requests = server_thread
+            .join()
+            .expect("fake llm server thread panicked")
+            .expect("fake llm server");
+        assert_eq!(recorded_requests.len(), 2);
+        assert!(recorded_requests[1].contains("\"tool_call_id\":\"call_denied\""));
+        assert!(recorded_requests[1].contains("\"tool_call_id\":\"call_allowed\""));
+    }
+
+    #[tokio::test]
+    async fn repeated_denied_tool_request_does_not_prompt_again() {
+        let _guard = cli_e2e_test_lock().await;
+        let fixture = TempFixture::new();
+        let responses = vec![
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_denied_once",
+                            "function": {
+                                "name": "shell_command",
+                                "arguments": "{\"command\":\"df -h\"}"
+                            }
+                        }]
+                    }
+                }]
+            })]),
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_denied_repeat",
+                            "function": {
+                                "name": "shell_command",
+                                "arguments": "{\"command\":\"df -h\"}"
+                            }
+                        }]
+                    }
+                }]
+            })]),
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{ "delta": { "content": "I cannot inspect disk usage because permission was denied." } }]
+            })]),
+        ];
+        let (base_url, server_thread) = spawn_fake_llm_server(responses);
+        let config = Arc::new(test_config(
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            base_url,
+        ));
+        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let mut client = AppServerClient::in_process(InProcessClientConfig {
+            runtime,
+            conversation_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+
+        client
+            .send_command(AppClientCommand::SubmitTurn(
+                agent_protocol::UserTurnInput {
+                    conversation_id: "default".to_string(),
+                    content: "check disk".to_string(),
+                },
+            ))
+            .expect("submit turn");
+
+        let mut request_count = 0usize;
+        let mut saw_completed = false;
+        while !saw_completed {
+            let event = timeout(Duration::from_secs(10), client.next_event())
+                .await
+                .expect("timed out waiting for client event")
+                .expect("client event");
+            match event {
+                AppServerEvent::Message(AppServerMessage::Request(
+                    agent_protocol::AppServerRequest::ServerRequest { request_id, .. },
+                )) => {
+                    request_count += 1;
+                    client
+                        .send_command(AppClientCommand::ResolveServerRequest {
+                            conversation_id: "default".to_string(),
+                            request_id,
+                            decision: agent_protocol::ServerRequestDecision::decline(Some(
+                                String::new(),
+                            )),
+                        })
+                        .expect("deny request");
+                }
+                AppServerEvent::Message(AppServerMessage::Notification(
+                    AppServerNotification::TurnCompleted { .. },
+                )) => {
+                    saw_completed = true;
+                }
+                _ => {}
+            }
+        }
+        client.shutdown().await.expect("shutdown client");
+
+        assert_eq!(request_count, 1);
+        let recorded_requests = server_thread
+            .join()
+            .expect("fake llm server thread panicked")
+            .expect("fake llm server");
+        assert_eq!(recorded_requests.len(), 3);
+        assert!(recorded_requests[1].contains("\"tool_call_id\":\"call_denied_once\""));
+        assert!(recorded_requests[1].contains("exec command rejected by user"));
+        assert!(recorded_requests[2].contains("\"tool_call_id\":\"call_denied_repeat\""));
+        assert!(recorded_requests[2].contains("exec command rejected by user"));
+        assert!(recorded_requests[2].contains("same tool request was already denied in this turn"));
     }
 
     fn test_config(

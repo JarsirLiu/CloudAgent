@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 
 pub(crate) enum UiEvent {
     Key(KeyEvent),
+    Paste(String),
     MouseScroll { up: bool },
     Resize,
     Tick,
@@ -17,6 +18,11 @@ pub(crate) fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
                 Ok(true) => match event::read() {
                     Ok(CEvent::Key(key)) => {
                         if tx.send(UiEvent::Key(key)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(CEvent::Paste(text)) => {
+                        if tx.send(UiEvent::Paste(text)).is_err() {
                             break;
                         }
                     }

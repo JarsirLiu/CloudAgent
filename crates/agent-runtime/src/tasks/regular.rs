@@ -7,6 +7,7 @@ use agent_protocol::{
     TurnItemKind, TurnState,
 };
 use anyhow::Result;
+use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
@@ -68,6 +69,7 @@ where
     let mut last_model_name = None;
     let mut assistant_item_seq: usize = 0;
     let tool_specs = runtime.tools.specs();
+    let mut denied_requests = HashSet::new();
 
     for _ in 0..runtime.policy.max_tool_roundtrips {
         if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
@@ -232,6 +234,7 @@ where
             &mut events,
             on_event,
             &approval,
+            &mut denied_requests,
         )
         .await?;
         if tool_batch.cancelled {

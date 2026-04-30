@@ -57,6 +57,8 @@ pub(crate) enum UiInputEvent {
         reason: String,
     },
     LocalCopy,
+    LocalHelp,
+    LocalInputError(String),
 }
 
 #[derive(Debug, Default, Clone)]
@@ -205,14 +207,6 @@ pub(crate) fn apply_ui_event(
     }
 
     match trimmed {
-        "/copy" => UiInputEvent::LocalCopy,
-        "/exit" | "/quit" => UiInputEvent::Command(AppClientCommand::Exit),
-        "/clear" => UiInputEvent::Command(AppClientCommand::ResetConversation {
-            conversation_id: conversation_id.to_string(),
-        }),
-        "/interrupt" => UiInputEvent::Command(AppClientCommand::InterruptTurn {
-            conversation_id: conversation_id.to_string(),
-        }),
         _ if mode == FrontendMode::WaitingForServerRequest => {
             let decision = match trimmed {
                 "2" | "a" | "A" | "all" | "ALL" | "session" | "SESSION" => {

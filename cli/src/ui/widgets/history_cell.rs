@@ -312,10 +312,18 @@ pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
             current_directory,
             status,
             exit_code,
+            stderr,
+            summary,
             ..
         } => HistoryCell::from_message(
             "tool",
-            summarize_command_execution(command, current_directory, status, *exit_code),
+            summarize_command_execution(
+                command,
+                current_directory,
+                status,
+                *exit_code,
+                stderr.as_deref().or(Some(summary.as_str())),
+            ),
             HistoryTone::Control,
         ),
         TranscriptItem::FileChange { summary, .. } => {
@@ -332,6 +340,7 @@ fn summarize_command_execution(
     current_directory: &str,
     status: &CommandExecutionStatus,
     exit_code: Option<i32>,
+    detail: Option<&str>,
 ) -> String {
     let status_text = match status {
         CommandExecutionStatus::InProgress => "running",
@@ -339,15 +348,19 @@ fn summarize_command_execution(
         CommandExecutionStatus::Failed => "failed",
         CommandExecutionStatus::Declined => "declined",
     };
-    match exit_code {
+    let mut summary = match exit_code {
         Some(code) => format!("{status_text}: {command} (exit {code}) @ {current_directory}"),
         None => format!("{status_text}: {command} @ {current_directory}"),
+    };
+    if let Some(detail) = detail.map(str::trim).filter(|detail| !detail.is_empty()) {
+        summary.push_str(&format!("\n{detail}"));
     }
+    summary
 }
 
 fn summarize_tool_content(
     _name: &str,
-    _content: &str,
+    content: &str,
     structured: Option<&StructuredToolResult>,
 ) -> String {
     if let Some(StructuredToolResult::CommandExecution {
@@ -355,6 +368,7 @@ fn summarize_tool_content(
         current_directory,
         status,
         exit_code,
+        stderr,
         ..
     }) = structured
     {
@@ -368,7 +382,13 @@ fn summarize_tool_content(
             Some(code) => {
                 format!("{status_text}: {command} (exit {code}) @ {current_directory}")
             }
-            None => format!("{status_text}: {command} @ {current_directory}"),
+            None => {
+                let mut summary = format!("{status_text}: {command} @ {current_directory}");
+                if let Some(stderr) = stderr.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    summary.push_str(&format!("\n{stderr}"));
+                }
+                summary
+            }
         };
     }
     if let Some(StructuredToolResult::ListDirectory { path, entry_count }) = structured {
@@ -398,7 +418,7 @@ fn summarize_tool_content(
         return format!("{status_text}: {bytes_written} bytes @ {path}");
     }
 
-    String::new()
+    content.to_string()
 }
 
 // ── Markdown ──────────────────────────────────────────────────────────────────

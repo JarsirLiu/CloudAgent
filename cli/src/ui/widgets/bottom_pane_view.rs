@@ -1,19 +1,21 @@
+use crate::input::intent::ComposerIntent;
 use agent_protocol::ServerRequestDecisionKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 #[derive(Debug, Clone)]
-pub enum BottomPaneViewAction {
+pub(crate) enum BottomPaneViewAction {
     None,
     Close,
+    Composer(ComposerIntent),
     ServerRequestSubmit {
         decision: ServerRequestDecisionKind,
         reason: String,
     },
 }
 
-pub trait BottomPaneView {
+pub(crate) trait BottomPaneView {
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if matches!(key.kind, KeyEventKind::Press)
             && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))

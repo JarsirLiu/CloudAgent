@@ -1,0 +1,113 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SlashCommand {
+    Help,
+    Copy,
+    Interrupt,
+    Clear,
+    Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SlashCommandSpec {
+    pub(crate) command: SlashCommand,
+    pub(crate) name: &'static str,
+    pub(crate) aliases: &'static [&'static str],
+    pub(crate) description: &'static str,
+    pub(crate) argument_hint: Option<&'static str>,
+    pub(crate) supports_inline_args: bool,
+}
+
+const SLASH_COMMANDS: &[SlashCommandSpec] = &[
+    SlashCommandSpec {
+        command: SlashCommand::Help,
+        name: "help",
+        aliases: &[],
+        description: "show available local commands",
+        argument_hint: None,
+        supports_inline_args: false,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Copy,
+        name: "copy",
+        aliases: &[],
+        description: "copy the latest assistant reply",
+        argument_hint: None,
+        supports_inline_args: false,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Interrupt,
+        name: "interrupt",
+        aliases: &["stop"],
+        description: "interrupt the running turn",
+        argument_hint: None,
+        supports_inline_args: false,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Clear,
+        name: "clear",
+        aliases: &[],
+        description: "clear this conversation",
+        argument_hint: None,
+        supports_inline_args: false,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Exit,
+        name: "exit",
+        aliases: &["quit"],
+        description: "exit CloudAgent",
+        argument_hint: None,
+        supports_inline_args: false,
+    },
+];
+
+impl SlashCommand {
+    pub(crate) fn all() -> &'static [SlashCommandSpec] {
+        SLASH_COMMANDS
+    }
+
+    pub(crate) fn spec(self) -> SlashCommandSpec {
+        *SLASH_COMMANDS
+            .iter()
+            .find(|spec| spec.command == self)
+            .expect("slash command spec must exist")
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        self.spec().name
+    }
+
+    pub(crate) fn supports_inline_args(self) -> bool {
+        self.spec().supports_inline_args
+    }
+}
+
+pub(crate) fn find_slash_command(name: &str) -> Option<SlashCommand> {
+    SLASH_COMMANDS
+        .iter()
+        .find(|spec| spec.matches_name(name))
+        .map(|spec| spec.command)
+}
+
+pub(crate) fn slash_command_help_text() -> String {
+    SLASH_COMMANDS
+        .iter()
+        .map(|spec| format!("/{:<12} {}", spec.name, spec.description))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+impl SlashCommandSpec {
+    pub(crate) fn matches_name(self, name: &str) -> bool {
+        self.name.eq_ignore_ascii_case(name)
+            || self
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(name))
+    }
+
+    pub(crate) fn matches_prefix(self, prefix: &str) -> bool {
+        let prefix = prefix.to_ascii_lowercase();
+        self.name.starts_with(&prefix)
+            || self.aliases.iter().any(|alias| alias.starts_with(&prefix))
+    }
+}

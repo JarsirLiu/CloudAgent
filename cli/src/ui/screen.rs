@@ -1,6 +1,5 @@
 use crate::app::TuiApp;
 use crate::state::selectors::status_text_from_mode;
-use crate::ui::widgets::text_effects::shimmer_spans_for_frame;
 use crate::ui::widgets::welcome::WelcomeScreen;
 use agent_protocol::FrontendMode;
 use ratatui::Frame;
@@ -47,50 +46,6 @@ pub(crate) fn render_app(app: &mut TuiApp, frame: &mut Frame) {
         .input_pane
         .cursor_position(sections[2], lines_before, app.console_state.mode);
     frame.set_cursor_position((x, y));
-}
-
-pub(crate) fn welcome_animation_line(
-    app: &TuiApp,
-    area: Rect,
-) -> Option<(u16, u16, Vec<Span<'static>>)> {
-    if !app.transcript_state.transcript.is_empty() || !app.run_state.history_loaded {
-        return None;
-    }
-
-    let content = centered_column(area, 112);
-    let bottom_height = app
-        .input_pane
-        .desired_height(app.console_state.mode, content.width)
-        .clamp(6, content.height.saturating_sub(10).max(6));
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(8),
-            Constraint::Length(bottom_height),
-        ])
-        .split(content);
-
-    let outer = sections[1].inner(Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
-        .split(outer);
-    let left_inner = Block::default().borders(Borders::ALL).inner(cols[0]);
-    if left_inner.width < 18 || left_inner.height < 7 {
-        return None;
-    }
-
-    let x = left_inner.x.saturating_add(4);
-    let y = left_inner.y.saturating_add(6);
-    Some((
-        x,
-        y,
-        shimmer_spans_for_frame("CloudAgent", app.welcome_animation_frame),
-    ))
 }
 
 fn header_block(app: &TuiApp) -> Paragraph<'static> {

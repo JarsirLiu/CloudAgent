@@ -331,7 +331,6 @@ impl AgentRuntime {
             .await?;
 
         let mut events = Vec::new();
-        let history_for_interrupt = history.clone();
         emit_event(
             &mut events,
             &mut event_sink,
@@ -394,12 +393,16 @@ impl AgentRuntime {
                         },
                     );
                     drop(event_sink);
-                    self.save_history(history_for_interrupt.clone()).await?;
+                    self.rollout_recorder.flush().await?;
+                    let mut interrupted_history =
+                        self.history_from_rollout(conversation_id).await?;
+                    interrupted_history.ensure_tool_outputs_present();
+                    self.save_history(interrupted_history.clone()).await?;
                     self.rollout_recorder.flush().await?;
                     let outcome = TurnOutcome {
                         turn_id: turn_id.clone(),
                         events,
-                        history: history_for_interrupt,
+                        history: interrupted_history,
                         model_name: None,
                         state: TurnState::Cancelled,
                     };
@@ -470,6 +473,15 @@ impl AgentRuntime {
         let history = conversation.history().clone();
         self.state.save_conversation(conversation).await;
         Ok(history)
+    }
+
+    async fn history_from_rollout(&self, conversation_id: &str) -> Result<ConversationHistory> {
+        let rollout_items = self.store.load_rollout_items(conversation_id).await?;
+        Ok(conversation_history_from_rollout_items(
+            conversation_id.to_string(),
+            self.config.runtime.system_prompt.clone(),
+            &rollout_items,
+        ))
     }
 
     async fn save_history(&self, history: ConversationHistory) -> Result<()> {

@@ -104,4 +104,32 @@ impl ServerRequestCoordinator {
             })
             .collect()
     }
+
+    pub(crate) fn drain_conversation(
+        &mut self,
+        conversation_id: &str,
+        decision: ServerRequestDecision,
+    ) -> Vec<(RequestId, TurnId, ServerRequest, ServerRequestDecision)> {
+        let request_ids = self
+            .pending
+            .iter()
+            .filter_map(|(request_id, pending)| {
+                (pending.conversation_id == conversation_id).then_some(request_id.clone())
+            })
+            .collect::<Vec<_>>();
+        request_ids
+            .into_iter()
+            .filter_map(|request_id| {
+                self.pending.remove(&request_id).map(|pending| {
+                    let _ = pending.reply_tx.send(decision.clone());
+                    (
+                        request_id,
+                        pending.turn_id,
+                        pending.request,
+                        decision.clone(),
+                    )
+                })
+            })
+            .collect()
+    }
 }

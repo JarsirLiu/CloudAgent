@@ -1,3 +1,7 @@
+use crate::input::completion::CompletionState;
+use crate::input::intent::ComposerIntent;
+use crate::input::slash_command::{SlashCommand, find_slash_command};
+use crate::ui::widgets::completion_popup::completion_popup_lines;
 use agent_protocol::FrontendMode;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
@@ -6,15 +10,6 @@ use ratatui::text::{Line, Span};
 
 use crate::ui::widgets::textarea::{TextArea, display_width};
 
-#[derive(Debug)]
-pub enum ComposerAction {
-    Submit(String),
-    Interrupt,
-    Exit,
-    Reset,
-    None,
-}
-
 pub struct ComposerRender {
     pub lines: Vec<Line<'static>>,
     pub cursor_row: u16,
@@ -22,39 +17,79 @@ pub struct ComposerRender {
 
 pub struct ChatComposer {
     textarea: TextArea,
+    completion: CompletionState,
 }
 
 impl ChatComposer {
     pub fn new() -> Self {
         Self {
             textarea: TextArea::new(),
+            completion: CompletionState::default(),
         }
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<ComposerAction> {
+    pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ComposerIntent> {
         if !matches!(key.kind, KeyEventKind::Press) {
             return None;
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return Some(match key.code {
-                KeyCode::Char('c') | KeyCode::Char('q') => ComposerAction::Exit,
-                KeyCode::Char('k') => ComposerAction::Interrupt,
+                KeyCode::Char('c') | KeyCode::Char('q') => ComposerIntent::Exit,
+                KeyCode::Char('k') => ComposerIntent::Interrupt,
                 KeyCode::Char('j') => self.submit(),
                 _ => {
                     self.textarea.handle_key(key);
-                    ComposerAction::None
+                    self.sync_completion();
+                    ComposerIntent::None
                 }
             });
+        }
+
+        if self.completion.is_active() {
+            match key.code {
+                KeyCode::Up => {
+                    self.completion.move_up();
+                    return Some(ComposerIntent::None);
+                }
+                KeyCode::Down => {
+                    self.completion.move_down();
+                    return Some(ComposerIntent::None);
+                }
+                KeyCode::Esc => {
+                    self.completion.clear();
+                    return Some(ComposerIntent::None);
+                }
+                KeyCode::Tab => {
+                    self.accept_selected_completion();
+                    return Some(ComposerIntent::None);
+                }
+                KeyCode::Enter => {
+                    if let Some(selected) = self.completion.selected() {
+                        let command = selected.command;
+                        self.textarea.clear();
+                        self.completion.clear();
+                        return Some(action_for_command(command));
+                    }
+                }
+                _ => {}
+            }
         }
 
         match key.code {
             KeyCode::Enter => Some(self.submit()),
             _ => {
                 self.textarea.handle_key(key);
+                self.sync_completion();
                 None
             }
         }
+    }
+
+    pub(crate) fn handle_paste(&mut self, text: &str) -> ComposerIntent {
+        self.textarea.insert_str(text);
+        self.sync_completion();
+        ComposerIntent::None
     }
 
     pub fn render(&self, mode: FrontendMode, width: usize) -> ComposerRender {
@@ -123,6 +158,7 @@ impl ChatComposer {
                 ),
             ]));
         }
+        lines.extend(completion_popup_lines(&self.completion, width));
 
         ComposerRender { lines, cursor_row }
     }
@@ -141,32 +177,131 @@ impl ChatComposer {
             _ => "  message ",
         };
         let prompt_width = display_width(prompt);
-        let available = area.width.saturating_sub(prompt_width as u16 + 2).max(1) as usize;
-        let cursor_col = self.textarea.display_width_before_cursor();
-        let cursor_row = (cursor_col / available) as u16;
-        let cursor_col_in_row = cursor_col % available;
-        let offset = if cursor_col + prompt_width >= available + prompt_width {
-            (cursor_col + prompt_width).saturating_sub(available + prompt_width - 1)
-        } else {
-            0
-        };
-        let x = area.x + (prompt_width + cursor_col_in_row).saturating_sub(offset) as u16;
-        let y = area.y + cursor_row;
+        let composer_width = area.width.saturating_sub(4) as usize;
+        let content_width = composer_width.saturating_sub(prompt_width + 2).max(10);
+        let (cursor_row, cursor_col) = self.textarea.visual_cursor_position(content_width);
+        let max_x_offset = area.width.saturating_sub(1) as usize;
+        let x = area.x + (prompt_width + cursor_col).min(max_x_offset) as u16;
+        let y = area.y + cursor_row as u16;
         (x, y)
     }
 
-    fn submit(&mut self) -> ComposerAction {
+    fn submit(&mut self) -> ComposerIntent {
+        let raw = self.textarea.text().to_string();
+        let leading_space_escape = raw.starts_with(' ');
         let text = self.textarea.take_trimmed();
+        self.completion.clear();
         if text.is_empty() {
-            ComposerAction::None
+            ComposerIntent::None
         } else {
-            match text.as_str() {
-                "/clear" => ComposerAction::Reset,
-                "/copy" => ComposerAction::Submit("/copy".to_string()),
-                "/interrupt" => ComposerAction::Interrupt,
-                "/exit" | "/quit" => ComposerAction::Exit,
-                _ => ComposerAction::Submit(text),
+            if !leading_space_escape && let Some(command_text) = text.strip_prefix('/') {
+                let mut parts = command_text.splitn(2, char::is_whitespace);
+                let name = parts.next().unwrap_or_default();
+                let args = parts.next().unwrap_or_default().trim();
+                if let Some(command) = find_slash_command(name) {
+                    if args.is_empty() || command.supports_inline_args() {
+                        return action_for_command(command);
+                    }
+                }
+                return ComposerIntent::UnknownCommand(name.to_string());
             }
+            ComposerIntent::Submit(text)
         }
+    }
+
+    fn sync_completion(&mut self) {
+        self.completion
+            .sync_from_input(self.textarea.text(), self.textarea.byte_cursor());
+    }
+
+    fn accept_selected_completion(&mut self) {
+        let Some(selected) = self.completion.selected() else {
+            return;
+        };
+        self.textarea
+            .set_text(format!("/{} ", selected.command.name()));
+        self.completion.clear();
+    }
+}
+
+fn action_for_command(command: SlashCommand) -> ComposerIntent {
+    match command {
+        SlashCommand::Clear => ComposerIntent::Reset,
+        SlashCommand::Copy => ComposerIntent::Copy,
+        SlashCommand::Help => ComposerIntent::Help,
+        SlashCommand::Interrupt => ComposerIntent::Interrupt,
+        SlashCommand::Exit => ComposerIntent::Exit,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn type_text(composer: &mut ChatComposer, text: &str) {
+        for ch in text.chars() {
+            composer.handle_key(key(KeyCode::Char(ch)));
+        }
+    }
+
+    #[test]
+    fn slash_opens_completion_and_tab_completes() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "/co");
+
+        assert!(composer.completion.is_active());
+        composer.handle_key(key(KeyCode::Tab));
+        assert_eq!(composer.textarea.text(), "/copy ");
+    }
+
+    #[test]
+    fn enter_dispatches_selected_completion() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "/co");
+
+        let action = composer.handle_key(key(KeyCode::Enter));
+        assert_eq!(action, Some(ComposerIntent::Copy));
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn exact_slash_command_dispatches_without_reducer_parsing() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "/clear");
+
+        let action = composer.handle_key(key(KeyCode::Enter));
+        assert_eq!(action, Some(ComposerIntent::Reset));
+    }
+
+    #[test]
+    fn leading_space_slash_submits_as_message() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, " /clear");
+
+        let action = composer.handle_key(key(KeyCode::Enter));
+        assert_eq!(action, Some(ComposerIntent::Submit("/clear".to_string())));
+    }
+
+    #[test]
+    fn completion_popup_does_not_shift_cursor() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "/co");
+
+        let (_, y) = composer.cursor_position(Rect::new(0, 10, 80, 5), FrontendMode::Idle);
+        assert_eq!(y, 10);
+    }
+
+    #[test]
+    fn bracketed_paste_inserts_text_without_submitting() {
+        let mut composer = ChatComposer::new();
+
+        let action = composer.handle_paste("first line\nsecond line");
+
+        assert_eq!(action, ComposerIntent::None);
+        assert_eq!(composer.textarea.text(), "first line\nsecond line");
     }
 }

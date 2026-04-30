@@ -65,6 +65,10 @@ impl ConversationHistory {
             },
         );
     }
+
+    pub fn ensure_tool_outputs_present(&mut self) {
+        ensure_tool_outputs_present(&mut self.messages);
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,4 +92,94 @@ pub enum ResponseItem {
         #[serde(default)]
         structured: Option<StructuredToolResult>,
     },
+}
+
+pub fn ensure_tool_outputs_present(items: &mut Vec<ResponseItem>) {
+    let mut missing_outputs_to_insert = Vec::new();
+
+    for (index, item) in items.iter().enumerate() {
+        let ResponseItem::Assistant { tool_calls, .. } = item else {
+            continue;
+        };
+        for call in tool_calls {
+            let has_output = items.iter().any(|candidate| {
+                matches!(
+                    candidate,
+                    ResponseItem::Tool { tool_call_id, .. } if tool_call_id == &call.id
+                )
+            });
+            if !has_output {
+                missing_outputs_to_insert.push((
+                    index,
+                    ResponseItem::Tool {
+                        tool_call_id: call.id.clone(),
+                        name: call.name.clone(),
+                        content: "aborted".to_string(),
+                        structured: None,
+                    },
+                ));
+            }
+        }
+    }
+
+    for (index, item) in missing_outputs_to_insert.into_iter().rev() {
+        items.insert(index + 1, item);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn ensure_tool_outputs_present_inserts_aborted_output_for_missing_call() {
+        let mut items = vec![ResponseItem::Assistant {
+            content: None,
+            tool_calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "shell_command".to_string(),
+                arguments: json!({"command": "pwd"}),
+            }],
+        }];
+
+        ensure_tool_outputs_present(&mut items);
+
+        assert!(matches!(
+            &items[..],
+            [
+                ResponseItem::Assistant { .. },
+                ResponseItem::Tool {
+                    tool_call_id,
+                    name,
+                    content,
+                    ..
+                }
+            ] if tool_call_id == "call_1" && name == "shell_command" && content == "aborted"
+        ));
+    }
+
+    #[test]
+    fn ensure_tool_outputs_present_does_not_duplicate_existing_output() {
+        let mut items = vec![
+            ResponseItem::Assistant {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "shell_command".to_string(),
+                    arguments: json!({"command": "pwd"}),
+                }],
+            },
+            ResponseItem::Tool {
+                tool_call_id: "call_1".to_string(),
+                name: "shell_command".to_string(),
+                content: "ok".to_string(),
+                structured: None,
+            },
+        ];
+
+        ensure_tool_outputs_present(&mut items);
+
+        assert_eq!(items.len(), 2);
+    }
 }

@@ -6,10 +6,17 @@ use agent_protocol::{
     TurnItemKind, TurnState, WriteFileStatus,
 };
 use anyhow::Result;
+use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) struct ToolBatchOutcome {
     pub(crate) cancelled: bool,
+}
+
+enum ApprovalFlow {
+    Approved,
+    Denied,
+    Cancelled,
 }
 
 pub(crate) struct ToolBatchRunner<'a> {
@@ -44,6 +51,7 @@ impl<'a> ToolBatchRunner<'a> {
         events: &mut Vec<EventMsg>,
         on_event: &mut E,
         approval: &F,
+        denied_requests: &mut HashSet<String>,
     ) -> Result<ToolBatchOutcome>
     where
         E: FnMut(&EventMsg) + Send,
@@ -54,6 +62,7 @@ impl<'a> ToolBatchRunner<'a> {
             self.conversation_id.to_string(),
             self.cancellation_token.clone(),
         );
+        let denied_requests_at_batch_start = denied_requests.clone();
 
         for call in tool_calls {
             if self.is_cancelled().await {
@@ -79,6 +88,21 @@ impl<'a> ToolBatchRunner<'a> {
                 },
             );
 
+            let request_key = tool_request_key(&call);
+            if denied_requests_at_batch_start.contains(&request_key) {
+                self.record_denied_tool_result(
+                    &call,
+                    spec,
+                    &tool_item_id,
+                    context_manager,
+                    events,
+                    on_event,
+                    &repeated_rejection_message(&call.name),
+                )
+                .await?;
+                continue;
+            }
+
             if spec.requires_approval && !self.runtime.is_tool_approved_for_session(&call) {
                 let approved = self
                     .request_approval(
@@ -89,10 +113,17 @@ impl<'a> ToolBatchRunner<'a> {
                         events,
                         on_event,
                         approval,
+                        denied_requests,
+                        request_key,
                     )
                     .await?;
-                if !approved {
-                    break;
+                match approved {
+                    ApprovalFlow::Approved => {}
+                    ApprovalFlow::Denied => continue,
+                    ApprovalFlow::Cancelled => {
+                        self.emit_cancelled(events, on_event);
+                        return Ok(ToolBatchOutcome { cancelled: true });
+                    }
                 }
             }
 
@@ -166,7 +197,9 @@ impl<'a> ToolBatchRunner<'a> {
         events: &mut Vec<EventMsg>,
         on_event: &mut E,
         approval: &F,
-    ) -> Result<bool>
+        denied_requests: &mut HashSet<String>,
+        request_key: String,
+    ) -> Result<ApprovalFlow>
     where
         E: FnMut(&EventMsg) + Send,
         F: Fn(ServerRequest) -> Fut + Send + Sync,
@@ -224,19 +257,57 @@ impl<'a> ToolBatchRunner<'a> {
             ) {
                 self.runtime.approve_tool_for_session(call);
             }
-            return Ok(true);
+            return Ok(ApprovalFlow::Approved);
+        }
+        if matches!(
+            decision.decision,
+            agent_protocol::ServerRequestDecisionKind::Cancel
+        ) {
+            return Ok(ApprovalFlow::Cancelled);
         }
 
         let reason = decision
             .reason
-            .unwrap_or_else(|| "request denied".to_string());
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| default_rejection_message(&call.name));
+        denied_requests.insert(request_key);
+        self.record_denied_tool_result(
+            call,
+            spec,
+            tool_item_id,
+            context_manager,
+            events,
+            on_event,
+            &reason,
+        )
+        .await?;
+        Ok(ApprovalFlow::Denied)
+    }
+
+    async fn record_denied_tool_result<E>(
+        &self,
+        call: &ToolCall,
+        spec: &ToolSpec,
+        tool_item_id: &str,
+        context_manager: &mut ContextManager,
+        events: &mut Vec<EventMsg>,
+        on_event: &mut E,
+        reason: &str,
+    ) -> Result<()>
+    where
+        E: FnMut(&EventMsg) + Send,
+    {
+        let content = reason.to_string();
         let result = ToolResult {
             tool_call_id: call.id.clone(),
             name: call.name.clone(),
-            content: format!("Tool execution skipped: {reason}"),
+            content: content.clone(),
             summary: "tool execution skipped".to_string(),
             is_error: true,
-            structured: denied_tool_result(call.name.as_str(), &call.arguments, reason.clone()),
+            structured: denied_tool_result(call.name.as_str(), &call.arguments, reason.to_string()),
         };
         emit_event(
             events,
@@ -245,7 +316,7 @@ impl<'a> ToolBatchRunner<'a> {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
                 kind: spec.delta_kind.clone(),
-                delta: format!("Tool execution skipped: {reason}"),
+                delta: content,
             },
         );
         emit_event(
@@ -254,11 +325,10 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
-                item: denied_transcript_item(tool_item_id, &call.name, &call.arguments, &reason),
+                item: denied_transcript_item(tool_item_id, &call.name, &call.arguments, reason),
             },
         );
-        self.record_tool_result(context_manager, result).await?;
-        Ok(false)
+        self.record_tool_result(context_manager, result).await
     }
 
     async fn record_tool_result(
@@ -432,7 +502,7 @@ fn denied_transcript_item(
             stderr,
             aggregated_output,
             duration_ms,
-            summary: "tool execution skipped".to_string(),
+            summary: reason.to_string(),
         },
         Some(StructuredToolResult::WriteFile {
             path,
@@ -444,13 +514,13 @@ fn denied_transcript_item(
             path,
             status,
             bytes_written,
-            summary: "tool execution skipped".to_string(),
+            summary: reason.to_string(),
         },
         structured => TranscriptItem::ToolResult {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
-            content: "tool execution skipped".to_string(),
-            summary: "tool execution skipped".to_string(),
+            content: reason.to_string(),
+            summary: reason.to_string(),
             structured,
         },
     }
@@ -467,6 +537,14 @@ fn tool_item_title(call: &ToolCall) -> String {
         return command.trim().to_string();
     }
     call.name.clone()
+}
+
+fn tool_request_key(call: &ToolCall) -> String {
+    format!("{}:{}", call.name, canonical_json(&call.arguments))
+}
+
+fn canonical_json(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
 
 fn denied_tool_result(
@@ -512,4 +590,25 @@ fn denied_tool_result(
         }
         _ => None,
     }
+}
+
+fn default_rejection_message(tool_name: &str) -> String {
+    match tool_name {
+        "shell_command" => {
+            "exec command rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
+        }
+        "write_file" => {
+            "patch rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
+        }
+        _ => {
+            "tool call rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
+        }
+    }
+}
+
+fn repeated_rejection_message(tool_name: &str) -> String {
+    format!(
+        "{}; same tool request was already denied in this turn",
+        default_rejection_message(tool_name)
+    )
 }

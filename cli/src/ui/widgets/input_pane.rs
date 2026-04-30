@@ -1,5 +1,6 @@
+use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
-use crate::ui::widgets::chat_composer::{ChatComposer, ComposerAction};
+use crate::ui::widgets::chat_composer::ChatComposer;
 use crate::ui::widgets::footer::{divider_line, hint_line, status_line};
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
@@ -14,8 +15,8 @@ pub struct InputPane {
     view_stack: Vec<Box<dyn BottomPaneView>>,
 }
 
-pub enum InputPaneAction {
-    Composer(ComposerAction),
+pub(crate) enum InputPaneAction {
+    Composer(ComposerIntent),
     ServerRequestSubmit {
         decision: ServerRequestDecisionKind,
         reason: String,
@@ -30,9 +31,9 @@ impl InputPane {
         }
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
+    pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
-            return Some(InputPaneAction::Composer(ComposerAction::Interrupt));
+            return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
         }
 
         if let Some(view) = self.view_stack.last_mut() {
@@ -40,7 +41,12 @@ impl InputPane {
                 BottomPaneViewAction::None => {}
                 BottomPaneViewAction::Close => {
                     self.view_stack.pop();
-                    return Some(InputPaneAction::Composer(ComposerAction::None));
+                    return Some(InputPaneAction::Composer(ComposerIntent::None));
+                }
+                BottomPaneViewAction::Composer(intent) => {
+                    if !matches!(intent, ComposerIntent::None) {
+                        return Some(InputPaneAction::Composer(intent));
+                    }
                 }
                 BottomPaneViewAction::ServerRequestSubmit { decision, reason } => {
                     self.view_stack.pop();
@@ -53,6 +59,13 @@ impl InputPane {
             return None;
         }
         self.composer.handle_key(key).map(InputPaneAction::Composer)
+    }
+
+    pub(crate) fn handle_paste(&mut self, text: &str) -> Option<InputPaneAction> {
+        if self.view_stack.is_empty() {
+            return Some(InputPaneAction::Composer(self.composer.handle_paste(text)));
+        }
+        None
     }
 
     pub fn render(
@@ -118,7 +131,15 @@ impl InputPane {
             height: area.height.saturating_sub(lines_before),
         };
         if let Some(view) = self.view_stack.last() {
-            return view.cursor_position(area).unwrap_or((inner.x, inner.y));
+            let view_area = Rect {
+                x: area.x,
+                y: area.y + 3,
+                width: area.width,
+                height: area.height.saturating_sub(3),
+            };
+            return view
+                .cursor_position(view_area)
+                .unwrap_or((inner.x, inner.y));
         }
         self.composer.cursor_position(inner, mode)
     }
@@ -139,5 +160,32 @@ impl InputPane {
 
     pub fn composer_is_empty(&self) -> bool {
         self.view_stack.is_empty() && self.composer.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
+
+    #[test]
+    fn ctrl_k_interrupts_even_when_server_request_overlay_is_active() {
+        let mut pane = InputPane::new();
+        pane.set_server_request(ServerRequestInlineState {
+            title: "Run command?".to_string(),
+            detail: "shell_command".to_string(),
+        });
+
+        let action = pane.handle_key(KeyEvent {
+            code: KeyCode::Char('k'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+
+        assert!(matches!(
+            action,
+            Some(InputPaneAction::Composer(ComposerIntent::Interrupt))
+        ));
     }
 }

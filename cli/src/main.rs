@@ -8,6 +8,7 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
+    cli::terminal::install_panic_hook();
 
     let workspace_root = std::env::current_dir()?;
     let config = AgentConfig::load(workspace_root)?;

@@ -145,6 +145,7 @@ impl ConversationHistoryBuilder {
                 self.upsert_item_in_turn_id(turn_id, item.clone());
             }
             EventMsg::TurnFailed { turn_id, error } => {
+                self.mark_unfinished_items_in_turn(turn_id, "failed");
                 self.upsert_item_in_turn_id(
                     turn_id,
                     TranscriptItem::SystemMessage {
@@ -155,6 +156,7 @@ impl ConversationHistoryBuilder {
                 self.set_turn_state(turn_id, TurnState::Failed, true);
             }
             EventMsg::TurnCancelled { turn_id, reason } => {
+                self.mark_unfinished_items_in_turn(turn_id, "aborted");
                 self.upsert_item_in_turn_id(
                     turn_id,
                     TranscriptItem::SystemMessage {
@@ -254,6 +256,23 @@ impl ConversationHistoryBuilder {
             upsert_completed_turn_item(turn, item, self.current_rollout_index);
         }
     }
+
+    fn mark_unfinished_items_in_turn(&mut self, turn_id: &str, reason: &str) {
+        if self
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.id == turn_id)
+        {
+            if let Some(turn) = self.current_turn.as_mut() {
+                turn.mark_unfinished_items(reason);
+            }
+            return;
+        }
+
+        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
+            mark_unfinished_transcript_items(&mut turn.items, reason);
+        }
+    }
 }
 
 impl PendingConversationTurn {
@@ -280,6 +299,42 @@ impl PendingConversationTurn {
         };
         append_delta_to_transcript_item(&mut self.items[index], kind, delta);
         self.rollout_end_index = rollout_index;
+    }
+
+    fn mark_unfinished_items(&mut self, reason: &str) {
+        mark_unfinished_transcript_items(&mut self.items, reason);
+    }
+}
+
+fn mark_unfinished_transcript_items(items: &mut [TranscriptItem], reason: &str) {
+    for item in items {
+        match item {
+            TranscriptItem::CommandExecution {
+                status,
+                stderr,
+                aggregated_output,
+                summary,
+                ..
+            } if *status == crate::tool::CommandExecutionStatus::InProgress => {
+                *status = crate::tool::CommandExecutionStatus::Failed;
+                *stderr = Some(reason.to_string());
+                *aggregated_output = Some(reason.to_string());
+                *summary = reason.to_string();
+            }
+            TranscriptItem::FileChange {
+                status, summary, ..
+            } if *status == crate::tool::WriteFileStatus::InProgress => {
+                *status = crate::tool::WriteFileStatus::Failed;
+                *summary = reason.to_string();
+            }
+            TranscriptItem::ToolResult {
+                content, summary, ..
+            } if content.trim().is_empty() && summary.trim().is_empty() => {
+                *content = reason.to_string();
+                *summary = reason.to_string();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -504,6 +559,7 @@ pub fn conversation_history_from_rollout_items(
             }
         }
     }
+    history.ensure_tool_outputs_present();
     history
 }
 

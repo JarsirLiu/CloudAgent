@@ -114,6 +114,15 @@ pub(crate) async fn handle_command(
         }
         AppClientCommand::InterruptTurn { conversation_id } => {
             let interrupted = runtime.interrupt_conversation(&conversation_id).await;
+            if interrupted {
+                resolve_pending_requests_for_interrupted_conversation(
+                    event_tx,
+                    &state,
+                    &conversation_id,
+                    "interrupted by client",
+                )
+                .await;
+            }
             send_notification(
                 event_tx,
                 &state,
@@ -412,6 +421,35 @@ async fn resolve_pending_requests_for_finished_turn(
         let mut state = state.lock().await;
         state.server_requests.drain_turn(
             turn_id,
+            ServerRequestDecision::cancel(Some(reason.to_string())),
+        )
+    };
+    for (request_id, turn_id, request, decision) in resolved {
+        send_notification(
+            event_tx,
+            state,
+            AppServerNotification::ServerRequestResolved {
+                conversation_id: conversation_id.to_string(),
+                turn_id,
+                request_id,
+                request,
+                decision,
+            },
+        )
+        .await;
+    }
+}
+
+async fn resolve_pending_requests_for_interrupted_conversation(
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: &str,
+    reason: &str,
+) {
+    let resolved = {
+        let mut state = state.lock().await;
+        state.server_requests.drain_conversation(
+            conversation_id,
             ServerRequestDecision::cancel(Some(reason.to_string())),
         )
     };

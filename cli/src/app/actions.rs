@@ -1,6 +1,7 @@
 use crate::app::TuiApp;
 use crate::app::effects::copy_text_to_clipboard;
 use crate::app::parse::ParsedInput;
+use crate::input::slash_command::slash_command_help_text;
 use crate::state::reducer::{ItemDispatch, ServerAction};
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerClient;
@@ -39,6 +40,20 @@ pub(crate) fn handle_tui_input(
                     ));
                 }
             }
+        }
+        ParsedInput::LocalHelp => {
+            app.push_cell(HistoryCell::from_message(
+                "commands",
+                slash_command_help_text(),
+                HistoryTone::Agent,
+            ));
+        }
+        ParsedInput::LocalInputError(message) => {
+            app.push_cell(HistoryCell::from_message(
+                "conversation",
+                message,
+                HistoryTone::Warning,
+            ));
         }
         ParsedInput::Command(command) => {
             if let AppClientCommand::Exit = command {

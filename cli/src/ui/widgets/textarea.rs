@@ -18,6 +18,14 @@ impl TextArea {
         &self.text
     }
 
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub fn byte_cursor(&self) -> usize {
+        byte_index_from_char_index(&self.text, self.cursor)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
@@ -25,6 +33,11 @@ impl TextArea {
     pub fn clear(&mut self) {
         self.text.clear();
         self.cursor = 0;
+    }
+
+    pub fn set_text(&mut self, value: impl Into<String>) {
+        self.text = value.into();
+        self.cursor = char_len(&self.text);
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -66,9 +79,27 @@ impl TextArea {
         wrap_text(text, width)
     }
 
-    pub fn display_width_before_cursor(&self) -> usize {
-        let before: String = self.text.graphemes(true).take(self.cursor).collect();
-        UnicodeWidthStr::width(before.as_str())
+    pub fn visual_cursor_position(&self, width: usize) -> (usize, usize) {
+        if width == 0 {
+            return (0, 0);
+        }
+
+        let before_cursor: String = self.text.graphemes(true).take(self.cursor).collect();
+        let mut row = 0usize;
+        let paragraphs = before_cursor.split('\n').collect::<Vec<_>>();
+
+        for paragraph in paragraphs.iter().take(paragraphs.len().saturating_sub(1)) {
+            row += wrap_text(paragraph, width).len();
+        }
+
+        let current = paragraphs.last().copied().unwrap_or_default();
+        let wrapped = wrap_text(current, width);
+        row += wrapped.len().saturating_sub(1);
+        let col = wrapped
+            .last()
+            .map(|line| UnicodeWidthStr::width(line.as_str()))
+            .unwrap_or_default();
+        (row, col)
     }
 
     fn insert_char(&mut self, ch: char) {
@@ -77,7 +108,7 @@ impl TextArea {
         self.cursor += 1;
     }
 
-    fn insert_str(&mut self, value: &str) {
+    pub fn insert_str(&mut self, value: &str) {
         let at = byte_index_from_char_index(&self.text, self.cursor);
         self.text.insert_str(at, value);
         self.cursor += value.graphemes(true).count();
