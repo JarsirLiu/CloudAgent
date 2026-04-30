@@ -556,6 +556,7 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::OnceLock;
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use tokio::time::timeout;
@@ -718,6 +719,7 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
+        let _guard = cli_e2e_test_lock().await;
         let fixture = TempFixture::new();
         let expected_path = fixture.workspace.display().to_string();
         let responses = vec![
@@ -964,6 +966,7 @@ mod tests {
 
     #[tokio::test]
     async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
+        let _guard = cli_e2e_test_lock().await;
         let fixture = TempFixture::new();
         let responses = vec![sse_body(vec![json!({
             "model": "fake-model",
@@ -1124,6 +1127,7 @@ mod tests {
 
     #[tokio::test]
     async fn consecutive_tool_turns_preserve_history_across_restart() {
+        let _guard = cli_e2e_test_lock().await;
         let fixture = TempFixture::new();
         let responses = vec![
             sse_body(vec![json!({
@@ -1453,5 +1457,12 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    async fn cli_e2e_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await
     }
 }

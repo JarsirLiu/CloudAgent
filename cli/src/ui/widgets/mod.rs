@@ -4,5 +4,6 @@ pub mod footer;
 pub mod history_cell;
 pub mod input_pane;
 pub mod server_request_overlay;
+pub mod text_effects;
 pub mod textarea;
 pub mod welcome;

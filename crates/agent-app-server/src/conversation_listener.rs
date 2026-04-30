@@ -3,8 +3,12 @@ use crate::projection::ConversationNotificationProjector;
 use agent_core::{ConversationHistoryBuilder, ConversationTurn, RolloutItem};
 use agent_protocol::{AppServerMessage, EventMsg, TurnState};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
+
+const ACTIVE_TURN_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[derive(Clone)]
 pub(crate) struct ConversationListenerHandle {
@@ -68,7 +72,11 @@ impl ConversationListenerHandle {
         self.command_tx
             .send(ConversationListenerCommand::ActiveTurnSnapshot { ack })
             .ok()?;
-        done.await.ok().flatten()
+        timeout(ACTIVE_TURN_SNAPSHOT_TIMEOUT, done)
+            .await
+            .ok()
+            .and_then(|result| result.ok())
+            .flatten()
     }
 
     pub(crate) async fn finish_turn(&self, turn_state: TurnState) {
