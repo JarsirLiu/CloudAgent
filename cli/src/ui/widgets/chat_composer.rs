@@ -95,24 +95,12 @@ impl ChatComposer {
 
     pub fn render(&self, mode: FrontendMode, width: usize) -> ComposerRender {
         let (prompt_text, prompt_color, prompt_bg) = match mode {
-            FrontendMode::WaitingForServerRequest => (
-                "reply",
-                Color::Rgb(255, 184, 76),
-                Some(Color::Rgb(45, 36, 18)),
-            ),
-            FrontendMode::Running => (
-                "message",
-                Color::Rgb(100, 160, 255),
-                Some(Color::Rgb(18, 28, 45)),
-            ),
-            FrontendMode::Idle => (
-                "message",
-                Color::Rgb(140, 140, 160),
-                Some(Color::Rgb(32, 32, 40)),
-            ),
+            FrontendMode::WaitingForServerRequest => ("?", Color::Rgb(255, 184, 76), None),
+            FrontendMode::Running => (">", Color::Rgb(100, 160, 255), None),
+            FrontendMode::Idle => (">", Color::Rgb(150, 180, 255), None),
         };
 
-        let prefix = format!("  {prompt_text:<8}");
+        let prefix = format!("  {prompt_text} ");
         let prefix_width = display_width(&prefix);
         let content_width = width.saturating_sub(prefix_width + 2).max(10);
 
@@ -183,8 +171,8 @@ impl ChatComposer {
 
     pub fn cursor_position(&self, area: Rect, mode: FrontendMode) -> (u16, u16) {
         let prompt = match mode {
-            FrontendMode::WaitingForServerRequest => "  reply   ",
-            _ => "  message ",
+            FrontendMode::WaitingForServerRequest => "  ? ",
+            _ => "  > ",
         };
         let prompt_width = display_width(prompt);
         let composer_width = area.width as usize;

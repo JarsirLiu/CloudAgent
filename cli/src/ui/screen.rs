@@ -34,18 +34,15 @@ pub(crate) fn render_app(app: &mut TuiApp, frame: &mut Frame) {
         frame.render_widget(transcript_panel(app, sections[1]), sections[1]);
     }
 
-    let (bottom_widget, lines_before, _) = app.input_pane.render(
+    let bottom = app.input_pane.render(
+        frame,
+        sections[2],
         app.console_state.mode,
         &current_status_text(app),
         &status_meta_text(app),
-        sections[2].width,
     );
-    frame.render_widget(bottom_widget, sections[2]);
 
-    if let Some((x, y)) =
-        app.input_pane
-            .cursor_position(sections[2], lines_before, app.console_state.mode)
-    {
+    if let Some((x, y)) = bottom.cursor_position {
         frame.set_cursor_position((x, y));
     }
 }
@@ -223,15 +220,18 @@ fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
 fn status_meta_text(app: &TuiApp) -> String {
     let mut parts = vec![format!("{} msgs", app.run_state.last_message_count)];
     if let Some(usage) = &app.run_state.last_turn_usage {
-        parts.push(format!(
-            "turn in {} out {} cache {}",
-            compact_number(usage.input_tokens),
-            compact_number(usage.output_tokens),
-            compact_number(usage.cached_input_tokens)
-        ));
-    }
-    if let Some(total) = &app.run_state.total_turn_usage {
-        parts.push(format!("total {} tok", compact_number(total.total_tokens)));
+        let mut token_text = format!(
+            "in {} out {} cached {}",
+            format_tokens(usage.input_tokens),
+            format_tokens(usage.output_tokens),
+            format_tokens(usage.cached_input_tokens)
+        );
+        if let Some(total) = &app.run_state.total_turn_usage {
+            token_text.push_str(&format!(" total {}", format_tokens(total.total_tokens)));
+        }
+        parts.push(token_text);
+    } else if let Some(total) = &app.run_state.total_turn_usage {
+        parts.push(format!("total {}", format_tokens(total.total_tokens)));
     }
     if let (Some(total), Some(window)) = (
         &app.run_state.total_turn_usage,
@@ -244,7 +244,7 @@ fn status_meta_text(app: &TuiApp) -> String {
     if let Some(tool) = &app.run_state.last_tool_name {
         parts.push(format!("tool {tool}"));
     }
-    parts.join("  ·  ")
+    parts.join(" · ")
 }
 
 fn compact_number(value: u64) -> String {
@@ -255,6 +255,10 @@ fn compact_number(value: u64) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn format_tokens(value: u64) -> String {
+    format!("{} tokens", compact_number(value))
 }
 
 fn current_status_text(app: &TuiApp) -> String {

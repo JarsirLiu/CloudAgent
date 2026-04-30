@@ -25,9 +25,9 @@ pub fn status_line(
     };
 
     let mut spans = vec![
-        Span::raw("  "),
+        Span::raw(" "),
         Span::styled(
-            format!(" state {mode_label} "),
+            format!(" {mode_label} "),
             Style::default()
                 .fg(dot_color)
                 .bg(badge_bg)
@@ -36,7 +36,7 @@ pub fn status_line(
     ];
     if !status_text.trim().is_empty() && !status_text.eq_ignore_ascii_case(mode_label) {
         spans.push(Span::styled(
-            "  .  ",
+            " · ",
             Style::default().fg(Color::Rgb(60, 60, 70)),
         ));
         spans.push(Span::styled(
@@ -65,7 +65,7 @@ pub fn status_line(
             used += w;
         }
         spans.push(Span::styled(
-            "  .  ",
+            " · ",
             Style::default().fg(Color::Rgb(60, 60, 70)),
         ));
         spans.push(Span::styled(

@@ -6,10 +6,12 @@ pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use agent_protocol::{FrontendMode, RequestId, ServerRequestDecisionKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 pub struct InputPane {
     composer: ChatComposer,
@@ -23,6 +25,10 @@ pub(crate) enum InputPaneAction {
         decision: ServerRequestDecisionKind,
         reason: String,
     },
+}
+
+pub(crate) struct InputPaneRenderResult {
+    pub cursor_position: Option<(u16, u16)>,
 }
 
 impl InputPane {
@@ -80,7 +86,76 @@ impl InputPane {
         None
     }
 
-    pub fn render(
+    pub(crate) fn render(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        mode: FrontendMode,
+        status_text: &str,
+        status_meta: &str,
+    ) -> InputPaneRenderResult {
+        if self.view_stack.last().is_some() {
+            let (widget, lines_before_composer, _) =
+                self.render_request_view(mode, status_text, status_meta, area.width);
+            frame.render_widget(widget, area);
+            return InputPaneRenderResult {
+                cursor_position: self.cursor_position(area, lines_before_composer, mode),
+            };
+        }
+
+        let inner_width = area.width.saturating_sub(2) as usize;
+        let composer = self.composer.render(mode, inner_width);
+        let border_style = border_style(mode);
+        let completion_lines = composer.completion_lines.clone();
+
+        let status = status_line(mode, status_text, status_meta, inner_width);
+
+        if completion_lines.is_empty() {
+            let mut lines = Vec::new();
+            lines.push(status);
+            lines.push(Line::raw(""));
+            lines.extend(composer.lines);
+            lines.push(hint_line(mode, inner_width));
+
+            let widget = input_block(lines, border_style);
+            frame.render_widget(widget, area);
+            let composer_area = composer_area(area, 2);
+            return InputPaneRenderResult {
+                cursor_position: Some(self.composer.cursor_position(composer_area, mode)),
+            };
+        }
+
+        let input_height = 5u16.saturating_add(composer.cursor_row);
+        let panel_height = completion_lines.len() as u16 + 1;
+        let [input_area, completion_area] = Layout::vertical([
+            Constraint::Length(input_height),
+            Constraint::Min(panel_height),
+        ])
+        .areas(area);
+
+        let mut input_lines = vec![status];
+        input_lines.push(Line::raw(""));
+        input_lines.extend(composer.lines);
+        frame.render_widget(input_block(input_lines, border_style), input_area);
+
+        let panel = Paragraph::new(Text::from(completion_lines))
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(Style::default().fg(Color::Rgb(58, 64, 86))),
+            )
+            .wrap(Wrap { trim: false });
+        frame.render_widget(panel, completion_area);
+
+        InputPaneRenderResult {
+            cursor_position: Some(
+                self.composer
+                    .cursor_position(composer_area(input_area, 2), mode),
+            ),
+        }
+    }
+
+    fn render_request_view(
         &self,
         mode: FrontendMode,
         status_text: &str,
@@ -101,64 +176,65 @@ impl InputPane {
             lines.extend(view_lines);
         }
 
-        if self.view_stack.is_empty() {
-            let composer = self.composer.render(mode, inner_width);
-            lines.push(Line::raw(""));
-            lines_before_composer += 1;
-            lines_before_composer += composer.cursor_row;
-            lines.extend(composer.lines);
-            if composer.completion_lines.is_empty() {
-                lines.push(Line::raw(""));
-                lines.push(hint_line(mode, inner_width));
-            } else {
-                lines.extend(composer.completion_lines);
-            }
-        }
-
         let total_lines = lines.len() as u16;
-        let border_style = match mode {
-            FrontendMode::Idle => Style::default().fg(Color::Rgb(75, 82, 110)),
-            FrontendMode::Running => Style::default().fg(Color::Rgb(82, 130, 190)),
-            FrontendMode::WaitingForServerRequest => Style::default().fg(Color::Rgb(210, 150, 45)),
-        };
         (
             Paragraph::new(Text::from(lines)).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(border_style)
+                    .border_style(border_style(mode))
                     .title_style(
                         Style::default()
                             .fg(Color::Rgb(215, 220, 235))
                             .add_modifier(Modifier::BOLD),
                     )
-                    .title(" composer "),
+                    .title(" action "),
             ),
             lines_before_composer,
             total_lines,
         )
     }
 
+    #[cfg(test)]
+    fn render_lines_for_test(
+        &self,
+        mode: FrontendMode,
+        status_text: &str,
+        status_meta: &str,
+        area_width: u16,
+    ) -> (Vec<Line<'static>>, u16) {
+        if self.view_stack.last().is_some() {
+            let (widget, lines_before, _) =
+                self.render_request_view(mode, status_text, status_meta, area_width);
+            let text = format!("{widget:?}");
+            return (vec![Line::raw(text)], lines_before);
+        }
+
+        let inner_width = area_width.saturating_sub(2) as usize;
+        let composer = self.composer.render(mode, inner_width);
+        let mut lines = vec![status_line(mode, status_text, status_meta, inner_width)];
+        lines.push(Line::raw(""));
+        lines.extend(composer.lines);
+        if !composer.completion_lines.is_empty() {
+            lines.extend(composer.completion_lines);
+        }
+        (lines, 1 + composer.cursor_row)
+    }
+
     pub fn desired_height(&self, mode: FrontendMode, area_width: u16) -> u16 {
         let inner_width = area_width.saturating_sub(2) as usize;
-        let mut total = 3u16; // border + status row
         if let Some(view) = self.view_stack.last() {
-            total += 1;
-            total += view.desired_height(area_width.saturating_sub(2));
-        } else {
-            let composer = self.composer.render(mode, inner_width);
-            total += 1; // gap before composer
-            total += composer.lines.len() as u16;
-            total += 2; // gap + hint line
-        }
-        let min_height = if !self.view_stack.is_empty() {
-            7
-        } else if self.composer.has_completion_menu() {
-            9
-        } else {
-            7
+            return (4 + view.desired_height(area_width.saturating_sub(2))).max(7);
         };
-        total.max(min_height)
+
+        let composer = self.composer.render(mode, inner_width);
+        if composer.completion_lines.is_empty() {
+            // Border + status + spacer + input + hint.
+            (5 + composer.lines.len() as u16).max(6)
+        } else {
+            // Small input surface with status plus an independent command panel below it.
+            (5 + composer.cursor_row).saturating_add(composer.completion_lines.len() as u16 + 1)
+        }
     }
 
     pub fn cursor_position(
@@ -234,6 +310,40 @@ impl InputPane {
 
     pub fn composer_is_empty(&self) -> bool {
         self.view_stack.is_empty() && self.composer.is_empty()
+    }
+}
+
+fn border_style(mode: FrontendMode) -> Style {
+    match mode {
+        FrontendMode::Idle => Style::default().fg(Color::Rgb(75, 82, 110)),
+        FrontendMode::Running => Style::default().fg(Color::Rgb(82, 130, 190)),
+        FrontendMode::WaitingForServerRequest => Style::default().fg(Color::Rgb(210, 150, 45)),
+    }
+}
+
+fn input_block(lines: Vec<Line<'static>>, border_style: Style) -> Paragraph<'static> {
+    Paragraph::new(Text::from(lines))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(border_style)
+                .title_style(
+                    Style::default()
+                        .fg(Color::Rgb(215, 220, 235))
+                        .add_modifier(Modifier::BOLD),
+                )
+                .title(" prompt "),
+        )
+        .wrap(Wrap { trim: false })
+}
+
+fn composer_area(area: Rect, content_row_offset: u16) -> Rect {
+    Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1).saturating_add(content_row_offset),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(content_row_offset + 2),
     }
 }
 
@@ -360,7 +470,7 @@ mod tests {
     fn idle_composer_stays_compact_and_completion_gets_menu_space() {
         let mut pane = InputPane::new();
         let before = pane.desired_height(FrontendMode::Idle, 100);
-        assert_eq!(before, 7);
+        assert_eq!(before, 6);
 
         let _ = pane.handle_key(KeyEvent {
             code: KeyCode::Char('/'),
@@ -371,7 +481,7 @@ mod tests {
 
         let after = pane.desired_height(FrontendMode::Idle, 100);
         assert!(after > before);
-        let (_, _, total_lines) = pane.render(FrontendMode::Idle, "Idle", "test", 100);
-        assert!(total_lines > 5);
+        let (lines, _) = pane.render_lines_for_test(FrontendMode::Idle, "Idle", "test", 100);
+        assert!(lines.len() > 5);
     }
 }
