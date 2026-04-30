@@ -72,7 +72,7 @@ async fn await_tracked_turn_tasks(state: &Arc<Mutex<ServerState>>) {
 }
 
 #[derive(Clone)]
-pub(crate) struct SpawnTurnContext {
+pub(crate) struct TurnSpawnDependencies {
     pub(crate) event_tx: mpsc::UnboundedSender<AppServerMessage>,
     pub(crate) state: Arc<Mutex<ServerState>>,
     pub(crate) auto_approve: bool,
@@ -103,7 +103,7 @@ pub(crate) async fn handle_command(
                 runtime,
                 input.conversation_id,
                 input.content,
-                SpawnTurnContext {
+                TurnSpawnDependencies {
                     event_tx: event_tx.clone(),
                     state: state.clone(),
                     auto_approve,
@@ -243,22 +243,22 @@ fn spawn_turn(
     runtime: Arc<AgentRuntime>,
     conversation_id: String,
     user_input: String,
-    ctx: SpawnTurnContext,
+    deps: TurnSpawnDependencies,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let finish_events = ctx.event_tx.clone();
-        let state_for_finish = ctx.state.clone();
+        let finish_events = deps.event_tx.clone();
+        let state_for_finish = deps.state.clone();
         let conversation_id_for_server_request = conversation_id.clone();
         let active_turn_id = Arc::new(StdMutex::new(None::<String>));
         let active_turn_id_for_events = active_turn_id.clone();
         let runtime_for_requests = runtime.clone();
         let (listener, listener_task) = start_conversation_listener(
             conversation_id.clone(),
-            ctx.event_tx.clone(),
-            ctx.state.clone(),
+            deps.event_tx.clone(),
+            deps.state.clone(),
         );
         {
-            let mut state = ctx.state.lock().await;
+            let mut state = deps.state.lock().await;
             state.set_active_listener(conversation_id.clone(), listener.clone());
         }
         let listener_for_events = listener.clone();
@@ -278,13 +278,13 @@ fn spawn_turn(
                     listener_for_events.project_event(event);
                 },
                 move |request: ServerRequest| {
-                    let event_tx = ctx.event_tx.clone();
-                    let state = ctx.state.clone();
+                    let event_tx = deps.event_tx.clone();
+                    let state = deps.state.clone();
                     let conversation_id = conversation_id_for_server_request.clone();
-                    let auto_approve_reason = ctx.auto_approve_reason.clone();
+                    let auto_approve_reason = deps.auto_approve_reason.clone();
                     let runtime = runtime_for_requests.clone();
                     async move {
-                        if ctx.auto_approve {
+                        if deps.auto_approve {
                             return Ok(ServerRequestDecision {
                                 approved: true,
                                 reason: auto_approve_reason
