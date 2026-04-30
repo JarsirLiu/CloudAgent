@@ -247,11 +247,10 @@ impl TuiApp {
     }
 
     fn needs_animation_frame(&self) -> bool {
-        self.console_state.mode == FrontendMode::Running
-            || (self.transcript_state.transcript.is_empty()
-                && self.run_state.history_loaded
-                && self.input_pane.composer_is_empty()
-                && self.welcome_animation_pause_ticks == 0)
+        self.transcript_state.transcript.is_empty()
+            && self.run_state.history_loaded
+            && self.input_pane.composer_is_empty()
+            && self.welcome_animation_pause_ticks == 0
     }
 
     fn advance_animation_frame(&mut self) {

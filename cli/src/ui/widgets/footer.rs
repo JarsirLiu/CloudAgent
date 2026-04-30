@@ -3,8 +3,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
-use crate::ui::widgets::text_effects::shimmer_spans;
-
 pub fn divider_line(width: usize) -> Line<'static> {
     Line::from(Span::styled(
         "-".repeat(width),
@@ -26,14 +24,10 @@ pub fn status_line(
         }
     };
 
-    let status_spans = if mode == FrontendMode::Running {
-        shimmer_spans(status_text)
-    } else {
-        vec![Span::styled(
-            status_text.to_string(),
-            Style::default().fg(Color::Rgb(140, 140, 155)),
-        )]
-    };
+    let status_spans = vec![Span::styled(
+        status_text.to_string(),
+        Style::default().fg(Color::Rgb(140, 140, 155)),
+    )];
 
     let mut spans = vec![
         Span::raw("  "),
