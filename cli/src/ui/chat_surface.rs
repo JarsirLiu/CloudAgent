@@ -234,10 +234,10 @@ fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
 }
 
 fn status_meta_text(app: &TuiApp) -> String {
-    let mut parts = vec![format!("{} msgs", app.run_state.last_message_count)];
+    let mut parts = Vec::new();
     if let Some(usage) = &app.run_state.last_turn_usage {
         parts.push(format!(
-            "in {} out {} cached {} total {}",
+            "in {} · out {} · cached {} · total {}",
             format_tokens(usage.input_tokens),
             format_tokens(usage.output_tokens),
             format_tokens(usage.cached_input_tokens),

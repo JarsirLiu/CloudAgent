@@ -123,7 +123,7 @@ mod tests {
         let line = status_line(
             FrontendMode::Running,
             "Request approved:",
-            "3 msgs · in 1.3k tokens out 93 tokens cached 0 tokens total 1.4k tokens",
+            "in 1.3k tokens · out 93 tokens · cached 0 tokens · total 1.4k tokens",
             58,
         );
 
