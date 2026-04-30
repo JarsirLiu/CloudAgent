@@ -59,6 +59,22 @@ impl CompletionState {
         self.selected
     }
 
+    pub(crate) fn visible_window(&self, max_rows: usize) -> (usize, &[CommandSuggestion]) {
+        if max_rows == 0 || self.suggestions.is_empty() {
+            return (0, &[]);
+        }
+        let len = self.suggestions.len();
+        let visible_len = len.min(max_rows);
+        let start = if self.selected < visible_len {
+            0
+        } else {
+            (self.selected + 1).saturating_sub(visible_len)
+        }
+        .min(len.saturating_sub(visible_len));
+        let end = start + visible_len;
+        (start, &self.suggestions[start..end])
+    }
+
     pub(crate) fn selected(&self) -> Option<CommandSuggestion> {
         self.suggestions.get(self.selected).copied()
     }
@@ -155,5 +171,21 @@ mod tests {
             .map(|item| item.name)
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["interrupt"]);
+    }
+
+    #[test]
+    fn visible_window_tracks_selected_item() {
+        let mut state = CompletionState::default();
+        state.sync_from_input("/", 1);
+        for _ in 0..4 {
+            state.move_down();
+        }
+
+        let (start, visible) = state.visible_window(3);
+
+        assert_eq!(start, 2);
+        assert_eq!(visible.len(), 3);
+        assert!(state.selected_index() >= start);
+        assert!(state.selected_index() < start + visible.len());
     }
 }

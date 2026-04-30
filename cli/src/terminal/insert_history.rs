@@ -13,6 +13,7 @@ use crossterm::terminal::{Clear, ClearType};
 use ratatui::backend::Backend;
 use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthChar;
 
 use crate::terminal::custom_terminal::Terminal;
 
@@ -32,10 +33,8 @@ where
     let mut should_update_area = false;
     let last_cursor_pos = terminal.last_known_cursor_pos;
     let wrap_width = area.width.max(1) as usize;
-    let wrapped_rows = lines
-        .iter()
-        .map(|line| line.width().max(1).div_ceil(wrap_width))
-        .sum::<usize>() as u16;
+    let lines = wrap_history_lines(lines, wrap_width);
+    let wrapped_rows = lines.len() as u16;
     if wrapped_rows == 0 {
         return Ok(());
     }
@@ -74,6 +73,58 @@ where
     }
     terminal.note_history_rows_inserted(wrapped_rows);
     Ok(())
+}
+
+fn wrap_history_lines(lines: Vec<Line<'static>>, wrap_width: usize) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .flat_map(|line| wrap_history_line(line, wrap_width.max(1)))
+        .collect()
+}
+
+fn wrap_history_line(line: Line<'static>, wrap_width: usize) -> Vec<Line<'static>> {
+    if line.width() <= wrap_width {
+        return vec![line];
+    }
+
+    let line_style = line.style;
+    let mut rows = Vec::new();
+    let mut row_spans = Vec::new();
+    let mut row_width = 0usize;
+
+    for span in line.spans {
+        let span_style = span.style;
+        let mut chunk = String::new();
+        for ch in span.content.chars() {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if row_width > 0 && row_width + ch_width > wrap_width {
+                if !chunk.is_empty() {
+                    row_spans.push(Span::styled(std::mem::take(&mut chunk), span_style));
+                }
+                rows.push(line_from_spans(std::mem::take(&mut row_spans), line_style));
+                row_width = 0;
+            }
+            chunk.push(ch);
+            row_width = row_width.saturating_add(ch_width);
+        }
+        if !chunk.is_empty() {
+            row_spans.push(Span::styled(chunk, span_style));
+        }
+    }
+
+    if !row_spans.is_empty() {
+        rows.push(line_from_spans(row_spans, line_style));
+    }
+    if rows.is_empty() {
+        rows.push(line_from_spans(Vec::new(), line_style));
+    }
+    rows
+}
+
+fn line_from_spans(spans: Vec<Span<'static>>, style: ratatui::style::Style) -> Line<'static> {
+    let mut line = Line::from(spans);
+    line.style = style;
+    line
 }
 
 fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) -> io::Result<()> {
@@ -228,5 +279,43 @@ impl crossterm::Command for ResetScrollRegion {
     #[cfg(windows)]
     fn is_ansi_code_supported(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_history_line;
+    use ratatui::style::{Color, Style};
+    use ratatui::text::{Line, Span};
+
+    #[test]
+    fn wraps_long_history_line_before_terminal_insert() {
+        let line = Line::from(vec![Span::styled(
+            "Get-PSDrive -PSProvider FileSystem",
+            Style::default().fg(Color::Blue),
+        )]);
+
+        let wrapped = wrap_history_line(line, 10);
+
+        assert!(wrapped.len() > 1);
+        assert!(wrapped.iter().all(|line| line.width() <= 10));
+        assert_eq!(
+            wrapped
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "Get-PSDrive -PSProvider FileSystem"
+        );
+    }
+
+    #[test]
+    fn preserves_wide_character_boundaries() {
+        let line = Line::raw("磁盘分区占用率");
+
+        let wrapped = wrap_history_line(line, 6);
+
+        assert!(wrapped.len() > 1);
+        assert!(wrapped.iter().all(|line| line.width() <= 6));
     }
 }

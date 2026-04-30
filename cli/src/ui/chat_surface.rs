@@ -9,65 +9,87 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 const WELCOME_HEIGHT: u16 = 27;
 const MAX_CONTENT_WIDTH: u16 = 140;
+const ACTIVE_TOP_INSET: u16 = 1;
 
-pub(crate) fn render_app(app: &mut TuiApp, frame: &mut Frame) {
-    let area = frame.area();
-    let content = centered_column(area, MAX_CONTENT_WIDTH);
-    let bottom_height = app
-        .input_pane
-        .desired_height(app.console_state.mode, content.width)
-        .min(content.height)
-        .max(1);
+pub(crate) struct ChatSurface;
 
-    let input_area = if should_show_welcome(app) && content.height > bottom_height + 2 {
-        let welcome_height = WELCOME_HEIGHT.min(content.height.saturating_sub(bottom_height));
-        let [welcome_area, input_area] = Layout::vertical([
-            Constraint::Length(welcome_height),
-            Constraint::Min(bottom_height),
-        ])
-        .areas(content);
-        render_welcome(app, frame, welcome_area);
-        input_area
-    } else if let Some(active_height) = active_cell_height(app, content.width)
-        && content.height > bottom_height + 1
-    {
-        let active_height = active_height.min(content.height.saturating_sub(bottom_height));
-        let [active_area, input_area] = Layout::vertical([
-            Constraint::Length(active_height),
-            Constraint::Min(bottom_height),
-        ])
-        .areas(content);
-        render_active_cell(app, frame, active_area);
-        input_area
-    } else {
-        content
-    };
+impl ChatSurface {
+    pub(crate) fn render(app: &mut TuiApp, frame: &mut Frame) {
+        let area = frame.area();
+        let content = centered_column(area, MAX_CONTENT_WIDTH);
+        let bottom_height = bottom_pane_height(app, content.width).min(content.height);
+        let live_height = live_area_height(app, content.width)
+            .unwrap_or(0)
+            .min(content.height.saturating_sub(bottom_height));
 
-    let bottom = app.input_pane.render(
-        frame,
-        input_area,
-        app.console_state.mode,
-        &current_status_text(app),
-        &status_meta_text(app),
-    );
+        let (live_area, bottom_area) = split_live_and_bottom(content, live_height, bottom_height);
+        render_live_area(app, frame, live_area);
 
-    if let Some((x, y)) = bottom.cursor_position {
-        frame.set_cursor_position((x, y));
+        let bottom = app.input_pane.render(
+            frame,
+            bottom_area,
+            app.console_state.mode,
+            &current_status_text(app),
+            &status_meta_text(app),
+        );
+
+        if let Some((x, y)) = bottom.cursor_position {
+            frame.set_cursor_position((x, y));
+        }
+    }
+
+    pub(crate) fn desired_height(app: &TuiApp, width: u16) -> u16 {
+        let content_width = width.min(MAX_CONTENT_WIDTH);
+        let bottom_height = bottom_pane_height(app, content_width);
+        let live_height = live_area_height(app, content_width).unwrap_or(0);
+        bottom_height.saturating_add(live_height).max(1)
     }
 }
 
-pub(crate) fn desired_app_height(app: &TuiApp, width: u16) -> u16 {
-    let content_width = width.min(MAX_CONTENT_WIDTH);
-    let input_height = app
-        .input_pane
-        .desired_height(app.console_state.mode, content_width)
-        .max(1);
+fn bottom_pane_height(app: &TuiApp, width: u16) -> u16 {
+    app.input_pane
+        .desired_height(app.console_state.mode, width)
+        .max(1)
+}
+
+fn live_area_height(app: &TuiApp, width: u16) -> Option<u16> {
     if should_show_welcome(app) {
-        input_height.saturating_add(WELCOME_HEIGHT)
-    } else if let Some(active_height) = active_cell_height(app, content_width) {
-        input_height.saturating_add(active_height)
+        Some(WELCOME_HEIGHT)
     } else {
-        input_height
+        active_cell_height(app, width).map(|height| height.saturating_add(ACTIVE_TOP_INSET))
+    }
+}
+
+fn split_live_and_bottom(content: Rect, live_height: u16, bottom_height: u16) -> (Rect, Rect) {
+    if live_height == 0 {
+        return (
+            Rect {
+                height: 0,
+                ..content
+            },
+            Rect {
+                height: bottom_height.max(1),
+                ..content
+            },
+        );
+    }
+
+    let [live_area, bottom_area] = Layout::vertical([
+        Constraint::Length(live_height),
+        Constraint::Length(bottom_height.max(1)),
+    ])
+    .areas(content);
+    (live_area, bottom_area)
+}
+
+fn render_live_area(app: &TuiApp, frame: &mut Frame, area: Rect) {
+    if area.height == 0 {
+        return;
+    }
+    if should_show_welcome(app) {
+        render_welcome(app, frame, area);
+    } else {
+        render_active_cell(app, frame, area);
     }
 }
 
@@ -170,7 +192,12 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
     if active.body.trim().is_empty() {
         return;
     }
-    let inner = area.inner(Margin {
+    let live_area = Rect {
+        y: area.y.saturating_add(ACTIVE_TOP_INSET),
+        height: area.height.saturating_sub(ACTIVE_TOP_INSET),
+        ..area
+    };
+    let inner = live_area.inner(Margin {
         horizontal: 2,
         vertical: 0,
     });

@@ -81,13 +81,12 @@ where
             x: 0,
             y: screen_size.height.saturating_sub(1),
         });
-        let viewport_y = screen_size.height.saturating_sub(1);
         Ok(Self {
             backend,
             buffers: [Buffer::empty(Rect::ZERO), Buffer::empty(Rect::ZERO)],
             current: 0,
             hidden_cursor: false,
-            viewport_area: Rect::new(0, viewport_y, screen_size.width, 1),
+            viewport_area: Rect::new(0, cursor_pos.y, 0, 0),
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,

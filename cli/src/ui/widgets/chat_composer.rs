@@ -294,6 +294,30 @@ mod tests {
     }
 
     #[test]
+    fn completion_popup_scrolls_to_selected_command() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "/");
+        for _ in 0..4 {
+            composer.handle_key(key(KeyCode::Down));
+        }
+
+        let rendered = composer.render(FrontendMode::Idle, 80);
+        let visible_text = rendered
+            .completion_lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(visible_text.contains("> /exit"));
+    }
+
+    #[test]
     fn bracketed_paste_inserts_text_without_submitting() {
         let mut composer = ChatComposer::new();
 

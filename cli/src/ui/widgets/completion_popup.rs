@@ -16,14 +16,27 @@ pub(crate) fn completion_popup_lines(
     }
 
     let mut lines = Vec::new();
-    for (index, suggestion) in completion.suggestions().iter().take(MAX_ROWS).enumerate() {
+    let (window_start, suggestions) = completion.visible_window(MAX_ROWS);
+    let has_more_above = window_start > 0;
+    let has_more_below = window_start + suggestions.len() < completion.suggestions().len();
+
+    for (offset, suggestion) in suggestions.iter().enumerate() {
+        let index = window_start + offset;
         let selected = index == completion.selected_index();
         let name = format!(
             "/{:<width$}",
             suggestion.name,
             width = COMMAND_COLUMN_WIDTH - 1
         );
-        let marker = if selected { "> " } else { "  " };
+        let marker = if selected {
+            "> "
+        } else if offset == 0 && has_more_above {
+            "↑ "
+        } else if offset + 1 == suggestions.len() && has_more_below {
+            "↓ "
+        } else {
+            "  "
+        };
         let row_indent = content_indent.saturating_sub(marker.len());
         let description_width =
             width.saturating_sub(row_indent + marker.len() + COMMAND_COLUMN_WIDTH + 3);

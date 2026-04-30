@@ -65,12 +65,7 @@ impl ScrollbackSurface {
         let size = terminal.terminal.size()?;
         terminal
             .terminal
-            .set_viewport_area(ratatui::layout::Rect::new(
-                0,
-                size.height.saturating_sub(1),
-                size.width,
-                1,
-            ));
+            .set_viewport_area(ratatui::layout::Rect::new(0, 0, size.width, 1));
         terminal.terminal.clear()?;
         self.inserted_cells = 0;
         for cell in cells {

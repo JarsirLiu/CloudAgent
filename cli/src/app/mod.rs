@@ -9,7 +9,7 @@ use crate::state::reducer::{TurnDispatch, apply_server_message};
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
 use crate::terminal::{Frame, ScrollbackSurface, TerminalGuard, UiEvent, spawn_tui_event_loop};
 use crate::transport::client::create_client;
-use crate::ui::screen::{desired_app_height, render_app};
+use crate::ui::chat_surface::ChatSurface;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
 use agent_app_server_client::AppServerEvent;
@@ -219,7 +219,7 @@ impl TuiApp {
     }
 
     fn render(&mut self, frame: &mut Frame) {
-        render_app(self, frame);
+        ChatSurface::render(self, frame);
     }
 
     fn needs_animation_frame(&self) -> bool {
@@ -477,7 +477,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
             }
             let pending_history_lines =
                 surface.pending_lines(&terminal, app.drain_pending_history_cells())?;
-            let height = desired_app_height(&app, terminal.terminal.size()?.width).max(1);
+            let height = ChatSurface::desired_height(&app, terminal.terminal.size()?.width).max(1);
             terminal.draw_with_history(height, pending_history_lines, |frame| app.render(frame))?;
         }
         let redraw_after_event = tokio::select! {
