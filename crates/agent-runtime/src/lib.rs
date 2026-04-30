@@ -5,9 +5,10 @@ mod tools;
 
 use agent_core::{
     AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
-    ConversationTurn, ExecutionPolicy, ModelRequest, ModelResponse, RolloutItem, ToolCall,
-    ToolExecutor, ToolSpec, agent_turn_output_from_events, build_turns_from_rollout_items,
-    conversation_history_from_rollout_items, flatten_conversation_turns,
+    ConversationTurn, EnvironmentContext, ExecutionPolicy, ModelRequest, ModelResponse,
+    RolloutItem, ToolCall, ToolExecutor, ToolSpec, agent_turn_output_from_events,
+    build_turns_from_rollout_items, conversation_history_from_rollout_items,
+    flatten_conversation_turns,
 };
 use agent_tools::ToolRegistry;
 use anyhow::{Context, Result, bail};
@@ -181,6 +182,16 @@ impl AgentRuntime {
 
     pub fn default_conversation_id(&self) -> &str {
         &self.config.runtime.default_conversation_id
+    }
+
+    pub(crate) fn environment_context(&self) -> EnvironmentContext {
+        let now = chrono::Local::now();
+        EnvironmentContext::new(
+            self.context.workspace_root.clone(),
+            model_shell_name(),
+            now.format("%Y-%m-%d").to_string(),
+            now.offset().to_string(),
+        )
     }
 
     pub async fn conversation_status(&self, conversation_id: &str) -> Result<ConversationSnapshot> {
@@ -514,6 +525,10 @@ impl AgentRuntime {
             outcome.state,
         )
     }
+}
+
+fn model_shell_name() -> &'static str {
+    if cfg!(windows) { "powershell" } else { "sh" }
 }
 
 fn is_turn_interrupted_error(error: &anyhow::Error) -> bool {

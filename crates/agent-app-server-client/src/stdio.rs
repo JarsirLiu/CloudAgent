@@ -32,7 +32,8 @@ impl StdioAppServerClient {
         command.args(&config.args);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
-        command.stderr(Stdio::inherit());
+        command.stderr(Stdio::null());
+        command.kill_on_drop(true);
 
         let mut child = command
             .spawn()

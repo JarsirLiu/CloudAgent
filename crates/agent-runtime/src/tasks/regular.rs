@@ -70,6 +70,7 @@ where
     let mut assistant_item_seq: usize = 0;
     let tool_specs = runtime.tools.specs();
     let mut denied_requests = HashSet::new();
+    let environment_context = runtime.environment_context();
 
     for _ in 0..runtime.policy.max_tool_roundtrips {
         if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
@@ -90,12 +91,18 @@ where
             });
         }
 
+        let model_request = context_manager.build_current_model_request_with_fragments(
+            std::slice::from_ref(&environment_context),
+            tool_specs.clone(),
+            runtime.config.llm.temperature,
+        );
+
         emit_event(
             &mut events,
             on_event,
             EventMsg::ModelRequestStarted {
                 turn_id: turn_id.to_string(),
-                message_count: context_manager.history().messages.len(),
+                message_count: model_request.messages.len(),
                 tool_count: tool_specs.len(),
             },
         );
@@ -104,10 +111,7 @@ where
         let response = runtime
             .complete_model_request_streaming(
                 &cancellation_token,
-                context_manager.build_current_model_request(
-                    tool_specs.clone(),
-                    runtime.config.llm.temperature,
-                ),
+                model_request,
                 &mut |delta: String| {
                     if delta.is_empty() {
                         return;

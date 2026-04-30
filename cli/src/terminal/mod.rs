@@ -99,25 +99,6 @@ pub fn install_panic_hook() {
     });
 }
 
-#[allow(dead_code)]
-pub(crate) fn with_restored<F, R>(f: F) -> Result<R>
-where
-    F: FnOnce() -> Result<R>,
-{
-    restore()?;
-    let result = f();
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnableBracketedPaste,
-        Clear(ClearType::All),
-        MoveTo(0, 0)
-    )?;
-    let _ = execute!(stdout, EnableAlternateScroll);
-    result
-}
-
 impl TerminalGuard {
     pub(crate) fn new() -> Result<Self> {
         init()

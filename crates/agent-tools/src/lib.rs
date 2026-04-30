@@ -176,7 +176,7 @@ impl LocalTool for ShellCommandTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "shell_command".to_string(),
-            description: "Run a shell command inside the workspace and return stdout, stderr, exit code, and working directory.".to_string(),
+            description: shell_tool_description(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -190,7 +190,9 @@ impl LocalTool for ShellCommandTool {
             requires_approval: true,
             item_kind: agent_protocol::TurnItemKind::CommandExecution,
             delta_kind: agent_protocol::TurnItemDeltaKind::CommandExecutionOutput,
-            approval_reason: Some("Shell commands can inspect or modify the workspace.".to_string()),
+            approval_reason: Some(
+                "Shell commands can inspect or modify the workspace.".to_string(),
+            ),
         }
     }
 
@@ -218,8 +220,10 @@ impl LocalTool for ShellCommandTool {
         };
         command
             .current_dir(&workdir)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        command.kill_on_drop(true);
 
         let mut child = command.spawn()?;
         let stdout = child
@@ -308,6 +312,18 @@ impl LocalTool for ShellCommandTool {
             }),
         })
     }
+}
+
+fn shell_tool_description() -> String {
+    let shell = if cfg!(windows) { "PowerShell" } else { "sh" };
+    let platform_note = if cfg!(windows) {
+        " On Windows, pass PowerShell script directly; do not wrap commands in `powershell -Command`."
+    } else {
+        ""
+    };
+    format!(
+        "Run a command script inside the workspace using {shell} and return stdout, stderr, exit code, and working directory.{platform_note}"
+    )
 }
 
 fn normalize_shell_command(command: &str) -> String {

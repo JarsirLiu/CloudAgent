@@ -6,7 +6,10 @@ pub mod rollout;
 pub mod tool;
 pub mod turn;
 
-pub use context::{AgentContext, ContextManager, ModelContext, ToolExecutionContext};
+pub use context::{
+    AgentContext, ContextFragment, ContextManager, EnvironmentContext, ModelContext,
+    ToolExecutionContext,
+};
 pub use conversation::{
     ActiveConversationTurn, ConversationHistory, ConversationState, ConversationTurn,
     PendingConversationRequest, PersistedConversation, ResponseItem, TranscriptItem,
