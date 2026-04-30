@@ -6,9 +6,10 @@ use crate::app::actions::{execute_server_action, handle_tui_input};
 use crate::app::parse::{ParsedInput, parse_line};
 use crate::state::reducer::{TurnDispatch, apply_server_message};
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
+use crate::terminal::frame::draw_spans_at;
 use crate::terminal::{TerminalGuard, UiEvent, spawn_tui_event_loop};
 use crate::transport::client::create_client;
-use crate::ui::screen::render_app;
+use crate::ui::screen::{render_app, welcome_animation_line};
 use crate::ui::widgets::chat_composer::ComposerAction;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
@@ -18,6 +19,7 @@ use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::Frame;
+use ratatui::layout::Rect;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
 use std::sync::Arc;
@@ -569,7 +571,18 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                     }
                     UiEvent::Resize => true,
                     UiEvent::Tick => {
-                        app.handle_animation_tick()
+                        if app.handle_animation_tick() {
+                            let size = terminal.terminal.size()?;
+                            let area = Rect::new(0, 0, size.width, size.height);
+                            if let Some((x, y, spans)) = welcome_animation_line(&app, area) {
+                                draw_spans_at(&mut terminal, x, y, &spans)?;
+                                false
+                            } else {
+                                true
+                            }
+                        } else {
+                            false
+                        }
                     }
                 }
             }
