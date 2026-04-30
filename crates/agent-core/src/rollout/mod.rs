@@ -21,7 +21,3 @@ impl From<ResponseItem> for RolloutItem {
         Self::ResponseItem { item }
     }
 }
-
-pub fn module_name() -> &'static str {
-    "agent-core::rollout"
-}

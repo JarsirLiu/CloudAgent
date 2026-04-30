@@ -89,7 +89,3 @@ pub trait ToolExecutor: Send + Sync {
 
     async fn execute(&self, call: ToolCall, ctx: &ToolExecutionContext) -> Result<ToolResult>;
 }
-
-pub fn module_name() -> &'static str {
-    "agent-core::tool"
-}

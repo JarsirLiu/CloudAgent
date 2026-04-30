@@ -12,7 +12,3 @@ pub use lifecycle::{TurnLifecycleClass, TurnLifecyclePhase};
 pub use output::AgentTurnOutput;
 pub use policy::ExecutionPolicy;
 pub use request_id::RequestId;
-
-pub fn module_name() -> &'static str {
-    "agent-core::turn"
-}

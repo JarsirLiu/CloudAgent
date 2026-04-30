@@ -123,7 +123,3 @@ pub fn classify_event_msg(event: &EventMsg) -> (EventStream, EventDelivery) {
         }
     }
 }
-
-pub fn module_name() -> &'static str {
-    "agent-core::events"
-}

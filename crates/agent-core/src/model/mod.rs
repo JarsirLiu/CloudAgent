@@ -33,7 +33,3 @@ pub trait ChatModel: Send + Sync {
         Ok(response)
     }
 }
-
-pub fn module_name() -> &'static str {
-    "agent-core::model"
-}

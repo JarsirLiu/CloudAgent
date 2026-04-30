@@ -7,7 +7,3 @@ pub use items::{ConversationTurn, TranscriptItem};
 pub use state::{
     ActiveConversationTurn, ConversationState, PendingConversationRequest, PersistedConversation,
 };
-
-pub fn module_name() -> &'static str {
-    "agent-core::conversation"
-}
