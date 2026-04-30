@@ -58,6 +58,8 @@ pub(crate) struct TuiApp {
     pub(crate) transcript_state: TranscriptState,
     pub(crate) run_state: RunState,
     pub(crate) input_pane: InputPane,
+    pub(crate) welcome_animation_frame: u64,
+    welcome_animation_pause_ticks: u8,
 }
 
 impl TuiApp {
@@ -70,6 +72,8 @@ impl TuiApp {
             transcript_state: TranscriptState::default(),
             run_state: RunState::new(connection_label),
             input_pane: InputPane::new(),
+            welcome_animation_frame: 0,
+            welcome_animation_pause_ticks: 0,
         }
     }
 
@@ -86,6 +90,8 @@ impl TuiApp {
         self.run_state = RunState::new(&self.connection_label);
         self.run_state.history_loaded = true;
         self.input_pane.clear_views();
+        self.welcome_animation_frame = 0;
+        self.welcome_animation_pause_ticks = 0;
     }
 
     pub(crate) fn set_mode(&mut self, mode: FrontendMode) {
@@ -240,6 +246,36 @@ impl TuiApp {
 
     fn needs_animation_frame(&self) -> bool {
         self.console_state.mode == FrontendMode::Running
+            || (self.transcript_state.transcript.is_empty()
+                && self.run_state.history_loaded
+                && self.input_pane.composer_is_empty()
+                && self.welcome_animation_pause_ticks == 0)
+    }
+
+    fn advance_animation_frame(&mut self) {
+        if self.transcript_state.transcript.is_empty()
+            && self.run_state.history_loaded
+            && self.input_pane.composer_is_empty()
+            && self.welcome_animation_pause_ticks == 0
+        {
+            self.welcome_animation_frame = self.welcome_animation_frame.wrapping_add(1);
+        }
+    }
+
+    fn pause_welcome_animation_for_input(&mut self) {
+        self.welcome_animation_pause_ticks = 8;
+    }
+
+    fn handle_animation_tick(&mut self) -> bool {
+        if self.welcome_animation_pause_ticks > 0 {
+            self.welcome_animation_pause_ticks -= 1;
+            return false;
+        }
+        if self.needs_animation_frame() {
+            self.advance_animation_frame();
+            return true;
+        }
+        false
     }
 
     fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
@@ -519,6 +555,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
             Some(event) = events.recv() => {
                 match event {
                     UiEvent::Key(key) => {
+                        app.pause_welcome_animation_for_input();
                         if let Some(input) = app.handle_key(key) {
                             if handle_tui_input(&conversation_id, &mut app, &client, input)? {
                                 break;
@@ -532,7 +569,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                     }
                     UiEvent::Resize => true,
                     UiEvent::Tick => {
-                        app.needs_animation_frame()
+                        app.handle_animation_tick()
                     }
                 }
             }

@@ -9,14 +9,37 @@ fn elapsed() -> Duration {
 }
 
 pub fn shimmer_spans(text: &str) -> Vec<Span<'static>> {
+    shimmer_spans_at(text, shimmer_position(text))
+}
+
+pub fn shimmer_spans_for_frame(text: &str, frame: u64) -> Vec<Span<'static>> {
+    let chars_len = text.chars().count();
+    if chars_len == 0 {
+        return vec![];
+    }
+    let padding = 8usize;
+    let period = chars_len + padding * 2;
+    let pos = (frame as usize) % period;
+    shimmer_spans_at(text, pos)
+}
+
+fn shimmer_position(text: &str) -> usize {
+    let chars_len = text.chars().count();
+    if chars_len == 0 {
+        return 0;
+    }
+    let padding = 8usize;
+    let period = chars_len + padding * 2;
+    let sweep = 2.0f32;
+    ((elapsed().as_secs_f32() % sweep) / sweep * period as f32) as usize
+}
+
+fn shimmer_spans_at(text: &str, pos: usize) -> Vec<Span<'static>> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() {
         return vec![];
     }
     let padding = 8usize;
-    let period = chars.len() + padding * 2;
-    let sweep = 2.0f32;
-    let pos = ((elapsed().as_secs_f32() % sweep) / sweep * period as f32) as usize;
 
     let base = Color::Rgb(100, 100, 110);
     let bright = Color::Rgb(200, 200, 220);

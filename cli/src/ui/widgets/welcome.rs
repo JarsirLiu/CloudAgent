@@ -1,3 +1,4 @@
+use crate::ui::widgets::text_effects::shimmer_spans_for_frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -6,13 +7,15 @@ use ratatui::widgets::{Paragraph, Wrap};
 pub struct WelcomeScreen {
     pub history_loaded: bool,
     pub status_text: String,
+    pub animation_frame: u64,
 }
 
 impl WelcomeScreen {
-    pub fn new(history_loaded: bool, status_text: String) -> Self {
+    pub fn new(history_loaded: bool, status_text: String, animation_frame: u64) -> Self {
         Self {
             history_loaded,
             status_text,
+            animation_frame,
         }
     }
 
@@ -65,10 +68,14 @@ impl WelcomeScreen {
         ]));
         lines.push(Line::raw(""));
 
-        let title_spans = vec![Span::styled(
-            "CloudAgent",
-            Style::default().fg(logo_color).add_modifier(Modifier::BOLD),
-        )];
+        let title_spans = if self.history_loaded {
+            shimmer_spans_for_frame("CloudAgent", self.animation_frame)
+        } else {
+            vec![Span::styled(
+                "CloudAgent",
+                Style::default().fg(logo_color).add_modifier(Modifier::BOLD),
+            )]
+        };
 
         let mut title_line = vec![Span::raw("  > ")];
         title_line.extend(title_spans);
