@@ -91,19 +91,19 @@ mod tests {
     use crate::turn::TurnItemDeltaKind;
 
     #[test]
-    fn tool_event_uses_completed_item_not_streamed_fallback() {
+    fn tool_event_uses_completed_item_not_streamed_delta() {
         let events = vec![
             EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
                 kind: crate::turn::TurnItemKind::CommandExecution,
-                title: Some("fallback title".to_string()),
+                title: Some("shell_command".to_string()),
             },
             EventMsg::ItemDelta {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
                 kind: TurnItemDeltaKind::CommandExecutionOutput,
-                delta: "streamed fallback".to_string(),
+                delta: "streamed stdout".to_string(),
             },
             EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
@@ -131,18 +131,26 @@ mod tests {
     }
 
     #[test]
-    fn completed_tool_item_is_authoritative_without_started_event() {
-        let events = vec![EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool-1".to_string(),
-            item: TranscriptItem::ToolResult {
-                id: "tool-1".to_string(),
-                tool_name: "custom_tool".to_string(),
-                content: "ok".to_string(),
-                summary: "ok".to_string(),
-                structured: None,
+    fn completed_tool_item_projects_tool_event() {
+        let events = vec![
+            EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "tool-1".to_string(),
+                kind: crate::turn::TurnItemKind::ToolCall,
+                title: Some("custom_tool".to_string()),
             },
-        }];
+            EventMsg::ItemCompleted {
+                turn_id: "turn-1".to_string(),
+                item_id: "tool-1".to_string(),
+                item: TranscriptItem::ToolResult {
+                    id: "tool-1".to_string(),
+                    tool_name: "custom_tool".to_string(),
+                    content: "ok".to_string(),
+                    summary: "ok".to_string(),
+                    structured: None,
+                },
+            },
+        ];
 
         let tool_events = tool_events_from_turn_events(&events);
 
