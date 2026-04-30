@@ -319,7 +319,6 @@ impl AgentRuntime {
             );
             Ok(TurnOutcome {
                 turn_id: turn_id.clone(),
-                final_response: "Turn cancelled.".to_string(),
                 events,
                 history,
                 model_name: None,
@@ -366,7 +365,6 @@ impl AgentRuntime {
                     self.rollout_recorder.flush().await?;
                     let outcome = TurnOutcome {
                         turn_id: turn_id.clone(),
-                        final_response: "Turn cancelled.".to_string(),
                         events,
                         history: history_for_interrupt,
                         model_name: None,
@@ -394,7 +392,6 @@ impl AgentRuntime {
                 self.rollout_recorder.flush().await?;
                 let outcome = TurnOutcome {
                     turn_id: turn_id.clone(),
-                    final_response: format!("Turn failed: {error_text}"),
                     events,
                     history,
                     model_name: None,
@@ -451,7 +448,6 @@ impl AgentRuntime {
     fn outcome_to_output(&self, outcome: TurnOutcome) -> AgentTurnOutput {
         agent_turn_output_from_events(
             outcome.turn_id,
-            outcome.final_response,
             outcome.events,
             &outcome.history,
             outcome.model_name,

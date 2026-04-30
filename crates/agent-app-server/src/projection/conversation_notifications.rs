@@ -195,7 +195,6 @@ mod tests {
 
         let immediate = projector.project_turn_event(&EventMsg::TurnCompleted {
             turn_id: "turn-1".to_string(),
-            final_response: "done".to_string(),
         });
         assert!(immediate.is_empty());
 

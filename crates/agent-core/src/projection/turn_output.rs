@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 pub fn agent_turn_output_from_events(
     turn_id: String,
-    final_response: String,
     events: Vec<EventMsg>,
     history: &ConversationHistory,
     model_name: Option<String>,
@@ -14,7 +13,6 @@ pub fn agent_turn_output_from_events(
     let tool_events = tool_events_from_turn_events(&events);
     AgentTurnOutput {
         turn_id,
-        final_response,
         tool_events,
         events,
         model_name,

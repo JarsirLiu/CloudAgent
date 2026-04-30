@@ -12,7 +12,6 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Debug)]
 pub(crate) struct TurnOutcome {
     pub(crate) turn_id: String,
-    pub(crate) final_response: String,
     pub(crate) events: Vec<EventMsg>,
     pub(crate) history: ConversationHistory,
     pub(crate) model_name: Option<String>,
@@ -82,7 +81,6 @@ where
             );
             return Ok(TurnOutcome {
                 turn_id: turn_id.to_string(),
-                final_response: "Turn cancelled.".to_string(),
                 events,
                 history: context_manager.history().clone(),
                 model_name: last_model_name,
@@ -196,16 +194,12 @@ where
             .await;
 
         if tool_calls.is_empty() {
-            let final_response = response
-                .content
-                .clone()
-                .unwrap_or_else(|| "The model returned an empty response.".to_string());
             if !had_streaming_assistant_item && response.content.is_none() {
                 emit_assistant_item(
                     &mut events,
                     on_event,
                     turn_id,
-                    &final_response,
+                    "The model returned an empty response.",
                     &mut assistant_item_seq,
                 );
             }
@@ -214,12 +208,10 @@ where
                 on_event,
                 EventMsg::TurnCompleted {
                     turn_id: turn_id.to_string(),
-                    final_response: final_response.clone(),
                 },
             );
             return Ok(TurnOutcome {
                 turn_id: turn_id.to_string(),
-                final_response,
                 events,
                 history: context_manager.history().clone(),
                 model_name: last_model_name,
@@ -243,7 +235,6 @@ where
                 );
                 return Ok(TurnOutcome {
                     turn_id: turn_id.to_string(),
-                    final_response: "Turn cancelled.".to_string(),
                     events,
                     history: context_manager.history().clone(),
                     model_name: last_model_name,
@@ -379,7 +370,6 @@ where
                 );
                 return Ok(TurnOutcome {
                     turn_id: turn_id.to_string(),
-                    final_response: "Turn cancelled.".to_string(),
                     events,
                     history: context_manager.history().clone(),
                     model_name: last_model_name,
@@ -416,20 +406,20 @@ where
         }
     }
 
-    let final_response =
+    let roundtrip_limit_message =
         "Reached the configured tool roundtrip limit before the model produced a final answer."
             .to_string();
     emit_assistant_item(
         &mut events,
         on_event,
         turn_id,
-        &final_response,
+        &roundtrip_limit_message,
         &mut assistant_item_seq,
     );
-    let final_response_item =
-        context_manager.record_assistant_message(Some(final_response.clone()), Vec::new());
+    let roundtrip_limit_item =
+        context_manager.record_assistant_message(Some(roundtrip_limit_message), Vec::new());
     runtime
-        .persist_rollout_items(conversation_id, &[RolloutItem::from(final_response_item)])
+        .persist_rollout_items(conversation_id, &[RolloutItem::from(roundtrip_limit_item)])
         .await?;
     runtime
         .state
@@ -440,12 +430,10 @@ where
         on_event,
         EventMsg::TurnCompleted {
             turn_id: turn_id.to_string(),
-            final_response: final_response.clone(),
         },
     );
     Ok(TurnOutcome {
         turn_id: turn_id.to_string(),
-        final_response,
         events,
         history: context_manager.history().clone(),
         model_name: last_model_name,

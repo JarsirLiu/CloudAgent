@@ -383,7 +383,6 @@ mod tests {
             }),
             RolloutItem::from(EventMsg::TurnCompleted {
                 turn_id: "turn-1".to_string(),
-                final_response: "hello".to_string(),
             }),
         ];
 
@@ -436,7 +435,6 @@ mod tests {
             }),
             RolloutItem::from(EventMsg::TurnCompleted {
                 turn_id: "turn-1".to_string(),
-                final_response: "done".to_string(),
             }),
             RolloutItem::from(EventMsg::TurnFailed {
                 turn_id: "turn-2".to_string(),
@@ -468,7 +466,6 @@ mod tests {
             }),
             RolloutItem::from(EventMsg::TurnCompleted {
                 turn_id: "turn-1".to_string(),
-                final_response: "one".to_string(),
             }),
             RolloutItem::from(ResponseItem::User {
                 content: "second".to_string(),
@@ -488,7 +485,6 @@ mod tests {
             }),
             RolloutItem::from(EventMsg::TurnCompleted {
                 turn_id: "turn-2".to_string(),
-                final_response: "two".to_string(),
             }),
         ];
 

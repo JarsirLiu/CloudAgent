@@ -108,7 +108,6 @@ pub enum EventMsg {
     },
     TurnCompleted {
         turn_id: TurnId,
-        final_response: String,
     },
     TurnFailed {
         turn_id: TurnId,
