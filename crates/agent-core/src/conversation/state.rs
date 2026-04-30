@@ -1,7 +1,6 @@
 use crate::context::ContextManager;
 use crate::conversation::ConversationHistory;
-use crate::protocol::RequestId;
-use crate::turn::{EventMsg, ServerRequest, TurnState};
+use crate::turn::{EventMsg, RequestId, ServerRequest, TurnState};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

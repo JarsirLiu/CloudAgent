@@ -10,7 +10,3 @@ impl ExecutionPolicy {
         }
     }
 }
-
-pub fn module_name() -> &'static str {
-    "agent-core::policy"
-}

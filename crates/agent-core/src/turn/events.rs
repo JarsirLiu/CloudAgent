@@ -1,5 +1,5 @@
 use crate::conversation::TranscriptItem;
-use crate::protocol::RequestId;
+use crate::turn::RequestId;
 use serde::{Deserialize, Serialize};
 
 pub type TurnId = String;

@@ -1,5 +1,5 @@
 use crate::conversation::{ConversationHistory, ResponseItem};
-use crate::core::ModelRequest;
+use crate::model::ModelRequest;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 use serde::{Deserialize, Serialize};
 

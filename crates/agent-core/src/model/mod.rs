@@ -35,5 +35,5 @@ pub trait ChatModel: Send + Sync {
 }
 
 pub fn module_name() -> &'static str {
-    "agent-core::core"
+    "agent-core::model"
 }
