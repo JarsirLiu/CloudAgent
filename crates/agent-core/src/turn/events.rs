@@ -15,8 +15,63 @@ pub struct ToolApprovalRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerRequestDecision {
-    pub approved: bool,
+    pub decision: ServerRequestDecisionKind,
     pub reason: Option<String>,
+}
+
+impl ServerRequestDecision {
+    pub fn accept(reason: Option<String>) -> Self {
+        Self {
+            decision: ServerRequestDecisionKind::Accept,
+            reason,
+        }
+    }
+
+    pub fn accept_for_session(reason: Option<String>) -> Self {
+        Self {
+            decision: ServerRequestDecisionKind::AcceptForSession,
+            reason,
+        }
+    }
+
+    pub fn decline(reason: Option<String>) -> Self {
+        Self {
+            decision: ServerRequestDecisionKind::Decline,
+            reason,
+        }
+    }
+
+    pub fn cancel(reason: Option<String>) -> Self {
+        Self {
+            decision: ServerRequestDecisionKind::Cancel,
+            reason,
+        }
+    }
+
+    pub fn is_approved(&self) -> bool {
+        matches!(
+            self.decision,
+            ServerRequestDecisionKind::Accept | ServerRequestDecisionKind::AcceptForSession
+        )
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self.decision {
+            ServerRequestDecisionKind::Accept => "approved",
+            ServerRequestDecisionKind::AcceptForSession => "approved for session",
+            ServerRequestDecisionKind::Decline => "denied",
+            ServerRequestDecisionKind::Cancel => "cancelled",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerRequestDecisionKind {
+    Accept,
+    AcceptForSession,
+    Decline,
+    Cancel,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

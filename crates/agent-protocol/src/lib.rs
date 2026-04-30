@@ -2,8 +2,9 @@ mod jsonrpc;
 
 pub use agent_core::{
     CommandExecutionStatus, ConversationTurn, EventMsg, ServerRequest, ServerRequestDecision,
-    StructuredToolResult, ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TranscriptItem,
-    TurnId, TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
+    ServerRequestDecisionKind, StructuredToolResult, ToolApprovalRequest, ToolCall,
+    ToolOutputDelta, ToolOutputStream, ToolResult, ToolSpec, TranscriptItem, TurnId,
+    TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
 };
 pub use jsonrpc::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
@@ -24,14 +25,6 @@ pub enum FrontendMode {
 pub struct UserTurnInput {
     pub conversation_id: String,
     pub content: String,
-}
-
-pub type NotificationSequence = u64;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SequencedAppServerMessage {
-    pub sequence: NotificationSequence,
-    pub message: AppServerMessage,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,8 +49,7 @@ pub enum AppClientCommand {
     ResolveServerRequest {
         conversation_id: String,
         request_id: RequestId,
-        approved: bool,
-        reason: Option<String>,
+        decision: ServerRequestDecision,
     },
     InterruptTurn {
         conversation_id: String,
@@ -70,10 +62,6 @@ pub enum AppClientCommand {
     },
     RequestConversationHistory {
         conversation_id: String,
-    },
-    RequestConversationNotifications {
-        conversation_id: String,
-        after_sequence: NotificationSequence,
     },
     SubscribeConversation {
         conversation_id: String,
@@ -95,9 +83,6 @@ impl AppClientCommand {
             | Self::ResetConversation { conversation_id }
             | Self::RequestConversationStatus { conversation_id }
             | Self::RequestConversationHistory { conversation_id }
-            | Self::RequestConversationNotifications {
-                conversation_id, ..
-            }
             | Self::SubscribeConversation { conversation_id }
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
             Self::Exit => None,
@@ -204,11 +189,6 @@ pub enum AppServerNotification {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
     },
-    ConversationNotifications {
-        conversation_id: String,
-        from_sequence: NotificationSequence,
-        messages: Vec<SequencedAppServerMessage>,
-    },
     ConversationSubscriptionChanged {
         conversation_id: String,
         subscribed: bool,
@@ -278,9 +258,6 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::ConversationHistory {
-                conversation_id, ..
-            }
-            | Self::ConversationNotifications {
                 conversation_id, ..
             }
             | Self::ConversationSubscriptionChanged {
@@ -372,7 +349,6 @@ pub fn classify_notification(
         | AppServerNotification::TurnCancelled { .. }
         | AppServerNotification::ConversationStatus { .. }
         | AppServerNotification::ConversationHistory { .. }
-        | AppServerNotification::ConversationNotifications { .. }
         | AppServerNotification::ConversationSubscriptionChanged { .. }
         | AppServerNotification::FrontendStateChanged { .. } => {
             (NotificationStream::Control, NotificationDelivery::Lossless)
@@ -509,10 +485,6 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "conversation/history" => Ok(AppClientCommand::RequestConversationHistory {
             conversation_id: value_field(params, "conversation_id")?,
         }),
-        "conversation/notifications" => Ok(AppClientCommand::RequestConversationNotifications {
-            conversation_id: value_field(params.clone(), "conversation_id")?,
-            after_sequence: value_field(params, "after_sequence")?,
-        }),
         "conversation/subscribe" => Ok(AppClientCommand::SubscribeConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
@@ -522,8 +494,7 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "serverRequest/resolve" => Ok(AppClientCommand::ResolveServerRequest {
             conversation_id: value_field(params.clone(), "conversation_id")?,
             request_id: value_field(params.clone(), "request_id")?,
-            approved: value_field(params.clone(), "approved")?,
-            reason: value_field(params, "reason")?,
+            decision: value_field(params, "decision")?,
         }),
         "app/exit" => Ok(AppClientCommand::Exit),
         other => anyhow::bail!("unsupported request method: {other}"),
@@ -555,16 +526,6 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         AppClientCommand::RequestConversationHistory { conversation_id } => (
             "conversation/history",
             serde_json::json!({ "conversation_id": conversation_id }),
-        ),
-        AppClientCommand::RequestConversationNotifications {
-            conversation_id,
-            after_sequence,
-        } => (
-            "conversation/notifications",
-            serde_json::json!({
-                "conversation_id": conversation_id,
-                "after_sequence": after_sequence
-            }),
         ),
         AppClientCommand::SubscribeConversation { conversation_id } => (
             "conversation/subscribe",
@@ -652,10 +613,6 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "conversation/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ConversationNotifications { .. } => (
-            "conversation/notifications",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
         AppServerNotification::ConversationSubscriptionChanged { .. } => (
             "conversation/subscriptionChanged",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -715,7 +672,6 @@ fn parse_server_notification(
         | "turn/cancelled"
         | "conversation/status"
         | "conversation/history"
-        | "conversation/notifications"
         | "conversation/subscriptionChanged"
         | "app/info"
         | "app/error" => Ok(serde_json::from_value(params)?),
@@ -993,8 +949,7 @@ mod tests {
             command: AppClientCommand::ResolveServerRequest {
                 conversation_id: "default".to_string(),
                 request_id: RequestId::Integer(7),
-                approved: true,
-                reason: Some("ok".to_string()),
+                decision: ServerRequestDecision::accept(Some("ok".to_string())),
             },
         };
 
@@ -1006,83 +961,14 @@ mod tests {
             AppClientCommand::ResolveServerRequest {
                 conversation_id,
                 request_id,
-                approved,
-                reason,
+                decision,
             } => {
                 assert_eq!(conversation_id, "default");
                 assert_eq!(request_id, RequestId::Integer(7));
-                assert!(approved);
-                assert_eq!(reason.as_deref(), Some("ok"));
+                assert!(decision.is_approved());
+                assert_eq!(decision.reason.as_deref(), Some("ok"));
             }
             other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn request_conversation_notifications_roundtrips_from_jsonrpc_request() {
-        let envelope = AppClientCommandEnvelope {
-            request_id: RequestId::Integer(11),
-            command: AppClientCommand::RequestConversationNotifications {
-                conversation_id: "default".to_string(),
-                after_sequence: 42,
-            },
-        };
-
-        let rpc = JsonRpcMessage::from(envelope.clone());
-        let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");
-
-        assert_eq!(parsed.request_id, RequestId::Integer(11));
-        match parsed.command {
-            AppClientCommand::RequestConversationNotifications {
-                conversation_id,
-                after_sequence,
-            } => {
-                assert_eq!(conversation_id, "default");
-                assert_eq!(after_sequence, 42);
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn conversation_notifications_roundtrips_through_jsonrpc_notification() {
-        let message = AppServerMessageEnvelope {
-            message: AppServerMessage::Notification(
-                AppServerNotification::ConversationNotifications {
-                    conversation_id: "default".to_string(),
-                    from_sequence: 2,
-                    messages: vec![SequencedAppServerMessage {
-                        sequence: 2,
-                        message: AppServerMessage::Notification(
-                            AppServerNotification::TurnCompleted {
-                                conversation_id: "default".to_string(),
-                                turn_id: "turn-1".to_string(),
-                            },
-                        ),
-                    }],
-                },
-            ),
-        };
-
-        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
-            panic!("expected notification");
-        };
-        assert_eq!(notification.method, "conversation/notifications");
-
-        let reparsed =
-            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
-                .expect("reparse");
-        match reparsed.message {
-            AppServerMessage::Notification(AppServerNotification::ConversationNotifications {
-                from_sequence,
-                messages,
-                ..
-            }) => {
-                assert_eq!(from_sequence, 2);
-                assert_eq!(messages.len(), 1);
-                assert_eq!(messages[0].sequence, 2);
-            }
-            other => panic!("unexpected notification: {other:?}"),
         }
     }
 }

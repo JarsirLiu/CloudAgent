@@ -4,6 +4,18 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Clone, Debug)]
+pub struct ToolOutputDelta {
+    pub stream: ToolOutputStream,
+    pub chunk: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolOutputStream {
+    Stdout,
+    Stderr,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,

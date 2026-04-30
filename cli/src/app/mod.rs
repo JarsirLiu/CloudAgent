@@ -1216,8 +1216,9 @@ mod tests {
                         .send_command(AppClientCommand::ResolveServerRequest {
                             conversation_id: "default".to_string(),
                             request_id: request_id.clone(),
-                            approved: true,
-                            reason: Some("ok".to_string()),
+                            decision: agent_protocol::ServerRequestDecision::accept(Some(
+                                "ok".to_string(),
+                            )),
                         })
                         .expect("approve request");
                 }

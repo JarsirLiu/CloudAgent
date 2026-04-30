@@ -101,11 +101,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     actions.push(ServerAction::SetHistoryLoaded(true));
                     actions.push(ServerAction::ReplaceHistory(turns.clone()));
                 }
-                AppServerNotification::ConversationNotifications { messages, .. } => {
-                    for entry in messages {
-                        actions.extend(apply_server_message(&entry.message).actions);
-                    }
-                }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
                 }
@@ -125,25 +120,15 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     actions.push(ServerAction::SetMode(FrontendMode::Running));
                     actions.push(ServerAction::SetPendingServerRequest(None));
                     actions.push(ServerAction::ClearServerRequestView);
-                    actions.push(ServerAction::SetStatusNotice(Some(if decision.approved {
-                        format!(
-                            "Request approved{}",
-                            decision
-                                .reason
-                                .as_deref()
-                                .map(|r| format!(": {r}"))
-                                .unwrap_or_default()
-                        )
-                    } else {
-                        format!(
-                            "Request denied{}",
-                            decision
-                                .reason
-                                .as_deref()
-                                .map(|r| format!(": {r}"))
-                                .unwrap_or_default()
-                        )
-                    })));
+                    actions.push(ServerAction::SetStatusNotice(Some(format!(
+                        "Request {}{}",
+                        decision.label(),
+                        decision
+                            .reason
+                            .as_deref()
+                            .map(|r| format!(": {r}"))
+                            .unwrap_or_default()
+                    ))));
                 }
                 AppServerNotification::TurnCompleted { .. } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Idle));
@@ -336,35 +321,7 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_protocol::{SequencedAppServerMessage, TurnState};
-
-    #[test]
-    fn conversation_notifications_replay_uses_normal_reducer_path() {
-        let message =
-            AppServerMessage::Notification(AppServerNotification::ConversationNotifications {
-                conversation_id: "default".to_string(),
-                from_sequence: 1,
-                messages: vec![SequencedAppServerMessage {
-                    sequence: 1,
-                    message: AppServerMessage::Notification(AppServerNotification::TurnCompleted {
-                        conversation_id: "default".to_string(),
-                        turn_id: "turn-1".to_string(),
-                    }),
-                }],
-            });
-
-        let reduced = apply_server_message(&message);
-
-        assert!(reduced.actions.iter().any(|action| {
-            matches!(action, ServerAction::TurnDispatch(TurnDispatch::Completed))
-        }));
-        assert!(reduced.actions.iter().any(|action| {
-            matches!(
-                action,
-                ServerAction::SetMode(agent_protocol::FrontendMode::Idle)
-            )
-        }));
-    }
+    use agent_protocol::TurnState;
 
     #[test]
     fn conversation_history_action_preserves_turns() {

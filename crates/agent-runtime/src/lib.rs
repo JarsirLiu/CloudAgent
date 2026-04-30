@@ -1,6 +1,7 @@
 mod rollout_recorder;
 mod state;
 mod tasks;
+mod tools;
 
 use agent_core::{
     AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
@@ -80,13 +81,10 @@ impl AgentRuntime {
                 user_input,
                 |_event| {},
                 |_request| async move {
-                    Ok(ServerRequestDecision {
-                        approved: false,
-                        reason: Some(
+                    Ok(ServerRequestDecision::decline(Some(
                             "Mutating tools require an approval-capable client. Use the interactive cli."
                                 .to_string(),
-                        ),
-                    })
+                        )))
                 },
             )
             .await?;
@@ -248,17 +246,36 @@ impl AgentRuntime {
         }
     }
 
-    pub(crate) async fn execute_tool_call(
+    pub(crate) async fn execute_tool_call_streaming<F>(
         &self,
         cancellation_token: &CancellationToken,
         call: ToolCall,
         ctx: &agent_core::ToolExecutionContext,
-    ) -> Result<agent_core::ToolResult> {
-        tokio::select! {
-            _ = cancellation_token.cancelled() => {
-                bail!(TURN_INTERRUPTED_ERROR);
+        mut on_output_delta: F,
+    ) -> Result<agent_core::ToolResult>
+    where
+        F: FnMut(agent_core::ToolOutputDelta) + Send,
+    {
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
+        let streaming_ctx = ctx.clone().with_output_tx(output_tx);
+        let execution = self.tools.execute(call, &streaming_ctx);
+        tokio::pin!(execution);
+
+        loop {
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    bail!(TURN_INTERRUPTED_ERROR);
+                }
+                Some(delta) = output_rx.recv() => {
+                    on_output_delta(delta);
+                }
+                response = &mut execution => {
+                    while let Ok(delta) = output_rx.try_recv() {
+                        on_output_delta(delta);
+                    }
+                    return response;
+                }
             }
-            response = self.tools.execute(call, ctx) => response,
         }
     }
 

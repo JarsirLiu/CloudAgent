@@ -5,8 +5,8 @@ mod policy;
 mod request_id;
 
 pub use events::{
-    EventMsg, PendingTurnRequest, ServerRequest, ServerRequestDecision, ToolApprovalRequest,
-    TurnId, TurnItemDeltaKind, TurnItemKind, TurnState,
+    EventMsg, PendingTurnRequest, ServerRequest, ServerRequestDecision, ServerRequestDecisionKind,
+    ToolApprovalRequest, TurnId, TurnItemDeltaKind, TurnItemKind, TurnState,
 };
 pub use lifecycle::{TurnLifecycleClass, TurnLifecyclePhase};
 pub use output::AgentTurnOutput;

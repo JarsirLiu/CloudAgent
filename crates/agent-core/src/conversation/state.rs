@@ -47,6 +47,13 @@ impl ConversationState {
     }
 
     pub fn clear_active_turn(&mut self) {
+        if let Some(active_turn) = &self.active_turn {
+            let turn_id = active_turn.turn_id.clone();
+            self.pending_requests
+                .retain(|pending| match &pending.request {
+                    ServerRequest::ToolApproval { request } => request.turn_id != turn_id,
+                });
+        }
         self.active_turn = None;
     }
 

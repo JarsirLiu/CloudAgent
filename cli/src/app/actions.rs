@@ -4,7 +4,10 @@ use crate::app::parse::ParsedInput;
 use crate::state::reducer::{ItemDispatch, ServerAction};
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerClient;
-use agent_protocol::{AppClientCommand, FrontendMode, TranscriptItem, TurnItemKind, UserTurnInput};
+use agent_protocol::{
+    AppClientCommand, FrontendMode, ServerRequestDecision, TranscriptItem, TurnItemKind,
+    UserTurnInput,
+};
 use anyhow::Result;
 
 pub(crate) fn handle_tui_input(
@@ -108,8 +111,11 @@ pub(crate) fn handle_tui_input(
             client.send_command(AppClientCommand::ResolveServerRequest {
                 conversation_id: conversation_id.to_string(),
                 request_id,
-                approved,
-                reason: Some(reason),
+                decision: if approved {
+                    ServerRequestDecision::accept(Some(reason))
+                } else {
+                    ServerRequestDecision::decline(Some(reason))
+                },
             })?;
         }
     }

@@ -1,13 +1,13 @@
 use agent_core::{
-    ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
-    context::ToolExecutionContext as CtxAlias,
+    ToolCall, ToolExecutionContext, ToolExecutor, ToolOutputDelta, ToolOutputStream, ToolResult,
+    ToolSpec, context::ToolExecutionContext as CtxAlias,
 };
 use agent_protocol::{CommandExecutionStatus, StructuredToolResult, WriteFileStatus};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -36,12 +36,12 @@ struct ToolInvocationOutput {
 
 #[derive(Clone)]
 pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn LocalTool>>,
+    tools: BTreeMap<String, Arc<dyn LocalTool>>,
 }
 
 impl ToolRegistry {
     pub fn new(max_read_chars: usize) -> Self {
-        let mut tools: HashMap<String, Arc<dyn LocalTool>> = HashMap::new();
+        let mut tools: BTreeMap<String, Arc<dyn LocalTool>> = BTreeMap::new();
         register(&mut tools, ShellCommandTool);
         register(&mut tools, ListDirTool);
         register(&mut tools, ReadFileTool { max_read_chars });
@@ -91,7 +91,7 @@ impl ToolExecutor for ToolRegistry {
     }
 }
 
-fn register<T>(tools: &mut HashMap<String, Arc<dyn LocalTool>>, tool: T)
+fn register<T>(tools: &mut BTreeMap<String, Arc<dyn LocalTool>>, tool: T)
 where
     T: LocalTool + 'static,
 {
@@ -146,6 +146,33 @@ struct ShellCommandArgs {
     workdir: Option<String>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+}
+
+async fn read_streaming_pipe<R>(
+    mut reader: R,
+    stream: ToolOutputStream,
+    output_tx: Option<tokio::sync::mpsc::UnboundedSender<ToolOutputDelta>>,
+) -> Result<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut collected = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        let chunk = buffer[..read].to_vec();
+        collected.extend_from_slice(&chunk);
+        if let Some(output_tx) = &output_tx {
+            let _ = output_tx.send(ToolOutputDelta {
+                stream: stream.clone(),
+                chunk: String::from_utf8_lossy(&chunk).to_string(),
+            });
+        }
+    }
+    Ok(collected)
 }
 
 #[async_trait]
@@ -203,18 +230,18 @@ impl LocalTool for ShellCommandTool {
             .stderr
             .take()
             .ok_or_else(|| anyhow!("failed to capture command stderr"))?;
-        let stdout_task = tokio::spawn(async move {
-            let mut reader = stdout;
-            let mut buffer = Vec::new();
-            reader.read_to_end(&mut buffer).await?;
-            Result::<Vec<u8>>::Ok(buffer)
-        });
-        let stderr_task = tokio::spawn(async move {
-            let mut reader = stderr;
-            let mut buffer = Vec::new();
-            reader.read_to_end(&mut buffer).await?;
-            Result::<Vec<u8>>::Ok(buffer)
-        });
+        let stdout_tx = ctx.output_tx.clone();
+        let stderr_tx = ctx.output_tx.clone();
+        let stdout_task = tokio::spawn(read_streaming_pipe(
+            stdout,
+            ToolOutputStream::Stdout,
+            stdout_tx,
+        ));
+        let stderr_task = tokio::spawn(read_streaming_pipe(
+            stderr,
+            ToolOutputStream::Stderr,
+            stderr_tx,
+        ));
 
         let status = tokio::select! {
             _ = ctx.cancellation_token.cancelled() => {

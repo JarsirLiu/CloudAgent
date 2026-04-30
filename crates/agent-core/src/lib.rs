@@ -21,13 +21,13 @@ pub use projection::{
 };
 pub use rollout::RolloutItem;
 pub use tool::{
-    CommandExecutionStatus, StructuredToolResult, ToolCall, ToolEvent, ToolExecutor, ToolResult,
-    ToolSpec, WriteFileStatus,
+    CommandExecutionStatus, StructuredToolResult, ToolCall, ToolEvent, ToolExecutor,
+    ToolOutputDelta, ToolOutputStream, ToolResult, ToolSpec, WriteFileStatus,
 };
 pub use turn::{
     AgentTurnOutput, EventMsg, ExecutionPolicy, RequestId, ServerRequest, ServerRequestDecision,
-    ToolApprovalRequest, TurnId, TurnItemDeltaKind, TurnItemKind, TurnLifecycleClass,
-    TurnLifecyclePhase, TurnState,
+    ServerRequestDecisionKind, ToolApprovalRequest, TurnId, TurnItemDeltaKind, TurnItemKind,
+    TurnLifecycleClass, TurnLifecyclePhase, TurnState,
 };
 
 pub fn crate_name() -> &'static str {
