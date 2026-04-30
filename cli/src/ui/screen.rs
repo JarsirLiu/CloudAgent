@@ -42,17 +42,19 @@ pub(crate) fn render_app(app: &mut TuiApp, frame: &mut Frame) {
     );
     frame.render_widget(bottom_widget, sections[2]);
 
-    let (x, y) = app
-        .input_pane
-        .cursor_position(sections[2], lines_before, app.console_state.mode);
-    frame.set_cursor_position((x, y));
+    if let Some((x, y)) =
+        app.input_pane
+            .cursor_position(sections[2], lines_before, app.console_state.mode)
+    {
+        frame.set_cursor_position((x, y));
+    }
 }
 
 fn header_block(app: &TuiApp) -> Paragraph<'static> {
     let status = match app.console_state.mode {
-        FrontendMode::Idle => ("IDLE", Color::Green),
-        FrontendMode::Running => ("RUNNING", Color::Cyan),
-        FrontendMode::WaitingForServerRequest => ("ACTION", Color::Yellow),
+        FrontendMode::Idle => ("ready", Color::Green),
+        FrontendMode::Running => ("working", Color::Cyan),
+        FrontendMode::WaitingForServerRequest => ("action", Color::Yellow),
     };
 
     let scroll_hint = if app.transcript_state.scroll > 0 {
@@ -75,17 +77,12 @@ fn header_block(app: &TuiApp) -> Paragraph<'static> {
         ),
         Span::raw("  "),
         Span::styled(
-            format!("conversation {}", app.conversation_id),
-            Style::default().fg(Color::White),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("[{}]", status.0),
+            format!("state {}", status.0),
             Style::default().fg(status.1).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
         Span::styled(
-            format!("msgs {}", app.run_state.last_message_count),
+            format!("{} msgs", app.run_state.last_message_count),
             Style::default().fg(Color::Rgb(130, 140, 160)),
         ),
         Span::raw("  "),
@@ -97,8 +94,9 @@ fn header_block(app: &TuiApp) -> Paragraph<'static> {
         Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
     ];
     if let Some(tool_text) = tool_text {
+        let insert_at = spans.len().saturating_sub(2);
         spans.splice(
-            10..10,
+            insert_at..insert_at,
             [
                 Span::raw("  "),
                 Span::styled(tool_text, Style::default().fg(Color::Rgb(130, 140, 160))),
@@ -223,14 +221,40 @@ fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
 }
 
 fn status_meta_text(app: &TuiApp) -> String {
-    let mut parts = vec![
-        format!("conversation {}", app.conversation_id),
-        format!("messages {}", app.run_state.last_message_count),
-    ];
+    let mut parts = vec![format!("{} msgs", app.run_state.last_message_count)];
+    if let Some(usage) = &app.run_state.last_turn_usage {
+        parts.push(format!(
+            "turn in {} out {} cache {}",
+            compact_number(usage.input_tokens),
+            compact_number(usage.output_tokens),
+            compact_number(usage.cached_input_tokens)
+        ));
+    }
+    if let Some(total) = &app.run_state.total_turn_usage {
+        parts.push(format!("total {} tok", compact_number(total.total_tokens)));
+    }
+    if let (Some(total), Some(window)) = (
+        &app.run_state.total_turn_usage,
+        app.run_state.model_context_window,
+    ) && window > 0
+    {
+        let percent = total.total_tokens.saturating_mul(100) / window;
+        parts.push(format!("context {percent}%"));
+    }
     if let Some(tool) = &app.run_state.last_tool_name {
         parts.push(format!("tool {tool}"));
     }
     parts.join("  ·  ")
+}
+
+fn compact_number(value: u64) -> String {
+    if value >= 1_000_000 {
+        format!("{:.1}m", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.1}k", value as f64 / 1_000.0)
+    } else {
+        value.to_string()
+    }
 }
 
 fn current_status_text(app: &TuiApp) -> String {

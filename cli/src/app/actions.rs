@@ -78,9 +78,12 @@ pub(crate) fn handle_tui_input(
             }
 
             if let AppClientCommand::ResolveServerRequest { .. } = &command {
-                app.console_state.mode = FrontendMode::Running;
-                app.server_request_state.pending_server_request_id = None;
-                app.input_pane.clear_views();
+                app.push_cell(HistoryCell::from_message(
+                    "request",
+                    "server requests must be answered through the active approval view",
+                    HistoryTone::Error,
+                ));
+                return Ok(false);
             }
             if let AppClientCommand::ResetConversation { .. } = &command {
                 app.reset_local_view();
@@ -90,6 +93,7 @@ pub(crate) fn handle_tui_input(
             if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
                 app.console_state.mode = FrontendMode::Running;
                 app.run_state.status_notice = Some("Submitting turn".to_string());
+                app.run_state.last_turn_usage = None;
                 app.input_pane.clear_views();
                 app.push_cell(HistoryCell::from_message(
                     "you",
@@ -101,19 +105,12 @@ pub(crate) fn handle_tui_input(
             }
             client.send_command(command)?;
         }
-        ParsedInput::ServerRequestAnswer { decision, reason } => {
-            let Some(request_id) = app.server_request_state.pending_server_request_id.clone()
-            else {
-                app.push_cell(HistoryCell::from_message(
-                    "request",
-                    "no pending server request",
-                    HistoryTone::Error,
-                ));
-                return Ok(false);
-            };
-            app.console_state.mode = FrontendMode::Running;
-            app.server_request_state.pending_server_request_id = None;
-            app.input_pane.clear_views();
+        ParsedInput::ServerRequestAnswer {
+            request_id,
+            decision,
+            reason,
+        } => {
+            sync_mode_after_server_request_view(app);
             app.push_cell(HistoryCell::from_message(
                 "request",
                 decision_label(&decision),
@@ -153,9 +150,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::SetMode(mode) => {
             app.set_mode(mode);
         }
-        ServerAction::SetPendingServerRequest(request_id) => {
-            app.server_request_state.pending_server_request_id = request_id;
-        }
         ServerAction::SetStatusNotice(notice) => {
             app.run_state.status_notice = notice;
         }
@@ -165,8 +159,28 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::SetHistoryLoaded(loaded) => {
             app.run_state.history_loaded = loaded;
         }
+        ServerAction::ClearCurrentTurnUsage => {
+            app.run_state.last_turn_usage = None;
+        }
+        ServerAction::SetTokenUsage {
+            last_usage,
+            total_usage,
+            model_context_window,
+        } => {
+            app.run_state.last_turn_usage = Some(last_usage);
+            app.run_state.total_turn_usage = Some(total_usage);
+            app.run_state.model_context_window = model_context_window;
+        }
         ServerAction::ClearServerRequestView => {
             app.input_pane.clear_server_request();
+        }
+        ServerAction::DismissServerRequestView(request_id) => {
+            app.input_pane.dismiss_server_request(&request_id);
+            sync_mode_after_server_request_view(app);
+        }
+        ServerAction::ClearServerRequestStatus => {
+            app.server_request_state.active_request_id = None;
+            app.server_request_state.action_required = false;
         }
         ServerAction::ClearLastToolName => {
             app.run_state.last_tool_name = None;
@@ -273,15 +287,33 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         },
         ServerAction::TurnDispatch(dispatch) => app.apply_turn_dispatch(dispatch),
         ServerAction::ShowServerRequestPrompt {
+            request_id,
             title,
             detail,
             notice,
         } => {
             app.input_pane.set_server_request(
-                crate::ui::widgets::input_pane::ServerRequestInlineState { title, detail },
+                crate::ui::widgets::input_pane::ServerRequestInlineState {
+                    request_id,
+                    title,
+                    detail,
+                },
             );
+            sync_mode_after_server_request_view(app);
             app.run_state.status_notice = Some(notice);
         }
+    }
+}
+
+fn sync_mode_after_server_request_view(app: &mut TuiApp) {
+    if app.input_pane.requires_action() {
+        app.console_state.mode = FrontendMode::WaitingForServerRequest;
+        app.server_request_state.active_request_id = app.input_pane.active_server_request_id();
+        app.server_request_state.action_required = true;
+    } else {
+        app.console_state.mode = FrontendMode::Running;
+        app.server_request_state.active_request_id = None;
+        app.server_request_state.action_required = false;
     }
 }
 

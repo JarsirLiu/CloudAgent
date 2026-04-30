@@ -1,4 +1,6 @@
 use crate::input::intent::ComposerIntent;
+use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
+use agent_protocol::RequestId;
 use agent_protocol::ServerRequestDecisionKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
@@ -10,6 +12,7 @@ pub(crate) enum BottomPaneViewAction {
     Close,
     Composer(ComposerIntent),
     ServerRequestSubmit {
+        request_id: RequestId,
         decision: ServerRequestDecisionKind,
         reason: String,
     },
@@ -27,11 +30,34 @@ pub(crate) trait BottomPaneView {
 
     fn render_lines(&self, area_width: u16) -> Vec<Line<'static>>;
 
+    fn desired_height(&self, area_width: u16) -> u16 {
+        self.render_lines(area_width).len() as u16
+    }
+
     fn cursor_position(&self, _area: Rect) -> Option<(u16, u16)> {
         None
     }
 
     fn is_complete(&self) -> bool {
+        false
+    }
+
+    fn try_consume_server_request(
+        &mut self,
+        request: ServerRequestInlineState,
+    ) -> Option<ServerRequestInlineState> {
+        Some(request)
+    }
+
+    fn dismiss_server_request(&mut self, _request_id: &RequestId) -> bool {
+        false
+    }
+
+    fn active_server_request_id(&self) -> Option<&RequestId> {
+        None
+    }
+
+    fn requires_action(&self) -> bool {
         false
     }
 }

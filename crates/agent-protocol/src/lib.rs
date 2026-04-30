@@ -1,9 +1,9 @@
 mod jsonrpc;
 
 pub use agent_core::{
-    CommandExecutionStatus, ConversationTurn, EventMsg, ServerRequest, ServerRequestDecision,
-    ServerRequestDecisionKind, StructuredToolResult, ToolApprovalRequest, ToolCall,
-    ToolOutputDelta, ToolOutputStream, ToolResult, ToolSpec, TranscriptItem, TurnId,
+    CommandExecutionStatus, ConversationTurn, EventMsg, ModelUsage, ServerRequest,
+    ServerRequestDecision, ServerRequestDecisionKind, StructuredToolResult, ToolApprovalRequest,
+    ToolCall, ToolOutputDelta, ToolOutputStream, ToolResult, ToolSpec, TranscriptItem, TurnId,
     TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
 };
 pub use jsonrpc::{
@@ -150,6 +150,13 @@ pub enum AppServerNotification {
         item_id: String,
         delta: String,
     },
+    TokenUsageUpdated {
+        conversation_id: String,
+        turn_id: TurnId,
+        last_usage: ModelUsage,
+        total_usage: ModelUsage,
+        model_context_window: Option<u64>,
+    },
     ItemCompleted {
         conversation_id: String,
         turn_id: TurnId,
@@ -234,6 +241,9 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::FileChangeOutputDelta {
+                conversation_id, ..
+            }
+            | Self::TokenUsageUpdated {
                 conversation_id, ..
             }
             | Self::ItemCompleted {
@@ -345,6 +355,7 @@ pub fn classify_notification(
         | AppServerNotification::ItemStarted { .. }
         | AppServerNotification::ServerRequestRequested { .. }
         | AppServerNotification::ServerRequestResolved { .. }
+        | AppServerNotification::TokenUsageUpdated { .. }
         | AppServerNotification::TurnFailed { .. }
         | AppServerNotification::TurnCancelled { .. }
         | AppServerNotification::ConversationStatus { .. }
@@ -581,6 +592,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "item/fileChange/outputDelta",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::TokenUsageUpdated { .. } => (
+            "turn/tokenUsageUpdated",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ItemCompleted { .. } => (
             "item/completed",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -663,6 +678,7 @@ fn parse_server_notification(
         | "item/commandExecution/outputDelta"
         | "item/tool/outputDelta"
         | "item/fileChange/outputDelta"
+        | "turn/tokenUsageUpdated"
         | "item/jsonPatch/delta"
         | "item/completed"
         | "serverRequest/requested"
@@ -874,6 +890,53 @@ mod tests {
             }) => {
                 assert_eq!(item_id, "tool:write");
                 assert_eq!(delta, "wrote note.txt");
+            }
+            other => panic!("unexpected notification: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn token_usage_roundtrips_through_jsonrpc_notification() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::TokenUsageUpdated {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                last_usage: ModelUsage {
+                    input_tokens: 10,
+                    cached_input_tokens: 3,
+                    output_tokens: 5,
+                    reasoning_output_tokens: 1,
+                    total_tokens: 15,
+                },
+                total_usage: ModelUsage {
+                    input_tokens: 20,
+                    cached_input_tokens: 6,
+                    output_tokens: 10,
+                    reasoning_output_tokens: 2,
+                    total_tokens: 30,
+                },
+                model_context_window: Some(100),
+            }),
+        };
+
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+        assert_eq!(notification.method, "turn/tokenUsageUpdated");
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::TokenUsageUpdated {
+                last_usage,
+                total_usage,
+                model_context_window,
+                ..
+            }) => {
+                assert_eq!(last_usage.total_tokens, 15);
+                assert_eq!(total_usage.cached_input_tokens, 6);
+                assert_eq!(model_context_window, Some(100));
             }
             other => panic!("unexpected notification: {other:?}"),
         }

@@ -1,4 +1,5 @@
 use crate::conversation::TranscriptItem;
+use crate::model::ModelUsage;
 use crate::turn::RequestId;
 use serde::{Deserialize, Serialize};
 
@@ -134,6 +135,12 @@ pub enum EventMsg {
         model_name: Option<String>,
         has_content: bool,
         tool_call_count: usize,
+    },
+    TokenUsageUpdated {
+        turn_id: TurnId,
+        last_usage: ModelUsage,
+        total_usage: ModelUsage,
+        model_context_window: Option<u64>,
     },
     ItemStarted {
         turn_id: TurnId,

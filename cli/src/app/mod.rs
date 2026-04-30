@@ -96,9 +96,6 @@ impl TuiApp {
 
     pub(crate) fn set_mode(&mut self, mode: FrontendMode) {
         self.console_state.mode = mode;
-        if mode != FrontendMode::WaitingForServerRequest {
-            self.input_pane.clear_server_request();
-        }
     }
 
     fn handle_server_message(&mut self, message: &AppServerMessage) {
@@ -227,9 +224,15 @@ impl TuiApp {
                 }))
             }
             InputPaneAction::Composer(ComposerIntent::None) => None,
-            InputPaneAction::ServerRequestSubmit { decision, reason } => {
-                Some(ParsedInput::ServerRequestAnswer { decision, reason })
-            }
+            InputPaneAction::ServerRequestSubmit {
+                request_id,
+                decision,
+                reason,
+            } => Some(ParsedInput::ServerRequestAnswer {
+                request_id,
+                decision,
+                reason,
+            }),
         }
     }
 
@@ -629,6 +632,26 @@ mod tests {
     }
 
     #[test]
+    fn mode_changes_do_not_clear_active_approval_view() {
+        let mut app = TuiApp::new("default".to_string(), "test");
+        app.input_pane.set_server_request(
+            crate::ui::widgets::input_pane::ServerRequestInlineState {
+                request_id: agent_protocol::RequestId::String("req-1".to_string()),
+                title: "Run command?".to_string(),
+                detail: "shell_command".to_string(),
+            },
+        );
+
+        app.set_mode(agent_protocol::FrontendMode::Running);
+
+        assert!(app.input_pane.requires_action());
+        assert_eq!(
+            app.input_pane.active_server_request_id(),
+            Some(agent_protocol::RequestId::String("req-1".to_string()))
+        );
+    }
+
+    #[test]
     fn assistant_delta_requires_item_started_before_streaming() {
         let mut app = TuiApp::new("default".to_string(), "test");
 
@@ -853,10 +876,12 @@ mod tests {
                 .await
                 .expect("timed out waiting for client event")
                 .expect("client event");
-            let is_request = matches!(
-                &event,
-                AppServerEvent::Message(AppServerMessage::Request(_))
-            );
+            let request_id = match &event {
+                AppServerEvent::Message(AppServerMessage::Request(
+                    agent_protocol::AppServerRequest::ServerRequest { request_id, .. },
+                )) => Some(request_id.clone()),
+                _ => None,
+            };
             if matches!(
                 &event,
                 AppServerEvent::Message(AppServerMessage::Notification(
@@ -866,13 +891,14 @@ mod tests {
                 saw_turn_completed = true;
             }
             app.handle_client_event(event);
-            if is_request {
+            if let Some(request_id) = request_id {
                 saw_server_request = true;
                 handle_tui_input(
                     "default",
                     &mut app,
                     &client,
                     ParsedInput::ServerRequestAnswer {
+                        request_id,
                         decision: ServerRequestDecisionKind::Accept,
                         reason: "ok".to_string(),
                     },

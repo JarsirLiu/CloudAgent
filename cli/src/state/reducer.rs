@@ -1,6 +1,6 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
-    FrontendMode, RequestId, ServerRequest, ServerRequestDecisionKind, TranscriptItem,
+    FrontendMode, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind, TranscriptItem,
     TurnItemKind, UserTurnInput,
 };
 
@@ -53,6 +53,7 @@ pub(crate) enum TurnDispatch {
 pub(crate) enum UiInputEvent {
     Command(AppClientCommand),
     ServerRequestAnswer {
+        request_id: RequestId,
         decision: ServerRequestDecisionKind,
         reason: String,
     },
@@ -69,17 +70,25 @@ pub(crate) struct ServerMessageReduce {
 #[derive(Debug, Clone)]
 pub(crate) enum ServerAction {
     SetMode(FrontendMode),
-    SetPendingServerRequest(Option<RequestId>),
     SetStatusNotice(Option<String>),
     SetLastMessageCount(usize),
     SetHistoryLoaded(bool),
+    ClearCurrentTurnUsage,
+    SetTokenUsage {
+        last_usage: ModelUsage,
+        total_usage: ModelUsage,
+        model_context_window: Option<u64>,
+    },
     ClearServerRequestView,
+    DismissServerRequestView(RequestId),
+    ClearServerRequestStatus,
     ClearLastToolName,
     ReplaceHistory(Vec<ConversationTurn>),
     PushErrorCell(String),
     ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
+        request_id: RequestId,
         title: String,
         detail: String,
         notice: String,
@@ -94,12 +103,15 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 AppServerNotification::FrontendStateChanged { mode, .. } => {
                     actions.push(ServerAction::SetMode(*mode));
                 }
+                AppServerNotification::TurnStarted { .. } => {
+                    actions.push(ServerAction::ClearCurrentTurnUsage);
+                }
                 AppServerNotification::ConversationStatus { snapshot, .. } => {
                     actions.push(ServerAction::SetLastMessageCount(snapshot.message_count));
                     actions.push(ServerAction::SetStatusNotice(None));
                 }
                 AppServerNotification::ConversationHistory { turns, .. } => {
-                    let message_count = turns.iter().map(|turn| turn.items.len()).sum();
+                    let message_count = visible_message_count_from_turns(turns);
                     actions.push(ServerAction::SetLastMessageCount(message_count));
                     actions.push(ServerAction::SetStatusNotice(Some(
                         "Workspace context ready".to_string(),
@@ -109,6 +121,18 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
+                }
+                AppServerNotification::TokenUsageUpdated {
+                    last_usage,
+                    total_usage,
+                    model_context_window,
+                    ..
+                } => {
+                    actions.push(ServerAction::SetTokenUsage {
+                        last_usage: last_usage.clone(),
+                        total_usage: total_usage.clone(),
+                        model_context_window: *model_context_window,
+                    });
                 }
                 AppServerNotification::Error { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
@@ -122,10 +146,13 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     };
                     actions.push(ServerAction::SetStatusNotice(Some(notice)));
                 }
-                AppServerNotification::ServerRequestResolved { decision, .. } => {
+                AppServerNotification::ServerRequestResolved {
+                    request_id,
+                    decision,
+                    ..
+                } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Running));
-                    actions.push(ServerAction::SetPendingServerRequest(None));
-                    actions.push(ServerAction::ClearServerRequestView);
+                    actions.push(ServerAction::DismissServerRequestView(request_id.clone()));
                     actions.push(ServerAction::SetStatusNotice(Some(format!(
                         "Request {}{}",
                         decision.label(),
@@ -138,15 +165,17 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 AppServerNotification::TurnCompleted { .. } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::SetPendingServerRequest(None));
+                    actions.push(ServerAction::ClearServerRequestStatus);
                     actions.push(ServerAction::ClearServerRequestView);
                     actions.push(ServerAction::ClearLastToolName);
-                    actions.push(ServerAction::SetStatusNotice(None));
+                    actions.push(ServerAction::SetStatusNotice(Some(
+                        "Turn complete".to_string(),
+                    )));
                     actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
                 }
                 AppServerNotification::TurnFailed { error, .. } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::SetPendingServerRequest(None));
+                    actions.push(ServerAction::ClearServerRequestStatus);
                     actions.push(ServerAction::ClearServerRequestView);
                     actions.push(ServerAction::ClearLastToolName);
                     actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
@@ -155,7 +184,7 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 AppServerNotification::TurnCancelled { reason, .. } => {
                     actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::SetPendingServerRequest(None));
+                    actions.push(ServerAction::ClearServerRequestStatus);
                     actions.push(ServerAction::ClearServerRequestView);
                     actions.push(ServerAction::ClearLastToolName);
                     actions.push(ServerAction::TurnDispatch(TurnDispatch::Cancelled {
@@ -175,10 +204,8 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
         }) => match request {
             ServerRequest::ToolApproval { request } => {
                 actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
-                actions.push(ServerAction::SetPendingServerRequest(Some(
-                    request_id.clone(),
-                )));
                 actions.push(ServerAction::ShowServerRequestPrompt {
+                    request_id: request_id.clone(),
                     title: format!("tool `{}` wants to run", request.tool_name),
                     detail: format!(
                         "reason: {}  args: {}",
@@ -193,10 +220,26 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     ServerMessageReduce { actions }
 }
 
+fn visible_message_count_from_turns(turns: &[ConversationTurn]) -> usize {
+    turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .filter(|item| match item {
+            TranscriptItem::UserMessage { text, .. }
+            | TranscriptItem::AgentMessage { text, .. } => !text.trim().is_empty(),
+            TranscriptItem::SystemMessage { .. }
+            | TranscriptItem::Reasoning { .. }
+            | TranscriptItem::CommandExecution { .. }
+            | TranscriptItem::FileChange { .. }
+            | TranscriptItem::ToolResult { .. } => false,
+        })
+        .count()
+}
+
 pub(crate) fn apply_ui_event(
     line: &str,
     conversation_id: &str,
-    mode: FrontendMode,
+    _mode: FrontendMode,
 ) -> UiInputEvent {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -207,32 +250,10 @@ pub(crate) fn apply_ui_event(
     }
 
     match trimmed {
-        _ if mode == FrontendMode::WaitingForServerRequest => {
-            let decision = match trimmed {
-                "2" | "a" | "A" | "all" | "ALL" | "session" | "SESSION" => {
-                    ServerRequestDecisionKind::AcceptForSession
-                }
-                "3" | "n" | "N" | "no" | "NO" => ServerRequestDecisionKind::Decline,
-                _ => ServerRequestDecisionKind::Accept,
-            };
-            UiInputEvent::ServerRequestAnswer {
-                reason: format!("{} by console operator", decision_label(&decision)),
-                decision,
-            }
-        }
         _ => UiInputEvent::Command(AppClientCommand::SubmitTurn(UserTurnInput {
             conversation_id: conversation_id.to_string(),
             content: trimmed.to_string(),
         })),
-    }
-}
-
-fn decision_label(decision: &ServerRequestDecisionKind) -> &'static str {
-    match decision {
-        ServerRequestDecisionKind::Accept => "approved",
-        ServerRequestDecisionKind::AcceptForSession => "approved for session",
-        ServerRequestDecisionKind::Decline => "denied",
-        ServerRequestDecisionKind::Cancel => "cancelled",
     }
 }
 
@@ -339,10 +360,29 @@ mod tests {
             turns: vec![ConversationTurn {
                 id: "turn-1".to_string(),
                 state: TurnState::Completed,
-                items: vec![TranscriptItem::AgentMessage {
-                    id: "assistant:1".to_string(),
-                    text: "hello".to_string(),
-                }],
+                items: vec![
+                    TranscriptItem::UserMessage {
+                        id: "user:1".to_string(),
+                        text: "hi".to_string(),
+                    },
+                    TranscriptItem::CommandExecution {
+                        id: "cmd:1".to_string(),
+                        tool_name: "shell_command".to_string(),
+                        command: "pwd".to_string(),
+                        current_directory: "D:\\work".to_string(),
+                        status: agent_protocol::CommandExecutionStatus::Completed,
+                        exit_code: Some(0),
+                        stdout: Some("D:\\work".to_string()),
+                        stderr: None,
+                        aggregated_output: Some("D:\\work".to_string()),
+                        duration_ms: Some(1),
+                        summary: "D:\\work".to_string(),
+                    },
+                    TranscriptItem::AgentMessage {
+                        id: "assistant:1".to_string(),
+                        text: "hello".to_string(),
+                    },
+                ],
                 rollout_start_index: 0,
                 rollout_end_index: 1,
             }],
@@ -355,6 +395,47 @@ mod tests {
                 action,
                 ServerAction::ReplaceHistory(turns)
                     if turns.len() == 1 && turns[0].id == "turn-1"
+            )
+        }));
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(action, ServerAction::SetLastMessageCount(count) if *count == 2)
+        }));
+    }
+
+    #[test]
+    fn token_usage_notification_updates_run_state() {
+        let message = AppServerMessage::Notification(AppServerNotification::TokenUsageUpdated {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            last_usage: agent_protocol::ModelUsage {
+                input_tokens: 10,
+                cached_input_tokens: 2,
+                output_tokens: 3,
+                reasoning_output_tokens: 1,
+                total_tokens: 13,
+            },
+            total_usage: agent_protocol::ModelUsage {
+                input_tokens: 20,
+                cached_input_tokens: 4,
+                output_tokens: 6,
+                reasoning_output_tokens: 2,
+                total_tokens: 26,
+            },
+            model_context_window: Some(100),
+        });
+
+        let reduced = apply_server_message(&message);
+
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(
+                action,
+                ServerAction::SetTokenUsage {
+                    last_usage,
+                    total_usage,
+                    model_context_window,
+                } if last_usage.total_tokens == 13
+                    && total_usage.cached_input_tokens == 4
+                    && *model_context_window == Some(100)
             )
         }));
     }

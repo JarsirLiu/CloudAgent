@@ -87,6 +87,18 @@ impl ConversationNotificationProjector {
                 TurnItemDeltaKind::JsonPatch => Vec::new(),
             },
             EventMsg::ItemCompleted { .. } => Vec::new(),
+            EventMsg::TokenUsageUpdated {
+                turn_id,
+                last_usage,
+                total_usage,
+                model_context_window,
+            } => vec![AppServerNotification::TokenUsageUpdated {
+                conversation_id: self.conversation_id.clone(),
+                turn_id: turn_id.clone(),
+                last_usage: last_usage.clone(),
+                total_usage: total_usage.clone(),
+                model_context_window: *model_context_window,
+            }],
             EventMsg::ServerRequestRequested { turn_id, request } => {
                 vec![AppServerNotification::ServerRequestRequested {
                     conversation_id: self.conversation_id.clone(),
@@ -388,6 +400,41 @@ mod tests {
             &notifications[0],
             AppServerNotification::ToolOutputDelta { item_id, delta, .. }
                 if item_id == "tool:custom" && delta == "custom output"
+        ));
+    }
+
+    #[test]
+    fn token_usage_projects_to_conversation_notification() {
+        let mut projector = ConversationNotificationProjector::new("default");
+        let usage = agent_protocol::ModelUsage {
+            input_tokens: 100,
+            cached_input_tokens: 25,
+            output_tokens: 40,
+            reasoning_output_tokens: 5,
+            total_tokens: 140,
+        };
+
+        let notifications = projector.project_turn_event(&EventMsg::TokenUsageUpdated {
+            turn_id: "turn-1".to_string(),
+            last_usage: usage.clone(),
+            total_usage: usage.clone(),
+            model_context_window: Some(1000),
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::TokenUsageUpdated {
+                conversation_id,
+                turn_id,
+                last_usage,
+                total_usage,
+                model_context_window,
+            } if conversation_id == "default"
+                && turn_id == "turn-1"
+                && last_usage.total_tokens == 140
+                && total_usage.cached_input_tokens == 25
+                && *model_context_window == Some(1000)
         ));
     }
 

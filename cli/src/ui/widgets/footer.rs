@@ -17,30 +17,33 @@ pub fn status_line(
     width: usize,
 ) -> Line<'static> {
     let (dot_color, mode_label, badge_bg) = match mode {
-        FrontendMode::Idle => (Color::Rgb(80, 200, 120), "IDLE", Color::Rgb(18, 34, 24)),
-        FrontendMode::Running => (Color::Rgb(100, 160, 255), "WORKING", Color::Rgb(18, 28, 45)),
+        FrontendMode::Idle => (Color::Rgb(80, 200, 120), "ready", Color::Rgb(18, 34, 24)),
+        FrontendMode::Running => (Color::Rgb(100, 160, 255), "working", Color::Rgb(18, 28, 45)),
         FrontendMode::WaitingForServerRequest => {
-            (Color::Rgb(255, 180, 50), "ACTION", Color::Rgb(48, 34, 14))
+            (Color::Rgb(255, 180, 50), "action", Color::Rgb(48, 34, 14))
         }
     };
-
-    let status_spans = vec![Span::styled(
-        status_text.to_string(),
-        Style::default().fg(Color::Rgb(140, 140, 155)),
-    )];
 
     let mut spans = vec![
         Span::raw("  "),
         Span::styled(
-            format!(" {mode_label} "),
+            format!(" state {mode_label} "),
             Style::default()
                 .fg(dot_color)
                 .bg(badge_bg)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  .  ", Style::default().fg(Color::Rgb(60, 60, 70))),
     ];
-    spans.extend(status_spans);
+    if !status_text.trim().is_empty() && !status_text.eq_ignore_ascii_case(mode_label) {
+        spans.push(Span::styled(
+            "  .  ",
+            Style::default().fg(Color::Rgb(60, 60, 70)),
+        ));
+        spans.push(Span::styled(
+            status_text.to_string(),
+            Style::default().fg(Color::Rgb(140, 140, 155)),
+        ));
+    }
     if !meta.is_empty() {
         let current_width: usize = spans
             .iter()

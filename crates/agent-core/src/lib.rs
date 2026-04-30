@@ -14,7 +14,7 @@ pub use conversation::{
     ActiveConversationTurn, ConversationHistory, ConversationState, ConversationTurn,
     PendingConversationRequest, PersistedConversation, ResponseItem, TranscriptItem,
 };
-pub use model::{ChatModel, ModelRequest, ModelResponse};
+pub use model::{ChatModel, ModelRequest, ModelResponse, ModelUsage};
 pub use projection::{
     ConversationHistoryBuilder, CoreTranscriptEvent, EventDelivery, EventStream, TranscriptBuilder,
     agent_turn_output_from_events, build_turns_from_rollout_items, classify_event_msg,

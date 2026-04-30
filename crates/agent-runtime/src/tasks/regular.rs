@@ -1,7 +1,7 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::tools::ToolBatchRunner;
 use crate::{AgentRuntime, emit_event};
-use agent_core::{ContextManager, ConversationHistory, RolloutItem};
+use agent_core::{ContextManager, ConversationHistory, ModelUsage, RolloutItem};
 use agent_protocol::{
     EventMsg, ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemDeltaKind,
     TurnItemKind, TurnState,
@@ -71,6 +71,7 @@ where
     let tool_specs = runtime.tools.specs();
     let mut denied_requests = HashSet::new();
     let environment_context = runtime.environment_context();
+    let mut turn_total_usage = ModelUsage::default();
 
     for _ in 0..runtime.policy.max_tool_roundtrips {
         if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
@@ -185,6 +186,19 @@ where
                 tool_call_count: tool_calls.len(),
             },
         );
+        if let Some(usage) = response.usage.clone() {
+            turn_total_usage.add_assign(&usage);
+            emit_event(
+                &mut events,
+                on_event,
+                EventMsg::TokenUsageUpdated {
+                    turn_id: turn_id.to_string(),
+                    last_usage: usage,
+                    total_usage: turn_total_usage.clone(),
+                    model_context_window: None,
+                },
+            );
+        }
 
         let assistant_response_item =
             context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());

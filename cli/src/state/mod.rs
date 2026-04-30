@@ -2,10 +2,7 @@ pub mod reducer;
 pub mod selectors;
 
 use crate::ui::widgets::history_cell::{HistoryCell, Transcript};
-use agent_protocol::{
-    AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn, FrontendMode,
-    RequestId,
-};
+use agent_protocol::{ConversationTurn, FrontendMode, ModelUsage, RequestId};
 
 #[derive(Clone, Debug)]
 pub struct ConsoleState {
@@ -26,7 +23,8 @@ impl ConsoleState {
 
 #[derive(Clone, Debug, Default)]
 pub struct ServerRequestState {
-    pub pending_server_request_id: Option<RequestId>,
+    pub active_request_id: Option<RequestId>,
+    pub action_required: bool,
 }
 
 #[derive(Default)]
@@ -48,6 +46,9 @@ pub struct RunState {
     pub status_notice: Option<String>,
     pub last_message_count: usize,
     pub last_tool_name: Option<String>,
+    pub last_turn_usage: Option<ModelUsage>,
+    pub total_turn_usage: Option<ModelUsage>,
+    pub model_context_window: Option<u64>,
     pub should_exit: bool,
 }
 
@@ -59,30 +60,10 @@ impl RunState {
             status_notice: Some(format!("Connected via {connection_label}")),
             last_message_count: 0,
             last_tool_name: None,
+            last_turn_usage: None,
+            total_turn_usage: None,
+            model_context_window: None,
             should_exit: false,
-        }
-    }
-}
-
-pub fn update_core_state_from_message(
-    console: &mut ConsoleState,
-    server_request: &mut ServerRequestState,
-    message: &AppServerMessage,
-) {
-    match message {
-        AppServerMessage::Notification(notification) => match notification {
-            AppServerNotification::FrontendStateChanged { mode, .. } => console.mode = *mode,
-            AppServerNotification::TurnCompleted { .. }
-            | AppServerNotification::TurnFailed { .. }
-            | AppServerNotification::TurnCancelled { .. } => {
-                console.mode = FrontendMode::Idle;
-                server_request.pending_server_request_id = None;
-            }
-            _ => {}
-        },
-        AppServerMessage::Request(AppServerRequest::ServerRequest { request_id, .. }) => {
-            console.mode = FrontendMode::WaitingForServerRequest;
-            server_request.pending_server_request_id = Some(request_id.clone());
         }
     }
 }

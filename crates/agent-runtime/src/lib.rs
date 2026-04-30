@@ -5,7 +5,7 @@ mod tools;
 
 use agent_core::{
     AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
-    ConversationTurn, EnvironmentContext, ExecutionPolicy, ModelRequest, ModelResponse,
+    ConversationTurn, EnvironmentContext, ExecutionPolicy, ModelRequest, ModelResponse, ModelUsage,
     RolloutItem, ToolCall, ToolExecutor, ToolSpec, agent_turn_output_from_events,
     build_turns_from_rollout_items, conversation_history_from_rollout_items,
     flatten_conversation_turns,
@@ -206,7 +206,7 @@ impl AgentRuntime {
             },
             active_turn: active_turn.as_ref().map(|turn| turn.turn_id.clone()),
             turn_state: active_turn.as_ref().map(|turn| turn.turn_state.clone()),
-            message_count: history.messages.len(),
+            message_count: visible_message_count(&history),
         })
     }
 
@@ -527,6 +527,20 @@ impl AgentRuntime {
     }
 }
 
+fn visible_message_count(history: &ConversationHistory) -> usize {
+    history
+        .messages
+        .iter()
+        .filter(|message| match message {
+            ResponseItem::User { content } => !content.trim().is_empty(),
+            ResponseItem::Assistant { content, .. } => content
+                .as_deref()
+                .is_some_and(|content| !content.trim().is_empty()),
+            ResponseItem::System { .. } | ResponseItem::Tool { .. } => false,
+        })
+        .count()
+}
+
 fn model_shell_name() -> &'static str {
     if cfg!(windows) { "powershell" } else { "sh" }
 }
@@ -535,6 +549,37 @@ fn is_turn_interrupted_error(error: &anyhow::Error) -> bool {
     error
         .chain()
         .any(|cause| cause.to_string() == TURN_INTERRUPTED_ERROR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn visible_message_count_excludes_system_and_tool_items() {
+        let mut history = ConversationHistory::new("default", "system");
+        history.push_user_message("hello");
+        history.push_assistant_message(
+            None,
+            vec![ToolCall {
+                id: "call-1".to_string(),
+                name: "shell_command".to_string(),
+                arguments: json!({"command": "pwd"}),
+            }],
+        );
+        history.push_tool_result(agent_core::ToolResult {
+            tool_call_id: "call-1".to_string(),
+            name: "shell_command".to_string(),
+            content: "D:\\work".to_string(),
+            summary: "D:\\work".to_string(),
+            is_error: false,
+            structured: None,
+        });
+        history.push_assistant_message(Some("done".to_string()), Vec::new());
+
+        assert_eq!(visible_message_count(&history), 2);
+    }
 }
 
 struct OpenAiCompatibleModel {
@@ -574,6 +619,7 @@ impl ChatModel for OpenAiCompatibleModel {
             parallel_tool_calls: false,
             temperature: request.temperature,
             stream: None,
+            stream_options: None,
         };
 
         let response = self
@@ -619,6 +665,7 @@ impl ChatModel for OpenAiCompatibleModel {
             content: choice.message.content,
             tool_calls,
             model_name: Some(parsed.model),
+            usage: parsed.usage.map(ModelUsage::from),
         })
     }
 
@@ -639,6 +686,9 @@ impl ChatModel for OpenAiCompatibleModel {
             parallel_tool_calls: false,
             temperature: request.temperature,
             stream: Some(true),
+            stream_options: Some(ChatCompletionStreamOptions {
+                include_usage: true,
+            }),
         };
 
         let mut response = self
@@ -662,6 +712,7 @@ impl ChatModel for OpenAiCompatibleModel {
         let mut content = String::new();
         let mut model_name: Option<String> = None;
         let mut stream_buffer = String::new();
+        let mut usage: Option<ModelUsage> = None;
         let mut tool_calls_acc: std::collections::HashMap<usize, StreamingToolCallAcc> =
             std::collections::HashMap::new();
 
@@ -687,6 +738,9 @@ impl ChatModel for OpenAiCompatibleModel {
                 };
                 if model_name.is_none() {
                     model_name = Some(parsed.model.clone());
+                }
+                if let Some(chunk_usage) = parsed.usage {
+                    usage = Some(ModelUsage::from(chunk_usage));
                 }
                 for choice in parsed.choices {
                     if let Some(delta) = choice.delta.content
@@ -740,6 +794,7 @@ impl ChatModel for OpenAiCompatibleModel {
             },
             tool_calls,
             model_name,
+            usage,
         })
     }
 }
@@ -754,6 +809,13 @@ struct ChatCompletionRequest {
     temperature: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<ChatCompletionStreamOptions>,
+}
+
+#[derive(Serialize)]
+struct ChatCompletionStreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Serialize)]
@@ -879,6 +941,8 @@ struct ChatToolFunctionCall {
 struct ChatCompletionResponse {
     model: String,
     choices: Vec<ChatChoice>,
+    #[serde(default)]
+    usage: Option<ChatUsage>,
 }
 
 #[derive(Deserialize)]
@@ -899,6 +963,50 @@ struct ChatResponseToolCall {
     function: ChatToolFunctionCall,
 }
 
+#[derive(Deserialize)]
+struct ChatUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+    #[serde(default)]
+    total_tokens: u64,
+    #[serde(default)]
+    prompt_tokens_details: Option<ChatPromptTokensDetails>,
+    #[serde(default)]
+    completion_tokens_details: Option<ChatCompletionTokensDetails>,
+}
+
+#[derive(Deserialize)]
+struct ChatPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: u64,
+}
+
+#[derive(Deserialize)]
+struct ChatCompletionTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: u64,
+}
+
+impl From<ChatUsage> for ModelUsage {
+    fn from(value: ChatUsage) -> Self {
+        Self {
+            input_tokens: value.prompt_tokens,
+            cached_input_tokens: value
+                .prompt_tokens_details
+                .map(|details| details.cached_tokens)
+                .unwrap_or_default(),
+            output_tokens: value.completion_tokens,
+            reasoning_output_tokens: value
+                .completion_tokens_details
+                .map(|details| details.reasoning_tokens)
+                .unwrap_or_default(),
+            total_tokens: value.total_tokens,
+        }
+    }
+}
+
 #[derive(Default)]
 struct StreamingToolCallAcc {
     id: String,
@@ -910,6 +1018,8 @@ struct StreamingToolCallAcc {
 struct ChatCompletionStreamChunk {
     model: String,
     choices: Vec<ChatCompletionStreamChoice>,
+    #[serde(default)]
+    usage: Option<ChatUsage>,
 }
 
 #[derive(Deserialize)]

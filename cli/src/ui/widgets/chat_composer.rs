@@ -12,6 +12,7 @@ use crate::ui::widgets::textarea::{TextArea, display_width};
 
 pub struct ComposerRender {
     pub lines: Vec<Line<'static>>,
+    pub completion_lines: Vec<Line<'static>>,
     pub cursor_row: u16,
 }
 
@@ -158,17 +159,26 @@ impl ChatComposer {
                 ),
             ]));
         }
-        lines.extend(completion_popup_lines(&self.completion, width));
+        let completion_lines = completion_popup_lines(&self.completion, width, prefix_width);
 
-        ComposerRender { lines, cursor_row }
+        ComposerRender {
+            lines,
+            completion_lines,
+            cursor_row,
+        }
     }
 
     pub fn desired_height(&self, mode: FrontendMode, width: usize) -> u16 {
-        self.render(mode, width).lines.len() as u16
+        let rendered = self.render(mode, width);
+        rendered.lines.len() as u16
     }
 
     pub fn is_empty(&self) -> bool {
         self.textarea.is_empty()
+    }
+
+    pub fn has_completion_menu(&self) -> bool {
+        self.completion.is_active()
     }
 
     pub fn cursor_position(&self, area: Rect, mode: FrontendMode) -> (u16, u16) {
@@ -177,7 +187,7 @@ impl ChatComposer {
             _ => "  message ",
         };
         let prompt_width = display_width(prompt);
-        let composer_width = area.width.saturating_sub(4) as usize;
+        let composer_width = area.width as usize;
         let content_width = composer_width.saturating_sub(prompt_width + 2).max(10);
         let (cursor_row, cursor_col) = self.textarea.visual_cursor_position(content_width);
         let max_x_offset = area.width.saturating_sub(1) as usize;

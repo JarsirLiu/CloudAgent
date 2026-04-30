@@ -171,6 +171,7 @@ impl ConversationHistoryBuilder {
             }
             EventMsg::ModelRequestStarted { .. }
             | EventMsg::ModelResponseReceived { .. }
+            | EventMsg::TokenUsageUpdated { .. }
             | EventMsg::ServerRequestRequested { .. }
             | EventMsg::ServerRequestResolved { .. } => {}
         }
