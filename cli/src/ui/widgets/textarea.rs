@@ -41,7 +41,18 @@ impl TextArea {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        if let KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers,
+            ..
+        } = key
+            && is_altgr(modifiers)
+        {
+            self.insert_char(ch);
+            return;
+        }
+
+        if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
                 KeyCode::Char('a') => self.cursor = 0,
                 KeyCode::Char('e') => self.cursor = char_len(&self.text),
@@ -187,6 +198,16 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
 pub fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
+}
+
+#[cfg(windows)]
+pub fn is_altgr(modifiers: KeyModifiers) -> bool {
+    modifiers.contains(KeyModifiers::ALT) && modifiers.contains(KeyModifiers::CONTROL)
+}
+
+#[cfg(not(windows))]
+pub fn is_altgr(_modifiers: KeyModifiers) -> bool {
+    false
 }
 
 fn char_len(s: &str) -> usize {

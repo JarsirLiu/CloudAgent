@@ -58,13 +58,18 @@ where
         area.top().saturating_sub(1)
     };
 
-    queue!(writer, SetScrollRegion(1..area.top()))?;
+    let has_history_region = area.top() > 1;
+    if has_history_region {
+        queue!(writer, SetScrollRegion(1..area.top()))?;
+    }
     queue!(writer, MoveTo(0, cursor_top))?;
     for line in &lines {
         queue!(writer, Print("\r\n"))?;
         write_history_line(writer, line, wrap_width)?;
     }
-    queue!(writer, ResetScrollRegion)?;
+    if has_history_region {
+        queue!(writer, ResetScrollRegion)?;
+    }
     queue!(writer, MoveTo(last_cursor_pos.x, last_cursor_pos.y))?;
     std::io::Write::flush(writer)?;
 

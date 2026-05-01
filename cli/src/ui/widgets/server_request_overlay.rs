@@ -70,6 +70,10 @@ impl BottomPaneView for ServerRequestOverlay {
         }
 
         match key.code {
+            KeyCode::Enter if key.modifiers == crossterm::event::KeyModifiers::SHIFT => {
+                self.reply.insert_str("\n");
+                BottomPaneViewAction::None
+            }
             KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
                 BottomPaneViewAction::None
@@ -148,7 +152,7 @@ impl BottomPaneView for ServerRequestOverlay {
             }
         };
 
-        vec![
+        let mut lines = vec![
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
@@ -209,31 +213,46 @@ impl BottomPaneView for ServerRequestOverlay {
                     Style::default().fg(Color::Rgb(92, 96, 118)),
                 ),
             ]),
-            if self.reply.is_empty() {
+        ];
+
+        if self.reply.is_empty() {
+            lines.push(
                 Line::from(Span::styled(
                     "  ↑/↓ select  ·  Enter confirm  ·  y approve  ·  a session  ·  n deny  ·  / commands",
                     Style::default().fg(Color::Rgb(62, 62, 78)),
-                ))
-            } else {
-                Line::from(vec![
+                )),
+            );
+        } else {
+            let reply_width = area_width
+                .saturating_sub(REPLY_PROMPT_WIDTH as u16 + 2)
+                .max(1) as usize;
+            let reply_lines = self.reply.wrapped_lines(self.reply.text(), reply_width);
+            for (index, reply_line) in reply_lines.into_iter().enumerate() {
+                let prompt = if index == 0 {
+                    "  note    "
+                } else {
+                    "          "
+                };
+                lines.push(Line::from(vec![
                     Span::styled(
-                        "  note    ",
+                        prompt,
                         Style::default()
                             .fg(accent)
                             .bg(title_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        self.reply.text().to_string(),
-                        Style::default().fg(Color::Rgb(220, 220, 230)),
-                    ),
-                ])
-            },
-        ]
+                    Span::styled(reply_line, Style::default().fg(Color::Rgb(220, 220, 230))),
+                ]));
+            }
+        }
+
+        lines
     }
 
-    fn desired_height(&self, _area_width: u16) -> u16 {
-        COMPACT_APPROVAL_HEIGHT
+    fn desired_height(&self, area_width: u16) -> u16 {
+        self.render_lines(area_width)
+            .len()
+            .max(COMPACT_APPROVAL_HEIGHT as usize) as u16
     }
 
     fn cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
@@ -369,7 +388,7 @@ fn intent_for_command(command: SlashCommand) -> ComposerIntent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyEventKind, KeyModifiers};
 
     fn request_state(id: &str) -> ServerRequestInlineState {
         ServerRequestInlineState {
@@ -444,5 +463,52 @@ mod tests {
             BottomPaneViewAction::Composer(ComposerIntent::UnknownCommand(command))
                 if command == "wat"
         ));
+    }
+
+    #[test]
+    fn long_note_wraps_and_expands_height() {
+        let mut overlay = ServerRequestOverlay::new(request_state("req-1"));
+        type_text(
+            &mut overlay,
+            "please skip this because the command has not been reviewed yet",
+        );
+
+        let height = overlay.desired_height(32);
+        let lines = overlay.render_lines(32);
+
+        assert!(height > COMPACT_APPROVAL_HEIGHT);
+        assert_eq!(height as usize, lines.len());
+        assert!(lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("reviewed"))
+        }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn altgr_character_is_inserted_in_note() {
+        let mut overlay = ServerRequestOverlay::new(request_state("req-1"));
+
+        overlay.handle_key_event(KeyEvent {
+            code: KeyCode::Char('@'),
+            modifiers: KeyModifiers::CONTROL | KeyModifiers::ALT,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+
+        assert_eq!(overlay.reply.text(), "@");
+    }
+
+    #[test]
+    fn shift_enter_inserts_newline_in_note() {
+        let mut overlay = ServerRequestOverlay::new(request_state("req-1"));
+        type_text(&mut overlay, "first");
+
+        let action = overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        type_text(&mut overlay, "second");
+
+        assert!(matches!(action, BottomPaneViewAction::None));
+        assert_eq!(overlay.reply.text(), "first\nsecond");
     }
 }

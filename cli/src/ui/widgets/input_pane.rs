@@ -40,7 +40,7 @@ impl InputPane {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('k') {
             return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
         }
 

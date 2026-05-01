@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::ui::widgets::textarea::{TextArea, display_width};
+use crate::ui::widgets::textarea::{TextArea, display_width, is_altgr};
 
 pub struct ComposerRender {
     pub lines: Vec<Line<'static>>,
@@ -34,7 +34,13 @@ impl ChatComposer {
             return None;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::SHIFT {
+            self.textarea.insert_str("\n");
+            self.sync_completion();
+            return None;
+        }
+
+        if key.modifiers == KeyModifiers::CONTROL {
             return Some(match key.code {
                 KeyCode::Char('c') | KeyCode::Char('q') => ComposerIntent::Exit,
                 KeyCode::Char('k') => ComposerIntent::Interrupt,
@@ -45,6 +51,12 @@ impl ChatComposer {
                     ComposerIntent::None
                 }
             });
+        }
+
+        if is_altgr(key.modifiers) {
+            self.textarea.handle_key(key);
+            self.sync_completion();
+            return None;
         }
 
         if self.completion.is_active() {
@@ -325,5 +337,17 @@ mod tests {
 
         assert_eq!(action, ComposerIntent::None);
         assert_eq!(composer.textarea.text(), "first line\nsecond line");
+    }
+
+    #[test]
+    fn shift_enter_inserts_newline_without_submitting() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "first");
+
+        let action = composer.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        type_text(&mut composer, "second");
+
+        assert_eq!(action, None);
+        assert_eq!(composer.textarea.text(), "first\nsecond");
     }
 }
