@@ -6,7 +6,9 @@ use agent_protocol::{EventMsg, ServerRequest, ServerRequestDecision};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
-pub(crate) use regular::{RegularTurnTask, TurnOutcome};
+pub(crate) use regular::{
+    RegularTurnTask, TurnOutcome, estimate_history_tokens, estimate_request_overhead_tokens,
+};
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

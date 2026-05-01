@@ -2,6 +2,7 @@
 pub(crate) enum ComposerIntent {
     Submit(String),
     Interrupt,
+    Compact,
     Exit,
     Reset,
     Copy,

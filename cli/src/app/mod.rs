@@ -189,6 +189,11 @@ impl TuiApp {
                     conversation_id: self.conversation_id.clone(),
                 }))
             }
+            InputPaneAction::Composer(ComposerIntent::Compact) => Some(ParsedInput::Command(
+                AppClientCommand::CompactConversation {
+                    conversation_id: self.conversation_id.clone(),
+                },
+            )),
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
             InputPaneAction::Composer(ComposerIntent::Help) => Some(ParsedInput::LocalHelp),
             InputPaneAction::Composer(ComposerIntent::UnknownCommand(command)) => {
@@ -1589,6 +1594,13 @@ mod tests {
                 system_prompt: "You are a test agent.".to_string(),
                 max_tool_roundtrips: 4,
                 conversation_store_dir,
+                model_context_window: 128_000,
+                context_compaction_trigger_ratio: 0.85,
+                context_compaction_target_tokens: 36_000,
+                context_compaction_request_overhead_tokens: 28_000,
+                context_compaction_preserved_user_turns: 3,
+                context_compaction_preserved_tail_tokens: 12_000,
+                context_compaction_summary_source_tokens: 24_000,
             },
             tools: ToolConfig {
                 default_shell_timeout_ms: 5_000,

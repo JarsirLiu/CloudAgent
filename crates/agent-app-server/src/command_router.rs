@@ -137,6 +137,61 @@ pub(crate) async fn handle_command(
             )
             .await;
         }
+        AppClientCommand::CompactConversation { conversation_id } => {
+            await_tracked_turn_tasks(&state).await;
+            match runtime.compact_conversation(&conversation_id).await? {
+                agent_runtime::ManualCompactionOutcome::Compacted {
+                    pre_context_tokens_estimate,
+                    post_context_tokens_estimate,
+                    pre_message_count,
+                    post_message_count,
+                    preserved_tail_count,
+                } => {
+                    let turns = runtime.build_turns_from_rollout(&conversation_id).await?;
+                    send_notification(
+                        event_tx,
+                        &state,
+                        AppServerNotification::ConversationHistory {
+                            conversation_id: conversation_id.clone(),
+                            turns,
+                        },
+                    )
+                    .await;
+                    send_notification(
+                        event_tx,
+                        &state,
+                        AppServerNotification::Info {
+                            conversation_id,
+                            message: format!(
+                                "Context compacted: ~{} -> ~{} tokens, preserved {} recent items ({} -> {} messages)",
+                                pre_context_tokens_estimate,
+                                post_context_tokens_estimate,
+                                preserved_tail_count,
+                                pre_message_count,
+                                post_message_count
+                            ),
+                        },
+                    )
+                    .await;
+                }
+                agent_runtime::ManualCompactionOutcome::Skipped {
+                    estimated_history_tokens,
+                } => {
+                    send_notification(
+                        event_tx,
+                        &state,
+                        AppServerNotification::Info {
+                            conversation_id,
+                            message: format!(
+                                "Not enough conversation history to compact yet (~{} tokens; need at least ~20000).",
+                                estimated_history_tokens
+                            ),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
         AppClientCommand::RequestConversationStatus { conversation_id } => {
             let snapshot = runtime.conversation_status(&conversation_id).await?;
             send_notification(

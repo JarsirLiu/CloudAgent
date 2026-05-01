@@ -39,11 +39,10 @@ pub fn plan_history_compaction(
     messages: &[ResponseItem],
     config: ContextCompactionConfig,
 ) -> Option<ContextCompactionPlan> {
+    let estimated = estimate_message_tokens(messages);
     if messages.len() <= 6 {
         return None;
     }
-
-    let estimated = estimate_message_tokens(messages);
     let trigger_tokens = ((config.model_context_window as f32) * config.trigger_ratio) as usize;
     let available_history_tokens = trigger_tokens
         .saturating_sub(config.request_overhead_tokens)
@@ -52,6 +51,30 @@ pub fn plan_history_compaction(
         return None;
     }
 
+    build_compaction_plan(messages, config)
+}
+
+pub fn plan_manual_history_compaction(
+    messages: &[ResponseItem],
+    config: ContextCompactionConfig,
+    minimum_history_tokens: usize,
+) -> Option<ContextCompactionPlan> {
+    if messages.len() <= 6 {
+        return None;
+    }
+
+    let estimated = estimate_message_tokens(messages);
+    if estimated < minimum_history_tokens.max(1) {
+        return None;
+    }
+
+    build_compaction_plan(messages, config)
+}
+
+fn build_compaction_plan(
+    messages: &[ResponseItem],
+    config: ContextCompactionConfig,
+) -> Option<ContextCompactionPlan> {
     let mut keep_start = choose_tail_start(
         messages,
         config.preserved_user_turns.max(1),

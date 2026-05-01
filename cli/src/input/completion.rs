@@ -158,7 +158,7 @@ mod tests {
             .iter()
             .map(|item| item.name)
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["copy"]);
+        assert_eq!(names, vec!["copy", "compact"]);
     }
 
     #[test]

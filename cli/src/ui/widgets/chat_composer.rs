@@ -237,6 +237,7 @@ impl ChatComposer {
 fn action_for_command(command: SlashCommand) -> ComposerIntent {
     match command {
         SlashCommand::Clear => ComposerIntent::Reset,
+        SlashCommand::Compact => ComposerIntent::Compact,
         SlashCommand::Copy => ComposerIntent::Copy,
         SlashCommand::Help => ComposerIntent::Help,
         SlashCommand::Interrupt => ComposerIntent::Interrupt,
@@ -326,7 +327,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(visible_text.contains("> /exit"));
+        assert!(visible_text.contains("> /clear"));
     }
 
     #[test]

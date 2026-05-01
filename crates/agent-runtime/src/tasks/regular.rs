@@ -388,7 +388,7 @@ where
     })
 }
 
-fn estimate_request_overhead_tokens(
+pub(crate) fn estimate_request_overhead_tokens(
     history_messages: &[agent_core::ResponseItem],
     environment_fragment: &agent_core::ResponseItem,
     tool_specs: &[agent_core::ToolSpec],
@@ -419,7 +419,7 @@ fn estimate_request_overhead_tokens(
     )
 }
 
-fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
+pub(crate) fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
     messages
         .iter()
         .map(|item| match item {

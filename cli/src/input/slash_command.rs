@@ -3,6 +3,7 @@ pub(crate) enum SlashCommand {
     Help,
     Copy,
     Interrupt,
+    Compact,
     Clear,
     Exit,
 }
@@ -39,6 +40,14 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         name: "interrupt",
         aliases: &["stop"],
         description: "interrupt the running turn",
+        argument_hint: None,
+        supports_inline_args: false,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Compact,
+        name: "compact",
+        aliases: &[],
+        description: "compact older conversation context into a summary",
         argument_hint: None,
         supports_inline_args: false,
     },

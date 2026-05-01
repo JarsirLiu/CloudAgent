@@ -378,6 +378,7 @@ fn slash_intent(line: &str) -> Option<ComposerIntent> {
 fn intent_for_command(command: SlashCommand) -> ComposerIntent {
     match command {
         SlashCommand::Clear => ComposerIntent::Reset,
+        SlashCommand::Compact => ComposerIntent::Compact,
         SlashCommand::Copy => ComposerIntent::Copy,
         SlashCommand::Help => ComposerIntent::Help,
         SlashCommand::Interrupt => ComposerIntent::Interrupt,

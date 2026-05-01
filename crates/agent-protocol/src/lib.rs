@@ -54,6 +54,9 @@ pub enum AppClientCommand {
     InterruptTurn {
         conversation_id: String,
     },
+    CompactConversation {
+        conversation_id: String,
+    },
     ResetConversation {
         conversation_id: String,
     },
@@ -80,6 +83,7 @@ impl AppClientCommand {
                 conversation_id, ..
             }
             | Self::InterruptTurn { conversation_id }
+            | Self::CompactConversation { conversation_id }
             | Self::ResetConversation { conversation_id }
             | Self::RequestConversationStatus { conversation_id }
             | Self::RequestConversationHistory { conversation_id }
@@ -500,6 +504,9 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "turn/interrupt" => Ok(AppClientCommand::InterruptTurn {
             conversation_id: value_field(params, "conversation_id")?,
         }),
+        "conversation/compact" => Ok(AppClientCommand::CompactConversation {
+            conversation_id: value_field(params, "conversation_id")?,
+        }),
         "conversation/reset" => Ok(AppClientCommand::ResetConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
@@ -537,6 +544,10 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         ),
         AppClientCommand::InterruptTurn { conversation_id } => (
             "turn/interrupt",
+            serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::CompactConversation { conversation_id } => (
+            "conversation/compact",
             serde_json::json!({ "conversation_id": conversation_id }),
         ),
         AppClientCommand::ResetConversation { conversation_id } => (

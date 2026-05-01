@@ -4,11 +4,13 @@ mod tasks;
 mod tools;
 
 use agent_core::{
-    AgentContext, AgentTurnOutput, ChatModel, ConversationHistory, ConversationState,
-    ConversationTurn, EnvironmentContext, ExecutionPolicy, ModelRequest, ModelResponse, ModelUsage,
-    RolloutItem, ToolCall, ToolExecutor, ToolSpec, agent_turn_output_from_events,
-    build_turns_from_rollout_items, conversation_history_from_rollout_items,
-    flatten_conversation_turns,
+    AgentContext, AgentTurnOutput, ChatModel, CompactionSummary, ContextCompactionConfig,
+    ContextFragment, ConversationHistory, ConversationState, ConversationTurn, EnvironmentContext,
+    ExecutionPolicy, ModelRequest, ModelResponse, ModelUsage, RolloutItem, ToolCall, ToolExecutor,
+    ToolSpec, agent_turn_output_from_events, apply_history_compaction,
+    build_compaction_summary_request, build_turns_from_rollout_items,
+    conversation_history_from_rollout_items, flatten_conversation_turns,
+    plan_manual_history_compaction,
 };
 use agent_tools::ToolRegistry;
 use anyhow::{Context, Result, bail};
@@ -24,7 +26,10 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage::JsonConversationStore;
-use tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
+use tasks::{
+    RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome, estimate_history_tokens,
+    estimate_request_overhead_tokens,
+};
 use tokio_util::sync::CancellationToken;
 
 pub use agent_core::ResponseItem;
@@ -34,6 +39,7 @@ pub use agent_protocol::{
 };
 
 const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
+const MANUAL_COMPACTION_MIN_HISTORY_TOKENS: usize = 20_000;
 
 pub fn crate_name() -> &'static str {
     "agent-runtime"
@@ -133,6 +139,90 @@ impl AgentRuntime {
         self.state.remove_conversation(conversation_id).await;
         self.store.delete_conversation(conversation_id).await?;
         self.store.delete_events(conversation_id).await
+    }
+
+    pub async fn compact_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<ManualCompactionOutcome> {
+        self.rollout_recorder.flush().await?;
+        let mut history = self.load_history(conversation_id).await?;
+        let tool_specs = self.tools.specs();
+        let environment_context = self.environment_context();
+        let estimated_history_tokens = estimate_history_tokens(&history.messages);
+        if estimated_history_tokens < MANUAL_COMPACTION_MIN_HISTORY_TOKENS {
+            return Ok(ManualCompactionOutcome::Skipped {
+                estimated_history_tokens,
+            });
+        }
+
+        let compaction_config = ContextCompactionConfig {
+            model_context_window: self.config.runtime.model_context_window,
+            trigger_ratio: self.config.runtime.context_compaction_trigger_ratio,
+            request_overhead_tokens: estimate_request_overhead_tokens(
+                &history.messages,
+                &environment_context.render(),
+                &tool_specs,
+                self.config
+                    .runtime
+                    .context_compaction_request_overhead_tokens,
+            ),
+            compacted_target_tokens: self.config.runtime.context_compaction_target_tokens,
+            preserved_user_turns: self.config.runtime.context_compaction_preserved_user_turns,
+            preserved_tail_tokens: self.config.runtime.context_compaction_preserved_tail_tokens,
+            summary_source_max_tokens: self.config.runtime.context_compaction_summary_source_tokens,
+        };
+
+        let Some(compaction_plan) = plan_manual_history_compaction(
+            &history.messages,
+            compaction_config,
+            MANUAL_COMPACTION_MIN_HISTORY_TOKENS,
+        ) else {
+            return Ok(ManualCompactionOutcome::Skipped {
+                estimated_history_tokens,
+            });
+        };
+
+        let summary_request = build_compaction_summary_request(
+            &compaction_plan,
+            compaction_config,
+            self.config.llm.temperature,
+        );
+        let summary_response = self.model.complete(summary_request).await?;
+        let summary = summary_response
+            .content
+            .map(|text| CompactionSummary::from_model_output(&text).ensure_defaults())
+            .filter(|summary| !summary.current_task.is_empty())
+            .unwrap_or_else(|| CompactionSummary::fallback_from_plan(&compaction_plan));
+
+        let pre_message_count = history.messages.len();
+        let pre_context_tokens_estimate = estimate_history_tokens(&history.messages) as u64;
+        let compacted = apply_history_compaction(&mut history.messages, &compaction_plan, summary);
+        let post_message_count = compacted.replacement_history.len();
+        let post_context_tokens_estimate =
+            estimate_history_tokens(&compacted.replacement_history) as u64;
+        let preserved_tail_count = post_message_count.saturating_sub(2);
+        let rendered_summary = compacted.summary.rendered();
+
+        self.persist_rollout_items(
+            conversation_id,
+            &[RolloutItem::Compacted {
+                summary: compacted.summary,
+                rendered_summary,
+                replacement_history: compacted.replacement_history.clone(),
+            }],
+        )
+        .await?;
+        self.save_history(history).await?;
+        self.rollout_recorder.flush().await?;
+
+        Ok(ManualCompactionOutcome::Compacted {
+            pre_context_tokens_estimate,
+            post_context_tokens_estimate,
+            pre_message_count,
+            post_message_count,
+            preserved_tail_count,
+        })
     }
 
     pub async fn conversation_history_snapshot(
@@ -1107,4 +1197,18 @@ fn tool_approval_key(call: &ToolCall) -> String {
     let arguments =
         serde_json::to_string(&call.arguments).unwrap_or_else(|_| call.arguments.to_string());
     format!("{}:{arguments}", call.name)
+}
+
+#[derive(Debug, Clone)]
+pub enum ManualCompactionOutcome {
+    Compacted {
+        pre_context_tokens_estimate: u64,
+        post_context_tokens_estimate: u64,
+        pre_message_count: usize,
+        post_message_count: usize,
+        preserved_tail_count: usize,
+    },
+    Skipped {
+        estimated_history_tokens: usize,
+    },
 }
