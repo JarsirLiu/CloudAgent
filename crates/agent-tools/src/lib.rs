@@ -17,6 +17,8 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
+pub mod v2;
+
 pub fn crate_name() -> &'static str {
     "agent-tools"
 }
