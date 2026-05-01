@@ -247,6 +247,19 @@ impl AgentRuntime {
         }
     }
 
+    pub(crate) async fn complete_model_request(
+        &self,
+        cancellation_token: &CancellationToken,
+        request: ModelRequest,
+    ) -> Result<ModelResponse> {
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                bail!(TURN_INTERRUPTED_ERROR);
+            }
+            response = self.model.complete(request) => response,
+        }
+    }
+
     pub(crate) async fn await_approval<Fut>(
         &self,
         cancellation_token: &CancellationToken,

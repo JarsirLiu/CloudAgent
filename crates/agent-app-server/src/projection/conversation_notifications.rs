@@ -99,6 +99,22 @@ impl ConversationNotificationProjector {
                 total_usage: total_usage.clone(),
                 model_context_window: *model_context_window,
             }],
+            EventMsg::ContextCompacted {
+                turn_id,
+                pre_context_tokens_estimate,
+                post_context_tokens_estimate,
+                pre_message_count,
+                post_message_count,
+                preserved_tail_count,
+            } => vec![AppServerNotification::ContextCompacted {
+                conversation_id: self.conversation_id.clone(),
+                turn_id: turn_id.clone(),
+                pre_context_tokens_estimate: *pre_context_tokens_estimate,
+                post_context_tokens_estimate: *post_context_tokens_estimate,
+                pre_message_count: *pre_message_count,
+                post_message_count: *post_message_count,
+                preserved_tail_count: *preserved_tail_count,
+            }],
             EventMsg::ServerRequestRequested { turn_id, request } => {
                 vec![AppServerNotification::ServerRequestRequested {
                     conversation_id: self.conversation_id.clone(),

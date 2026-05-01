@@ -1,3 +1,4 @@
+use crate::context::CompactionSummary;
 use crate::conversation::ResponseItem;
 use crate::turn::EventMsg;
 use serde::{Deserialize, Serialize};
@@ -5,9 +6,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RolloutItem {
-    EventMsg { event: EventMsg },
-    ResponseItem { item: ResponseItem },
-    Compacted { summary: String },
+    EventMsg {
+        event: EventMsg,
+    },
+    ResponseItem {
+        item: ResponseItem,
+    },
+    Compacted {
+        summary: CompactionSummary,
+        rendered_summary: String,
+        #[serde(default)]
+        replacement_history: Vec<ResponseItem>,
+    },
 }
 
 impl From<EventMsg> for RolloutItem {

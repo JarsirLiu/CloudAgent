@@ -157,6 +157,15 @@ pub enum AppServerNotification {
         total_usage: ModelUsage,
         model_context_window: Option<u64>,
     },
+    ContextCompacted {
+        conversation_id: String,
+        turn_id: TurnId,
+        pre_context_tokens_estimate: u64,
+        post_context_tokens_estimate: u64,
+        pre_message_count: usize,
+        post_message_count: usize,
+        preserved_tail_count: usize,
+    },
     ItemCompleted {
         conversation_id: String,
         turn_id: TurnId,
@@ -244,6 +253,9 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::TokenUsageUpdated {
+                conversation_id, ..
+            }
+            | Self::ContextCompacted {
                 conversation_id, ..
             }
             | Self::ItemCompleted {
@@ -356,6 +368,7 @@ pub fn classify_notification(
         | AppServerNotification::ServerRequestRequested { .. }
         | AppServerNotification::ServerRequestResolved { .. }
         | AppServerNotification::TokenUsageUpdated { .. }
+        | AppServerNotification::ContextCompacted { .. }
         | AppServerNotification::TurnFailed { .. }
         | AppServerNotification::TurnCancelled { .. }
         | AppServerNotification::ConversationStatus { .. }
@@ -596,6 +609,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "turn/tokenUsageUpdated",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::ContextCompacted { .. } => (
+            "turn/contextCompacted",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ItemCompleted { .. } => (
             "item/completed",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -679,6 +696,7 @@ fn parse_server_notification(
         | "item/tool/outputDelta"
         | "item/fileChange/outputDelta"
         | "turn/tokenUsageUpdated"
+        | "turn/contextCompacted"
         | "item/jsonPatch/delta"
         | "item/completed"
         | "serverRequest/requested"

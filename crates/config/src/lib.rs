@@ -25,6 +25,13 @@ pub struct RuntimeConfig {
     pub system_prompt: String,
     pub max_tool_roundtrips: usize,
     pub conversation_store_dir: PathBuf,
+    pub model_context_window: u64,
+    pub context_compaction_trigger_ratio: f32,
+    pub context_compaction_target_tokens: usize,
+    pub context_compaction_request_overhead_tokens: usize,
+    pub context_compaction_preserved_user_turns: usize,
+    pub context_compaction_preserved_tail_tokens: usize,
+    pub context_compaction_summary_source_tokens: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,10 +57,19 @@ struct PartialLlmConfig {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct PartialRuntimeConfig {
+    #[serde(alias = "default_session_id")]
     default_conversation_id: Option<String>,
     system_prompt: Option<String>,
     max_tool_roundtrips: Option<usize>,
+    #[serde(alias = "session_store_dir")]
     conversation_store_dir: Option<PathBuf>,
+    model_context_window: Option<u64>,
+    context_compaction_trigger_ratio: Option<f32>,
+    context_compaction_target_tokens: Option<usize>,
+    context_compaction_request_overhead_tokens: Option<usize>,
+    context_compaction_preserved_user_turns: Option<usize>,
+    context_compaction_preserved_tail_tokens: Option<usize>,
+    context_compaction_summary_source_tokens: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -102,6 +118,13 @@ impl AgentConfig {
                 system_prompt: default_system_prompt(),
                 max_tool_roundtrips: 8,
                 conversation_store_dir: workspace_root.join("data").join("conversations"),
+                model_context_window: 128_000,
+                context_compaction_trigger_ratio: 0.85,
+                context_compaction_target_tokens: 36_000,
+                context_compaction_request_overhead_tokens: 28_000,
+                context_compaction_preserved_user_turns: 3,
+                context_compaction_preserved_tail_tokens: 12_000,
+                context_compaction_summary_source_tokens: 24_000,
             },
             llm: LlmConfig {
                 base_url: "https://api.openai.com/v1".to_string(),
@@ -146,6 +169,66 @@ impl AgentConfig {
             if let Some(value) = runtime.conversation_store_dir {
                 self.runtime.conversation_store_dir = absolutize_path(&self.workspace_root, value);
             }
+            if let Some(value) = runtime.model_context_window {
+                self.runtime.model_context_window = value.max(2_048);
+            }
+            if let Some(value) = runtime.context_compaction_trigger_ratio {
+                self.runtime.context_compaction_trigger_ratio = value.clamp(0.5, 0.98);
+            }
+            if let Some(value) = runtime.context_compaction_target_tokens {
+                self.runtime.context_compaction_target_tokens = value.max(512);
+            }
+            if let Some(value) = runtime.context_compaction_request_overhead_tokens {
+                self.runtime.context_compaction_request_overhead_tokens = value;
+            }
+            if let Some(value) = runtime.context_compaction_preserved_user_turns {
+                self.runtime.context_compaction_preserved_user_turns = value.clamp(1, 12);
+            }
+            if let Some(value) = runtime.context_compaction_preserved_tail_tokens {
+                self.runtime.context_compaction_preserved_tail_tokens = value.max(512);
+            }
+            if let Some(value) = runtime.context_compaction_summary_source_tokens {
+                self.runtime.context_compaction_summary_source_tokens = value.max(1_024);
+            }
+            let trigger_tokens = ((self.runtime.model_context_window as f32)
+                * self.runtime.context_compaction_trigger_ratio)
+                as usize;
+            if self.runtime.context_compaction_request_overhead_tokens >= trigger_tokens {
+                self.runtime.context_compaction_request_overhead_tokens =
+                    trigger_tokens.saturating_sub(4_000);
+            }
+            if self.runtime.context_compaction_target_tokens >= trigger_tokens {
+                self.runtime.context_compaction_target_tokens =
+                    trigger_tokens.saturating_sub(8_000).max(512);
+            }
+            if self
+                .runtime
+                .context_compaction_target_tokens
+                .saturating_add(self.runtime.context_compaction_request_overhead_tokens)
+                >= trigger_tokens
+            {
+                self.runtime.context_compaction_target_tokens = trigger_tokens
+                    .saturating_sub(self.runtime.context_compaction_request_overhead_tokens)
+                    .saturating_sub(4_000)
+                    .max(512);
+            }
+            if self.runtime.context_compaction_preserved_tail_tokens
+                >= self.runtime.context_compaction_target_tokens
+            {
+                self.runtime.context_compaction_preserved_tail_tokens = self
+                    .runtime
+                    .context_compaction_target_tokens
+                    .saturating_sub(8_000)
+                    .max(512);
+            }
+            if self.runtime.context_compaction_summary_source_tokens
+                >= self.runtime.model_context_window as usize
+            {
+                self.runtime.context_compaction_summary_source_tokens =
+                    (self.runtime.model_context_window as usize)
+                        .saturating_sub(8_000)
+                        .max(1_024);
+            }
         }
 
         if let Some(tools) = partial.tools {
@@ -187,6 +270,79 @@ impl AgentConfig {
         if let Ok(value) = env::var("CLOUDAGENT_CONVERSATION_STORE_DIR") {
             self.runtime.conversation_store_dir =
                 absolutize_path(&self.workspace_root, PathBuf::from(value));
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_MODEL_CONTEXT_WINDOW")
+            && let Ok(parsed) = value.parse::<u64>()
+        {
+            self.runtime.model_context_window = parsed.max(2_048);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_CONTEXT_COMPACTION_TRIGGER_RATIO")
+            && let Ok(parsed) = value.parse::<f32>()
+        {
+            self.runtime.context_compaction_trigger_ratio = parsed.clamp(0.5, 0.98);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_CONTEXT_COMPACTION_TARGET_TOKENS")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.context_compaction_target_tokens = parsed.max(512);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_CONTEXT_COMPACTION_REQUEST_OVERHEAD_TOKENS")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.context_compaction_request_overhead_tokens = parsed;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_CONTEXT_COMPACTION_PRESERVED_USER_TURNS")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.context_compaction_preserved_user_turns = parsed.clamp(1, 12);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_CONTEXT_COMPACTION_PRESERVED_TAIL_TOKENS")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.context_compaction_preserved_tail_tokens = parsed.max(512);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_CONTEXT_COMPACTION_SUMMARY_SOURCE_TOKENS")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.context_compaction_summary_source_tokens = parsed.max(1_024);
+        }
+        let trigger_tokens = ((self.runtime.model_context_window as f32)
+            * self.runtime.context_compaction_trigger_ratio) as usize;
+        if self.runtime.context_compaction_request_overhead_tokens >= trigger_tokens {
+            self.runtime.context_compaction_request_overhead_tokens =
+                trigger_tokens.saturating_sub(4_000);
+        }
+        if self.runtime.context_compaction_target_tokens >= trigger_tokens {
+            self.runtime.context_compaction_target_tokens =
+                trigger_tokens.saturating_sub(8_000).max(512);
+        }
+        if self
+            .runtime
+            .context_compaction_target_tokens
+            .saturating_add(self.runtime.context_compaction_request_overhead_tokens)
+            >= trigger_tokens
+        {
+            self.runtime.context_compaction_target_tokens = trigger_tokens
+                .saturating_sub(self.runtime.context_compaction_request_overhead_tokens)
+                .saturating_sub(4_000)
+                .max(512);
+        }
+        if self.runtime.context_compaction_preserved_tail_tokens
+            >= self.runtime.context_compaction_target_tokens
+        {
+            self.runtime.context_compaction_preserved_tail_tokens = self
+                .runtime
+                .context_compaction_target_tokens
+                .saturating_sub(8_000)
+                .max(512);
+        }
+        if self.runtime.context_compaction_summary_source_tokens
+            >= self.runtime.model_context_window as usize
+        {
+            self.runtime.context_compaction_summary_source_tokens =
+                (self.runtime.model_context_window as usize)
+                    .saturating_sub(8_000)
+                    .max(1_024);
         }
         if let Ok(value) = env::var("CLOUDAGENT_SHELL_TIMEOUT_MS")
             && let Ok(parsed) = value.parse::<u64>()

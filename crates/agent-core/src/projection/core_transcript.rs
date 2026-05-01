@@ -87,6 +87,7 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
         | EventMsg::ModelRequestStarted { .. }
         | EventMsg::ModelResponseReceived { .. }
         | EventMsg::TokenUsageUpdated { .. }
+        | EventMsg::ContextCompacted { .. }
         | EventMsg::ItemStarted { .. }
         | EventMsg::ServerRequestRequested { .. }
         | EventMsg::ServerRequestResolved { .. }
@@ -121,8 +122,7 @@ pub fn classify_event_msg(event: &EventMsg) -> (EventStream, EventDelivery) {
         | EventMsg::TurnCancelled { .. } => (EventStream::Control, EventDelivery::Lossless),
         EventMsg::ModelRequestStarted { .. }
         | EventMsg::ModelResponseReceived { .. }
-        | EventMsg::TokenUsageUpdated { .. } => {
-            (EventStream::Diagnostic, EventDelivery::BestEffort)
-        }
+        | EventMsg::TokenUsageUpdated { .. }
+        | EventMsg::ContextCompacted { .. } => (EventStream::Diagnostic, EventDelivery::BestEffort),
     }
 }

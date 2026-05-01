@@ -1,7 +1,11 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::tools::ToolBatchRunner;
 use crate::{AgentRuntime, emit_event};
-use agent_core::{ContextManager, ConversationHistory, ModelUsage, RolloutItem};
+use agent_core::{
+    CompactionSummary, ContextCompactionConfig, ContextFragment, ContextManager,
+    ConversationHistory, ModelUsage, RolloutItem, apply_history_compaction,
+    build_compaction_summary_request, plan_history_compaction,
+};
 use agent_protocol::{
     EventMsg, ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemDeltaKind,
     TurnItemKind, TurnState,
@@ -90,6 +94,89 @@ where
                 model_name: last_model_name,
                 state: TurnState::Cancelled,
             });
+        }
+
+        let compaction_config = ContextCompactionConfig {
+            model_context_window: runtime.config.runtime.model_context_window,
+            trigger_ratio: runtime.config.runtime.context_compaction_trigger_ratio,
+            request_overhead_tokens: estimate_request_overhead_tokens(
+                &context_manager.history().messages,
+                &environment_context.render(),
+                &tool_specs,
+                runtime
+                    .config
+                    .runtime
+                    .context_compaction_request_overhead_tokens,
+            ),
+            compacted_target_tokens: runtime.config.runtime.context_compaction_target_tokens,
+            preserved_user_turns: runtime
+                .config
+                .runtime
+                .context_compaction_preserved_user_turns,
+            preserved_tail_tokens: runtime
+                .config
+                .runtime
+                .context_compaction_preserved_tail_tokens,
+            summary_source_max_tokens: runtime
+                .config
+                .runtime
+                .context_compaction_summary_source_tokens,
+        };
+
+        if let Some(compaction_plan) =
+            plan_history_compaction(&context_manager.history().messages, compaction_config)
+        {
+            let pre_message_count = context_manager.history().messages.len();
+            let pre_context_tokens_estimate =
+                estimate_history_tokens(&context_manager.history().messages) as u64;
+            let summary_request = build_compaction_summary_request(
+                &compaction_plan,
+                compaction_config,
+                runtime.config.llm.temperature,
+            );
+            let summary_response = runtime
+                .complete_model_request(&cancellation_token, summary_request)
+                .await?;
+            let summary = summary_response
+                .content
+                .map(|text| CompactionSummary::from_model_output(&text).ensure_defaults())
+                .filter(|summary| !summary.current_task.is_empty())
+                .unwrap_or_else(|| CompactionSummary::fallback_from_plan(&compaction_plan));
+            let compacted = apply_history_compaction(
+                &mut context_manager.history_mut().messages,
+                &compaction_plan,
+                summary,
+            );
+            let post_message_count = compacted.replacement_history.len();
+            let post_context_tokens_estimate =
+                estimate_history_tokens(&compacted.replacement_history) as u64;
+            let rendered_summary = compacted.summary.rendered();
+            runtime
+                .persist_rollout_items(
+                    conversation_id,
+                    &[RolloutItem::Compacted {
+                        summary: compacted.summary.clone(),
+                        rendered_summary: rendered_summary.clone(),
+                        replacement_history: compacted.replacement_history.clone(),
+                    }],
+                )
+                .await?;
+            runtime
+                .state
+                .save_history(context_manager.history().clone())
+                .await;
+            emit_event(
+                &mut events,
+                on_event,
+                EventMsg::ContextCompacted {
+                    turn_id: turn_id.to_string(),
+                    pre_context_tokens_estimate,
+                    post_context_tokens_estimate,
+                    pre_message_count,
+                    post_message_count,
+                    preserved_tail_count: post_message_count.saturating_sub(2),
+                },
+            );
         }
 
         let model_request = context_manager.build_current_model_request_with_fragments(
@@ -195,7 +282,7 @@ where
                     turn_id: turn_id.to_string(),
                     last_usage: usage,
                     total_usage: turn_total_usage.clone(),
-                    model_context_window: None,
+                    model_context_window: Some(runtime.config.runtime.model_context_window),
                 },
             );
         }
@@ -299,6 +386,65 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
+}
+
+fn estimate_request_overhead_tokens(
+    history_messages: &[agent_core::ResponseItem],
+    environment_fragment: &agent_core::ResponseItem,
+    tool_specs: &[agent_core::ToolSpec],
+    minimum_overhead_tokens: usize,
+) -> usize {
+    let system_tokens = history_messages
+        .first()
+        .map(|item| estimate_history_tokens(std::slice::from_ref(item)))
+        .unwrap_or(0);
+    let environment_tokens = estimate_history_tokens(std::slice::from_ref(environment_fragment));
+    let tool_tokens = tool_specs
+        .iter()
+        .map(|tool| {
+            tool.name.chars().count()
+                + tool.description.chars().count()
+                + tool.parameters.to_string().chars().count()
+                + 64
+        })
+        .sum::<usize>()
+        .saturating_div(3)
+        .max(1);
+
+    minimum_overhead_tokens.max(
+        system_tokens
+            .saturating_add(environment_tokens)
+            .saturating_add(tool_tokens)
+            .saturating_add(2_000),
+    )
+}
+
+fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
+    messages
+        .iter()
+        .map(|item| match item {
+            agent_core::ResponseItem::System { content }
+            | agent_core::ResponseItem::User { content } => content.chars().count(),
+            agent_core::ResponseItem::Assistant {
+                content,
+                tool_calls,
+            } => {
+                let text_len = content.as_ref().map_or(0, |text| text.chars().count());
+                let tool_len: usize = tool_calls
+                    .iter()
+                    .map(|call| {
+                        call.name.chars().count() + call.arguments.to_string().chars().count()
+                    })
+                    .sum();
+                text_len + tool_len
+            }
+            agent_core::ResponseItem::Tool { name, content, .. } => {
+                name.chars().count() + content.chars().count()
+            }
+        })
+        .sum::<usize>()
+        .saturating_div(3)
+        .max(1)
 }
 
 fn emit_assistant_item(

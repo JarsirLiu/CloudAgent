@@ -130,6 +130,19 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                         model_context_window: *model_context_window,
                     });
                 }
+                AppServerNotification::ContextCompacted {
+                    pre_context_tokens_estimate,
+                    post_context_tokens_estimate,
+                    preserved_tail_count,
+                    ..
+                } => {
+                    actions.push(ServerAction::SetStatusNotice(Some(format!(
+                        "Context compacted: ~{} -> ~{} tokens, preserved {} recent items",
+                        pre_context_tokens_estimate,
+                        post_context_tokens_estimate,
+                        preserved_tail_count
+                    ))));
+                }
                 AppServerNotification::Error { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
                     actions.push(ServerAction::PushErrorCell(message.clone()));

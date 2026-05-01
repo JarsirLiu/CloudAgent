@@ -142,6 +142,14 @@ pub enum EventMsg {
         total_usage: ModelUsage,
         model_context_window: Option<u64>,
     },
+    ContextCompacted {
+        turn_id: TurnId,
+        pre_context_tokens_estimate: u64,
+        post_context_tokens_estimate: u64,
+        pre_message_count: usize,
+        post_message_count: usize,
+        preserved_tail_count: usize,
+    },
     ItemStarted {
         turn_id: TurnId,
         item_id: String,

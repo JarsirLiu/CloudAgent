@@ -7,8 +7,10 @@ pub mod tool;
 pub mod turn;
 
 pub use context::{
-    AgentContext, ContextFragment, ContextManager, EnvironmentContext, ModelContext,
-    ToolExecutionContext,
+    AgentContext, CompactionSummary, ContextCompactionConfig, ContextCompactionPlan,
+    ContextCompactionResult, ContextFragment, ContextManager, EnvironmentContext, ModelContext,
+    ToolExecutionContext, apply_history_compaction, build_compaction_summary_request,
+    plan_history_compaction,
 };
 pub use conversation::{
     ActiveConversationTurn, ConversationHistory, ConversationState, ConversationTurn,

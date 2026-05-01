@@ -33,10 +33,12 @@ impl ConversationHistoryBuilder {
         match item {
             RolloutItem::EventMsg { event } => self.push_event_msg(event),
             RolloutItem::ResponseItem { item } => self.push_response_item(item),
-            RolloutItem::Compacted { summary } => {
+            RolloutItem::Compacted {
+                rendered_summary, ..
+            } => {
                 self.upsert_item_in_current_turn(TranscriptItem::SystemMessage {
                     id: format!("compacted:{}", self.current_rollout_index),
-                    text: summary.clone(),
+                    text: rendered_summary.clone(),
                 });
             }
         }
@@ -172,6 +174,7 @@ impl ConversationHistoryBuilder {
             EventMsg::ModelRequestStarted { .. }
             | EventMsg::ModelResponseReceived { .. }
             | EventMsg::TokenUsageUpdated { .. }
+            | EventMsg::ContextCompacted { .. }
             | EventMsg::ServerRequestRequested { .. }
             | EventMsg::ServerRequestResolved { .. } => {}
         }
@@ -521,43 +524,53 @@ pub fn conversation_history_from_rollout_items(
 ) -> crate::conversation::ConversationHistory {
     let mut history = crate::conversation::ConversationHistory::new(conversation_id, system_prompt);
     for item in items {
-        let RolloutItem::ResponseItem { item } = item else {
-            continue;
-        };
         match item {
-            ResponseItem::System { content } => {
-                history.messages[0] = ResponseItem::System {
-                    content: content.clone(),
-                };
+            RolloutItem::ResponseItem { item } => match item {
+                ResponseItem::System { content } => {
+                    history.messages[0] = ResponseItem::System {
+                        content: content.clone(),
+                    };
+                }
+                ResponseItem::User { content } => {
+                    history.turn_count += 1;
+                    history.messages.push(ResponseItem::User {
+                        content: content.clone(),
+                    });
+                }
+                ResponseItem::Assistant {
+                    content,
+                    tool_calls,
+                } => {
+                    history.messages.push(ResponseItem::Assistant {
+                        content: content.clone(),
+                        tool_calls: tool_calls.clone(),
+                    });
+                }
+                ResponseItem::Tool {
+                    tool_call_id,
+                    name,
+                    content,
+                    structured,
+                } => {
+                    history.messages.push(ResponseItem::Tool {
+                        tool_call_id: tool_call_id.clone(),
+                        name: name.clone(),
+                        content: content.clone(),
+                        structured: structured.clone(),
+                    });
+                }
+            },
+            RolloutItem::Compacted {
+                replacement_history,
+                ..
+            } if !replacement_history.is_empty() => {
+                history.messages = replacement_history.clone();
+                history.turn_count = replacement_history
+                    .iter()
+                    .filter(|item| matches!(item, ResponseItem::User { .. }))
+                    .count() as u64;
             }
-            ResponseItem::User { content } => {
-                history.turn_count += 1;
-                history.messages.push(ResponseItem::User {
-                    content: content.clone(),
-                });
-            }
-            ResponseItem::Assistant {
-                content,
-                tool_calls,
-            } => {
-                history.messages.push(ResponseItem::Assistant {
-                    content: content.clone(),
-                    tool_calls: tool_calls.clone(),
-                });
-            }
-            ResponseItem::Tool {
-                tool_call_id,
-                name,
-                content,
-                structured,
-            } => {
-                history.messages.push(ResponseItem::Tool {
-                    tool_call_id: tool_call_id.clone(),
-                    name: name.clone(),
-                    content: content.clone(),
-                    structured: structured.clone(),
-                });
-            }
+            RolloutItem::EventMsg { .. } | RolloutItem::Compacted { .. } => {}
         }
     }
     history.ensure_tool_outputs_present();
@@ -830,6 +843,58 @@ mod tests {
                     ..
                 },
             ] if system == "system prompt" && user == "hi" && assistant == "hello"
+        ));
+    }
+
+    #[test]
+    fn conversation_history_prefers_compacted_replacement_history() {
+        let history = conversation_history_from_rollout_items(
+            "default",
+            "system prompt",
+            &[
+                RolloutItem::from(ResponseItem::User {
+                    content: "old".to_string(),
+                }),
+                RolloutItem::Compacted {
+                    summary: crate::context::CompactionSummary::from_model_output(
+                        "Current Task:\n- old",
+                    )
+                    .ensure_defaults(),
+                    rendered_summary: "[Context Summary]\nold".to_string(),
+                    replacement_history: vec![
+                        ResponseItem::System {
+                            content: "system prompt".to_string(),
+                        },
+                        ResponseItem::System {
+                            content: "[Context Summary]\nold".to_string(),
+                        },
+                        ResponseItem::User {
+                            content: "latest".to_string(),
+                        },
+                        ResponseItem::Assistant {
+                            content: Some("current".to_string()),
+                            tool_calls: Vec::new(),
+                        },
+                    ],
+                },
+            ],
+        );
+
+        assert_eq!(history.turn_count, 1);
+        assert!(matches!(
+            &history.messages[..],
+            [
+                ResponseItem::System { content: system },
+                ResponseItem::System { content: summary },
+                ResponseItem::User { content: user },
+                ResponseItem::Assistant {
+                    content: Some(assistant),
+                    ..
+                },
+            ] if system == "system prompt"
+                && summary == "[Context Summary]\nold"
+                && user == "latest"
+                && assistant == "current"
         ));
     }
 
