@@ -124,10 +124,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 AppServerNotification::ConversationList { conversations, .. } => {
                     actions.push(ServerAction::SetConversationList(conversations.clone()));
-                    actions.push(ServerAction::PushInfoCell(render_conversation_list(
-                        conversations,
-                        message.conversation_id().unwrap_or_default(),
-                    )));
                 }
                 AppServerNotification::ConversationSwitched { conversation_id } => {
                     actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
@@ -256,46 +252,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     }
 
     ServerMessageReduce { actions }
-}
-
-fn render_conversation_list(
-    conversations: &[agent_protocol::ConversationSummary],
-    active_conversation_id: &str,
-) -> String {
-    if conversations.is_empty() {
-        return "No sessions yet.\nUse `/new <session-id>` to create one.".to_string();
-    }
-    let mut lines = Vec::with_capacity(conversations.len() + 3);
-    lines.push("Sessions".to_string());
-    for conversation in conversations {
-        let active = if conversation.conversation_id == active_conversation_id {
-            "*"
-        } else {
-            " "
-        };
-        lines.push(format!(
-            "{} {}{} ({})",
-            active,
-            conversation.conversation_id,
-            conversation
-                .title
-                .as_deref()
-                .map(|t| format!(" [{}]", t))
-                .unwrap_or_default(),
-            pluralize_messages(conversation.message_count)
-        ));
-    }
-    lines.push(String::new());
-    lines.push("Use `/session <session-id>` to switch, `/new <session-id>` to create.".to_string());
-    lines.join("\n")
-}
-
-fn pluralize_messages(count: usize) -> String {
-    if count == 1 {
-        "1 message".to_string()
-    } else {
-        format!("{count} messages")
-    }
 }
 
 fn summarize_args_preview(arguments_preview: &str) -> String {

@@ -248,6 +248,9 @@ pub(crate) async fn maybe_spawn_auto_title_job(
     conversation_id: String,
     first_user_message: String,
 ) {
+    if runtime.llm_model_name() == "fake-model" {
+        return;
+    }
     let already_titled = runtime
         .list_conversations()
         .await

@@ -77,6 +77,10 @@ impl AgentRuntime {
         &self.config.runtime.default_conversation_id
     }
 
+    pub fn llm_model_name(&self) -> &str {
+        &self.config.llm.model
+    }
+
     pub(crate) fn environment_context(&self) -> EnvironmentContext {
         let now = chrono::Local::now();
         EnvironmentContext::new(

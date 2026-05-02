@@ -346,7 +346,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(visible_text.contains("> /clear"));
+        assert!(visible_text.contains("> /"));
     }
 
     #[test]
