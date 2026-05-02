@@ -91,11 +91,35 @@ fn command_references_workspace_escape(command: &str, workspace_root: &Path) -> 
     let normalized_root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.to_path_buf());
+    if is_safe_readonly_chain(command) {
+        return chain_mentions_outside_workspace(command, &normalized_root);
+    }
     command_tokens(command).into_iter().any(|token| {
         parse_absolute_path_candidate(token)
-            .map(|path| !path.starts_with(&normalized_root))
+            .map(|path| !normalized_path_starts_with(&path, &normalized_root))
             .unwrap_or(false)
     })
+}
+
+fn chain_mentions_outside_workspace(command: &str, normalized_root: &Path) -> bool {
+    command
+        .split(|ch| matches!(ch, '&' | ';'))
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .any(|segment| {
+            command_tokens(segment).into_iter().any(|token| {
+                parse_absolute_path_candidate(token)
+                    .map(|path| !normalized_path_starts_with(&path, normalized_root))
+                    .unwrap_or(false)
+            })
+        })
+}
+
+fn normalized_path_starts_with(candidate: &Path, root: &Path) -> bool {
+    let canonical_candidate = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| candidate.to_path_buf());
+    canonical_candidate.starts_with(root)
 }
 
 fn is_safe_readonly_command(command: &str) -> bool {
@@ -108,6 +132,10 @@ fn is_safe_readonly_command(command: &str) -> bool {
         return false;
     }
 
+    if is_safe_readonly_chain(&normalized) {
+        return true;
+    }
+
     let Some(program) = normalized.split_whitespace().next() else {
         return false;
     };
@@ -117,6 +145,60 @@ fn is_safe_readonly_command(command: &str) -> bool {
         | "findstr" | "select-string" | "get-childitem" | "get-content" | "measure-object"
         | "where-object" | "sort-object" | "select-object" => true,
         "git" => is_safe_git_command(&normalized),
+        _ => false,
+    }
+}
+
+fn is_safe_readonly_chain(command: &str) -> bool {
+    if command.contains("&&") {
+        return command
+            .split("&&")
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .all(is_safe_readonly_segment);
+    }
+
+    if command.contains(';') {
+        return command
+            .split(';')
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .all(is_safe_readonly_segment);
+    }
+
+    is_safe_readonly_segment(command)
+}
+
+fn is_safe_readonly_segment(segment: &str) -> bool {
+    let normalized = segment.trim();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    if contains_write_operator(normalized) || contains_network_indicator(normalized) {
+        return false;
+    }
+
+    let Some(program) = normalized.split_whitespace().next() else {
+        return false;
+    };
+
+    match program {
+        "cd" | "set-location" | "pushd" => {
+            let location = normalized
+                .split_whitespace()
+                .skip(1)
+                .collect::<Vec<_>>()
+                .join(" ");
+            !location.is_empty()
+                && !location.starts_with("..")
+                && !location.contains("/../")
+                && !location.contains("\\..\\")
+        }
+        "pwd" | "ls" | "dir" | "cat" | "type" | "head" | "tail" | "find" | "tree" | "rg" | "fd"
+        | "findstr" | "select-string" | "get-childitem" | "get-content" | "measure-object"
+        | "where-object" | "sort-object" | "select-object" => true,
+        "git" => is_safe_git_command(normalized),
         _ => false,
     }
 }
@@ -257,6 +339,17 @@ mod tests {
         let requirement = approval_requirement_for_tool(
             &shell_spec(),
             &shell_call("git log --oneline -10"),
+            Path::new("D:\\learn\\gifti\\cloudagent"),
+        );
+
+        assert_eq!(requirement, ApprovalRequirement::not_required());
+    }
+
+    #[test]
+    fn safe_readonly_shell_command_chain_skips_approval() {
+        let requirement = approval_requirement_for_tool(
+            &shell_spec(),
+            &shell_call("cd D:\\learn\\gifti\\cloudagent && Get-ChildItem -Recurse -Filter *.rs"),
             Path::new("D:\\learn\\gifti\\cloudagent"),
         );
 

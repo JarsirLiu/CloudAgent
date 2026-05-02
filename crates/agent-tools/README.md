@@ -2,20 +2,20 @@
 
 `agent-tools` is the product-facing tool layer for `cloudagent`.
 
-This crate should not grow into a catalog of many mediocre tools. Its job is to expose a small,
-stable, well-described set of high-value capabilities that the agent can rely on across large real
-world repositories.
+This crate exposes the compact core tool stack for the agent. The design target is a small,
+stable set of strong tools that behave well in large repositories, on Windows, and under repeated
+tool use.
 
-The current direction is:
+The product direction is:
 
-- align core tool architecture with Codex
-- absorb strong single-tool design ideas from Claude Code
-- remove low-value exploration loops
-- prefer fewer, more reliable tools over a larger tool surface
+- align tool architecture with Codex
+- absorb concise single-tool ergonomics from Claude Code
+- prefer fewer, stronger tools over a broad catalog
+- keep roundtrips low and outputs predictable
 
 ## Tool Philosophy
 
-The long-term goal is not "more tools". The goal is:
+The goal is not more tools. The goal is:
 
 - stable behavior
 - high information density per call
@@ -23,12 +23,12 @@ The long-term goal is not "more tools". The goal is:
 - strong Windows and large-repo behavior
 - low model roundtrip count
 
-That means `cloudagent` should converge on a compact core toolset instead of maintaining many
-partially overlapping primitives.
+That means `cloudagent` should remain a compact core toolset instead of growing many overlapping
+primitives.
 
 ## Reference Strategy
 
-Two reference systems matter here, but they should influence different layers.
+Two reference systems matter here, but they influence different layers.
 
 ### Codex as the architecture reference
 
@@ -55,9 +55,9 @@ In short:
 - architecture and tool catalog shape should lean Codex
 - per-tool ergonomics should learn from Claude Code
 
-## Target Core Toolset
+## Core Toolset
 
-The default tool stack should converge on a very small set of core capabilities.
+The default tool stack is intentionally small.
 
 ### 1. `shell_command`
 
@@ -116,17 +116,6 @@ Primary purpose:
 Long-term expectation:
 
 - this remains a narrow helper, not a primary exploration path
-
-## Tools That Are Transitional, Not Final
-
-Several existing tools are useful during migration, but they should not define the long-term
-product shape.
-
-- the current transitional implementation behind `fuzzy_file_search`
-- the current transitional implementation behind `fs_read_file`
-
-These may continue to exist for compatibility while the new core toolset is built out, but they
-should be treated as bridges rather than permanent product commitments.
 
 ## Architectural Layers
 
@@ -207,20 +196,6 @@ The model should not need to remember:
 
 Those defaults belong in the implementation and policy layers.
 
-## Migration Direction
-
-The migration target is not "finish v2 exactly as first imagined". The target is to reach a
-Codex-shaped core tool stack as quickly as possible without sacrificing reliability.
-
-Recommended order:
-
-1. tighten documentation around the final target
-2. strengthen the current transitional implementations only when they directly support the target
-3. converge file reading into a shared `fs_read_file` path
-4. converge editing into `apply_patch`
-5. replace transitional file discovery with `fuzzy_file_search`
-6. reduce or remove tools that no longer justify exposure
-
 ## What Belongs Here
 
 Put code in `agent-tools` if:
@@ -237,8 +212,7 @@ Put code elsewhere if:
 
 ## Immediate Development Rule
 
-From this point forward, do not add new default tools just to fill gaps in the current transitional
-surface.
+Do not add new default tools just to fill gaps in the current compact surface.
 
 Before adding or keeping a tool, answer:
 

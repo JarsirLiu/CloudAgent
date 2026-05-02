@@ -371,6 +371,7 @@ fn default_system_prompt() -> String {
         "Use tools when inspection or file changes are needed, and keep outputs actionable.",
         "When exploring a repository, prefer the smallest high-signal tool first.",
         "Use `fuzzy_file_search` to locate likely files, `fs_read_file` once a path is known, and `shell_command` for precise search or verification.",
+        "If a search returns few or no results, broaden the pattern or scope before repeating the same search.",
         "Keep paths workspace-relative unless a tool explicitly needs an absolute path.",
         "On Windows, use platform-appropriate command forms; do not assume Unix-only flags will work.",
         "Batch independent tool calls in the same round when possible instead of returning to the model after each small step.",

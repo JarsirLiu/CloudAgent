@@ -135,7 +135,11 @@ impl LocalTool for FuzzyFileSearchLocalTool {
             .cloned()
             .collect::<Vec<_>>();
         let content = if displayed.is_empty() {
-            "No files found".to_string()
+            if matches.is_empty() {
+                "No files found. Try a broader pattern or set path_scope.".to_string()
+            } else {
+                "No files found in the requested offset window.".to_string()
+            }
         } else {
             let mut content = format!("Top {} matches:\n{}", displayed.len(), displayed.join("\n"));
             if matches.len() > displayed.len() {

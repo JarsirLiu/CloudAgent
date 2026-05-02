@@ -65,6 +65,9 @@ impl LocalTool for ApplyPatchLocalTool {
             match (file_patch.old_path.as_str(), file_patch.new_path.as_str()) {
                 ("/dev/null", new_path) => {
                     let path = resolve_workspace_path(&ctx.workspace_root, Some(new_path))?;
+                    if path.exists() {
+                        anyhow::bail!("refusing to add existing file {}", path.display());
+                    }
                     let next = render_hunks_as_new_file(&file_patch.hunks)?;
                     let Some(parent) = path.parent() else {
                         anyhow::bail!("cannot determine parent directory for {}", path.display());
@@ -75,13 +78,22 @@ impl LocalTool for ApplyPatchLocalTool {
                 }
                 (old_path, "/dev/null") => {
                     let path = resolve_workspace_path(&ctx.workspace_root, Some(old_path))?;
-                    if path.exists() {
-                        fs::remove_file(&path).await?;
-                        changed_files.insert(old_path.to_string());
+                    if !path.exists() {
+                        anyhow::bail!("refusing to delete missing file {}", path.display());
                     }
+                    fs::remove_file(&path).await?;
+                    changed_files.insert(old_path.to_string());
                 }
                 (_, new_path) => {
+                    if file_patch.old_path != file_patch.new_path {
+                        anyhow::bail!(
+                            "file moves/renames are not supported by apply_patch; use a delete and add patch instead"
+                        );
+                    }
                     let path = resolve_workspace_path(&ctx.workspace_root, Some(new_path))?;
+                    if !path.exists() {
+                        anyhow::bail!("refusing to update missing file {}", path.display());
+                    }
                     let current = fs::read_to_string(&path).await?;
                     let next = apply_hunks(&current, &file_patch.hunks).map_err(|err| {
                         anyhow::anyhow!("failed to apply patch for {}: {err}", new_path)
@@ -130,9 +142,83 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
     let mut current_new_path: Option<String> = None;
     let mut hunks: Vec<Hunk> = Vec::new();
     let mut current_hunk: Option<Hunk> = None;
+    let mut in_patch_block = false;
+
+    let flush_current = |file_patches: &mut Vec<FilePatch>,
+                         current_old_path: &mut Option<String>,
+                         current_new_path: &mut Option<String>,
+                         hunks: &mut Vec<Hunk>,
+                         current_hunk: &mut Option<Hunk>| {
+        if let Some(h) = current_hunk.take() {
+            hunks.push(h);
+        }
+        if let (Some(old_path), Some(new_path)) = (current_old_path.take(), current_new_path.take())
+        {
+            file_patches.push(FilePatch {
+                old_path,
+                new_path,
+                hunks: std::mem::take(hunks),
+            });
+        }
+    };
 
     for line in patch.lines() {
+        if line == "*** Begin Patch" {
+            in_patch_block = true;
+            continue;
+        }
+        if line == "*** End Patch" {
+            flush_current(
+                &mut file_patches,
+                &mut current_old_path,
+                &mut current_new_path,
+                &mut hunks,
+                &mut current_hunk,
+            );
+            in_patch_block = false;
+            continue;
+        }
+        if !in_patch_block && !line.starts_with("diff --git ") {
+            continue;
+        }
         if line.starts_with("diff --git ") {
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("*** Add File: ") {
+            flush_current(
+                &mut file_patches,
+                &mut current_old_path,
+                &mut current_new_path,
+                &mut hunks,
+                &mut current_hunk,
+            );
+            current_old_path = Some("/dev/null".to_string());
+            current_new_path = Some(path.trim().to_string());
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("*** Delete File: ") {
+            flush_current(
+                &mut file_patches,
+                &mut current_old_path,
+                &mut current_new_path,
+                &mut hunks,
+                &mut current_hunk,
+            );
+            current_old_path = Some(path.trim().to_string());
+            current_new_path = Some("/dev/null".to_string());
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("*** Update File: ") {
+            flush_current(
+                &mut file_patches,
+                &mut current_old_path,
+                &mut current_new_path,
+                &mut hunks,
+                &mut current_hunk,
+            );
+            let path = path.trim().to_string();
+            current_old_path = Some(path.clone());
+            current_new_path = Some(path);
             continue;
         }
         if let Some(path) = line.strip_prefix("--- ") {
@@ -145,19 +231,13 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             continue;
         }
         if let Some(path) = line.strip_prefix("+++ ") {
-            if let Some(h) = current_hunk.take() {
-                hunks.push(h);
-            }
-            if let (Some(old_path), Some(new_path)) =
-                (current_old_path.take(), current_new_path.take())
-            {
-                file_patches.push(FilePatch {
-                    old_path,
-                    new_path,
-                    hunks,
-                });
-                hunks = Vec::new();
-            }
+            flush_current(
+                &mut file_patches,
+                &mut current_old_path,
+                &mut current_new_path,
+                &mut hunks,
+                &mut current_hunk,
+            );
             current_new_path = Some(
                 path.trim()
                     .strip_prefix("b/")
@@ -183,16 +263,13 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             hunk.lines.push(line.to_string());
         }
     }
-    if let Some(h) = current_hunk.take() {
-        hunks.push(h);
-    }
-    if let (Some(old_path), Some(new_path)) = (current_old_path.take(), current_new_path.take()) {
-        file_patches.push(FilePatch {
-            old_path,
-            new_path,
-            hunks,
-        });
-    }
+    flush_current(
+        &mut file_patches,
+        &mut current_old_path,
+        &mut current_new_path,
+        &mut hunks,
+        &mut current_hunk,
+    );
     Ok(file_patches)
 }
 
@@ -250,4 +327,101 @@ fn apply_single_hunk(content: &str, hunk: &Hunk) -> anyhow::Result<String> {
     next.push_str(&replacement);
     next.push_str(&content[end..]);
     Ok(next)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::shared::LocalTool;
+    use agent_core::ToolExecutionContext;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::fs;
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn apply_patch_refuses_to_add_existing_file() {
+        let base = test_workspace("apply_patch_refuses_to_add_existing_file");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "old\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let result = tool
+            .invoke(
+                serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Add File: src/lib.rs\n+ new\n*** End Patch"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn apply_patch_refuses_to_delete_missing_file() {
+        let base = test_workspace("apply_patch_refuses_to_delete_missing_file");
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let result = tool
+            .invoke(
+                serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Delete File: src/missing.rs\n*** End Patch"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn apply_patch_refuses_rename_style_patch() {
+        let base = test_workspace("apply_patch_refuses_rename_style_patch");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "old\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let result = tool
+            .invoke(
+                serde_json::json!({
+                    "patch": "--- a/src/lib.rs\n+++ b/src/main.rs\n@@\n- old\n+ new\n"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    fn test_workspace(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_millis();
+        path.push(format!("cloudagent_{name}_{stamp}"));
+        std::fs::create_dir_all(&path).expect("create temp workspace");
+        path
+    }
+
+    fn tool_context(workspace_root: &std::path::Path) -> ToolExecutionContext {
+        ToolExecutionContext {
+            conversation_id: "test".to_string(),
+            workspace_root: workspace_root.to_path_buf(),
+            default_shell_timeout_ms: 5_000,
+            cancellation_token: CancellationToken::new(),
+            output_tx: None,
+        }
+    }
 }
