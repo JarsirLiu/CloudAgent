@@ -1,14 +1,15 @@
-use crate::conversation_listener::ConversationListenerHandle;
-use crate::conversation_subscriptions::ConversationSubscriptions;
-use crate::conversation_service;
-use crate::server_request_service;
-use crate::server_request_coordinator::{ResolvedServerRequest, ServerRequestCoordinator};
-use crate::turn_service;
+use crate::session::listener::ConversationListenerHandle;
+use crate::session::subscriptions::ConversationSubscriptions;
+use crate::session::service as session_service;
+use crate::server_request::coordinator::{ResolvedServerRequest, ServerRequestCoordinator};
+use crate::server_request::service as server_request_service;
+use crate::turn::service as turn_service;
 use agent_core::ConversationTurn;
 use agent_protocol::{AppClientCommand, AppServerMessage, ServerRequestDecision};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -19,6 +20,7 @@ pub(crate) struct ServerState {
     server_requests: ServerRequestCoordinator,
     turn_tasks_by_conversation: HashMap<String, Vec<JoinHandle<()>>>,
     active_listeners: HashMap<String, ConversationListenerHandle>,
+    title_jobs_in_flight: HashSet<String>,
 }
 
 impl ServerState {
@@ -29,6 +31,7 @@ impl ServerState {
             server_requests: ServerRequestCoordinator::new(),
             turn_tasks_by_conversation: HashMap::new(),
             active_listeners: HashMap::new(),
+            title_jobs_in_flight: HashSet::new(),
         }
     }
 
@@ -153,6 +156,14 @@ impl ServerState {
         self.server_requests
             .insert_pending(request_id, conversation_id, turn_id, request, reply_tx);
     }
+
+    pub(crate) fn try_start_title_job(&mut self, conversation_id: &str) -> bool {
+        self.title_jobs_in_flight.insert(conversation_id.to_string())
+    }
+
+    pub(crate) fn finish_title_job(&mut self, conversation_id: &str) {
+        self.title_jobs_in_flight.remove(conversation_id);
+    }
 }
 
 #[derive(Clone)]
@@ -191,7 +202,7 @@ pub(crate) async fn handle_command(
             turn_service::compact_conversation(&runtime, event_tx, &state, conversation_id).await?;
         }
         AppClientCommand::RequestConversationStatus { conversation_id } => {
-            conversation_service::request_conversation_status(
+            session_service::request_conversation_status(
                 &runtime,
                 event_tx,
                 &state,
@@ -200,14 +211,14 @@ pub(crate) async fn handle_command(
             .await?;
         }
         AppClientCommand::RequestConversationHistory { conversation_id } => {
-            conversation_service::request_conversation_history(
+            session_service::request_conversation_history(
                 &runtime,
                 event_tx,
                 &state,
                 conversation_id.clone(),
             )
             .await?;
-            conversation_service::replay_frontend_state(&runtime, event_tx, &state, &conversation_id)
+            session_service::replay_frontend_state(&runtime, event_tx, &state, &conversation_id)
                 .await?;
             server_request_service::replay_pending_for_conversation(
                 event_tx,
@@ -221,7 +232,7 @@ pub(crate) async fn handle_command(
             before_turn_id,
             limit,
         } => {
-            conversation_service::request_conversation_history_page(
+            session_service::request_conversation_history_page(
                 &runtime,
                 event_tx,
                 &state,
@@ -232,10 +243,10 @@ pub(crate) async fn handle_command(
             .await?;
         }
         AppClientCommand::ListConversations => {
-            conversation_service::list_conversations(&runtime, event_tx, &state).await?;
+            session_service::list_conversations(&runtime, event_tx, &state).await?;
         }
         AppClientCommand::CreateConversation { conversation_id } => {
-            conversation_service::create_conversation(
+            session_service::create_conversation(
                 &runtime,
                 event_tx,
                 &state,
@@ -247,7 +258,7 @@ pub(crate) async fn handle_command(
             conversation_id,
             title,
         } => {
-            conversation_service::set_conversation_title(
+            session_service::set_conversation_title(
                 &runtime,
                 event_tx,
                 &state,
@@ -257,21 +268,21 @@ pub(crate) async fn handle_command(
             .await?;
         }
         AppClientCommand::SwitchConversation { conversation_id } => {
-            conversation_service::switch_conversation(&runtime, event_tx, &state, conversation_id)
+            session_service::switch_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
         }
         AppClientCommand::ArchiveConversation { conversation_id } => {
-            conversation_service::archive_conversation(&runtime, event_tx, &state, conversation_id)
+            session_service::archive_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
         }
         AppClientCommand::ResetConversation { conversation_id } => {
-            conversation_service::reset_conversation(&runtime, event_tx, &state, conversation_id)
+            session_service::reset_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
         }
         AppClientCommand::SubscribeConversation { conversation_id } => {
-            conversation_service::subscribe_conversation(event_tx, &state, conversation_id.clone())
+            session_service::subscribe_conversation(event_tx, &state, conversation_id.clone())
                 .await;
-            conversation_service::replay_frontend_state(&runtime, event_tx, &state, &conversation_id)
+            session_service::replay_frontend_state(&runtime, event_tx, &state, &conversation_id)
                 .await?;
             server_request_service::replay_pending_for_conversation(
                 event_tx,
@@ -281,7 +292,7 @@ pub(crate) async fn handle_command(
             .await;
         }
         AppClientCommand::UnsubscribeConversation { conversation_id } => {
-            conversation_service::unsubscribe_conversation(event_tx, &state, conversation_id).await;
+            session_service::unsubscribe_conversation(event_tx, &state, conversation_id).await;
         }
         AppClientCommand::ResolveServerRequest {
             conversation_id,

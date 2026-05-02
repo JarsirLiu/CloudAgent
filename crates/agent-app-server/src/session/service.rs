@@ -1,17 +1,19 @@
-use crate::command_router::{ServerState, merge_active_turn};
-use crate::notification_service::send_notification;
+use crate::routing::command_router::{ServerState, merge_active_turn};
+use crate::app::notification::send_notification;
+use crate::session::state as session_state;
 use agent_protocol::{AppServerMessage, AppServerNotification, ConversationStatus, FrontendMode};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
+use tokio::task;
 
 pub(crate) async fn list_conversations(
     runtime: &Arc<AgentRuntime>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
 ) -> Result<()> {
-    let active_conversation_id = {
+    let active_session_id = {
         let state = state.lock().await;
         state.active_conversation_id().to_string()
     };
@@ -20,7 +22,7 @@ pub(crate) async fn list_conversations(
         event_tx,
         state,
         AppServerNotification::ConversationList {
-            conversation_id: active_conversation_id,
+            conversation_id: active_session_id,
             conversations,
         },
     )
@@ -141,39 +143,9 @@ pub(crate) async fn switch_conversation(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<()> {
-    {
-        let mut guard = state.lock().await;
-        guard.switch_active_conversation(conversation_id.clone());
-        guard.subscribe(conversation_id.clone());
-    }
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationSwitched {
-            conversation_id: conversation_id.clone(),
-        },
-    )
-    .await;
-    let snapshot = runtime.conversation_status(&conversation_id).await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationStatus {
-            conversation_id: conversation_id.clone(),
-            snapshot,
-        },
-    )
-    .await;
-    let turns = runtime.build_turns_from_rollout(&conversation_id).await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationHistory {
-            conversation_id: conversation_id.clone(),
-            turns,
-        },
-    )
-    .await;
+    session_state::apply_active_conversation(state, conversation_id.clone()).await;
+    session_state::persist_active_conversation(runtime, &conversation_id).await;
+    publish_switched_conversation_state(runtime, event_tx, state, &conversation_id).await?;
     let conversations = runtime.list_conversations().await?;
     send_notification(
         event_tx,
@@ -194,64 +166,34 @@ pub(crate) async fn archive_conversation(
     conversation_id: String,
 ) -> Result<()> {
     runtime.archive_conversation(&conversation_id).await?;
-    let (active_conversation_id, switched_active) = {
-        let mut guard = state.lock().await;
-        let was_active = guard.active_conversation_id() == conversation_id;
-        guard.unsubscribe(&conversation_id);
-        if was_active {
-            guard.switch_active_conversation(runtime.default_conversation_id().to_string());
-            guard.subscribe(runtime.default_conversation_id().to_string());
-        }
-        (guard.active_conversation_id().to_string(), was_active)
-    };
+    let transition = session_state::apply_archive_transition(
+        state,
+        &conversation_id,
+        runtime.default_conversation_id(),
+    )
+    .await;
+    let active_session_id = transition.active_session_id;
+    let switched_active = transition.switched_active;
     if switched_active {
-        send_notification(
-            event_tx,
-            state,
-            AppServerNotification::ConversationSwitched {
-                conversation_id: active_conversation_id.clone(),
-            },
-        )
-        .await;
-        let snapshot = runtime.conversation_status(&active_conversation_id).await?;
-        send_notification(
-            event_tx,
-            state,
-            AppServerNotification::ConversationStatus {
-                conversation_id: active_conversation_id.clone(),
-                snapshot,
-            },
-        )
-        .await;
-        let turns = runtime
-            .build_turns_from_rollout(&active_conversation_id)
-            .await?;
-        send_notification(
-            event_tx,
-            state,
-            AppServerNotification::ConversationHistory {
-                conversation_id: active_conversation_id.clone(),
-                turns,
-            },
-        )
-        .await;
+        session_state::persist_active_conversation(runtime, &active_session_id).await;
+        publish_switched_conversation_state(runtime, event_tx, state, &active_session_id).await?;
     }
     let conversations = runtime.list_conversations().await?;
     send_notification(
         event_tx,
         state,
         AppServerNotification::ConversationList {
-            conversation_id: active_conversation_id.clone(),
+            conversation_id: active_session_id.clone(),
             conversations,
         },
     )
     .await;
-    if active_conversation_id != conversation_id {
+    if active_session_id != conversation_id {
         send_notification(
             event_tx,
             state,
             AppServerNotification::Info {
-                conversation_id: active_conversation_id,
+                conversation_id: active_session_id,
                 message: format!("Archived conversation `{conversation_id}`"),
             },
         )
@@ -299,6 +241,68 @@ pub(crate) async fn set_conversation_title(
     Ok(())
 }
 
+pub(crate) async fn maybe_spawn_auto_title_job(
+    runtime: Arc<AgentRuntime>,
+    event_tx: mpsc::UnboundedSender<AppServerMessage>,
+    state: Arc<Mutex<ServerState>>,
+    conversation_id: String,
+    first_user_message: String,
+) {
+    let already_titled = runtime
+        .list_conversations()
+        .await
+        .ok()
+        .and_then(|list| {
+            list.into_iter()
+                .find(|c| c.conversation_id == conversation_id)
+                .and_then(|c| c.title)
+        })
+        .is_some();
+    if already_titled {
+        return;
+    }
+    {
+        let mut guard = state.lock().await;
+        if !guard.try_start_title_job(&conversation_id) {
+            return;
+        }
+    }
+    task::spawn(async move {
+        let candidate = runtime
+            .suggest_conversation_title(&first_user_message)
+            .await
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| derive_title(&first_user_message));
+        if !candidate.is_empty() {
+            let still_untitled = runtime
+                .list_conversations()
+                .await
+                .ok()
+                .and_then(|list| {
+                    list.into_iter()
+                        .find(|c| c.conversation_id == conversation_id)
+                        .and_then(|c| c.title)
+                })
+                .is_none();
+            if still_untitled
+                && runtime
+                    .set_conversation_title(&conversation_id, &candidate)
+                    .await
+                    .is_ok()
+            {
+                let _ = list_conversations(&runtime, &event_tx, &state).await;
+            }
+        }
+        state.lock().await.finish_title_job(&conversation_id);
+    });
+}
+
+fn derive_title(input: &str) -> String {
+    let single = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    single.chars().take(28).collect::<String>().trim().to_string()
+}
+
 pub(crate) async fn subscribe_conversation(
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
@@ -334,4 +338,41 @@ pub(crate) async fn unsubscribe_conversation(
             subscribed: false,
         },
     ));
+}
+
+async fn publish_switched_conversation_state(
+    runtime: &Arc<AgentRuntime>,
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: &str,
+) -> Result<()> {
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::ConversationSwitched {
+            conversation_id: conversation_id.to_string(),
+        },
+    )
+    .await;
+    let snapshot = runtime.conversation_status(conversation_id).await?;
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::ConversationStatus {
+            conversation_id: conversation_id.to_string(),
+            snapshot,
+        },
+    )
+    .await;
+    let turns = runtime.build_turns_from_rollout(conversation_id).await?;
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::ConversationHistory {
+            conversation_id: conversation_id.to_string(),
+            turns,
+        },
+    )
+    .await;
+    Ok(())
 }

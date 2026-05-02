@@ -1,13 +1,9 @@
-mod command_router;
-mod conversation_service;
-mod conversation_listener;
-mod conversation_subscriptions;
-mod in_process;
-mod notification_service;
+mod app;
 mod projection;
-mod server_request_service;
-mod server_request_coordinator;
-mod turn_service;
+mod routing;
+mod server_request;
+mod session;
+mod turn;
 pub mod transport;
 
 use agent_protocol::{AppClientCommandEnvelope, AppServerMessageEnvelope};
@@ -17,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-pub use in_process::{
+pub use app::in_process::{
     InProcessClientHandle, InProcessClientSender, InProcessServer, start_in_process,
 };
 

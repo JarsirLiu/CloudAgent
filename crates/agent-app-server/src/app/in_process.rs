@@ -1,4 +1,5 @@
-use crate::command_router::{ServerState, handle_command};
+use crate::routing::command_router::{ServerState, handle_command};
+use crate::session::state as session_state;
 use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
 use agent_runtime::AgentRuntime;
 use anyhow::{Result, anyhow};
@@ -63,13 +64,7 @@ pub fn start_in_process(
     let state = Arc::new(Mutex::new(ServerState::new(conversation_id.clone())));
 
     tokio::spawn(async move {
-        if let Ok(Some(active_conversation_id)) = runtime.load_active_conversation().await
-            && !active_conversation_id.trim().is_empty()
-        {
-            let mut guard = state.lock().await;
-            guard.switch_active_conversation(active_conversation_id.clone());
-            guard.subscribe(active_conversation_id);
-        }
+        session_state::hydrate_active_conversation(&runtime, &state).await;
         while let Some(message) = command_rx.recv().await {
             match message {
                 ServerMessage::Command(AppClientCommand::Exit) => {
@@ -103,7 +98,7 @@ pub fn start_in_process(
                             },
                         ));
                     } else if let (Some(id), true) = (command_conversation_id, should_mark_active) {
-                        let _ = runtime.mark_active_conversation(&id).await;
+                        session_state::persist_active_conversation(&runtime, &id).await;
                     }
                 }
                 ServerMessage::Shutdown { done } => {

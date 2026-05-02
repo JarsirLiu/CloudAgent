@@ -1,7 +1,8 @@
-use crate::command_router::{ServerState, TurnSpawnDependencies};
-use crate::conversation_listener::start_conversation_listener;
-use crate::notification_service::{send_notification, send_request};
-use crate::server_request_service;
+use crate::routing::command_router::{ServerState, TurnSpawnDependencies};
+use crate::app::notification::{send_notification, send_request};
+use crate::server_request::service as server_request_service;
+use crate::session::listener::start_conversation_listener;
+use crate::session::service as session_service;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest, ServerRequestDecision,
 };
@@ -21,6 +22,14 @@ pub(crate) async fn submit_turn(
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) {
+    session_service::maybe_spawn_auto_title_job(
+        runtime.clone(),
+        event_tx.clone(),
+        state.clone(),
+        conversation_id.clone(),
+        content.clone(),
+    )
+    .await;
     await_tracked_turn_tasks(state, &conversation_id).await;
     send_notification(
         event_tx,

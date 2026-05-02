@@ -1,5 +1,5 @@
-use crate::command_router::ServerState;
-use crate::notification_service::{send_notification, send_request};
+use crate::routing::command_router::ServerState;
+use crate::app::notification::{send_notification, send_request};
 use agent_protocol::{
     AppServerMessage, AppServerNotification, AppServerRequest, RequestId, ServerRequestDecision,
 };

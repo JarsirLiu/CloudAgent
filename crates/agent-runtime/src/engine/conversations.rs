@@ -1,6 +1,7 @@
 use crate::AgentRuntime;
 use agent_core::{
-    ConversationHistory, ConversationState, ConversationTurn, build_turns_from_rollout_items,
+    ConversationHistory, ConversationState, ConversationTurn, ModelRequest, ResponseItem,
+    build_turns_from_rollout_items,
     flatten_conversation_turns,
 };
 use agent_protocol::{ConversationSnapshot, ConversationStatus, ConversationSummary, TranscriptItem};
@@ -78,6 +79,30 @@ impl AgentRuntime {
 
     pub async fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()> {
         self.store.set_conversation_title(conversation_id, title).await
+    }
+
+    pub async fn suggest_conversation_title(&self, user_input: &str) -> Result<String> {
+        let request = ModelRequest {
+            messages: vec![
+                ResponseItem::System {
+                    content: "Generate a short session title (max 8 words). Return title text only."
+                        .to_string(),
+                },
+                ResponseItem::User {
+                    content: user_input.to_string(),
+                },
+            ],
+            tools: Vec::new(),
+            temperature: 0.2,
+        };
+        let response = self.model.complete(request).await?;
+        let title = response
+            .content
+            .unwrap_or_default()
+            .trim()
+            .trim_matches('"')
+            .to_string();
+        Ok(title)
     }
 
     pub async fn conversation_history_snapshot(
