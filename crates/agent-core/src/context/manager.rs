@@ -159,6 +159,23 @@ impl ContextManager {
     ) -> ModelRequest {
         self.build_model_request_with_fragments(&self.history, fragments, tools, temperature)
     }
+
+    pub fn build_current_model_request_with_rendered_fragments(
+        &self,
+        fragments: &[ResponseItem],
+        tools: Vec<ToolSpec>,
+        temperature: f32,
+    ) -> ModelRequest {
+        let messages = insert_context_fragments_before_latest_user(
+            self.history.messages.clone(),
+            fragments,
+        );
+        ModelRequest {
+            messages,
+            tools,
+            temperature,
+        }
+    }
 }
 
 fn render_context_fragments(fragments: &[impl ContextFragment]) -> Vec<ResponseItem> {

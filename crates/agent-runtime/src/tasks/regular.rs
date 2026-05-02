@@ -2,9 +2,8 @@ use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::tools::ToolBatchRunner;
 use crate::{AgentRuntime, emit_event};
 use agent_core::{
-    CompactionSummary, ContextCompactionConfig, ContextFragment, ContextManager,
-    ContextInputFilterService, ConversationHistory, FilterPolicy, ModelUsage, RolloutItem, apply_history_compaction,
-    build_compaction_summary_request, plan_manual_history_compaction,
+    ContextCompactionConfig, ContextFragment, ContextManager, ContextFacade, ConversationHistory,
+    ModelUsage, RolloutItem,
 };
 use agent_protocol::{
     EventMsg, ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemDeltaKind,
@@ -12,7 +11,6 @@ use agent_protocol::{
 };
 use anyhow::Result;
 use std::collections::HashSet;
-use std::fs;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
@@ -79,6 +77,7 @@ where
     let mut denied_requests = HashSet::new();
     let environment_context = runtime.environment_context();
     let mut turn_total_usage = ModelUsage::default();
+    let context_facade = ContextFacade::new();
     let mut last_sdk_context_tokens: Option<usize> = None;
     let mut history_len_at_last_sdk_usage: Option<usize> = None;
 
@@ -128,11 +127,6 @@ where
                 .context_compaction_summary_source_tokens,
         };
 
-        let trigger_tokens = ((compaction_config.model_context_window as f32)
-            * compaction_config.trigger_ratio) as usize;
-        let available_history_tokens = trigger_tokens
-            .saturating_sub(compaction_config.request_overhead_tokens)
-            .max(1);
         let estimated_total_tokens = if let Some(sdk_tokens) = last_sdk_context_tokens {
             let delta_start = history_len_at_last_sdk_usage
                 .unwrap_or_else(|| context_manager.history().messages.len())
@@ -144,13 +138,24 @@ where
             estimate_history_tokens(&context_manager.history().messages)
         };
 
-        if estimated_total_tokens > available_history_tokens
-            && let Some(compaction_plan) = plan_manual_history_compaction(
-                &context_manager.history().messages,
+        let prepared = context_facade
+            .prepare_model_request(
+                &mut context_manager,
+                &runtime.config.workspace_root,
+                vec![environment_context.render()],
+                tool_specs.clone(),
+                runtime.config.llm.temperature,
                 compaction_config,
-                /*minimum_history_tokens*/ 1,
+                estimated_total_tokens,
+                |summary_request| async {
+                    let response = runtime
+                        .complete_model_request(&cancellation_token, summary_request)
+                        .await?;
+                    Ok(response.content)
+                },
             )
-        {
+            .await?;
+        if prepared.compaction_requested {
             emit_event(
                 &mut events,
                 on_event,
@@ -159,37 +164,14 @@ where
                     estimated_tokens: estimated_total_tokens as u64,
                 },
             );
-            let pre_message_count = context_manager.history().messages.len();
-            let pre_context_tokens_estimate =
-                estimate_history_tokens(&context_manager.history().messages) as u64;
-            let summary_request = build_compaction_summary_request(
-                &compaction_plan,
-                compaction_config,
-                runtime.config.llm.temperature,
-            );
-            let summary_response = runtime
-                .complete_model_request(&cancellation_token, summary_request)
-                .await?;
-            let summary = summary_response
-                .content
-                .map(|text| CompactionSummary::from_model_output(&text).ensure_defaults())
-                .filter(|summary| !summary.current_task.is_empty())
-                .unwrap_or_else(|| CompactionSummary::fallback_from_plan(&compaction_plan));
-            let compacted = apply_history_compaction(
-                &mut context_manager.history_mut().messages,
-                &compaction_plan,
-                summary,
-            );
-            let post_message_count = compacted.replacement_history.len();
-            let post_context_tokens_estimate =
-                estimate_history_tokens(&compacted.replacement_history) as u64;
-            let rendered_summary = compacted.summary.rendered();
+        }
+        if let Some(compacted) = &prepared.compaction {
             runtime
                 .persist_rollout_items(
                     conversation_id,
                     &[RolloutItem::Compacted {
                         summary: compacted.summary.clone(),
-                        rendered_summary: rendered_summary.clone(),
+                        rendered_summary: compacted.rendered_summary.clone(),
                         replacement_history: compacted.replacement_history.clone(),
                     }],
                 )
@@ -203,27 +185,16 @@ where
                 on_event,
                 EventMsg::ContextCompacted {
                     turn_id: turn_id.to_string(),
-                    pre_context_tokens_estimate,
-                    post_context_tokens_estimate,
-                    pre_message_count,
-                    post_message_count,
-                    preserved_tail_count: post_message_count.saturating_sub(2),
+                    pre_context_tokens_estimate: compacted.pre_context_tokens_estimate,
+                    post_context_tokens_estimate: compacted.post_context_tokens_estimate,
+                    pre_message_count: compacted.pre_message_count,
+                    post_message_count: compacted.post_message_count,
+                    preserved_tail_count: compacted.post_message_count.saturating_sub(2),
                 },
             );
         }
 
-        let mut model_request = context_manager.build_current_model_request_with_fragments(
-            std::slice::from_ref(&environment_context),
-            tool_specs.clone(),
-            runtime.config.llm.temperature,
-        );
-        let filter_service = ContextInputFilterService::new();
-        model_request.messages = filter_service.filter_for_model(
-            model_request.messages,
-            FilterPolicy {
-                enabled: is_global_pre_llm_filter_enabled(runtime),
-            },
-        );
+        let model_request = prepared.model_request;
 
         emit_event(
             &mut events,
@@ -428,24 +399,6 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
-}
-
-fn is_global_pre_llm_filter_enabled(runtime: &AgentRuntime) -> bool {
-    let path = runtime
-        .config
-        .workspace_root
-        .join("data")
-        .join("ui-settings.json");
-    let Ok(text) = fs::read_to_string(path) else {
-        return false;
-    };
-    serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
-        .and_then(|v| {
-            v.get("pre_llm_filter_enabled")
-                .and_then(|b| b.as_bool())
-        })
-        .unwrap_or(false)
 }
 
 pub(crate) fn estimate_request_overhead_tokens(

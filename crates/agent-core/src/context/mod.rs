@@ -1,5 +1,6 @@
 mod compaction;
 mod environment;
+mod facade;
 mod fragments;
 mod input_filter;
 mod manager;
@@ -11,6 +12,7 @@ pub use compaction::{
     plan_manual_history_compaction,
 };
 pub use environment::EnvironmentContext;
+pub use facade::ContextFacade;
 pub use fragments::ContextFragment;
 pub use input_filter::{ContextInputFilterService, FilterPolicy};
 pub use manager::{ContextManager, ModelContext};
