@@ -18,15 +18,7 @@ pub struct SearchTextArgs {
     #[serde(default)]
     pub max_results: Option<usize>,
     #[serde(default)]
-    pub regex: Option<bool>,
-    #[serde(default)]
     pub case_sensitive: Option<bool>,
-    #[serde(default)]
-    pub file_glob: Option<String>,
-    #[serde(default)]
-    pub context_lines: Option<usize>,
-    #[serde(default)]
-    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,10 +26,6 @@ pub struct SearchTextMatch {
     pub path: String,
     pub line: usize,
     pub preview: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub before: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub after: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,12 +53,8 @@ impl SearchTextTool {
                     "properties": {
                         "query": { "type": "string" },
                         "path_scope": { "type": "string" },
-                        "file_glob": { "type": "string" },
-                        "regex": { "type": "boolean" },
                         "case_sensitive": { "type": "boolean" },
-                        "context_lines": { "type": "integer", "minimum": 0, "maximum": 5 },
-                        "max_results": { "type": "integer", "minimum": 1 },
-                        "offset": { "type": "integer", "minimum": 0 }
+                        "max_results": { "type": "integer", "minimum": 1 }
                     },
                     "required": ["query"]
                 }),
@@ -99,21 +83,13 @@ pub async fn run_search_text(workspace_root: &Path, args: SearchTextArgs) -> Res
         .max_results
         .unwrap_or(DEFAULT_MAX_RESULTS)
         .clamp(1, HARD_MAX_RESULTS);
-    let offset = args.offset.unwrap_or(0);
-    let use_regex = args.regex.unwrap_or(false);
     let case_sensitive = args.case_sensitive.unwrap_or(true);
-    let context_lines = args.context_lines.unwrap_or(0).min(5);
-    let file_glob = args.file_glob.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    if use_regex {
-        validate_lightweight_regex(query)?;
-    }
     let ignored: BTreeSet<&str> = DEFAULT_IGNORED_DIRS.iter().copied().collect();
 
     let mut files = Vec::new();
     collect_text_files(&base, &base, &ignored, &mut files).await?;
 
     let mut results = Vec::new();
-    let mut skipped = 0usize;
     let mut files_with_matches = BTreeSet::new();
 
     for file_path in files {
@@ -130,36 +106,15 @@ pub async fn run_search_text(workspace_root: &Path, args: SearchTextArgs) -> Res
             .unwrap_or(&file_path)
             .to_string_lossy()
             .replace('\\', "/");
-        if let Some(glob) = file_glob && !glob_match(glob, &rel) {
-            continue;
-        }
-
-        let lines: Vec<&str> = text.lines().collect();
-        for (idx, line) in lines.iter().enumerate() {
-            if !line_matches(query, line, use_regex, case_sensitive) {
-                continue;
-            }
-            if skipped < offset {
-                skipped += 1;
+        for (idx, line) in text.lines().enumerate() {
+            if !line_matches(query, line, case_sensitive) {
                 continue;
             }
             files_with_matches.insert(rel.clone());
-            let before_start = idx.saturating_sub(context_lines);
-            let before = lines[before_start..idx]
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect();
-            let after_end = usize::min(idx + 1 + context_lines, lines.len());
-            let after = lines[idx + 1..after_end]
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect();
             results.push(SearchTextMatch {
                 path: rel.clone(),
                 line: idx + 1,
                 preview: line.trim().to_string(),
-                before,
-                after,
             });
             if results.len() >= max_results {
                 break;
@@ -175,75 +130,12 @@ pub async fn run_search_text(workspace_root: &Path, args: SearchTextArgs) -> Res
     })
 }
 
-fn line_matches(query: &str, line: &str, use_regex: bool, case_sensitive: bool) -> bool {
-    if use_regex {
-        regex_line_match(query, line, case_sensitive)
-    } else if case_sensitive {
+fn line_matches(query: &str, line: &str, case_sensitive: bool) -> bool {
+    if case_sensitive {
         line.contains(query)
     } else {
         line.to_lowercase().contains(&query.to_lowercase())
     }
-}
-
-fn glob_match(pattern: &str, value: &str) -> bool {
-    wildcard_match(pattern, value)
-}
-
-fn regex_line_match(pattern: &str, text: &str, case_sensitive: bool) -> bool {
-    let mut converted = String::with_capacity(pattern.len());
-    let mut escaped = false;
-    for ch in pattern.chars() {
-        if escaped {
-            converted.push(ch);
-            escaped = false;
-            continue;
-        }
-        match ch {
-            '\\' => escaped = true,
-            '.' => converted.push('?'),
-            '*' => converted.push('*'),
-            _ => converted.push(ch),
-        }
-    }
-    let (p, t) = if case_sensitive {
-        (converted, text.to_string())
-    } else {
-        (converted.to_lowercase(), text.to_lowercase())
-    };
-    wildcard_match(&p, &t)
-}
-
-fn validate_lightweight_regex(pattern: &str) -> Result<()> {
-    if pattern.is_empty() {
-        bail!("`query` must not be empty");
-    }
-    let unsupported = ['[', ']', '(', ')', '{', '}', '+', '|', '^', '$'];
-    if pattern.chars().any(|c| unsupported.contains(&c)) {
-        bail!("regex mode currently supports only '.', '*', and escaped literals");
-    }
-    Ok(())
-}
-
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
-    let s: Vec<char> = text.chars().collect();
-    let mut dp = vec![vec![false; s.len() + 1]; p.len() + 1];
-    dp[0][0] = true;
-    for i in 1..=p.len() {
-        if p[i - 1] == '*' {
-            dp[i][0] = dp[i - 1][0];
-        }
-    }
-    for i in 1..=p.len() {
-        for j in 1..=s.len() {
-            dp[i][j] = match p[i - 1] {
-                '*' => dp[i - 1][j] || dp[i][j - 1],
-                '?' => dp[i - 1][j - 1],
-                c => dp[i - 1][j - 1] && c == s[j - 1],
-            };
-        }
-    }
-    dp[p.len()][s.len()]
 }
 
 async fn collect_text_files(

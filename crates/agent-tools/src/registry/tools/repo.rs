@@ -43,14 +43,7 @@ impl LocalTool for SearchTextLocalTool {
         }
         let output = run_search_text(&ctx.workspace_root, args).await?;
         let lines = output.results.iter().map(|m| {
-            let mut block = format!("{}:{}: {}", m.path, m.line, m.preview);
-            if !m.before.is_empty() || !m.after.is_empty() {
-                let before = m.before.iter().map(|l| format!("< {l}")).collect::<Vec<_>>().join("\n");
-                let after = m.after.iter().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n");
-                if !before.is_empty() { block.push_str(&format!("\n{before}")); }
-                if !after.is_empty() { block.push_str(&format!("\n{after}")); }
-            }
-            block
+            format!("{}:{}: {}", m.path, m.line, m.preview)
         }).collect::<Vec<_>>().join("\n\n");
         let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches in {} files.\n{}", output.match_count, output.file_count, lines) };
         Ok(ToolInvocationOutput { content, summary: format!("found {} matches across {} files (powershell backend)", output.match_count, output.file_count), structured: None })
@@ -74,12 +67,7 @@ async fn run_search_text_with_rg(
     if args.case_sensitive == Some(false) {
         cmd.arg("-i");
     }
-    if args.regex == Some(false) {
-        cmd.arg("-F");
-    }
-    if let Some(glob) = args.file_glob.as_deref().filter(|v| !v.trim().is_empty()) {
-        cmd.arg("--glob").arg(glob);
-    }
+    cmd.arg("-F");
     cmd.arg(&args.query);
     if let Some(scope) = args.path_scope.as_deref().filter(|v| !v.trim().is_empty()) {
         cmd.arg(scope);
@@ -94,10 +82,6 @@ async fn run_search_text_with_rg(
         .lines()
         .map(|s| s.to_string())
         .collect();
-    let offset = args.offset.unwrap_or(0);
-    if offset > 0 {
-        lines = lines.into_iter().skip(offset).collect();
-    }
     let content = if lines.is_empty() {
         "No matches found (rg backend)".to_string()
     } else {
