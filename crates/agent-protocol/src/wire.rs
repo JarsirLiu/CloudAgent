@@ -111,38 +111,38 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
             params,
         )?)),
         "turn/interrupt" => Ok(AppClientCommand::InterruptTurn {
-            conversation_id: value_field(params, "conversation_id")?,
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/compact" => Ok(AppClientCommand::CompactConversation {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/compact" => Ok(AppClientCommand::CompactSession {
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/reset" => Ok(AppClientCommand::ResetConversation {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/reset" => Ok(AppClientCommand::ResetSession {
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/status" => Ok(AppClientCommand::RequestConversationStatus {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/status" => Ok(AppClientCommand::RequestSessionStatus {
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/history" => Ok(AppClientCommand::RequestConversationHistory {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/history" => Ok(AppClientCommand::RequestSessionHistory {
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/list" => Ok(AppClientCommand::ListConversations),
-        "conversation/create" => Ok(AppClientCommand::CreateConversation {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/list" => Ok(AppClientCommand::ListSessions),
+        "session/create" => Ok(AppClientCommand::CreateSession {
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/switch" => Ok(AppClientCommand::SwitchConversation {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/switch" => Ok(AppClientCommand::SwitchSession {
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/archive" => Ok(AppClientCommand::ArchiveConversation {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/archive" => Ok(AppClientCommand::ArchiveSession {
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/subscribe" => Ok(AppClientCommand::SubscribeConversation {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/subscribe" => Ok(AppClientCommand::SubscribeSession {
+            session_id: value_field(params, "session_id")?,
         }),
-        "conversation/unsubscribe" => Ok(AppClientCommand::UnsubscribeConversation {
-            conversation_id: value_field(params, "conversation_id")?,
+        "session/unsubscribe" => Ok(AppClientCommand::UnsubscribeSession {
+            session_id: value_field(params, "session_id")?,
         }),
         "serverRequest/resolve" => Ok(AppClientCommand::ResolveServerRequest {
-            conversation_id: value_field(params.clone(), "conversation_id")?,
+            session_id: value_field(params.clone(), "session_id")?,
             request_id: value_field(params.clone(), "request_id")?,
             decision: value_field(params, "decision")?,
         }),
@@ -161,46 +161,46 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             "serverRequest/resolve",
             serde_json::to_value(command).unwrap_or(Value::Null),
         ),
-        AppClientCommand::InterruptTurn { conversation_id } => (
+        AppClientCommand::InterruptTurn { session_id } => (
             "turn/interrupt",
-            serde_json::json!({ "conversation_id": conversation_id }),
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::CompactConversation { conversation_id } => (
-            "conversation/compact",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::CompactSession { session_id } => (
+            "session/compact",
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::ResetConversation { conversation_id } => (
-            "conversation/reset",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::ResetSession { session_id } => (
+            "session/reset",
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::RequestConversationStatus { conversation_id } => (
-            "conversation/status",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::RequestSessionStatus { session_id } => (
+            "session/status",
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::RequestConversationHistory { conversation_id } => (
-            "conversation/history",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::RequestSessionHistory { session_id } => (
+            "session/history",
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::ListConversations => ("conversation/list", Value::Null),
-        AppClientCommand::CreateConversation { conversation_id } => (
-            "conversation/create",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::ListSessions => ("session/list", Value::Null),
+        AppClientCommand::CreateSession { session_id } => (
+            "session/create",
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::SwitchConversation { conversation_id } => (
-            "conversation/switch",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::SwitchSession { session_id } => (
+            "session/switch",
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::ArchiveConversation { conversation_id } => (
-            "conversation/archive",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::ArchiveSession { session_id } => (
+            "session/archive",
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::SubscribeConversation { conversation_id } => (
-            "conversation/subscribe",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::SubscribeSession { session_id } => (
+            "session/subscribe",
+            serde_json::json!({ "session_id": session_id }),
         ),
-        AppClientCommand::UnsubscribeConversation { conversation_id } => (
-            "conversation/unsubscribe",
-            serde_json::json!({ "conversation_id": conversation_id }),
+        AppClientCommand::UnsubscribeSession { session_id } => (
+            "session/unsubscribe",
+            serde_json::json!({ "session_id": session_id }),
         ),
         AppClientCommand::Exit => ("app/exit", Value::Null),
     }
@@ -284,24 +284,24 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "turn/cancelled",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ConversationStatus { .. } => (
-            "conversation/status",
+        AppServerNotification::SessionStatus { .. } => (
+            "session/status",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ConversationHistory { .. } => (
-            "conversation/history",
+        AppServerNotification::SessionHistory { .. } => (
+            "session/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ConversationList { .. } => (
-            "conversation/list",
+        AppServerNotification::SessionList { .. } => (
+            "session/list",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ConversationSwitched { .. } => (
-            "conversation/switched",
+        AppServerNotification::SessionSwitched { .. } => (
+            "session/switched",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ConversationSubscriptionChanged { .. } => (
-            "conversation/subscriptionChanged",
+        AppServerNotification::SessionSubscriptionChanged { .. } => (
+            "session/subscriptionChanged",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::Info { .. } => (
@@ -319,14 +319,14 @@ fn request_method_and_params(request: &AppServerRequest) -> (RequestId, &'static
     match request {
         AppServerRequest::ServerRequest {
             request_id,
-            conversation_id,
+            session_id,
             request,
         } => match request {
             ServerRequest::ToolApproval { .. } => (
                 request_id.clone(),
                 "serverRequest/toolApproval",
                 serde_json::json!({
-                    "conversation_id": conversation_id,
+                    "session_id": session_id,
                     "request": request,
                 }),
             ),
@@ -360,11 +360,11 @@ fn parse_server_notification(
         | "turn/completed"
         | "turn/failed"
         | "turn/cancelled"
-        | "conversation/status"
-        | "conversation/history"
-        | "conversation/list"
-        | "conversation/switched"
-        | "conversation/subscriptionChanged"
+        | "session/status"
+        | "session/history"
+        | "session/list"
+        | "session/switched"
+        | "session/subscriptionChanged"
         | "app/info"
         | "app/error" => Ok(serde_json::from_value(params)?),
         other => anyhow::bail!("unsupported notification method: {other}"),
@@ -382,17 +382,17 @@ fn parse_server_request(
             let object = params
                 .as_object()
                 .ok_or_else(|| anyhow::anyhow!("expected object params"))?;
-            let conversation_id = object
-                .get("conversation_id")
+            let session_id = object
+                .get("session_id")
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("missing `conversation_id` field"))?;
+                .ok_or_else(|| anyhow::anyhow!("missing `session_id` field"))?;
             let request = object
                 .get("request")
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("missing `request` field"))?;
             Ok(AppServerRequest::ServerRequest {
                 request_id,
-                conversation_id: serde_json::from_value(conversation_id)?,
+                session_id: serde_json::from_value(session_id)?,
                 request: serde_json::from_value(request)?,
             })
         }
@@ -421,31 +421,31 @@ mod tests {
     #[test]
     fn classify_core_transcript_notifications_matches_codex_core_set() {
         let agent_delta = AppServerNotification::AgentMessageDelta {
-            conversation_id: "default".to_string(),
+            session_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "assistant:1".to_string(),
             delta: "hello".to_string(),
         };
         let reasoning_summary = AppServerNotification::ReasoningSummaryTextDelta {
-            conversation_id: "default".to_string(),
+            session_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "reasoning:1".to_string(),
             delta: "summary".to_string(),
         };
         let reasoning_text = AppServerNotification::ReasoningTextDelta {
-            conversation_id: "default".to_string(),
+            session_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "reasoning:1".to_string(),
             delta: "detail".to_string(),
         };
         let plan_delta = AppServerNotification::PlanDelta {
-            conversation_id: "default".to_string(),
+            session_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "plan:1".to_string(),
             delta: "step 1".to_string(),
         };
         let item_completed = AppServerNotification::ItemCompleted {
-            conversation_id: "default".to_string(),
+            session_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item: TranscriptItem::AgentMessage {
                 id: "assistant:1".to_string(),
@@ -453,7 +453,7 @@ mod tests {
             },
         };
         let turn_completed = AppServerNotification::TurnCompleted {
-            conversation_id: "default".to_string(),
+            session_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
         };
 
@@ -479,19 +479,19 @@ mod tests {
     fn command_execution_output_is_control_not_core_transcript() {
         for notification in [
             AppServerNotification::CommandExecutionOutputDelta {
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:1".to_string(),
                 delta: "D:\\work".to_string(),
             },
             AppServerNotification::FileChangeOutputDelta {
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:2".to_string(),
                 delta: "wrote D:\\work\\note.txt".to_string(),
             },
             AppServerNotification::ToolOutputDelta {
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:3".to_string(),
                 delta: "generic tool output".to_string(),
@@ -511,7 +511,7 @@ mod tests {
     fn tool_output_roundtrips_through_jsonrpc_notification() {
         let message = AppServerMessageEnvelope {
             message: AppServerMessage::Notification(AppServerNotification::ToolOutputDelta {
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:custom".to_string(),
                 delta: "custom output".to_string(),
@@ -543,7 +543,7 @@ mod tests {
     fn file_change_output_roundtrips_through_jsonrpc_notification() {
         let message = AppServerMessageEnvelope {
             message: AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:write".to_string(),
                 delta: "wrote note.txt".to_string(),
@@ -575,7 +575,7 @@ mod tests {
     fn token_usage_roundtrips_through_jsonrpc_notification() {
         let message = AppServerMessageEnvelope {
             message: AppServerMessage::Notification(AppServerNotification::TokenUsageUpdated {
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 last_usage: ModelUsage {
                     input_tokens: 10,
@@ -623,7 +623,7 @@ mod tests {
         let message = AppServerMessageEnvelope {
             message: AppServerMessage::Request(AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(7),
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 request: ServerRequest::ToolApproval {
                     request: ToolApprovalRequest {
                         turn_id: "turn-1".to_string(),
@@ -663,7 +663,7 @@ mod tests {
         let envelope = AppClientCommandEnvelope {
             request_id: RequestId::Integer(1),
             command: AppClientCommand::SubmitTurn(UserTurnInput {
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 content: "hello".to_string(),
             }),
         };
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(parsed.request_id, RequestId::Integer(1));
         match parsed.command {
             AppClientCommand::SubmitTurn(input) => {
-                assert_eq!(input.conversation_id, "default");
+                assert_eq!(input.session_id, "default");
                 assert_eq!(input.content, "hello");
             }
             other => panic!("unexpected command: {other:?}"),
@@ -686,7 +686,7 @@ mod tests {
         let envelope = AppClientCommandEnvelope {
             request_id: RequestId::Integer(9),
             command: AppClientCommand::ResolveServerRequest {
-                conversation_id: "default".to_string(),
+                session_id: "default".to_string(),
                 request_id: RequestId::Integer(7),
                 decision: ServerRequestDecision::accept(Some("ok".to_string())),
             },
@@ -698,11 +698,11 @@ mod tests {
         assert_eq!(parsed.request_id, RequestId::Integer(9));
         match parsed.command {
             AppClientCommand::ResolveServerRequest {
-                conversation_id,
+                session_id,
                 request_id,
                 decision,
             } => {
-                assert_eq!(conversation_id, "default");
+                assert_eq!(session_id, "default");
                 assert_eq!(request_id, RequestId::Integer(7));
                 assert!(decision.is_approved());
                 assert_eq!(decision.reason.as_deref(), Some("ok"));
