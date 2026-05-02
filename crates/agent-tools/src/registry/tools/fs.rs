@@ -1,5 +1,6 @@
 use crate::impls::fs::{
-    GetMetadataTool, ReadDirectoryTool as ReadDirectoryDescriptorTool,
+    ApplyPatchTool as ApplyPatchDescriptorTool, GetMetadataTool,
+    ReadDirectoryTool as ReadDirectoryDescriptorTool,
     WriteFileTool as WriteFileDescriptorTool,
 };
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
@@ -8,11 +9,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
+use tokio::process::Command;
 
 pub(crate) struct GetMetadataLocalTool;
 pub(crate) struct ReadDirectoryTool;
 pub(crate) struct WriteFileTool;
+pub(crate) struct ApplyPatchLocalTool;
 
 #[derive(Deserialize)]
 struct GetMetadataArgs {
@@ -29,6 +33,11 @@ struct ReadDirectoryArgs {
 struct WriteFileArgs {
     path: String,
     content: String,
+}
+
+#[derive(Deserialize)]
+struct ApplyPatchArgs {
+    patch: String,
 }
 
 #[async_trait]
@@ -118,4 +127,51 @@ impl LocalTool for WriteFileTool {
             }),
         })
     }
+}
+
+#[async_trait]
+impl LocalTool for ApplyPatchLocalTool {
+    fn spec(&self) -> ToolSpec {
+        ApplyPatchDescriptorTool::descriptor().spec
+    }
+    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
+        let args: ApplyPatchArgs = serde_json::from_value(arguments)?;
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+        let patch_path = ctx.workspace_root.join(format!(".apply_patch_{stamp}.diff"));
+        fs::write(&patch_path, &args.patch).await?;
+
+        let files_changed = count_patch_targets(&args.patch);
+        let output = Command::new("git")
+            .current_dir(&ctx.workspace_root)
+            .arg("apply")
+            .arg("--whitespace=nowarn")
+            .arg("--recount")
+            .arg(&patch_path)
+            .output()
+            .await?;
+        let _ = fs::remove_file(&patch_path).await;
+
+        if !output.status.success() {
+            anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+
+        Ok(ToolInvocationOutput {
+            content: format!("Applied patch. files_changed={files_changed}"),
+            summary: "applied patch".to_string(),
+            structured: Some(agent_protocol::StructuredToolResult::ApplyPatch {
+                files_changed,
+                status: agent_protocol::WriteFileStatus::Completed,
+            }),
+        })
+    }
+}
+
+fn count_patch_targets(patch: &str) -> usize {
+    let mut files = std::collections::BTreeSet::new();
+    for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            files.insert(path.to_string());
+        }
+    }
+    files.len()
 }

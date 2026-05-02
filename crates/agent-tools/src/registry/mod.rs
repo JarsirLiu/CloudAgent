@@ -23,7 +23,7 @@ use shared::{LocalTool, register, structured_failure_result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tools::command::ShellCommandTool;
-use tools::fs::{GetMetadataLocalTool, ReadDirectoryTool, WriteFileTool};
+use tools::fs::{ApplyPatchLocalTool, GetMetadataLocalTool, ReadDirectoryTool, WriteFileTool};
 use tools::repo::{FindFilesLocalTool, ReadFileTool, ReadFilesLocalTool, SearchTextLocalTool};
 
 #[derive(Clone)]
@@ -65,6 +65,7 @@ impl ToolRegistry {
         register_alias(&mut tools, "repo/readFile", "read_file");
         register(&mut tools, WriteFileTool);
         register_alias(&mut tools, "fs/writeFile", "write_file");
+        register(&mut tools, ApplyPatchLocalTool);
 
         Self {
             tools,
