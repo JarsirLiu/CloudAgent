@@ -159,12 +159,12 @@ impl InputPane {
         &self,
         mode: FrontendMode,
         status_text: &str,
-        status_meta: &str,
+        _status_meta: &str,
         area_width: u16,
     ) -> (Paragraph<'static>, u16, u16) {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let inner_width = area_width.saturating_sub(2) as usize;
-        lines.push(status_line(mode, status_text, status_meta, inner_width));
+        lines.push(status_line(mode, status_text, "", inner_width));
 
         let mut lines_before_composer = 1u16;
 
