@@ -84,6 +84,7 @@ pub(crate) enum ServerAction {
     ClearLastToolName,
     ReplaceHistory(Vec<ConversationTurn>),
     PushErrorCell(String),
+    PushInfoCell(String),
     ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
@@ -117,6 +118,9 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
+                    if message.to_ascii_lowercase().contains("compact") {
+                        actions.push(ServerAction::PushInfoCell(message.clone()));
+                    }
                 }
                 AppServerNotification::TokenUsageUpdated {
                     last_usage,
@@ -136,12 +140,14 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     preserved_tail_count,
                     ..
                 } => {
-                    actions.push(ServerAction::SetStatusNotice(Some(format!(
+                    let summary = format!(
                         "Context compacted: ~{} -> ~{} tokens, preserved {} recent items",
                         pre_context_tokens_estimate,
                         post_context_tokens_estimate,
                         preserved_tail_count
-                    ))));
+                    );
+                    actions.push(ServerAction::SetStatusNotice(Some(summary.clone())));
+                    actions.push(ServerAction::PushInfoCell(summary));
                 }
                 AppServerNotification::Error { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));

@@ -185,6 +185,14 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 HistoryTone::Error,
             ));
         }
+        ServerAction::PushInfoCell(message) => {
+            app.input_pane.clear_views();
+            app.push_cell(HistoryCell::from_message(
+                "context",
+                message,
+                HistoryTone::Control,
+            ));
+        }
         ServerAction::ItemDispatch(dispatch) => match dispatch {
             ItemDispatch::AssistantStarted { turn_id, item_id } => {
                 app.handle_assistant_item_started(&turn_id, &item_id);
