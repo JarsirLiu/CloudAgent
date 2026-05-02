@@ -1,21 +1,20 @@
 use crate::conversation_listener::ConversationListenerHandle;
-use crate::conversation_listener::start_conversation_listener;
 use crate::conversation_subscriptions::ConversationSubscriptions;
+use crate::conversation_service;
+use crate::server_request_service;
 use crate::server_request_coordinator::ServerRequestCoordinator;
+use crate::turn_service;
 use agent_core::ConversationTurn;
-use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest,
-    ServerRequestDecision,
-};
+use agent_protocol::{AppClientCommand, AppServerMessage, ServerRequestDecision};
 use agent_runtime::AgentRuntime;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 pub(crate) struct ServerState {
+    active_conversation_id: String,
     subscriptions: ConversationSubscriptions,
     server_requests: ServerRequestCoordinator,
     turn_tasks: Vec<JoinHandle<()>>,
@@ -25,6 +24,7 @@ pub(crate) struct ServerState {
 impl ServerState {
     pub(crate) fn new(default_conversation_id: String) -> Self {
         Self {
+            active_conversation_id: default_conversation_id.clone(),
             subscriptions: ConversationSubscriptions::new(default_conversation_id),
             server_requests: ServerRequestCoordinator::new(),
             turn_tasks: Vec::new(),
@@ -59,15 +59,87 @@ impl ServerState {
     ) -> Option<ConversationListenerHandle> {
         self.active_listeners.get(conversation_id).cloned()
     }
-}
 
-async fn await_tracked_turn_tasks(state: &Arc<Mutex<ServerState>>) {
-    let tasks = {
-        let mut guard = state.lock().await;
-        guard.take_turn_tasks()
-    };
-    for task in tasks {
-        let _ = task.await;
+    pub(crate) fn active_conversation_id(&self) -> &str {
+        &self.active_conversation_id
+    }
+
+    pub(crate) fn switch_active_conversation(&mut self, conversation_id: String) {
+        self.active_conversation_id = conversation_id;
+    }
+
+    pub(crate) fn is_subscribed(&self, conversation_id: &str) -> bool {
+        self.subscriptions.is_subscribed(conversation_id)
+    }
+
+    pub(crate) fn subscribe(&mut self, conversation_id: String) {
+        self.subscriptions.subscribe(conversation_id);
+    }
+
+    pub(crate) fn unsubscribe(&mut self, conversation_id: &str) {
+        self.subscriptions.unsubscribe(conversation_id);
+    }
+
+    pub(crate) fn resolve_server_request(
+        &mut self,
+        request_id: &agent_protocol::RequestId,
+        decision: ServerRequestDecision,
+    ) -> Option<(
+        String,
+        agent_protocol::ServerRequest,
+        ServerRequestDecision,
+    )> {
+        self.server_requests.resolve(request_id, decision)
+    }
+
+    pub(crate) fn drain_server_requests_for_turn(
+        &mut self,
+        turn_id: &str,
+        decision: ServerRequestDecision,
+    ) -> Vec<(
+        agent_protocol::RequestId,
+        String,
+        agent_protocol::ServerRequest,
+        ServerRequestDecision,
+    )> {
+        self.server_requests.drain_turn(turn_id, decision)
+    }
+
+    pub(crate) fn drain_server_requests_for_conversation(
+        &mut self,
+        conversation_id: &str,
+        decision: ServerRequestDecision,
+    ) -> Vec<(
+        agent_protocol::RequestId,
+        String,
+        agent_protocol::ServerRequest,
+        ServerRequestDecision,
+    )> {
+        self.server_requests
+            .drain_conversation(conversation_id, decision)
+    }
+
+    pub(crate) fn pending_server_requests_for_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Vec<(agent_protocol::RequestId, agent_protocol::ServerRequest)> {
+        self.server_requests.pending_for_conversation(conversation_id)
+    }
+
+    pub(crate) fn next_server_request_id(&self) -> agent_protocol::RequestId {
+        self.server_requests.next_request_id()
+    }
+
+    pub(crate) fn insert_pending_server_request(
+        &mut self,
+        request_id: agent_protocol::RequestId,
+        conversation_id: String,
+        turn_id: String,
+        request: agent_protocol::ServerRequest,
+        reply_tx: oneshot::Sender<ServerRequestDecision>,
+    ) {
+        self.server_requests
+            .insert_pending(request_id, conversation_id, turn_id, request, reply_tx);
     }
 }
 
@@ -89,223 +161,98 @@ pub(crate) async fn handle_command(
 ) -> Result<()> {
     match command {
         AppClientCommand::SubmitTurn(input) => {
-            await_tracked_turn_tasks(&state).await;
-            send_notification(
+            turn_service::submit_turn(
+                runtime,
                 event_tx,
                 &state,
-                AppServerNotification::FrontendStateChanged {
-                    conversation_id: input.conversation_id.clone(),
-                    mode: agent_protocol::FrontendMode::Running,
-                },
-            )
-            .await;
-            let task = spawn_turn(
-                runtime,
                 input.conversation_id,
                 input.content,
-                TurnSpawnDependencies {
-                    event_tx: event_tx.clone(),
-                    state: state.clone(),
-                    auto_approve,
-                    auto_approve_reason,
-                },
-            );
-            state.lock().await.track_turn_task(task);
+                auto_approve,
+                auto_approve_reason,
+            )
+            .await;
         }
         AppClientCommand::InterruptTurn { conversation_id } => {
-            let interrupted = runtime.interrupt_conversation(&conversation_id).await;
-            if interrupted {
-                resolve_pending_requests_for_interrupted_conversation(
-                    event_tx,
-                    &state,
-                    &conversation_id,
-                    "interrupted by client",
-                )
-                .await;
-            }
-            send_notification(
-                event_tx,
-                &state,
-                AppServerNotification::Info {
-                    conversation_id,
-                    message: if interrupted {
-                        "interrupt requested".to_string()
-                    } else {
-                        "no active turn".to_string()
-                    },
-                },
-            )
-            .await;
+            turn_service::interrupt_turn(&runtime, event_tx, &state, conversation_id).await;
         }
         AppClientCommand::CompactConversation { conversation_id } => {
-            await_tracked_turn_tasks(&state).await;
-            let estimated_tokens = runtime
-                .conversation_history_snapshot(&conversation_id)
-                .await
-                .map(|history| estimate_history_tokens(&history.messages))
-                .unwrap_or(0) as u64;
-            send_notification(
-                event_tx,
-                &state,
-                AppServerNotification::ContextCompactionStarted {
-                    conversation_id: conversation_id.clone(),
-                    turn_id: "manual_compaction".to_string(),
-                    estimated_tokens,
-                },
-            )
-            .await;
-            match runtime.compact_conversation(&conversation_id).await? {
-                agent_runtime::ManualCompactionOutcome::Compacted {
-                    pre_context_tokens_estimate,
-                    post_context_tokens_estimate,
-                    pre_message_count: _,
-                    post_message_count: _,
-                    preserved_tail_count: _,
-                } => {
-                    let turns = runtime.build_turns_from_rollout(&conversation_id).await?;
-                    send_notification(
-                        event_tx,
-                        &state,
-                        AppServerNotification::ConversationHistory {
-                            conversation_id: conversation_id.clone(),
-                            turns,
-                        },
-                    )
-                    .await;
-                    send_notification(
-                        event_tx,
-                        &state,
-                        AppServerNotification::Info {
-                            conversation_id,
-                            message: format!(
-                                "Context compacted: ~{} -> ~{} tokens",
-                                pre_context_tokens_estimate, post_context_tokens_estimate
-                            ),
-                        },
-                    )
-                    .await;
-                }
-                agent_runtime::ManualCompactionOutcome::Skipped {
-                    estimated_history_tokens,
-                } => {
-                    send_notification(
-                        event_tx,
-                        &state,
-                        AppServerNotification::Info {
-                            conversation_id,
-                            message: format!(
-                                "Not enough conversation history to compact yet (~{} tokens; need at least ~20000).",
-                                estimated_history_tokens
-                            ),
-                        },
-                    )
-                    .await;
-                }
-            }
+            turn_service::compact_conversation(&runtime, event_tx, &state, conversation_id).await?;
         }
         AppClientCommand::RequestConversationStatus { conversation_id } => {
-            let snapshot = runtime.conversation_status(&conversation_id).await?;
-            send_notification(
+            conversation_service::request_conversation_status(
+                &runtime,
                 event_tx,
                 &state,
-                AppServerNotification::ConversationStatus {
-                    conversation_id,
-                    snapshot,
-                },
+                conversation_id,
             )
-            .await;
+            .await?;
         }
         AppClientCommand::RequestConversationHistory { conversation_id } => {
-            let requested_conversation_id = conversation_id.clone();
-            let active_listener = {
-                let state = state.lock().await;
-                state.active_listener(&conversation_id)
-            };
-            let active_turn = match active_listener {
-                Some(listener) => listener.active_turn_snapshot().await,
-                None => None,
-            };
-            let mut turns = runtime.build_turns_from_rollout(&conversation_id).await?;
-            merge_active_turn(&mut turns, active_turn);
-            send_notification(
+            conversation_service::request_conversation_history(
+                &runtime,
                 event_tx,
                 &state,
-                AppServerNotification::ConversationHistory {
-                    conversation_id,
-                    turns,
-                },
+                conversation_id.clone(),
+            )
+            .await?;
+            server_request_service::replay_pending_for_conversation(
+                event_tx,
+                &state,
+                &conversation_id,
             )
             .await;
-            replay_pending_requests_for_conversation(event_tx, &state, &requested_conversation_id)
-                .await;
+        }
+        AppClientCommand::ListConversations => {
+            conversation_service::list_conversations(&runtime, event_tx, &state).await?;
+        }
+        AppClientCommand::CreateConversation { conversation_id } => {
+            conversation_service::create_conversation(
+                &runtime,
+                event_tx,
+                &state,
+                conversation_id,
+            )
+            .await?;
+        }
+        AppClientCommand::SwitchConversation { conversation_id } => {
+            conversation_service::switch_conversation(&runtime, event_tx, &state, conversation_id)
+                .await?;
+        }
+        AppClientCommand::ArchiveConversation { conversation_id } => {
+            conversation_service::archive_conversation(&runtime, event_tx, &state, conversation_id)
+                .await?;
         }
         AppClientCommand::ResetConversation { conversation_id } => {
-            runtime.reset_conversation(&conversation_id).await?;
-            send_notification(
-                event_tx,
-                &state,
-                AppServerNotification::Info {
-                    conversation_id,
-                    message: "conversation reset".to_string(),
-                },
-            )
-            .await;
+            conversation_service::reset_conversation(&runtime, event_tx, &state, conversation_id)
+                .await?;
         }
         AppClientCommand::SubscribeConversation { conversation_id } => {
-            {
-                let mut state = state.lock().await;
-                state.subscriptions.subscribe(conversation_id.clone());
-            }
-            send_notification(
+            conversation_service::subscribe_conversation(event_tx, &state, conversation_id.clone())
+                .await;
+            server_request_service::replay_pending_for_conversation(
                 event_tx,
                 &state,
-                AppServerNotification::ConversationSubscriptionChanged {
-                    conversation_id: conversation_id.clone(),
-                    subscribed: true,
-                },
+                &conversation_id,
             )
             .await;
-            replay_pending_requests_for_conversation(event_tx, &state, &conversation_id).await;
         }
         AppClientCommand::UnsubscribeConversation { conversation_id } => {
-            {
-                let mut state = state.lock().await;
-                state.subscriptions.unsubscribe(&conversation_id);
-            }
-            let _ = event_tx.send(AppServerMessage::Notification(
-                AppServerNotification::ConversationSubscriptionChanged {
-                    conversation_id,
-                    subscribed: false,
-                },
-            ));
+            conversation_service::unsubscribe_conversation(event_tx, &state, conversation_id).await;
         }
         AppClientCommand::ResolveServerRequest {
             conversation_id,
             request_id,
             decision,
         } => {
-            let mut state_guard = state.lock().await;
-            let resolved = state_guard
-                .server_requests
-                .resolve(&request_id, decision.clone());
-            drop(state_guard);
-            if let Some((turn_id, request, decision)) = resolved {
-                runtime
-                    .resolve_pending_request(&conversation_id, &request_id)
-                    .await;
-                send_notification(
-                    event_tx,
-                    &state,
-                    AppServerNotification::ServerRequestResolved {
-                        conversation_id,
-                        turn_id,
-                        request_id,
-                        request,
-                        decision,
-                    },
-                )
-                .await;
-            }
+            server_request_service::resolve_command(
+                &runtime,
+                event_tx,
+                &state,
+                conversation_id,
+                request_id,
+                decision,
+            )
+            .await;
         }
         AppClientCommand::Exit => {}
     }
@@ -313,282 +260,7 @@ pub(crate) async fn handle_command(
     Ok(())
 }
 
-fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
-    messages
-        .iter()
-        .map(|item| match item {
-            agent_core::ResponseItem::System { content }
-            | agent_core::ResponseItem::User { content } => content.chars().count(),
-            agent_core::ResponseItem::Assistant {
-                content,
-                tool_calls,
-            } => {
-                let text_len = content.as_ref().map_or(0, |text| text.chars().count());
-                let tool_len: usize = tool_calls
-                    .iter()
-                    .map(|call| {
-                        call.name.chars().count() + call.arguments.to_string().chars().count()
-                    })
-                    .sum();
-                text_len + tool_len
-            }
-            agent_core::ResponseItem::Tool { name, content, .. } => {
-                name.chars().count() + content.chars().count()
-            }
-        })
-        .sum::<usize>()
-        .saturating_div(3)
-        .max(1)
-}
-
-fn spawn_turn(
-    runtime: Arc<AgentRuntime>,
-    conversation_id: String,
-    user_input: String,
-    deps: TurnSpawnDependencies,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let finish_events = deps.event_tx.clone();
-        let state_for_finish = deps.state.clone();
-        let conversation_id_for_server_request = conversation_id.clone();
-        let active_turn_id = Arc::new(StdMutex::new(None::<String>));
-        let active_turn_id_for_events = active_turn_id.clone();
-        let runtime_for_requests = runtime.clone();
-        let (listener, listener_task) = start_conversation_listener(
-            conversation_id.clone(),
-            deps.event_tx.clone(),
-            deps.state.clone(),
-        );
-        {
-            let mut state = deps.state.lock().await;
-            state.set_active_listener(conversation_id.clone(), listener.clone());
-        }
-        let listener_for_events = listener.clone();
-
-        let result = runtime
-            .chat_with_approval_and_events(
-                &conversation_id,
-                &user_input,
-                move |event| {
-                    let event = event.clone();
-                    let active_turn_id = active_turn_id_for_events.clone();
-                    if let agent_protocol::EventMsg::TurnStarted { turn_id, .. } = &event
-                        && let Ok(mut active) = active_turn_id.lock()
-                    {
-                        *active = Some(turn_id.clone());
-                    }
-                    listener_for_events.project_event(event);
-                },
-                move |request: ServerRequest| {
-                    let event_tx = deps.event_tx.clone();
-                    let state = deps.state.clone();
-                    let conversation_id = conversation_id_for_server_request.clone();
-                    let auto_approve_reason = deps.auto_approve_reason.clone();
-                    let runtime = runtime_for_requests.clone();
-                    async move {
-                        if deps.auto_approve {
-                            return Ok(ServerRequestDecision::accept(
-                                auto_approve_reason
-                                    .clone()
-                                    .or_else(|| Some("auto-approved by app server".to_string())),
-                            ));
-                        }
-
-                        let request_id = {
-                            let state_guard = state.lock().await;
-                            state_guard.server_requests.next_request_id()
-                        };
-                        let (reply_tx, reply_rx) = oneshot::channel();
-                        let turn_id = match &request {
-                            ServerRequest::ToolApproval { request } => request.turn_id.clone(),
-                        };
-                        {
-                            let mut state_guard = state.lock().await;
-                            state_guard.server_requests.insert_pending(
-                                request_id.clone(),
-                                conversation_id.clone(),
-                                turn_id,
-                                request.clone(),
-                                reply_tx,
-                            );
-                        }
-                        runtime
-                            .register_pending_request(
-                                &conversation_id,
-                                request_id.clone(),
-                                request.clone(),
-                            )
-                            .await;
-                        send_request(
-                            &event_tx,
-                            &state,
-                            AppServerRequest::ServerRequest {
-                                request_id,
-                                conversation_id,
-                                request,
-                            },
-                        )
-                        .await;
-                        reply_rx
-                            .await
-                            .map_err(|_| anyhow!("server request response channel closed"))
-                    }
-                },
-            )
-            .await;
-
-        {
-            let mut state = state_for_finish.lock().await;
-            state.clear_active_listener(&conversation_id);
-        }
-
-        match result {
-            Ok(output) => {
-                resolve_pending_requests_for_finished_turn(
-                    &finish_events,
-                    &state_for_finish,
-                    &conversation_id,
-                    &output.turn_id,
-                    "turn finished before request was answered",
-                )
-                .await;
-                listener.finish_turn(output.state).await;
-            }
-            Err(error) => {
-                let maybe_turn_id = active_turn_id.lock().ok().and_then(|guard| guard.clone());
-                if let Some(turn_id) = maybe_turn_id {
-                    resolve_pending_requests_for_finished_turn(
-                        &finish_events,
-                        &state_for_finish,
-                        &conversation_id,
-                        &turn_id,
-                        "turn failed before request was answered",
-                    )
-                    .await;
-                    send_notification(
-                        &finish_events,
-                        &state_for_finish,
-                        AppServerNotification::TurnFailed {
-                            conversation_id: conversation_id.clone(),
-                            turn_id,
-                            error: format!("{error:#}"),
-                        },
-                    )
-                    .await;
-                } else {
-                    send_notification(
-                        &finish_events,
-                        &state_for_finish,
-                        AppServerNotification::Error {
-                            conversation_id: conversation_id.clone(),
-                            message: format!("turn failed before start: {error:#}"),
-                        },
-                    )
-                    .await;
-                }
-                send_notification(
-                    &finish_events,
-                    &state_for_finish,
-                    AppServerNotification::FrontendStateChanged {
-                        conversation_id: conversation_id.clone(),
-                        mode: agent_protocol::FrontendMode::Idle,
-                    },
-                )
-                .await;
-                listener
-                    .finish_turn(agent_protocol::TurnState::Failed)
-                    .await;
-            }
-        }
-        let _ = listener_task.await;
-    })
-}
-
-async fn resolve_pending_requests_for_finished_turn(
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
-    conversation_id: &str,
-    turn_id: &str,
-    reason: &str,
-) {
-    let resolved = {
-        let mut state = state.lock().await;
-        state.server_requests.drain_turn(
-            turn_id,
-            ServerRequestDecision::cancel(Some(reason.to_string())),
-        )
-    };
-    for (request_id, turn_id, request, decision) in resolved {
-        send_notification(
-            event_tx,
-            state,
-            AppServerNotification::ServerRequestResolved {
-                conversation_id: conversation_id.to_string(),
-                turn_id,
-                request_id,
-                request,
-                decision,
-            },
-        )
-        .await;
-    }
-}
-
-async fn resolve_pending_requests_for_interrupted_conversation(
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
-    conversation_id: &str,
-    reason: &str,
-) {
-    let resolved = {
-        let mut state = state.lock().await;
-        state.server_requests.drain_conversation(
-            conversation_id,
-            ServerRequestDecision::cancel(Some(reason.to_string())),
-        )
-    };
-    for (request_id, turn_id, request, decision) in resolved {
-        send_notification(
-            event_tx,
-            state,
-            AppServerNotification::ServerRequestResolved {
-                conversation_id: conversation_id.to_string(),
-                turn_id,
-                request_id,
-                request,
-                decision,
-            },
-        )
-        .await;
-    }
-}
-
-async fn replay_pending_requests_for_conversation(
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
-    conversation_id: &str,
-) {
-    let pending = {
-        let state = state.lock().await;
-        state
-            .server_requests
-            .pending_for_conversation(conversation_id)
-    };
-    for (request_id, request) in pending {
-        send_request(
-            event_tx,
-            state,
-            AppServerRequest::ServerRequest {
-                request_id,
-                conversation_id: conversation_id.to_string(),
-                request,
-            },
-        )
-        .await;
-    }
-}
-
-fn merge_active_turn(turns: &mut Vec<ConversationTurn>, active_turn: Option<ConversationTurn>) {
+pub(crate) fn merge_active_turn(turns: &mut Vec<ConversationTurn>, active_turn: Option<ConversationTurn>) {
     let Some(active_turn) = active_turn else {
         return;
     };
@@ -639,37 +311,5 @@ mod tests {
             rollout_start_index: 0,
             rollout_end_index: 0,
         }
-    }
-}
-
-pub(crate) async fn send_notification(
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
-    notification: AppServerNotification,
-) {
-    let subscribed = {
-        let state = state.lock().await;
-        state
-            .subscriptions
-            .is_subscribed(notification.conversation_id())
-    };
-    let message = AppServerMessage::Notification(notification);
-    if subscribed {
-        let _ = event_tx.send(message);
-    }
-}
-
-async fn send_request(
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
-    request: AppServerRequest,
-) {
-    let subscribed = {
-        let state = state.lock().await;
-        state.subscriptions.is_subscribed(request.conversation_id())
-    };
-    let message = AppServerMessage::Request(request);
-    if subscribed {
-        let _ = event_tx.send(message);
     }
 }
