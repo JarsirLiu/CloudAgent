@@ -104,6 +104,9 @@ pub async fn run_search_text(workspace_root: &Path, args: SearchTextArgs) -> Res
     let case_sensitive = args.case_sensitive.unwrap_or(true);
     let context_lines = args.context_lines.unwrap_or(0).min(5);
     let file_glob = args.file_glob.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if use_regex {
+        validate_lightweight_regex(query)?;
+    }
     let ignored: BTreeSet<&str> = DEFAULT_IGNORED_DIRS.iter().copied().collect();
 
     let mut files = Vec::new();
@@ -174,7 +177,7 @@ pub async fn run_search_text(workspace_root: &Path, args: SearchTextArgs) -> Res
 
 fn line_matches(query: &str, line: &str, use_regex: bool, case_sensitive: bool) -> bool {
     if use_regex {
-        regex_match(query, line, case_sensitive)
+        regex_line_match(query, line, case_sensitive)
     } else if case_sensitive {
         line.contains(query)
     } else {
@@ -186,13 +189,39 @@ fn glob_match(pattern: &str, value: &str) -> bool {
     wildcard_match(pattern, value)
 }
 
-fn regex_match(pattern: &str, text: &str, case_sensitive: bool) -> bool {
+fn regex_line_match(pattern: &str, text: &str, case_sensitive: bool) -> bool {
+    let mut converted = String::with_capacity(pattern.len());
+    let mut escaped = false;
+    for ch in pattern.chars() {
+        if escaped {
+            converted.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '.' => converted.push('?'),
+            '*' => converted.push('*'),
+            _ => converted.push(ch),
+        }
+    }
     let (p, t) = if case_sensitive {
-        (pattern.to_string(), text.to_string())
+        (converted, text.to_string())
     } else {
-        (pattern.to_lowercase(), text.to_lowercase())
+        (converted.to_lowercase(), text.to_lowercase())
     };
-    wildcard_match(&p.replace('.', "?"), &t)
+    wildcard_match(&p, &t)
+}
+
+fn validate_lightweight_regex(pattern: &str) -> Result<()> {
+    if pattern.is_empty() {
+        bail!("`query` must not be empty");
+    }
+    let unsupported = ['[', ']', '(', ')', '{', '}', '+', '|', '^', '$'];
+    if pattern.chars().any(|c| unsupported.contains(&c)) {
+        bail!("regex mode currently supports only '.', '*', and escaped literals");
+    }
+    Ok(())
 }
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {
