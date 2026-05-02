@@ -1,8 +1,10 @@
 use crate::command_router::{ServerState, handle_command};
+use crate::conversation_cursor;
 use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
 use agent_runtime::AgentRuntime;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
+use std::{env, path::PathBuf};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 #[derive(Debug)]
@@ -58,9 +60,11 @@ pub fn start_in_process(
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) -> InProcessClientHandle {
+    let project_root = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let initial_conversation_id = resolve_initial_conversation_id(&runtime, &project_root, &conversation_id);
     let (command_tx, mut command_rx) = mpsc::unbounded_channel::<ServerMessage>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<AppServerMessage>();
-    let state = Arc::new(Mutex::new(ServerState::new(conversation_id.clone())));
+    let state = Arc::new(Mutex::new(ServerState::new(initial_conversation_id.clone())));
 
     tokio::spawn(async move {
         while let Some(message) = command_rx.recv().await {
@@ -68,7 +72,7 @@ pub fn start_in_process(
                 ServerMessage::Command(AppClientCommand::Exit) => {
                     let tasks = {
                         let mut guard = state.lock().await;
-                        guard.take_turn_tasks()
+                        guard.take_all_turn_tasks()
                     };
                     for task in tasks {
                         let _ = task.await;
@@ -76,6 +80,7 @@ pub fn start_in_process(
                     break;
                 }
                 ServerMessage::Command(command) => {
+                    let command_conversation_id = command.conversation_id().map(str::to_string);
                     if handle_command(
                         runtime.clone(),
                         command,
@@ -93,12 +98,14 @@ pub fn start_in_process(
                                 message: "command handling failed".to_string(),
                             },
                         ));
+                    } else if let Some(id) = command_conversation_id {
+                        let _ = conversation_cursor::save(&project_root, &id);
                     }
                 }
                 ServerMessage::Shutdown { done } => {
                     let tasks = {
                         let mut guard = state.lock().await;
-                        guard.take_turn_tasks()
+                        guard.take_all_turn_tasks()
                     };
                     for task in tasks {
                         let _ = task.await;
@@ -113,5 +120,20 @@ pub fn start_in_process(
     InProcessClientHandle {
         command_tx,
         event_rx,
+    }
+}
+
+fn resolve_initial_conversation_id(
+    _runtime: &AgentRuntime,
+    project_root: &std::path::Path,
+    fallback_default: &str,
+) -> String {
+    let Some(candidate) = conversation_cursor::load(project_root) else {
+        return fallback_default.to_string();
+    };
+    if candidate.trim().is_empty() {
+        fallback_default.to_string()
+    } else {
+        candidate
     }
 }

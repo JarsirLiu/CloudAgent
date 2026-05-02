@@ -1,6 +1,7 @@
 mod command_router;
 mod conversation_service;
 mod conversation_listener;
+mod conversation_cursor;
 mod conversation_subscriptions;
 mod in_process;
 mod notification_service;
@@ -13,6 +14,7 @@ pub mod transport;
 use agent_protocol::{AppClientCommandEnvelope, AppServerMessageEnvelope};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -34,8 +36,19 @@ pub async fn run_stdio_server(
     let read_task = tokio::spawn(async move { transport::stdio::read_commands(command_tx).await });
     let write_task = tokio::spawn(async move { transport::stdio::write_events(event_rx).await });
     let forward_events = tokio::spawn(async move {
+        let mut seq_by_conversation: HashMap<String, u64> = HashMap::new();
         while let Some(message) = client.next_message().await {
-            if event_tx.send(AppServerMessageEnvelope { message }).is_err() {
+            let event_seq = message.conversation_id().map(|conversation_id| {
+                let next = seq_by_conversation
+                    .entry(conversation_id.to_string())
+                    .or_insert(0);
+                *next += 1;
+                *next
+            });
+            if event_tx
+                .send(AppServerMessageEnvelope { message, event_seq })
+                .is_err()
+            {
                 break;
             }
         }
