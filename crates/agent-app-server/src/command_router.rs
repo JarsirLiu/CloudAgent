@@ -139,12 +139,18 @@ pub(crate) async fn handle_command(
         }
         AppClientCommand::CompactConversation { conversation_id } => {
             await_tracked_turn_tasks(&state).await;
+            let estimated_tokens = runtime
+                .conversation_history_snapshot(&conversation_id)
+                .await
+                .map(|history| estimate_history_tokens(&history.messages))
+                .unwrap_or(0) as u64;
             send_notification(
                 event_tx,
                 &state,
-                AppServerNotification::Info {
+                AppServerNotification::ContextCompactionStarted {
                     conversation_id: conversation_id.clone(),
-                    message: "Compacting context...".to_string(),
+                    turn_id: "manual_compaction".to_string(),
+                    estimated_tokens,
                 },
             )
             .await;
@@ -305,6 +311,34 @@ pub(crate) async fn handle_command(
     }
 
     Ok(())
+}
+
+fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
+    messages
+        .iter()
+        .map(|item| match item {
+            agent_core::ResponseItem::System { content }
+            | agent_core::ResponseItem::User { content } => content.chars().count(),
+            agent_core::ResponseItem::Assistant {
+                content,
+                tool_calls,
+            } => {
+                let text_len = content.as_ref().map_or(0, |text| text.chars().count());
+                let tool_len: usize = tool_calls
+                    .iter()
+                    .map(|call| {
+                        call.name.chars().count() + call.arguments.to_string().chars().count()
+                    })
+                    .sum();
+                text_len + tool_len
+            }
+            agent_core::ResponseItem::Tool { name, content, .. } => {
+                name.chars().count() + content.chars().count()
+            }
+        })
+        .sum::<usize>()
+        .saturating_div(3)
+        .max(1)
 }
 
 fn spawn_turn(
