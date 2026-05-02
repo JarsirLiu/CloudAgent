@@ -103,7 +103,7 @@ where
         let compaction_config = ContextCompactionConfig {
             model_context_window: runtime.config.runtime.model_context_window,
             trigger_ratio: runtime.config.runtime.context_compaction_trigger_ratio,
-            request_overhead_tokens: estimate_request_overhead_tokens(
+            request_overhead_tokens: context_facade.estimate_request_overhead_tokens(
                 &context_manager.history().messages,
                 &environment_context.render(),
                 &tool_specs,
@@ -131,11 +131,16 @@ where
             let delta_start = history_len_at_last_sdk_usage
                 .unwrap_or_else(|| context_manager.history().messages.len())
                 .min(context_manager.history().messages.len());
-            let local_delta_tokens =
-                estimate_history_tokens(&context_manager.history().messages[delta_start..]);
+            let local_delta_tokens = context_facade.estimate_history_tokens_for_compaction(
+                &context_manager.history().messages[delta_start..],
+                &runtime.config.workspace_root,
+            );
             sdk_tokens.saturating_add(local_delta_tokens)
         } else {
-            estimate_history_tokens(&context_manager.history().messages)
+            context_facade.estimate_history_tokens_for_compaction(
+                &context_manager.history().messages,
+                &runtime.config.workspace_root,
+            )
         };
 
         let prepared = context_facade
@@ -399,65 +404,6 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
-}
-
-pub(crate) fn estimate_request_overhead_tokens(
-    history_messages: &[agent_core::ResponseItem],
-    environment_fragment: &agent_core::ResponseItem,
-    tool_specs: &[agent_core::ToolSpec],
-    minimum_overhead_tokens: usize,
-) -> usize {
-    let system_tokens = history_messages
-        .first()
-        .map(|item| estimate_history_tokens(std::slice::from_ref(item)))
-        .unwrap_or(0);
-    let environment_tokens = estimate_history_tokens(std::slice::from_ref(environment_fragment));
-    let tool_tokens = tool_specs
-        .iter()
-        .map(|tool| {
-            tool.name.chars().count()
-                + tool.description.chars().count()
-                + tool.parameters.to_string().chars().count()
-                + 64
-        })
-        .sum::<usize>()
-        .saturating_div(3)
-        .max(1);
-
-    minimum_overhead_tokens.max(
-        system_tokens
-            .saturating_add(environment_tokens)
-            .saturating_add(tool_tokens)
-            .saturating_add(2_000),
-    )
-}
-
-pub(crate) fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
-    messages
-        .iter()
-        .map(|item| match item {
-            agent_core::ResponseItem::System { content }
-            | agent_core::ResponseItem::User { content } => content.chars().count(),
-            agent_core::ResponseItem::Assistant {
-                content,
-                tool_calls,
-            } => {
-                let text_len = content.as_ref().map_or(0, |text| text.chars().count());
-                let tool_len: usize = tool_calls
-                    .iter()
-                    .map(|call| {
-                        call.name.chars().count() + call.arguments.to_string().chars().count()
-                    })
-                    .sum();
-                text_len + tool_len
-            }
-            agent_core::ResponseItem::Tool { name, content, .. } => {
-                name.chars().count() + content.chars().count()
-            }
-        })
-        .sum::<usize>()
-        .saturating_div(3)
-        .max(1)
 }
 
 fn emit_assistant_item(

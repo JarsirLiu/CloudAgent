@@ -87,6 +87,56 @@ impl ContextFacade {
         apply_history_compaction(messages, plan, summary)
     }
 
+    pub fn estimate_history_tokens(&self, messages: &[ResponseItem]) -> usize {
+        estimate_history_tokens(messages)
+    }
+
+    pub fn estimate_history_tokens_for_compaction(
+        &self,
+        messages: &[ResponseItem],
+        _workspace_root: &Path,
+    ) -> usize {
+        // Compaction pressure should always be measured on the filtered view.
+        // This keeps compaction behavior stable even when interactive filter mode is off.
+        let filtered = self
+            .input_filter
+            .filter_for_model(messages.to_vec(), FilterPolicy { enabled: true });
+        estimate_history_tokens(&filtered)
+    }
+
+    pub fn estimate_request_overhead_tokens(
+        &self,
+        history_messages: &[ResponseItem],
+        environment_fragment: &ResponseItem,
+        tool_specs: &[ToolSpec],
+        minimum_overhead_tokens: usize,
+    ) -> usize {
+        let system_tokens = history_messages
+            .first()
+            .map(|item| estimate_history_tokens(std::slice::from_ref(item)))
+            .unwrap_or(0);
+        let environment_tokens =
+            estimate_history_tokens(std::slice::from_ref(environment_fragment));
+        let tool_tokens = tool_specs
+            .iter()
+            .map(|tool| {
+                tool.name.chars().count()
+                    + tool.description.chars().count()
+                    + tool.parameters.to_string().chars().count()
+                    + 64
+            })
+            .sum::<usize>()
+            .saturating_div(3)
+            .max(1);
+
+        minimum_overhead_tokens.max(
+            system_tokens
+                .saturating_add(environment_tokens)
+                .saturating_add(tool_tokens)
+                .saturating_add(2_000),
+        )
+    }
+
     pub async fn prepare_model_request<F, Fut>(
         &self,
         context_manager: &mut ContextManager,
@@ -111,14 +161,20 @@ impl ContextFacade {
         let compaction_requested = estimated_total_tokens > available_history_tokens;
 
         let compaction = if compaction_requested {
-            if let Some(compaction_plan) =
-                self.plan_manual_compaction(&context_manager.history().messages, compaction_config, 1)
+            let raw_messages = &context_manager.history().messages;
+            let filtered_messages = self
+                .input_filter
+                .filter_for_model(raw_messages.clone(), FilterPolicy { enabled: true });
+            let filtered_plan =
+                self.plan_manual_compaction(&filtered_messages, compaction_config, 1);
+            let raw_plan = self.plan_manual_compaction(raw_messages, compaction_config, 1);
+            if let (Some(filtered_plan), Some(raw_plan)) = (filtered_plan, raw_plan)
             {
                 let pre_message_count = context_manager.history().messages.len();
                 let pre_context_tokens_estimate =
                     estimate_history_tokens(&context_manager.history().messages) as u64;
                 let summary_request = self.build_compaction_summary_request(
-                    &compaction_plan,
+                    &filtered_plan,
                     compaction_config,
                     temperature,
                 );
@@ -129,7 +185,7 @@ impl ContextFacade {
                     .ensure_defaults();
                 let compacted = self.apply_compaction(
                     &mut context_manager.history_mut().messages,
-                    &compaction_plan,
+                    &raw_plan,
                     summary,
                 );
                 let post_message_count = compacted.replacement_history.len();
