@@ -2,6 +2,10 @@ use anyhow::Result;
 use rusqlite::{Connection, params};
 use std::path::Path;
 
+const SCHEMA_V1: i32 = 1;
+const SCHEMA_V2: i32 = 2;
+const LATEST_SCHEMA_VERSION: i32 = SCHEMA_V2;
+
 #[derive(Clone, Debug)]
 pub struct SessionIndexRow {
     pub conversation_id: String,
@@ -15,12 +19,18 @@ fn open(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "busy_timeout", 3000)?;
-    conn.execute_batch(
-        r#"
+    migrate_schema(&conn)?;
+    Ok(conn)
+}
+
+fn migrate_schema(conn: &Connection) -> Result<()> {
+    let mut current_version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if current_version == 0 {
+        conn.execute_batch(
+            r#"
 CREATE TABLE IF NOT EXISTS sessions(
   conversation_id TEXT PRIMARY KEY,
   project_root TEXT NOT NULL,
-  title TEXT,
   message_count INTEGER NOT NULL DEFAULT 0,
   updated_at_ms INTEGER NOT NULL,
   last_active_at_ms INTEGER NOT NULL,
@@ -46,9 +56,23 @@ CREATE TABLE IF NOT EXISTS session_events(
 CREATE INDEX IF NOT EXISTS idx_sessions_project_updated ON sessions(project_root, updated_at_ms DESC);
 CREATE INDEX IF NOT EXISTS idx_events_conversation_time ON session_events(conversation_id, created_at_ms DESC);
 "#,
-    )?;
-    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT", []);
-    Ok(conn)
+        )?;
+        conn.pragma_update(None, "user_version", SCHEMA_V1)?;
+        current_version = SCHEMA_V1;
+    }
+
+    if current_version < SCHEMA_V2 {
+        conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT", [])?;
+        conn.pragma_update(None, "user_version", SCHEMA_V2)?;
+        current_version = SCHEMA_V2;
+    }
+
+    if current_version > LATEST_SCHEMA_VERSION {
+        anyhow::bail!(
+            "unsupported session_index schema version {current_version}, max supported is {LATEST_SCHEMA_VERSION}"
+        );
+    }
+    Ok(())
 }
 
 pub fn db_path(root: &Path) -> std::path::PathBuf {
