@@ -18,6 +18,7 @@ pub struct JsonConversationStore {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredConversationSummary {
     pub conversation_id: String,
+    pub title: Option<String>,
     pub message_count: usize,
     pub updated_at_ms: u64,
     pub archived: bool,
@@ -66,6 +67,7 @@ impl JsonConversationStore {
         self.write_text_atomically(&path, &text).await?;
         self.upsert_index_entry_locked(StoredConversationSummary {
             conversation_id: conversation.history().id.clone(),
+            title: None,
             message_count: conversation.history().messages.len(),
             updated_at_ms: now_ms(),
             archived: false,
@@ -78,6 +80,7 @@ impl JsonConversationStore {
             conversation.history().messages.len(),
             now_ms(),
             false,
+            None,
         );
         Ok(())
     }
@@ -165,6 +168,7 @@ impl JsonConversationStore {
         self.ensure_root_dir().await?;
         self.upsert_index_entry_locked(StoredConversationSummary {
             conversation_id: conversation_id.to_string(),
+            title: None,
             message_count: 0,
             updated_at_ms: now_ms(),
             archived: false,
@@ -178,6 +182,7 @@ impl JsonConversationStore {
             0,
             now,
             false,
+            None,
         );
         let _ = session_index::append_event(
             &session_index::db_path(&self.root),
@@ -215,6 +220,7 @@ impl JsonConversationStore {
             0,
             now,
             true,
+            None,
         );
         let _ = session_index::append_event(
             &session_index::db_path(&self.root),
@@ -239,6 +245,7 @@ impl JsonConversationStore {
                 .into_iter()
                 .map(|row| StoredConversationSummary {
                     conversation_id: row.conversation_id,
+                    title: row.title,
                     message_count: row.message_count,
                     updated_at_ms: row.updated_at_ms,
                     archived: row.archived,
@@ -289,6 +296,10 @@ impl JsonConversationStore {
             &session_index::db_path(&self.root),
             &self.root.to_string_lossy(),
         )
+    }
+
+    pub async fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()> {
+        session_index::set_title(&session_index::db_path(&self.root), conversation_id, title)
     }
 
     fn conversation_path(&self, conversation_id: &str) -> PathBuf {
@@ -433,6 +444,7 @@ impl JsonConversationStore {
         } else {
             index.conversations.push(StoredConversationSummary {
                 conversation_id: conversation_id.to_string(),
+                title: None,
                 message_count: 0,
                 updated_at_ms: now_ms(),
                 archived: false,

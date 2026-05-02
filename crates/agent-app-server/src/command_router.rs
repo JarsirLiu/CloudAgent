@@ -243,6 +243,19 @@ pub(crate) async fn handle_command(
             )
             .await?;
         }
+        AppClientCommand::SetConversationTitle {
+            conversation_id,
+            title,
+        } => {
+            conversation_service::set_conversation_title(
+                &runtime,
+                event_tx,
+                &state,
+                conversation_id,
+                title,
+            )
+            .await?;
+        }
         AppClientCommand::SwitchConversation { conversation_id } => {
             conversation_service::switch_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;

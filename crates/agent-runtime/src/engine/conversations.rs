@@ -68,10 +68,15 @@ impl AgentRuntime {
             .into_iter()
             .map(|summary| ConversationSummary {
                 conversation_id: summary.conversation_id,
+                title: summary.title,
                 message_count: summary.message_count,
                 updated_at_ms: summary.updated_at_ms,
             })
             .collect())
+    }
+
+    pub async fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()> {
+        self.store.set_conversation_title(conversation_id, title).await
     }
 
     pub async fn conversation_history_snapshot(

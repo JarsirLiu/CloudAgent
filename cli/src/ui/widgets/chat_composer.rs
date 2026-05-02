@@ -247,11 +247,16 @@ fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
         SlashCommand::Copy => ComposerIntent::Copy,
         SlashCommand::Help => ComposerIntent::Help,
         SlashCommand::Interrupt => ComposerIntent::Interrupt,
-        SlashCommand::Sessions => ComposerIntent::Sessions,
-        SlashCommand::NewConversation => ComposerIntent::NewConversation(args.trim().to_string()),
-        SlashCommand::SwitchConversation => {
-            ComposerIntent::SwitchConversation(args.trim().to_string())
+        SlashCommand::Session => {
+            let trimmed = args.trim();
+            if trimmed.is_empty() {
+                ComposerIntent::Session
+            } else {
+                ComposerIntent::SessionSwitch(trimmed.to_string())
+            }
         }
+        SlashCommand::NewConversation => ComposerIntent::NewConversation(args.trim().to_string()),
+        SlashCommand::SetTitle => ComposerIntent::SetTitle(args.trim().to_string()),
         SlashCommand::ArchiveConversation => {
             ComposerIntent::ArchiveConversation(args.trim().to_string())
         }

@@ -32,6 +32,7 @@ pub struct ConversationSnapshot {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationSummary {
     pub conversation_id: String,
+    pub title: Option<String>,
     pub message_count: usize,
     pub updated_at_ms: u64,
 }

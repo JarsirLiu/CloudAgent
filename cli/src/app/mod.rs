@@ -252,14 +252,17 @@ impl TuiApp {
                     conversation_id: self.conversation_id.clone(),
                 },
             )),
-            InputPaneAction::Composer(ComposerIntent::Sessions) => {
+            InputPaneAction::Composer(ComposerIntent::Session) => {
                 Some(ParsedInput::Command(AppClientCommand::ListConversations))
             }
             InputPaneAction::Composer(ComposerIntent::NewConversation(conversation_id)) => {
                 Some(ParsedInput::LocalConversationCreate(conversation_id))
             }
-            InputPaneAction::Composer(ComposerIntent::SwitchConversation(conversation_id)) => {
+            InputPaneAction::Composer(ComposerIntent::SessionSwitch(conversation_id)) => {
                 Some(ParsedInput::LocalConversationSwitch(conversation_id))
+            }
+            InputPaneAction::Composer(ComposerIntent::SetTitle(title)) => {
+                Some(ParsedInput::LocalConversationTitle(title))
             }
             InputPaneAction::Composer(ComposerIntent::ArchiveConversation(conversation_id)) => {
                 Some(ParsedInput::LocalConversationArchive(conversation_id))

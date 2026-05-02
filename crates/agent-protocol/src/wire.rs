@@ -169,6 +169,10 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "conversation/create" => Ok(AppClientCommand::CreateConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
+        "conversation/title/set" => Ok(AppClientCommand::SetConversationTitle {
+            conversation_id: value_field(params.clone(), "conversation_id")?,
+            title: value_field(params, "title")?,
+        }),
         "conversation/switch" => Ok(AppClientCommand::SwitchConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
@@ -237,6 +241,13 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         AppClientCommand::CreateConversation { conversation_id } => (
             "conversation/create",
             serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::SetConversationTitle {
+            conversation_id,
+            title,
+        } => (
+            "conversation/title/set",
+            serde_json::json!({ "conversation_id": conversation_id, "title": title }),
         ),
         AppClientCommand::SwitchConversation { conversation_id } => (
             "conversation/switch",

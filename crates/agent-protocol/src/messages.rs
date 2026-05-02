@@ -35,6 +35,10 @@ pub enum AppClientCommand {
         limit: usize,
     },
     ListConversations,
+    SetConversationTitle {
+        conversation_id: String,
+        title: String,
+    },
     CreateConversation {
         conversation_id: String,
     },
@@ -69,6 +73,9 @@ impl AppClientCommand {
                 conversation_id, ..
             }
             | Self::CreateConversation { conversation_id }
+            | Self::SetConversationTitle {
+                conversation_id, ..
+            }
             | Self::SwitchConversation { conversation_id }
             | Self::ArchiveConversation { conversation_id }
             | Self::SubscribeConversation { conversation_id }

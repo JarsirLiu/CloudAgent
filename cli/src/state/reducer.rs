@@ -54,6 +54,7 @@ pub(crate) enum UiInputEvent {
     Command(AppClientCommand),
     LocalConversationCreate(String),
     LocalConversationSwitch(String),
+    LocalConversationTitle(String),
     LocalConversationArchive(String),
     ServerRequestAnswer {
         request_id: RequestId,
@@ -264,8 +265,13 @@ fn render_conversation_list(conversations: &[agent_protocol::ConversationSummary
     lines.push("Conversations".to_string());
     for conversation in conversations {
         lines.push(format!(
-            "- {} ({})",
+            "- {}{} ({})",
             conversation.conversation_id,
+            conversation
+                .title
+                .as_deref()
+                .map(|t| format!(" [{}]", t))
+                .unwrap_or_default(),
             pluralize_messages(conversation.message_count)
         ));
     }

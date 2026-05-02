@@ -76,13 +76,28 @@ pub(crate) fn handle_tui_input(
             if trimmed.is_empty() {
                 app.push_cell(HistoryCell::from_message(
                     "conversation",
-                    "Usage: /switch <conversation-id>",
+                    "Usage: /session <conversation-id>",
                     HistoryTone::Warning,
                 ));
                 return Ok(false);
             }
             client.send_command(AppClientCommand::SwitchConversation {
                 conversation_id: trimmed.to_string(),
+            })?;
+        }
+        ParsedInput::LocalConversationTitle(title) => {
+            let trimmed = title.trim();
+            if trimmed.is_empty() {
+                app.push_cell(HistoryCell::from_message(
+                    "conversation",
+                    "Usage: /title <text>",
+                    HistoryTone::Warning,
+                ));
+                return Ok(false);
+            }
+            client.send_command(AppClientCommand::SetConversationTitle {
+                conversation_id: app.conversation_id.clone(),
+                title: trimmed.to_string(),
             })?;
         }
         ParsedInput::LocalConversationArchive(target_conversation_id) => {

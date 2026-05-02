@@ -5,6 +5,7 @@ use std::path::Path;
 #[derive(Clone, Debug)]
 pub struct SessionIndexRow {
     pub conversation_id: String,
+    pub title: Option<String>,
     pub message_count: usize,
     pub updated_at_ms: u64,
     pub archived: bool,
@@ -19,6 +20,7 @@ fn open(db_path: &Path) -> Result<Connection> {
 CREATE TABLE IF NOT EXISTS sessions(
   conversation_id TEXT PRIMARY KEY,
   project_root TEXT NOT NULL,
+  title TEXT,
   message_count INTEGER NOT NULL DEFAULT 0,
   updated_at_ms INTEGER NOT NULL,
   last_active_at_ms INTEGER NOT NULL,
@@ -45,6 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_project_updated ON sessions(project_root
 CREATE INDEX IF NOT EXISTS idx_events_conversation_time ON session_events(conversation_id, created_at_ms DESC);
 "#,
     )?;
+    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT", []);
     Ok(conn)
 }
 
@@ -59,17 +62,19 @@ pub fn upsert_session(
     message_count: usize,
     updated_at_ms: u64,
     archived: bool,
+    title: Option<&str>,
 ) -> Result<()> {
     let conn = open(db_path)?;
     conn.execute(
-        r#"INSERT INTO sessions(conversation_id, project_root, message_count, updated_at_ms, last_active_at_ms, archived)
-VALUES(?1, ?2, ?3, ?4, ?4, ?5)
+        r#"INSERT INTO sessions(conversation_id, project_root, message_count, updated_at_ms, last_active_at_ms, archived, title)
+VALUES(?1, ?2, ?3, ?4, ?4, ?5, ?6)
 ON CONFLICT(conversation_id) DO UPDATE SET
   project_root=excluded.project_root,
   message_count=excluded.message_count,
   updated_at_ms=excluded.updated_at_ms,
-  archived=excluded.archived"#,
-        params![conversation_id, project_root, message_count as i64, updated_at_ms as i64, if archived {1} else {0}],
+  archived=excluded.archived,
+  title=COALESCE(excluded.title, sessions.title)"#,
+        params![conversation_id, project_root, message_count as i64, updated_at_ms as i64, if archived {1} else {0}, title],
     )?;
     Ok(())
 }
@@ -109,19 +114,29 @@ pub fn get_active(db_path: &Path, project_root: &str) -> Result<Option<String>> 
 pub fn list_sessions(db_path: &Path, project_root: &str) -> Result<Vec<SessionIndexRow>> {
     let conn = open(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT conversation_id, message_count, updated_at_ms, archived FROM sessions WHERE project_root=?1 AND archived=0 ORDER BY updated_at_ms DESC",
+        "SELECT conversation_id, title, message_count, updated_at_ms, archived FROM sessions WHERE project_root=?1 AND archived=0 ORDER BY updated_at_ms DESC",
     )?;
     let mut rows = stmt.query(params![project_root])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         out.push(SessionIndexRow {
             conversation_id: row.get(0)?,
-            message_count: row.get::<_, i64>(1)? as usize,
-            updated_at_ms: row.get::<_, i64>(2)? as u64,
-            archived: row.get::<_, i64>(3)? != 0,
+            title: row.get(1)?,
+            message_count: row.get::<_, i64>(2)? as usize,
+            updated_at_ms: row.get::<_, i64>(3)? as u64,
+            archived: row.get::<_, i64>(4)? != 0,
         });
     }
     Ok(out)
+}
+
+pub fn set_title(db_path: &Path, conversation_id: &str, title: &str) -> Result<()> {
+    let conn = open(db_path)?;
+    conn.execute(
+        "UPDATE sessions SET title=?2 WHERE conversation_id=?1",
+        params![conversation_id, title],
+    )?;
+    Ok(())
 }
 
 pub fn append_event(

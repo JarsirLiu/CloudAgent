@@ -298,6 +298,26 @@ pub(crate) async fn reset_conversation(
     Ok(())
 }
 
+pub(crate) async fn set_conversation_title(
+    runtime: &Arc<AgentRuntime>,
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: String,
+    title: String,
+) -> Result<()> {
+    runtime.set_conversation_title(&conversation_id, &title).await?;
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::Info {
+            conversation_id,
+            message: "conversation title updated".to_string(),
+        },
+    )
+    .await;
+    Ok(())
+}
+
 pub(crate) async fn subscribe_conversation(
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
