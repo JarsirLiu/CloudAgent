@@ -7,7 +7,7 @@ use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone, render_history_
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
     AppClientCommand, FrontendMode, ServerRequestDecision, ServerRequestDecisionKind,
-    TranscriptItem, TurnItemKind, UserTurnInput,
+    TranscriptItem, UserTurnInput,
 };
 use anyhow::Result;
 
@@ -111,18 +111,7 @@ pub(crate) fn handle_tui_input(
             reason,
         } => {
             sync_mode_after_server_request_view(app);
-            app.push_cell(HistoryCell::from_message(
-                "request",
-                decision_label(&decision),
-                if matches!(
-                    decision,
-                    ServerRequestDecisionKind::Accept | ServerRequestDecisionKind::AcceptForSession
-                ) {
-                    HistoryTone::Agent
-                } else {
-                    HistoryTone::Warning
-                },
-            ));
+            app.run_state.status_notice = Some(format!("Request {}", decision_label(&decision)));
             client.send_command(AppClientCommand::ResolveServerRequest {
                 conversation_id: conversation_id.to_string(),
                 request_id,
@@ -182,7 +171,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.server_request_state.action_required = false;
         }
         ServerAction::ClearLastToolName => {
-            app.run_state.last_tool_name = None;
+            app.run_state.current_tool_activity = None;
         }
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
@@ -236,47 +225,10 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 | TranscriptItem::ToolResult { .. } => {}
             },
             ItemDispatch::ControlCompleted { item } => match item {
-                TranscriptItem::CommandExecution {
-                    id,
-                    command,
-                    tool_name,
-                    summary,
-                    ..
-                } => {
-                    let title = if command.trim().is_empty() {
-                        tool_name.as_str()
-                    } else {
-                        command.as_str()
-                    };
-                    app.handle_control_item_completed(
-                        &id,
-                        TurnItemKind::CommandExecution,
-                        title,
-                        &summary,
-                    );
-                }
-                TranscriptItem::FileChange {
-                    id, path, summary, ..
-                } => {
-                    app.handle_control_item_completed(
-                        &id,
-                        TurnItemKind::FileChange,
-                        &path,
-                        &summary,
-                    );
-                }
-                TranscriptItem::ToolResult {
-                    id,
-                    tool_name,
-                    summary,
-                    ..
-                } => {
-                    app.handle_control_item_completed(
-                        &id,
-                        TurnItemKind::ToolResult,
-                        &tool_name,
-                        &summary,
-                    );
+                TranscriptItem::CommandExecution { ref id, .. }
+                | TranscriptItem::FileChange { ref id, .. }
+                | TranscriptItem::ToolResult { ref id, .. } => {
+                    app.handle_control_item_completed(id, render_history_entry(&item));
                 }
                 TranscriptItem::UserMessage { .. }
                 | TranscriptItem::SystemMessage { .. }

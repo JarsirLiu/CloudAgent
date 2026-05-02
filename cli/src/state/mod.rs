@@ -41,11 +41,12 @@ pub struct RunState {
     pub history_loaded: bool,
     pub history_snapshot: Option<Vec<ConversationTurn>>,
     pub status_notice: Option<String>,
-    pub last_tool_name: Option<String>,
+    pub current_tool_activity: Option<String>,
     pub last_turn_usage: Option<ModelUsage>,
     pub total_turn_usage: Option<ModelUsage>,
     pub model_context_window: Option<u64>,
     pub should_exit: bool,
+    pub expand_tool_details: bool,
 }
 
 impl RunState {
@@ -54,11 +55,12 @@ impl RunState {
             history_loaded: false,
             history_snapshot: None,
             status_notice: Some(format!("Connected via {connection_label}")),
-            last_tool_name: None,
+            current_tool_activity: None,
             last_turn_usage: None,
             total_turn_usage: None,
             model_context_window: None,
             should_exit: false,
+            expand_tool_details: false,
         }
     }
 }

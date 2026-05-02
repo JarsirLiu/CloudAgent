@@ -252,8 +252,8 @@ fn status_meta_text(app: &TuiApp) -> String {
         let percent = total.total_tokens.saturating_mul(100) / window;
         parts.push(format!("context {percent}%"));
     }
-    if let Some(tool) = &app.run_state.last_tool_name {
-        parts.push(format!("tool {tool}"));
+    if let Some(activity) = &app.run_state.current_tool_activity {
+        parts.push(activity.clone());
     }
     parts.join(" · ")
 }

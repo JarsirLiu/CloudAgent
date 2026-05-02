@@ -212,14 +212,12 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             ..
         }) => match request {
             ServerRequest::ToolApproval { request } => {
+                let args_hint = summarize_args_preview(&request.arguments_preview);
                 actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
                 actions.push(ServerAction::ShowServerRequestPrompt {
                     request_id: request_id.clone(),
                     title: format!("tool `{}` wants to run", request.tool_name),
-                    detail: format!(
-                        "reason: {}  args: {}",
-                        request.reason, request.arguments_preview
-                    ),
+                    detail: format!("reason: {}\nargs: {args_hint}", request.reason),
                     notice: format!("Action required for {}", request.tool_name),
                 });
             }
@@ -227,6 +225,22 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     }
 
     ServerMessageReduce { actions }
+}
+
+fn summarize_args_preview(arguments_preview: &str) -> String {
+    let trimmed = arguments_preview.trim();
+    if trimmed.is_empty() {
+        return "(none)".to_string();
+    }
+    if trimmed.chars().count() <= 80 {
+        return trimmed.to_string();
+    }
+    let mut out = String::new();
+    for ch in trimmed.chars().take(80) {
+        out.push(ch);
+    }
+    out.push_str("… (truncated)");
+    out
 }
 
 pub(crate) fn apply_ui_event(

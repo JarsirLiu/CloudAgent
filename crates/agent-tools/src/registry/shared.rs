@@ -10,7 +10,11 @@ use tokio::io::AsyncReadExt;
 #[async_trait]
 pub(crate) trait LocalTool: Send + Sync {
     fn spec(&self) -> ToolSpec;
-    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput>;
+    async fn invoke(
+        &self,
+        arguments: Value,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput>;
 }
 
 #[derive(Clone, Debug)]
@@ -38,6 +42,7 @@ where
 {
     let mut collected = Vec::new();
     let mut buffer = [0_u8; 8192];
+    let mut pending_utf8 = Vec::new();
     loop {
         let read = reader.read(&mut buffer).await?;
         if read == 0 {
@@ -46,17 +51,78 @@ where
         let chunk = buffer[..read].to_vec();
         collected.extend_from_slice(&chunk);
         if let Some(output_tx) = &output_tx {
+            pending_utf8.extend_from_slice(&chunk);
             let _ = output_tx.send(ToolOutputDelta {
                 stream: stream.clone(),
-                chunk: String::from_utf8_lossy(&chunk).to_string(),
+                chunk: decode_utf8_chunk(&mut pending_utf8, false),
+            });
+        }
+    }
+    if let Some(output_tx) = &output_tx {
+        let tail = decode_utf8_chunk(&mut pending_utf8, true);
+        if !tail.is_empty() {
+            let _ = output_tx.send(ToolOutputDelta {
+                stream,
+                chunk: tail,
             });
         }
     }
     Ok(collected)
 }
 
-pub(crate) fn resolve_workspace_path(workspace_root: &Path, value: Option<&str>) -> Result<PathBuf> {
-    let root = workspace_root.canonicalize().unwrap_or_else(|_| workspace_root.to_path_buf());
+fn decode_utf8_chunk(buffer: &mut Vec<u8>, flush: bool) -> String {
+    if buffer.is_empty() {
+        return String::new();
+    }
+
+    match std::str::from_utf8(buffer) {
+        Ok(valid) => {
+            let text = valid.to_string();
+            buffer.clear();
+            text
+        }
+        Err(err) if !flush && err.error_len().is_none() => {
+            let valid_up_to = err.valid_up_to();
+            if valid_up_to == 0 {
+                return String::new();
+            }
+            let text = String::from_utf8_lossy(&buffer[..valid_up_to]).to_string();
+            buffer.drain(..valid_up_to);
+            text
+        }
+        Err(err) => {
+            let valid_up_to = err.valid_up_to();
+            let text = String::from_utf8_lossy(&buffer[..valid_up_to]).to_string();
+            let invalid_end = match err.error_len() {
+                Some(len) => valid_up_to.saturating_add(len),
+                None => buffer.len(),
+            };
+            let remainder = if invalid_end < buffer.len() {
+                buffer[invalid_end..].to_vec()
+            } else {
+                Vec::new()
+            };
+            buffer.clear();
+            buffer.extend_from_slice(&remainder);
+            if flush && !buffer.is_empty() {
+                let mut out = text;
+                out.push_str(&String::from_utf8_lossy(buffer));
+                buffer.clear();
+                out
+            } else {
+                text
+            }
+        }
+    }
+}
+
+pub(crate) fn resolve_workspace_path(
+    workspace_root: &Path,
+    value: Option<&str>,
+) -> Result<PathBuf> {
+    let root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
     let Some(value) = value else {
         return Ok(root);
     };

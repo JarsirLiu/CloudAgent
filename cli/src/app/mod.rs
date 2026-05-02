@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod effects;
+mod items;
 mod parse;
 
 use crate::app::actions::{execute_server_action, handle_tui_input};
@@ -13,10 +14,10 @@ use crate::ui::chat_surface::ChatSurface;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
 use agent_app_server_client::AppServerEvent;
-use agent_protocol::{AppClientCommand, AppServerMessage, FrontendMode, TurnItemKind};
+use agent_protocol::{AppClientCommand, AppServerMessage, FrontendMode};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
@@ -87,9 +88,24 @@ impl TuiApp {
     }
 
     pub(crate) fn replace_history_cells(&mut self, cells: Vec<HistoryCell>) {
+        let mut cells = cells;
+        for cell in &mut cells {
+            if matches!(
+                cell.tone,
+                HistoryTone::Tool
+                    | HistoryTone::Control
+                    | HistoryTone::Warning
+                    | HistoryTone::Error
+            ) {
+                cell.expanded = self.run_state.expand_tool_details;
+            }
+        }
         self.transcript_state
             .transcript
             .replace_cells(cells.clone());
+        self.transcript_state
+            .transcript
+            .set_tool_cells_expanded(self.run_state.expand_tool_details);
         self.pending_history_cells = cells.into();
         self.pending_history_rebuild = true;
     }
@@ -178,6 +194,29 @@ impl TuiApp {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
+        if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.run_state.expand_tool_details = !self.run_state.expand_tool_details;
+            self.transcript_state
+                .transcript
+                .set_tool_cells_expanded(self.run_state.expand_tool_details);
+            if let Some(cell) = self.transcript_state.active_cell.as_mut()
+                && matches!(
+                    cell.tone,
+                    HistoryTone::Tool
+                        | HistoryTone::Control
+                        | HistoryTone::Warning
+                        | HistoryTone::Error
+                )
+            {
+                cell.expanded = self.run_state.expand_tool_details;
+            }
+            self.run_state.status_notice = Some(if self.run_state.expand_tool_details {
+                "Tool details expanded".to_string()
+            } else {
+                "Tool details collapsed".to_string()
+            });
+            return None;
+        }
         match self.input_pane.handle_key(key)? {
             InputPaneAction::Composer(ComposerIntent::Submit(text)) => Some(parse_line(
                 &text,
@@ -259,197 +298,6 @@ impl TuiApp {
         }
         false
     }
-
-    pub(crate) fn handle_assistant_item_started(&mut self, turn_id: &str, item_id: &str) {
-        let _ = turn_id;
-        self.flush_active_cell_to_transcript();
-        self.transcript_state.active_item_id = Some(item_id.to_string());
-        self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-        self.transcript_state.active_cell = Some(HistoryCell::from_message(
-            "cloudagent",
-            String::new(),
-            HistoryTone::Agent,
-        ));
-    }
-
-    pub(crate) fn handle_assistant_item_delta(&mut self, item_id: &str, delta: &str) {
-        if self.transcript_state.active_item_id.as_deref() != Some(item_id)
-            || self.transcript_state.active_item_kind != Some(TurnItemKind::AssistantMessage)
-        {
-            return;
-        }
-        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
-            cell.append_body(delta);
-        }
-    }
-
-    pub(crate) fn handle_assistant_item_completed(&mut self, item_id: &str, output: &str) {
-        if self.transcript_state.active_item_id.as_deref() != Some(item_id)
-            || self.transcript_state.active_item_kind != Some(TurnItemKind::AssistantMessage)
-        {
-            self.flush_active_cell_to_transcript();
-            self.transcript_state.active_item_id = Some(item_id.to_string());
-            self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-            self.transcript_state.active_cell = Some(HistoryCell::from_message(
-                "cloudagent",
-                String::new(),
-                HistoryTone::Agent,
-            ));
-        }
-        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
-            cell.replace_body(output);
-        }
-        let has_text = self
-            .transcript_state
-            .active_cell
-            .as_ref()
-            .is_some_and(|cell| !cell.body.trim().is_empty());
-        if has_text {
-            self.transcript_state.last_copyable_output = self
-                .transcript_state
-                .active_cell
-                .as_ref()
-                .map(|c| c.body.clone());
-            self.flush_active_cell_to_transcript();
-        } else {
-            self.clear_active_cell();
-        }
-    }
-
-    fn handle_secondary_item_started(
-        &mut self,
-        item_id: &str,
-        kind: TurnItemKind,
-        title: &str,
-        tone: HistoryTone,
-    ) {
-        self.flush_active_cell_to_transcript();
-        self.transcript_state.active_item_id = Some(item_id.to_string());
-        self.transcript_state.active_item_kind = Some(kind);
-        self.transcript_state.active_cell = Some(HistoryCell::from_message(
-            title.to_string(),
-            String::new(),
-            tone,
-        ));
-        self.run_state.last_tool_name = Some(title.to_string());
-    }
-
-    fn handle_secondary_item_completed(
-        &mut self,
-        item_id: &str,
-        kind: TurnItemKind,
-        title: &str,
-        output: &str,
-        tone: HistoryTone,
-    ) {
-        if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
-            self.flush_active_cell_to_transcript();
-            self.transcript_state.active_item_id = Some(item_id.to_string());
-            self.transcript_state.active_item_kind = Some(kind);
-            self.transcript_state.active_cell = Some(HistoryCell::from_message(
-                title.to_string(),
-                String::new(),
-                tone,
-            ));
-        }
-        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
-            cell.replace_body(output);
-        }
-        if self.transcript_state.active_item_id.as_deref() == Some(item_id) {
-            self.flush_active_cell_to_transcript();
-        }
-        self.run_state.last_tool_name = None;
-    }
-
-    fn append_active_secondary_item_delta(&mut self, item_id: &str, delta: &str) {
-        if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
-            return;
-        }
-        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
-            if !cell.body.is_empty() {
-                cell.append_body("\n");
-            }
-            cell.append_body(delta);
-        }
-    }
-
-    pub(crate) fn handle_reasoning_item_started(&mut self, item_id: &str, title: &str) {
-        self.handle_secondary_item_started(
-            item_id,
-            TurnItemKind::Reasoning,
-            title,
-            HistoryTone::Reasoning,
-        );
-    }
-
-    pub(crate) fn handle_reasoning_item_completed(
-        &mut self,
-        item_id: &str,
-        title: &str,
-        output: &str,
-    ) {
-        self.handle_secondary_item_completed(
-            item_id,
-            TurnItemKind::Reasoning,
-            title,
-            output,
-            HistoryTone::Reasoning,
-        );
-    }
-
-    pub(crate) fn handle_reasoning_item_delta(&mut self, item_id: &str, delta: &str) {
-        if self.transcript_state.active_item_kind == Some(TurnItemKind::Reasoning) {
-            self.append_active_secondary_item_delta(item_id, delta);
-        }
-    }
-
-    pub(crate) fn handle_control_item_started(
-        &mut self,
-        item_id: &str,
-        kind: TurnItemKind,
-        title: &str,
-    ) {
-        self.handle_secondary_item_started(item_id, kind, title, HistoryTone::Control);
-    }
-
-    pub(crate) fn handle_control_item_completed(
-        &mut self,
-        item_id: &str,
-        kind: TurnItemKind,
-        title: &str,
-        output: &str,
-    ) {
-        self.handle_secondary_item_completed(item_id, kind, title, output, HistoryTone::Control);
-    }
-
-    pub(crate) fn handle_control_item_delta(&mut self, item_id: &str, delta: &str) {
-        if matches!(
-            self.transcript_state.active_item_kind,
-            Some(TurnItemKind::ToolCall)
-                | Some(TurnItemKind::ToolResult)
-                | Some(TurnItemKind::CommandExecution)
-                | Some(TurnItemKind::FileChange)
-        ) {
-            self.append_active_secondary_item_delta(item_id, delta);
-        }
-    }
-
-    fn clear_active_cell(&mut self) {
-        self.transcript_state.active_item_id = None;
-        self.transcript_state.active_item_kind = None;
-        self.transcript_state.active_cell = None;
-    }
-
-    fn flush_active_cell_to_transcript(&mut self) {
-        let Some(cell) = self.transcript_state.active_cell.take() else {
-            self.clear_active_cell();
-            return;
-        };
-        if !cell.body.trim().is_empty() {
-            self.push_cell(cell);
-        }
-        self.clear_active_cell();
-    }
 }
 
 pub async fn run_console(config: ConsoleConfig) -> Result<()> {
@@ -529,6 +377,7 @@ mod tests {
     use crate::app::actions::{execute_server_action, handle_tui_input};
     use crate::app::parse::ParsedInput;
     use crate::state::reducer::{ServerAction, TurnDispatch};
+    use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
     use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
     use agent_protocol::{
         AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus,
@@ -600,9 +449,11 @@ mod tests {
         app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "pwd");
         app.handle_control_item_completed(
             "tool:1",
-            TurnItemKind::CommandExecution,
-            "pwd",
-            "current directory is D:\\learn\\gifti\\cloudagent",
+            HistoryCell::from_message(
+                "pwd",
+                "current directory is D:\\learn\\gifti\\cloudagent",
+                HistoryTone::Control,
+            ),
         );
 
         let cells = app.transcript_state.transcript.cells();
@@ -628,9 +479,7 @@ mod tests {
         app.handle_control_item_delta("tool:1", "pwd");
         app.handle_control_item_completed(
             "tool:1",
-            TurnItemKind::CommandExecution,
-            "pwd",
-            "D:\\learn\\gifti\\cloudagent",
+            HistoryCell::from_message("pwd", "D:\\learn\\gifti\\cloudagent", HistoryTone::Control),
         );
 
         let cells = app.transcript_state.transcript.cells();
@@ -838,11 +687,11 @@ mod tests {
                 .iter()
                 .any(|cell| cell.body == "可以看到当前在哪个目录下吗")
         );
-        assert!(live_cells.iter().any(|cell| cell.body == "approved"));
+        assert!(!live_cells.iter().any(|cell| cell.body == "approved"));
         assert!(live_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-                && (cell.body.contains("shell command finished with exit code 0")
-                    || cell.body.contains("exit_code: 0"))
+                && cell.body.contains("completed `pwd`")
+                && cell.body.contains("exit 0")
         }));
         assert!(live_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
@@ -955,8 +804,9 @@ mod tests {
         );
         assert!(rebuilt_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-                && cell.body.starts_with("completed: pwd (exit 0) @ ")
-                && cell.body.ends_with("\\workspace")
+                && cell.body.contains("completed `pwd`")
+                && cell.body.contains("exit 0")
+                && cell.body.ends_with("/workspace")
         }));
         assert!(rebuilt_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
@@ -1149,7 +999,7 @@ mod tests {
         assert!(
             rebuilt_cells
                 .iter()
-                .any(|cell| cell.label == "tool" && cell.body.contains("failed: pwd")),
+                .any(|cell| cell.label == "shell_command" && cell.body.contains("failed `pwd`")),
             "rebuilt cells: {debug_cells:?}"
         );
         assert!(!rebuilt_cells.iter().any(|cell| cell.label == "request"));
