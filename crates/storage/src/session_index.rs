@@ -1,0 +1,145 @@
+use anyhow::Result;
+use rusqlite::{Connection, params};
+use std::path::Path;
+
+#[derive(Clone, Debug)]
+pub struct SessionIndexRow {
+    pub conversation_id: String,
+    pub message_count: usize,
+    pub updated_at_ms: u64,
+    pub archived: bool,
+}
+
+fn open(db_path: &Path) -> Result<Connection> {
+    let conn = Connection::open(db_path)?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "busy_timeout", 3000)?;
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS sessions(
+  conversation_id TEXT PRIMARY KEY,
+  project_root TEXT NOT NULL,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  updated_at_ms INTEGER NOT NULL,
+  last_active_at_ms INTEGER NOT NULL,
+  archived INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS project_active_session(
+  project_root TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL,
+  project_root TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  reason TEXT,
+  actor TEXT NOT NULL,
+  request_id TEXT,
+  event_seq INTEGER,
+  payload_json TEXT,
+  created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_updated ON sessions(project_root, updated_at_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_events_conversation_time ON session_events(conversation_id, created_at_ms DESC);
+"#,
+    )?;
+    Ok(conn)
+}
+
+pub fn db_path(root: &Path) -> std::path::PathBuf {
+    root.join("session_index.db")
+}
+
+pub fn upsert_session(
+    db_path: &Path,
+    project_root: &str,
+    conversation_id: &str,
+    message_count: usize,
+    updated_at_ms: u64,
+    archived: bool,
+) -> Result<()> {
+    let conn = open(db_path)?;
+    conn.execute(
+        r#"INSERT INTO sessions(conversation_id, project_root, message_count, updated_at_ms, last_active_at_ms, archived)
+VALUES(?1, ?2, ?3, ?4, ?4, ?5)
+ON CONFLICT(conversation_id) DO UPDATE SET
+  project_root=excluded.project_root,
+  message_count=excluded.message_count,
+  updated_at_ms=excluded.updated_at_ms,
+  archived=excluded.archived"#,
+        params![conversation_id, project_root, message_count as i64, updated_at_ms as i64, if archived {1} else {0}],
+    )?;
+    Ok(())
+}
+
+pub fn mark_active(
+    db_path: &Path,
+    project_root: &str,
+    conversation_id: &str,
+    updated_at_ms: u64,
+) -> Result<()> {
+    let conn = open(db_path)?;
+    conn.execute(
+        r#"INSERT INTO project_active_session(project_root, conversation_id, updated_at_ms)
+VALUES(?1, ?2, ?3)
+ON CONFLICT(project_root) DO UPDATE SET conversation_id=excluded.conversation_id, updated_at_ms=excluded.updated_at_ms"#,
+        params![project_root, conversation_id, updated_at_ms as i64],
+    )?;
+    conn.execute(
+        "UPDATE sessions SET last_active_at_ms=?2 WHERE conversation_id=?1",
+        params![conversation_id, updated_at_ms as i64],
+    )?;
+    Ok(())
+}
+
+pub fn get_active(db_path: &Path, project_root: &str) -> Result<Option<String>> {
+    let conn = open(db_path)?;
+    let mut stmt =
+        conn.prepare("SELECT conversation_id FROM project_active_session WHERE project_root=?1")?;
+    let mut rows = stmt.query(params![project_root])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(row.get(0)?))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn list_sessions(db_path: &Path, project_root: &str) -> Result<Vec<SessionIndexRow>> {
+    let conn = open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT conversation_id, message_count, updated_at_ms, archived FROM sessions WHERE project_root=?1 AND archived=0 ORDER BY updated_at_ms DESC",
+    )?;
+    let mut rows = stmt.query(params![project_root])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(SessionIndexRow {
+            conversation_id: row.get(0)?,
+            message_count: row.get::<_, i64>(1)? as usize,
+            updated_at_ms: row.get::<_, i64>(2)? as u64,
+            archived: row.get::<_, i64>(3)? != 0,
+        });
+    }
+    Ok(out)
+}
+
+pub fn append_event(
+    db_path: &Path,
+    project_root: &str,
+    conversation_id: &str,
+    event_type: &str,
+    reason: Option<&str>,
+    actor: &str,
+    request_id: Option<&str>,
+    event_seq: Option<i64>,
+    payload_json: Option<&str>,
+    created_at_ms: u64,
+) -> Result<()> {
+    let conn = open(db_path)?;
+    conn.execute(
+        "INSERT INTO session_events(conversation_id, project_root, event_type, reason, actor, request_id, event_seq, payload_json, created_at_ms) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![conversation_id, project_root, event_type, reason, actor, request_id, event_seq, payload_json, created_at_ms as i64],
+    )?;
+    Ok(())
+}

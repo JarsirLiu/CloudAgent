@@ -1,7 +1,6 @@
 mod command_router;
 mod conversation_service;
 mod conversation_listener;
-mod conversation_cursor;
 mod conversation_subscriptions;
 mod in_process;
 mod notification_service;

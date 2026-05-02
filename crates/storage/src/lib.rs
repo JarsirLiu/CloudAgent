@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
+mod session_index;
 
 #[derive(Clone, Debug)]
 pub struct JsonConversationStore {
@@ -70,6 +71,14 @@ impl JsonConversationStore {
             archived: false,
         })
         .await?;
+        let _ = session_index::upsert_session(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            &conversation.history().id,
+            conversation.history().messages.len(),
+            now_ms(),
+            false,
+        );
         Ok(())
     }
 
@@ -160,7 +169,29 @@ impl JsonConversationStore {
             updated_at_ms: now_ms(),
             archived: false,
         })
-        .await
+        .await?;
+        let now = now_ms();
+        let _ = session_index::upsert_session(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            conversation_id,
+            0,
+            now,
+            false,
+        );
+        let _ = session_index::append_event(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            conversation_id,
+            "create",
+            None,
+            "system",
+            None,
+            None,
+            None,
+            now,
+        );
+        Ok(())
     }
 
     pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {
@@ -175,10 +206,45 @@ impl JsonConversationStore {
             summary.archived = true;
             summary.updated_at_ms = now_ms();
         }
-        self.save_index_locked(&index).await
+        self.save_index_locked(&index).await?;
+        let now = now_ms();
+        let _ = session_index::upsert_session(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            conversation_id,
+            0,
+            now,
+            true,
+        );
+        let _ = session_index::append_event(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            conversation_id,
+            "archive",
+            None,
+            "system",
+            None,
+            None,
+            None,
+            now,
+        );
+        Ok(())
     }
 
     pub async fn list_conversations(&self) -> Result<Vec<StoredConversationSummary>> {
+        if let Ok(index_rows) =
+            session_index::list_sessions(&session_index::db_path(&self.root), &self.root.to_string_lossy())
+        {
+            return Ok(index_rows
+                .into_iter()
+                .map(|row| StoredConversationSummary {
+                    conversation_id: row.conversation_id,
+                    message_count: row.message_count,
+                    updated_at_ms: row.updated_at_ms,
+                    archived: row.archived,
+                })
+                .collect());
+        }
         let _guard = self.io_lock.lock().await;
         let mut conversations = self
             .load_index_locked()
@@ -193,6 +259,36 @@ impl JsonConversationStore {
                 .then_with(|| a.conversation_id.cmp(&b.conversation_id))
         });
         Ok(conversations)
+    }
+
+    pub async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {
+        let now = now_ms();
+        session_index::mark_active(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            conversation_id,
+            now,
+        )?;
+        session_index::append_event(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            conversation_id,
+            "switch_active",
+            None,
+            "user",
+            None,
+            None,
+            None,
+            now,
+        )?;
+        Ok(())
+    }
+
+    pub async fn load_active_conversation(&self) -> Result<Option<String>> {
+        session_index::get_active(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+        )
     }
 
     fn conversation_path(&self, conversation_id: &str) -> PathBuf {

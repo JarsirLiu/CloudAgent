@@ -35,6 +35,14 @@ fn paginate_turns(
 }
 
 impl AgentRuntime {
+    pub async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.store.mark_active_conversation(conversation_id).await
+    }
+
+    pub async fn load_active_conversation(&self) -> Result<Option<String>> {
+        self.store.load_active_conversation().await
+    }
+
     pub async fn reset_conversation(&self, conversation_id: &str) -> Result<()> {
         self.rollout_recorder.flush().await?;
         self.state.remove_conversation(conversation_id).await;
