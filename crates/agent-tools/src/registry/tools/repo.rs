@@ -8,6 +8,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::process::Command;
 use tokio::fs;
 
 pub(crate) struct SearchTextLocalTool;
@@ -33,6 +34,13 @@ impl LocalTool for SearchTextLocalTool {
     }
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: SearchTextArgs = serde_json::from_value(arguments)?;
+        if let Ok(Some(content)) = run_search_text_with_rg(&ctx.workspace_root, &args).await {
+            return Ok(ToolInvocationOutput {
+                summary: "found matches with rg backend".to_string(),
+                content,
+                structured: None,
+            });
+        }
         let output = run_search_text(&ctx.workspace_root, args).await?;
         let lines = output.results.iter().map(|m| {
             let mut block = format!("{}:{}: {}", m.path, m.line, m.preview);
@@ -45,8 +53,57 @@ impl LocalTool for SearchTextLocalTool {
             block
         }).collect::<Vec<_>>().join("\n\n");
         let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches in {} files.\n{}", output.match_count, output.file_count, lines) };
-        Ok(ToolInvocationOutput { content, summary: format!("found {} matches across {} files", output.match_count, output.file_count), structured: None })
+        Ok(ToolInvocationOutput { content, summary: format!("found {} matches across {} files (powershell backend)", output.match_count, output.file_count), structured: None })
     }
+}
+
+async fn run_search_text_with_rg(
+    workspace_root: &std::path::Path,
+    args: &SearchTextArgs,
+) -> Result<Option<String>> {
+    let probe = Command::new("rg").arg("--version").output().await;
+    if probe.is_err() {
+        return Ok(None);
+    }
+    let mut cmd = Command::new("rg");
+    cmd.current_dir(workspace_root);
+    cmd.arg("--line-number");
+    cmd.arg("--with-filename");
+    cmd.arg("--color").arg("never");
+    cmd.arg("--max-count").arg(args.max_results.unwrap_or(100).to_string());
+    if args.case_sensitive == Some(false) {
+        cmd.arg("-i");
+    }
+    if args.regex == Some(false) {
+        cmd.arg("-F");
+    }
+    if let Some(glob) = args.file_glob.as_deref().filter(|v| !v.trim().is_empty()) {
+        cmd.arg("--glob").arg(glob);
+    }
+    cmd.arg(&args.query);
+    if let Some(scope) = args.path_scope.as_deref().filter(|v| !v.trim().is_empty()) {
+        cmd.arg(scope);
+    } else {
+        cmd.arg(".");
+    }
+    let output = cmd.output().await?;
+    if !output.status.success() && output.stdout.is_empty() {
+        return Ok(None);
+    }
+    let mut lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    let offset = args.offset.unwrap_or(0);
+    if offset > 0 {
+        lines = lines.into_iter().skip(offset).collect();
+    }
+    let content = if lines.is_empty() {
+        "No matches found (rg backend)".to_string()
+    } else {
+        format!("Found {} matches (rg backend).\n{}", lines.len(), lines.join("\n"))
+    };
+    Ok(Some(content))
 }
 
 #[async_trait]
