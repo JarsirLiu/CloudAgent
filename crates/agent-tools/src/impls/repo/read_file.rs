@@ -45,7 +45,9 @@ impl ReadFileTool {
 struct ReadFileArgs {
     path: String,
     #[serde(default)]
-    max_chars: Option<usize>,
+    start_line: Option<usize>,
+    #[serde(default)]
+    max_lines: Option<usize>,
 }
 
 pub(crate) struct ReadFileLocalTool {
@@ -61,10 +63,18 @@ impl LocalTool for ReadFileLocalTool {
         let args: ReadFileArgs = serde_json::from_value(arguments)?;
         let path = resolve_workspace_path(&ctx.workspace_root, Some(args.path.as_str()))?;
         let text = fs::read_to_string(&path).await?;
-        let max_chars = args.max_chars.unwrap_or(self.max_read_chars).max(128);
-        let content = if text.chars().count() > max_chars {
-            format!("{}\n\n[truncated]", text.chars().take(max_chars).collect::<String>())
-        } else { text };
+        let start_line = args.start_line.unwrap_or(1).max(1);
+        let max_lines = args.max_lines.unwrap_or(500).clamp(1, 5000);
+        let selected = text
+            .lines()
+            .skip(start_line.saturating_sub(1))
+            .take(max_lines)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let max_chars = self.max_read_chars.max(128);
+        let content = if selected.chars().count() > max_chars {
+            format!("{}\n\n[truncated]", selected.chars().take(max_chars).collect::<String>())
+        } else { selected };
         let char_count = content.chars().count();
         let truncated = content.ends_with("\n\n[truncated]");
         Ok(ToolInvocationOutput {

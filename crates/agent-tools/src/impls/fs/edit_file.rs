@@ -58,20 +58,38 @@ impl LocalTool for EditFileLocalTool {
         }
         let mut changed_files = BTreeSet::new();
         for file_patch in file_patches {
-            if file_patch.path == "/dev/null" {
-                anyhow::bail!("creating new files through edit_file is not supported");
-            }
-            let path = resolve_workspace_path(&ctx.workspace_root, Some(file_patch.path.as_str()))?;
-            let current = fs::read_to_string(&path).await?;
-            let next = apply_hunks(&current, &file_patch.hunks)
-                .map_err(|err| anyhow::anyhow!("failed to apply patch for {}: {err}", file_patch.path))?;
-            if next != current {
-                let Some(parent) = path.parent() else {
-                    anyhow::bail!("cannot determine parent directory for {}", path.display());
-                };
-                fs::create_dir_all(parent).await?;
-                fs::write(&path, next).await?;
-                changed_files.insert(file_patch.path);
+            match (file_patch.old_path.as_str(), file_patch.new_path.as_str()) {
+                ("/dev/null", new_path) => {
+                    let path = resolve_workspace_path(&ctx.workspace_root, Some(new_path))?;
+                    let next = render_hunks_as_new_file(&file_patch.hunks)?;
+                    let Some(parent) = path.parent() else {
+                        anyhow::bail!("cannot determine parent directory for {}", path.display());
+                    };
+                    fs::create_dir_all(parent).await?;
+                    fs::write(&path, next).await?;
+                    changed_files.insert(new_path.to_string());
+                }
+                (old_path, "/dev/null") => {
+                    let path = resolve_workspace_path(&ctx.workspace_root, Some(old_path))?;
+                    if path.exists() {
+                        fs::remove_file(&path).await?;
+                        changed_files.insert(old_path.to_string());
+                    }
+                }
+                (_, new_path) => {
+                    let path = resolve_workspace_path(&ctx.workspace_root, Some(new_path))?;
+                    let current = fs::read_to_string(&path).await?;
+                    let next = apply_hunks(&current, &file_patch.hunks)
+                        .map_err(|err| anyhow::anyhow!("failed to apply patch for {}: {err}", new_path))?;
+                    if next != current {
+                        let Some(parent) = path.parent() else {
+                            anyhow::bail!("cannot determine parent directory for {}", path.display());
+                        };
+                        fs::create_dir_all(parent).await?;
+                        fs::write(&path, next).await?;
+                        changed_files.insert(new_path.to_string());
+                    }
+                }
             }
         }
         let files_changed = changed_files.len();
@@ -88,7 +106,8 @@ impl LocalTool for EditFileLocalTool {
 
 #[derive(Debug)]
 struct FilePatch {
-    path: String,
+    old_path: String,
+    new_path: String,
     hunks: Vec<Hunk>,
 }
 
@@ -99,7 +118,8 @@ struct Hunk {
 
 fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
     let mut file_patches = Vec::new();
-    let mut current_path: Option<String> = None;
+    let mut current_old_path: Option<String> = None;
+    let mut current_new_path: Option<String> = None;
     let mut hunks: Vec<Hunk> = Vec::new();
     let mut current_hunk: Option<Hunk> = None;
 
@@ -107,24 +127,23 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
         if line.starts_with("diff --git ") {
             continue;
         }
+        if let Some(path) = line.strip_prefix("--- ") {
+            current_old_path = Some(path.trim().strip_prefix("a/").unwrap_or(path.trim()).to_string());
+            continue;
+        }
         if let Some(path) = line.strip_prefix("+++ ") {
             if let Some(h) = current_hunk.take() {
                 hunks.push(h);
             }
-            if let Some(path) = current_path.take() {
-                file_patches.push(FilePatch { path, hunks });
+            if let (Some(old_path), Some(new_path)) = (current_old_path.take(), current_new_path.take()) {
+                file_patches.push(FilePatch { old_path, new_path, hunks });
                 hunks = Vec::new();
             }
-            let normalized = path
-                .trim()
-                .strip_prefix("b/")
-                .unwrap_or(path.trim())
-                .to_string();
-            current_path = Some(normalized);
+            current_new_path = Some(path.trim().strip_prefix("b/").unwrap_or(path.trim()).to_string());
             continue;
         }
         if line.starts_with("@@") {
-            if current_path.is_none() {
+            if current_new_path.is_none() {
                 anyhow::bail!("hunk found before target file");
             }
             if let Some(h) = current_hunk.take() {
@@ -143,10 +162,26 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
     if let Some(h) = current_hunk.take() {
         hunks.push(h);
     }
-    if let Some(path) = current_path.take() {
-        file_patches.push(FilePatch { path, hunks });
+    if let (Some(old_path), Some(new_path)) = (current_old_path.take(), current_new_path.take()) {
+        file_patches.push(FilePatch { old_path, new_path, hunks });
     }
     Ok(file_patches)
+}
+
+fn render_hunks_as_new_file(hunks: &[Hunk]) -> anyhow::Result<String> {
+    let mut lines = Vec::new();
+    for hunk in hunks {
+        for line in &hunk.lines {
+            if let Some(rest) = line.strip_prefix('+') {
+                lines.push(rest.to_string());
+            } else if line.starts_with(' ') || line.starts_with('-') {
+                continue;
+            } else {
+                anyhow::bail!("unsupported hunk line for new file: {line}");
+            }
+        }
+    }
+    Ok(lines.join("\n"))
 }
 
 fn apply_hunks(original: &str, hunks: &[Hunk]) -> anyhow::Result<String> {

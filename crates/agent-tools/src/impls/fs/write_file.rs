@@ -43,6 +43,8 @@ impl WriteFileTool {
 struct WriteFileArgs {
     path: String,
     content: String,
+    #[serde(default)]
+    overwrite: Option<bool>,
 }
 
 pub(crate) struct WriteFileLocalTool;
@@ -55,6 +57,9 @@ impl LocalTool for WriteFileLocalTool {
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: WriteFileArgs = serde_json::from_value(arguments)?;
         let path = resolve_workspace_path(&ctx.workspace_root, Some(args.path.as_str()))?;
+        if path.exists() && !args.overwrite.unwrap_or(true) {
+            anyhow::bail!("target file already exists and overwrite=false: {}", path.display());
+        }
         let Some(parent) = path.parent() else {
             anyhow::bail!("cannot determine parent directory for {}", path.display());
         };
