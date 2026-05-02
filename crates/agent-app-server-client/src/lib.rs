@@ -42,6 +42,25 @@ impl AppServerClient {
         }
     }
 
+    pub fn request_conversation_history(&self, conversation_id: impl Into<String>) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::RequestConversationHistory {
+            conversation_id: conversation_id.into(),
+        })
+    }
+
+    pub fn request_conversation_history_page(
+        &self,
+        conversation_id: impl Into<String>,
+        before_turn_id: Option<String>,
+        limit: usize,
+    ) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::RequestConversationHistoryPage {
+            conversation_id: conversation_id.into(),
+            before_turn_id,
+            limit,
+        })
+    }
+
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         match self {
             Self::InProcess(client) => client.next_event().await,

@@ -216,6 +216,21 @@ pub(crate) async fn handle_command(
             )
             .await;
         }
+        AppClientCommand::RequestConversationHistoryPage {
+            conversation_id,
+            before_turn_id,
+            limit,
+        } => {
+            conversation_service::request_conversation_history_page(
+                &runtime,
+                event_tx,
+                &state,
+                conversation_id,
+                before_turn_id,
+                limit,
+            )
+            .await?;
+        }
         AppClientCommand::ListConversations => {
             conversation_service::list_conversations(&runtime, event_tx, &state).await?;
         }

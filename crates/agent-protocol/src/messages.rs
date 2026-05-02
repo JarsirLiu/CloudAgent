@@ -29,6 +29,11 @@ pub enum AppClientCommand {
     RequestConversationHistory {
         conversation_id: String,
     },
+    RequestConversationHistoryPage {
+        conversation_id: String,
+        before_turn_id: Option<String>,
+        limit: usize,
+    },
     ListConversations,
     CreateConversation {
         conversation_id: String,
@@ -60,6 +65,9 @@ impl AppClientCommand {
             | Self::ResetConversation { conversation_id }
             | Self::RequestConversationStatus { conversation_id }
             | Self::RequestConversationHistory { conversation_id }
+            | Self::RequestConversationHistoryPage {
+                conversation_id, ..
+            }
             | Self::CreateConversation { conversation_id }
             | Self::SwitchConversation { conversation_id }
             | Self::ArchiveConversation { conversation_id }
@@ -190,6 +198,12 @@ pub enum AppServerNotification {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
     },
+    ConversationHistoryPage {
+        conversation_id: String,
+        turns: Vec<ConversationTurn>,
+        has_more: bool,
+        next_before_turn_id: Option<String>,
+    },
     ConversationList {
         conversation_id: String,
         conversations: Vec<ConversationSummary>,
@@ -207,6 +221,9 @@ pub enum AppServerNotification {
     },
     Error {
         conversation_id: String,
+        // Stable machine-readable error prefixes may be included in message text.
+        // Current convention includes:
+        // - ERR_CONVERSATION_BUSY: submitted turn rejected because conversation already has an active turn.
         message: String,
     },
 }
@@ -275,6 +292,9 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::ConversationHistory {
+                conversation_id, ..
+            }
+            | Self::ConversationHistoryPage {
                 conversation_id, ..
             }
             | Self::ConversationList {
@@ -362,6 +382,7 @@ pub fn classify_notification(
         | AppServerNotification::TurnCancelled { .. }
         | AppServerNotification::ConversationStatus { .. }
         | AppServerNotification::ConversationHistory { .. }
+        | AppServerNotification::ConversationHistoryPage { .. }
         | AppServerNotification::ConversationList { .. }
         | AppServerNotification::ConversationSwitched { .. }
         | AppServerNotification::ConversationSubscriptionChanged { .. }

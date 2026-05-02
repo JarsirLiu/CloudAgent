@@ -12,6 +12,8 @@ pub struct AppClientCommandEnvelope {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppServerMessageEnvelope {
     pub message: AppServerMessage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_seq: Option<u64>,
 }
 
 impl TryFrom<JsonRpcMessage> for AppClientCommandEnvelope {
@@ -44,6 +46,7 @@ impl From<AppServerMessageEnvelope> for JsonRpcMessage {
         match envelope.message {
             AppServerMessage::Notification(notification) => {
                 let (method, params) = notification_method_and_params(&notification);
+                let params = inject_event_seq(params, envelope.event_seq);
                 JsonRpcMessage::Notification(JsonRpcNotification {
                     method: method.to_string(),
                     params: Some(params),
@@ -51,6 +54,7 @@ impl From<AppServerMessageEnvelope> for JsonRpcMessage {
             }
             AppServerMessage::Request(request) => {
                 let (id, method, params) = request_method_and_params(&request);
+                let params = inject_event_seq(params, envelope.event_seq);
                 JsonRpcMessage::Request(JsonRpcRequest {
                     id,
                     method: method.to_string(),
@@ -66,24 +70,55 @@ impl TryFrom<JsonRpcMessage> for AppServerMessageEnvelope {
 
     fn try_from(message: JsonRpcMessage) -> Result<Self, Self::Error> {
         match message {
-            JsonRpcMessage::Notification(notification) => Ok(AppServerMessageEnvelope {
-                message: AppServerMessage::Notification(parse_server_notification(
-                    &notification.method,
-                    notification.params,
-                )?),
-            }),
-            JsonRpcMessage::Request(request) => Ok(AppServerMessageEnvelope {
+            JsonRpcMessage::Notification(notification) => {
+                let (event_seq, params) = extract_event_seq(notification.params);
+                Ok(AppServerMessageEnvelope {
+                    message: AppServerMessage::Notification(parse_server_notification(
+                        &notification.method,
+                        params,
+                    )?),
+                    event_seq,
+                })
+            }
+            JsonRpcMessage::Request(request) => {
+                let (event_seq, params) = extract_event_seq(request.params);
+                Ok(AppServerMessageEnvelope {
                 message: AppServerMessage::Request(parse_server_request(
                     request.id,
                     &request.method,
-                    request.params,
+                    params,
                 )?),
-            }),
+                    event_seq,
+                })
+            }
             JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
                 anyhow::bail!("server envelope expects a notification or request")
             }
         }
     }
+}
+
+fn inject_event_seq(mut params: Value, event_seq: Option<u64>) -> Value {
+    if let Some(seq) = event_seq {
+        if !params.is_object() {
+            params = serde_json::json!({});
+        }
+        if let Some(object) = params.as_object_mut() {
+            object.insert("_event_seq".to_string(), Value::from(seq));
+        }
+    }
+    params
+}
+
+fn extract_event_seq(params: Option<Value>) -> (Option<u64>, Option<Value>) {
+    let mut params = params;
+    let mut event_seq = None;
+    if let Some(Value::Object(object)) = params.as_mut()
+        && let Some(seq) = object.remove("_event_seq")
+    {
+        event_seq = seq.as_u64();
+    }
+    (event_seq, params)
 }
 
 fn command_from_request(request: JsonRpcRequest) -> anyhow::Result<AppClientCommandEnvelope> {
@@ -124,6 +159,11 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         }),
         "conversation/history" => Ok(AppClientCommand::RequestConversationHistory {
             conversation_id: value_field(params, "conversation_id")?,
+        }),
+        "conversation/historyPage" => Ok(AppClientCommand::RequestConversationHistoryPage {
+            conversation_id: value_field(params.clone(), "conversation_id")?,
+            before_turn_id: optional_value_field(params.clone(), "before_turn_id")?,
+            limit: optional_value_field(params, "limit")?.unwrap_or(30),
         }),
         "conversation/list" => Ok(AppClientCommand::ListConversations),
         "conversation/create" => Ok(AppClientCommand::CreateConversation {
@@ -180,6 +220,18 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         AppClientCommand::RequestConversationHistory { conversation_id } => (
             "conversation/history",
             serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::RequestConversationHistoryPage {
+            conversation_id,
+            before_turn_id,
+            limit,
+        } => (
+            "conversation/historyPage",
+            serde_json::json!({
+                "conversation_id": conversation_id,
+                "before_turn_id": before_turn_id,
+                "limit": limit
+            }),
         ),
         AppClientCommand::ListConversations => ("conversation/list", Value::Null),
         AppClientCommand::CreateConversation { conversation_id } => (
@@ -292,6 +344,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "conversation/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::ConversationHistoryPage { .. } => (
+            "conversation/historyPage",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ConversationList { .. } => (
             "conversation/list",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -362,6 +418,7 @@ fn parse_server_notification(
         | "turn/cancelled"
         | "conversation/status"
         | "conversation/history"
+        | "conversation/historyPage"
         | "conversation/list"
         | "conversation/switched"
         | "conversation/subscriptionChanged"
@@ -412,6 +469,22 @@ where
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("missing `{field}` field"))?;
     Ok(serde_json::from_value(value)?)
+}
+
+fn optional_value_field<T>(value: Value, field: &str) -> anyhow::Result<Option<T>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("expected object params"))?;
+    let Some(value) = object.get(field).cloned() else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_value(value)?))
 }
 
 #[cfg(test)]
@@ -516,6 +589,7 @@ mod tests {
                 item_id: "tool:custom".to_string(),
                 delta: "custom output".to_string(),
             }),
+            event_seq: None,
         };
 
         let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
@@ -548,6 +622,7 @@ mod tests {
                 item_id: "tool:write".to_string(),
                 delta: "wrote note.txt".to_string(),
             }),
+            event_seq: None,
         };
 
         let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
@@ -593,6 +668,7 @@ mod tests {
                 },
                 model_context_window: Some(100),
             }),
+            event_seq: None,
         };
 
         let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
@@ -634,6 +710,7 @@ mod tests {
                     },
                 },
             }),
+            event_seq: None,
         };
 
         let JsonRpcMessage::Request(request) = JsonRpcMessage::from(message) else {
@@ -706,6 +783,32 @@ mod tests {
                 assert_eq!(request_id, RequestId::Integer(7));
                 assert!(decision.is_approved());
                 assert_eq!(decision.reason.as_deref(), Some("ok"));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn history_page_roundtrips_from_jsonrpc_request() {
+        let envelope = AppClientCommandEnvelope {
+            request_id: RequestId::Integer(12),
+            command: AppClientCommand::RequestConversationHistoryPage {
+                conversation_id: "default".to_string(),
+                before_turn_id: Some("turn-9".to_string()),
+                limit: 25,
+            },
+        };
+        let rpc = JsonRpcMessage::from(envelope);
+        let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");
+        match parsed.command {
+            AppClientCommand::RequestConversationHistoryPage {
+                conversation_id,
+                before_turn_id,
+                limit,
+            } => {
+                assert_eq!(conversation_id, "default");
+                assert_eq!(before_turn_id.as_deref(), Some("turn-9"));
+                assert_eq!(limit, 25);
             }
             other => panic!("unexpected command: {other:?}"),
         }

@@ -6,6 +6,34 @@ use agent_core::{
 use agent_protocol::{ConversationSnapshot, ConversationStatus, ConversationSummary, TranscriptItem};
 use anyhow::Result;
 
+fn paginate_turns(
+    turns: Vec<ConversationTurn>,
+    before_turn_id: Option<&str>,
+    limit: usize,
+) -> (Vec<ConversationTurn>, bool, Option<String>) {
+    if turns.is_empty() {
+        return (Vec::new(), false, None);
+    }
+    let end_exclusive = if let Some(before_id) = before_turn_id {
+        turns
+            .iter()
+            .position(|turn| turn.id == before_id)
+            .unwrap_or(turns.len())
+    } else {
+        turns.len()
+    };
+    let page_limit = limit.max(1);
+    let start = end_exclusive.saturating_sub(page_limit);
+    let page = turns[start..end_exclusive].to_vec();
+    let has_more = start > 0;
+    let next_before_turn_id = if has_more {
+        Some(turns[start].id.clone())
+    } else {
+        None
+    };
+    (page, has_more, next_before_turn_id)
+}
+
 impl AgentRuntime {
     pub async fn reset_conversation(&self, conversation_id: &str) -> Result<()> {
         self.rollout_recorder.flush().await?;
@@ -67,6 +95,16 @@ impl AgentRuntime {
         Ok(build_turns_from_rollout_items(&rollout_items))
     }
 
+    pub async fn build_turns_page_from_rollout(
+        &self,
+        conversation_id: &str,
+        before_turn_id: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<ConversationTurn>, bool, Option<String>)> {
+        let turns = self.build_turns_from_rollout(conversation_id).await?;
+        Ok(paginate_turns(turns, before_turn_id, limit))
+    }
+
     pub async fn conversation_snapshot(&self, conversation_id: &str) -> Result<ConversationState> {
         if let Some(conversation) = self.state.conversation(conversation_id).await {
             return Ok(conversation);
@@ -97,5 +135,40 @@ impl AgentRuntime {
             turn_state: active_turn.as_ref().map(|turn| turn.turn_state.clone()),
             message_count: super::visible_message_count(&history),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::paginate_turns;
+    use agent_core::ConversationTurn;
+    use agent_protocol::TurnState;
+
+    fn turn(id: &str) -> ConversationTurn {
+        ConversationTurn {
+            id: id.to_string(),
+            state: TurnState::Completed,
+            items: Vec::new(),
+            rollout_start_index: 0,
+            rollout_end_index: 0,
+        }
+    }
+
+    #[test]
+    fn paginate_returns_tail_page_and_cursor() {
+        let turns = vec![turn("t1"), turn("t2"), turn("t3"), turn("t4")];
+        let (page, has_more, cursor) = paginate_turns(turns, None, 2);
+        assert_eq!(page.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["t3", "t4"]);
+        assert!(has_more);
+        assert_eq!(cursor.as_deref(), Some("t3"));
+    }
+
+    #[test]
+    fn paginate_before_cursor_returns_older_page() {
+        let turns = vec![turn("t1"), turn("t2"), turn("t3"), turn("t4")];
+        let (page, has_more, cursor) = paginate_turns(turns, Some("t3"), 2);
+        assert_eq!(page.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["t1", "t2"]);
+        assert!(!has_more);
+        assert!(cursor.is_none());
     }
 }

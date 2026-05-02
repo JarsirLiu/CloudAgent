@@ -1,6 +1,6 @@
 use crate::command_router::{ServerState, merge_active_turn};
 use crate::notification_service::send_notification;
-use agent_protocol::{AppServerMessage, AppServerNotification};
+use agent_protocol::{AppServerMessage, AppServerNotification, ConversationStatus, FrontendMode};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use std::sync::Arc;
@@ -42,7 +42,9 @@ pub(crate) async fn request_conversation_history(
         Some(listener) => listener.active_turn_snapshot().await,
         None => None,
     };
-    let mut turns = runtime.build_turns_from_rollout(&conversation_id).await?;
+    let (mut turns, _has_more, _next_before_turn_id) = runtime
+        .build_turns_page_from_rollout(&conversation_id, None, 30)
+        .await?;
     merge_active_turn(&mut turns, active_turn);
     send_notification(
         event_tx,
@@ -69,6 +71,54 @@ pub(crate) async fn request_conversation_status(
         AppServerNotification::ConversationStatus {
             conversation_id,
             snapshot,
+        },
+    )
+    .await;
+    Ok(())
+}
+
+pub(crate) async fn request_conversation_history_page(
+    runtime: &Arc<AgentRuntime>,
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: String,
+    before_turn_id: Option<String>,
+    limit: usize,
+) -> Result<()> {
+    let (turns, has_more, next_before_turn_id) = runtime
+        .build_turns_page_from_rollout(&conversation_id, before_turn_id.as_deref(), limit)
+        .await?;
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::ConversationHistoryPage {
+            conversation_id,
+            turns,
+            has_more,
+            next_before_turn_id,
+        },
+    )
+    .await;
+    Ok(())
+}
+
+pub(crate) async fn replay_frontend_state(
+    runtime: &Arc<AgentRuntime>,
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: &str,
+) -> Result<()> {
+    let snapshot = runtime.conversation_status(conversation_id).await?;
+    let mode = match snapshot.conversation_status {
+        ConversationStatus::Busy => FrontendMode::Running,
+        ConversationStatus::Idle => FrontendMode::Idle,
+    };
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::FrontendStateChanged {
+            conversation_id: conversation_id.to_string(),
+            mode,
         },
     )
     .await;
