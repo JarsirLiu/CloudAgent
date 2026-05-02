@@ -2,9 +2,9 @@ use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
 use serde_json::json;
 
-pub struct ReadFileToolV2;
+pub struct ReadFileTool;
 
-impl ReadFileToolV2 {
+impl ReadFileTool {
     pub fn descriptor(max_read_chars: usize) -> ToolDescriptor {
         ToolDescriptor::new(
             ToolCategory::RepositoryExploration,

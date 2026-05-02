@@ -2,9 +2,9 @@ use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
 use serde_json::json;
 
-pub struct WriteFileToolV2;
+pub struct WriteFileTool;
 
-impl WriteFileToolV2 {
+impl WriteFileTool {
     pub fn descriptor() -> ToolDescriptor {
         ToolDescriptor::new(
             ToolCategory::CodeEditing,

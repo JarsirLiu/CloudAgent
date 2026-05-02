@@ -7,10 +7,10 @@ mod tools {
 }
 
 use crate::impls::{
-    code_editing::{ApplyPatchTool, WriteFileToolV2},
-    command::ShellCommandToolV2,
-    fs::{GetMetadataTool, ReadDirectoryToolV2},
-    repo::{FindFilesTool, ReadFileToolV2, ReadFilesTool, SearchTextTool},
+    code_editing::{ApplyPatchTool, WriteFileTool as WriteFileDescriptorTool},
+    command::ShellCommandTool as ShellCommandDescriptorTool,
+    fs::{GetMetadataTool, ReadDirectoryTool as ReadDirectoryDescriptorTool},
+    repo::{FindFilesTool, ReadFileTool as ReadFileDescriptorTool, ReadFilesTool, SearchTextTool},
 };
 use crate::selection::{TaskKind, ToolMode, ToolSelector};
 use crate::spec::ToolDescriptor;
@@ -38,13 +38,13 @@ impl ToolRegistry {
         let descriptors = vec![
             SearchTextTool::descriptor(),
             FindFilesTool::descriptor(),
-            ReadFileToolV2::descriptor(max_read_chars),
+            ReadFileDescriptorTool::descriptor(max_read_chars),
             ReadFilesTool::descriptor(max_read_chars),
             ApplyPatchTool::descriptor(),
-            WriteFileToolV2::descriptor(),
-            ShellCommandToolV2::descriptor(),
+            WriteFileDescriptorTool::descriptor(),
+            ShellCommandDescriptorTool::descriptor(),
             GetMetadataTool::descriptor(),
-            ReadDirectoryToolV2::descriptor(),
+            ReadDirectoryDescriptorTool::descriptor(),
         ];
 
         let mut tools: BTreeMap<String, Arc<dyn LocalTool>> = BTreeMap::new();

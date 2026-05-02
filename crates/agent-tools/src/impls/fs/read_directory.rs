@@ -2,9 +2,9 @@ use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
 use serde_json::json;
 
-pub struct ReadDirectoryToolV2;
+pub struct ReadDirectoryTool;
 
-impl ReadDirectoryToolV2 {
+impl ReadDirectoryTool {
     pub fn descriptor() -> ToolDescriptor {
         ToolDescriptor::new(
             ToolCategory::WorkspaceFileOps,

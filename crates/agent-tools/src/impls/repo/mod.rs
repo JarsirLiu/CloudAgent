@@ -5,7 +5,7 @@ mod read_files;
 mod search_text;
 
 pub use find_files::{FindFilesArgs, FindFilesTool};
-pub use read_file::ReadFileToolV2;
+pub use read_file::ReadFileTool;
 pub use read_files::{ReadFilesArgs, ReadFilesTool};
 pub use search_text::{SearchTextArgs, SearchTextOutput, SearchTextTool, run_search_text};
 

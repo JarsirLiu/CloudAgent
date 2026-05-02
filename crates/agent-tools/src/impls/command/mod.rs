@@ -1,3 +1,3 @@
 mod shell_command;
 
-pub use shell_command::ShellCommandToolV2;
+pub use shell_command::ShellCommandTool;

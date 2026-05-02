@@ -223,7 +223,7 @@ This is not yet wired into runtime enforcement, but this is where that policy be
 
 ### `registry`
 
-Holds `ToolRegistryV2`, which is the future product registry for the default tool catalog.
+Holds `ToolRegistry`, which is the product registry for the default tool catalog.
 
 Its responsibilities are:
 
@@ -413,7 +413,7 @@ Success metric:
 
 ### Phase 2: wire v2 registry execution
 
-Teach `ToolRegistryV2` to:
+Teach `ToolRegistry` to:
 
 - hold executable tool instances
 - route `ToolCall`s by tool name
@@ -507,7 +507,7 @@ The next implementation work in this crate should be:
 1. implement `search_text`
 2. implement `find_files`
 3. implement `read_files`
-4. teach `ToolRegistryV2` to execute calls
+4. teach `ToolRegistry` to execute calls
 5. connect runtime explore mode to v2 selection
 
 That sequence creates the first real end-to-end improvement without forcing a full rewrite in one

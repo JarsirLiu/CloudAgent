@@ -1,4 +1,4 @@
-use crate::impls::code_editing::WriteFileToolV2;
+use crate::impls::code_editing::WriteFileTool as WriteFileDescriptorTool;
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
 use agent_core::{ToolExecutionContext, ToolSpec};
 use anyhow::{Result, bail};
@@ -18,7 +18,7 @@ struct WriteFileArgs {
 #[async_trait]
 impl LocalTool for WriteFileTool {
     fn spec(&self) -> ToolSpec {
-        WriteFileToolV2::descriptor().spec
+        WriteFileDescriptorTool::descriptor().spec
     }
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: WriteFileArgs = serde_json::from_value(arguments)?;

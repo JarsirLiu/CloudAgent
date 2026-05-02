@@ -2,9 +2,9 @@ use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
 use serde_json::json;
 
-pub struct ShellCommandToolV2;
+pub struct ShellCommandTool;
 
-impl ShellCommandToolV2 {
+impl ShellCommandTool {
     pub fn descriptor() -> ToolDescriptor {
         ToolDescriptor::new(
             ToolCategory::CommandExecution,

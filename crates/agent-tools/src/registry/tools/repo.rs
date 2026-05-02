@@ -1,6 +1,6 @@
 use crate::impls::repo::{
-    FindFilesArgs, FindFilesTool, ReadFileToolV2, ReadFilesArgs, ReadFilesTool, SearchTextArgs,
-    SearchTextTool, run_search_text,
+    FindFilesArgs, FindFilesTool, ReadFileTool as ReadFileDescriptorTool, ReadFilesArgs,
+    ReadFilesTool, SearchTextArgs, SearchTextTool, run_search_text,
 };
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
 use agent_core::{ToolExecutionContext, ToolSpec};
@@ -106,7 +106,7 @@ impl LocalTool for ReadFilesLocalTool {
 #[async_trait]
 impl LocalTool for ReadFileTool {
     fn spec(&self) -> ToolSpec {
-        ReadFileToolV2::descriptor(self.max_read_chars).spec
+        ReadFileDescriptorTool::descriptor(self.max_read_chars).spec
     }
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: ReadFileArgs = serde_json::from_value(arguments)?;

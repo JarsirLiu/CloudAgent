@@ -1,4 +1,4 @@
-use crate::impls::fs::{GetMetadataTool, ReadDirectoryToolV2};
+use crate::impls::fs::{GetMetadataTool, ReadDirectoryTool as ReadDirectoryDescriptorTool};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
 use agent_core::{ToolExecutionContext, ToolSpec};
 use anyhow::Result;
@@ -49,7 +49,7 @@ impl LocalTool for GetMetadataLocalTool {
 #[async_trait]
 impl LocalTool for ReadDirectoryTool {
     fn spec(&self) -> ToolSpec {
-        ReadDirectoryToolV2::descriptor().spec
+        ReadDirectoryDescriptorTool::descriptor().spec
     }
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: ReadDirectoryArgs = serde_json::from_value(arguments)?;

@@ -1,4 +1,4 @@
-use crate::impls::command::ShellCommandToolV2;
+use crate::impls::command::ShellCommandTool as ShellCommandDescriptorTool;
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, read_streaming_pipe, resolve_workspace_path};
 use agent_core::{ToolExecutionContext, ToolOutputStream, ToolSpec};
 use agent_protocol::{CommandExecutionStatus, StructuredToolResult};
@@ -25,7 +25,7 @@ struct ShellCommandArgs {
 #[async_trait]
 impl LocalTool for ShellCommandTool {
     fn spec(&self) -> ToolSpec {
-        ShellCommandToolV2::descriptor().spec
+        ShellCommandDescriptorTool::descriptor().spec
     }
 
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
