@@ -12,6 +12,10 @@ pub struct FindFilesArgs {
     pub path_scope: Option<String>,
     #[serde(default)]
     pub max_results: Option<usize>,
+    #[serde(default)]
+    pub case_sensitive: Option<bool>,
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
 
 impl FindFilesTool {
@@ -28,7 +32,9 @@ impl FindFilesTool {
                     "properties": {
                         "pattern": { "type": "string" },
                         "path_scope": { "type": "string" },
-                        "max_results": { "type": "integer", "minimum": 1 }
+                        "max_results": { "type": "integer", "minimum": 1 },
+                        "case_sensitive": { "type": "boolean" },
+                        "offset": { "type": "integer", "minimum": 0 }
                     },
                     "required": ["pattern"]
                 }),

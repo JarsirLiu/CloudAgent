@@ -34,7 +34,16 @@ impl LocalTool for SearchTextLocalTool {
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: SearchTextArgs = serde_json::from_value(arguments)?;
         let output = run_search_text(&ctx.workspace_root, args).await?;
-        let lines = output.results.iter().map(|m| format!("{}:{}: {}", m.path, m.line, m.preview)).collect::<Vec<_>>().join("\n");
+        let lines = output.results.iter().map(|m| {
+            let mut block = format!("{}:{}: {}", m.path, m.line, m.preview);
+            if !m.before.is_empty() || !m.after.is_empty() {
+                let before = m.before.iter().map(|l| format!("< {l}")).collect::<Vec<_>>().join("\n");
+                let after = m.after.iter().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n");
+                if !before.is_empty() { block.push_str(&format!("\n{before}")); }
+                if !after.is_empty() { block.push_str(&format!("\n{after}")); }
+            }
+            block
+        }).collect::<Vec<_>>().join("\n\n");
         let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches in {} files.\n{}", output.match_count, output.file_count, lines) };
         Ok(ToolInvocationOutput { content, summary: format!("found {} matches across {} files", output.match_count, output.file_count), structured: None })
     }
@@ -47,9 +56,11 @@ impl LocalTool for FindFilesLocalTool {
     }
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: FindFilesArgs = serde_json::from_value(arguments)?;
-        let pattern = args.pattern.trim().to_lowercase();
+        let pattern = args.pattern.trim().to_string();
         if pattern.is_empty() { bail!("`pattern` must not be empty"); }
         let max_results = args.max_results.unwrap_or(200).clamp(1, 2_000);
+        let offset = args.offset.unwrap_or(0);
+        let case_sensitive = args.case_sensitive.unwrap_or(false);
         let root = resolve_workspace_path(&ctx.workspace_root, args.path_scope.as_deref())?;
         let mut stack = vec![root];
         let mut matches = Vec::new();
@@ -64,18 +75,50 @@ impl LocalTool for FindFilesLocalTool {
                     if ignored.contains(&name.as_str()) || (name.starts_with('.') && name != ".cargo") { continue; }
                     stack.push(path); continue;
                 }
-                if metadata.is_file() && name.to_lowercase().contains(&pattern) {
+                if metadata.is_file() && file_name_matches(&name, &pattern, case_sensitive) {
                     let rel = path.strip_prefix(&ctx.workspace_root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
                     matches.push(rel);
-                    if matches.len() >= max_results { break; }
+                    if matches.len() >= max_results + offset { break; }
                 }
             }
-            if matches.len() >= max_results { break; }
+            if matches.len() >= max_results + offset { break; }
         }
         matches.sort();
+        let matches = matches.into_iter().skip(offset).take(max_results).collect::<Vec<_>>();
         let content = if matches.is_empty() { "No files found".to_string() } else { matches.join("\n") };
         Ok(ToolInvocationOutput { summary: format!("found {} files", matches.len()), content, structured: None })
     }
+}
+
+fn file_name_matches(name: &str, pattern: &str, case_sensitive: bool) -> bool {
+    let (name, pattern) = if case_sensitive {
+        (name.to_string(), pattern.to_string())
+    } else {
+        (name.to_lowercase(), pattern.to_lowercase())
+    };
+    wildcard_match(&pattern, &name) || name.contains(&pattern)
+}
+
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let s: Vec<char> = text.chars().collect();
+    let mut dp = vec![vec![false; s.len() + 1]; p.len() + 1];
+    dp[0][0] = true;
+    for i in 1..=p.len() {
+        if p[i - 1] == '*' {
+            dp[i][0] = dp[i - 1][0];
+        }
+    }
+    for i in 1..=p.len() {
+        for j in 1..=s.len() {
+            dp[i][j] = match p[i - 1] {
+                '*' => dp[i - 1][j] || dp[i][j - 1],
+                '?' => dp[i - 1][j - 1],
+                c => dp[i - 1][j - 1] && c == s[j - 1],
+            };
+        }
+    }
+    dp[p.len()][s.len()]
 }
 
 #[async_trait]

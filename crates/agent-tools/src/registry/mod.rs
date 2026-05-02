@@ -51,14 +51,18 @@ impl ToolRegistry {
         register(&mut tools, ShellCommandTool);
         register_alias(&mut tools, "command/exec", "shell_command");
         register(&mut tools, SearchTextLocalTool);
+        register_alias(&mut tools, "repo/searchText", "search_text");
         register(&mut tools, FindFilesLocalTool);
+        register_alias(&mut tools, "repo/findFiles", "find_files");
         register(&mut tools, ReadFilesLocalTool { max_read_chars });
+        register_alias(&mut tools, "repo/readFiles", "read_files");
         register(&mut tools, GetMetadataLocalTool);
         register_alias(&mut tools, "fs/getMetadata", "get_metadata");
         register(&mut tools, ReadDirectoryTool);
         register_alias(&mut tools, "fs/readDirectory", "read_directory");
         register(&mut tools, ReadFileTool { max_read_chars });
         register_alias(&mut tools, "fs/readFile", "read_file");
+        register_alias(&mut tools, "repo/readFile", "read_file");
         register(&mut tools, WriteFileTool);
         register_alias(&mut tools, "fs/writeFile", "write_file");
 

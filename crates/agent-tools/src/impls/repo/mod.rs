@@ -36,6 +36,11 @@ mod tests {
                 query: "token".to_string(),
                 path_scope: None,
                 max_results: Some(10),
+                regex: None,
+                case_sensitive: None,
+                file_glob: None,
+                context_lines: None,
+                offset: None,
             },
         )
         .await
