@@ -3,6 +3,7 @@ use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcMessage, RequestId,
 };
 use anyhow::{Context, Result, anyhow};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -138,11 +139,23 @@ where
 {
     let mut lines = reader.lines();
     let mut skipped_events = 0usize;
+    let mut last_seq_by_conversation: HashMap<String, u64> = HashMap::new();
 
     while let Some(line) = lines.next_line().await? {
         let message: JsonRpcMessage =
             serde_json::from_str(&line).context("failed to parse stdio app-server event")?;
         let envelope = AppServerMessageEnvelope::try_from(message)?;
+        if let (Some(conversation_id), Some(event_seq)) =
+            (envelope.message.conversation_id(), envelope.event_seq)
+        {
+            let last_seq = last_seq_by_conversation
+                .entry(conversation_id.to_string())
+                .or_insert(0);
+            if event_seq <= *last_seq {
+                continue;
+            }
+            *last_seq = event_seq;
+        }
 
         if !forward_event(
             &event_tx,
@@ -217,6 +230,7 @@ mod tests {
                 conversation_id: "default".to_string(),
                 message: "hello".to_string(),
             }),
+            event_seq: None,
         };
         let request = AppServerMessageEnvelope {
             message: AppServerMessage::Request(agent_protocol::AppServerRequest::ServerRequest {
@@ -232,6 +246,7 @@ mod tests {
                     },
                 },
             }),
+            event_seq: None,
         };
         let payload = format!(
             "{}\n{}\n",
@@ -278,5 +293,60 @@ mod tests {
             }
             other => panic!("unexpected third event: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn read_events_dedupes_replayed_event_seq_per_conversation() {
+        let first = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: "default".to_string(),
+                message: "first".to_string(),
+            }),
+            event_seq: Some(1),
+        };
+        let replayed = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: "default".to_string(),
+                message: "duplicate".to_string(),
+            }),
+            event_seq: Some(1),
+        };
+        let next = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: "default".to_string(),
+                message: "second".to_string(),
+            }),
+            event_seq: Some(2),
+        };
+        let payload = format!(
+            "{}\n{}\n{}\n",
+            serde_json::to_string(&JsonRpcMessage::from(first)).expect("first"),
+            serde_json::to_string(&JsonRpcMessage::from(replayed)).expect("replayed"),
+            serde_json::to_string(&JsonRpcMessage::from(next)).expect("next"),
+        );
+        let (mut write_side, read_side) = duplex(4096);
+        let writer = tokio::spawn(async move {
+            write_side
+                .write_all(payload.as_bytes())
+                .await
+                .expect("write payload");
+        });
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+
+        read_events_from(BufReader::new(read_side), event_tx)
+            .await
+            .expect("read events");
+        writer.await.expect("writer task");
+
+        let mut messages = Vec::new();
+        while let Some(event) = event_rx.recv().await {
+            if let AppServerEvent::Message(AppServerMessage::Notification(
+                AppServerNotification::Info { message, .. },
+            )) = event
+            {
+                messages.push(message);
+            }
+        }
+        assert_eq!(messages, vec!["first".to_string(), "second".to_string()]);
     }
 }

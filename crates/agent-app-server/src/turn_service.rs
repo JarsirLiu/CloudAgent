@@ -21,7 +21,7 @@ pub(crate) async fn submit_turn(
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) {
-    await_tracked_turn_tasks(state).await;
+    await_tracked_turn_tasks(state, &conversation_id).await;
     send_notification(
         event_tx,
         state,
@@ -33,7 +33,7 @@ pub(crate) async fn submit_turn(
     .await;
     let task = spawn_turn(
         runtime,
-        conversation_id,
+        conversation_id.clone(),
         content,
         TurnSpawnDependencies {
             event_tx: event_tx.clone(),
@@ -42,7 +42,7 @@ pub(crate) async fn submit_turn(
             auto_approve_reason,
         },
     );
-    state.lock().await.track_turn_task(task);
+    state.lock().await.track_turn_task(conversation_id, task);
 }
 
 pub(crate) async fn interrupt_turn(
@@ -82,7 +82,7 @@ pub(crate) async fn compact_conversation(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<()> {
-    await_tracked_turn_tasks(state).await;
+    await_tracked_turn_tasks(state, &conversation_id).await;
     let estimated_tokens = runtime
         .conversation_history_snapshot(&conversation_id)
         .await
@@ -149,8 +149,13 @@ pub(crate) async fn compact_conversation(
     Ok(())
 }
 
-async fn await_tracked_turn_tasks(state: &Arc<Mutex<ServerState>>) {
-    let tasks = { state.lock().await.take_turn_tasks() };
+async fn await_tracked_turn_tasks(state: &Arc<Mutex<ServerState>>, conversation_id: &str) {
+    let tasks = {
+        state
+            .lock()
+            .await
+            .take_turn_tasks_for_conversation(conversation_id)
+    };
     for task in tasks {
         let _ = task.await;
     }
@@ -243,11 +248,18 @@ fn spawn_turn(runtime: Arc<AgentRuntime>, conversation_id: String, user_input: S
             }
             Err(error) => {
                 let maybe_turn_id = active_turn_id.lock().ok().and_then(|guard| guard.clone());
+                let error_text = format!("{error:#}");
+                let busy_error = error_text.starts_with("ERR_CONVERSATION_BUSY:");
                 if let Some(turn_id) = maybe_turn_id {
                     server_request_service::resolve_pending_for_finished_turn(&finish_events, &state_for_finish, &conversation_id, &turn_id, "turn failed before request was answered").await;
-                    send_notification(&finish_events, &state_for_finish, AppServerNotification::TurnFailed { conversation_id: conversation_id.clone(), turn_id, error: format!("{error:#}") }).await;
+                    send_notification(&finish_events, &state_for_finish, AppServerNotification::TurnFailed { conversation_id: conversation_id.clone(), turn_id, error: error_text }).await;
                 } else {
-                    send_notification(&finish_events, &state_for_finish, AppServerNotification::Error { conversation_id: conversation_id.clone(), message: format!("turn failed before start: {error:#}") }).await;
+                    let message = if busy_error {
+                        "conversation is busy; wait for the active turn to finish or interrupt it".to_string()
+                    } else {
+                        format!("turn failed before start: {error:#}")
+                    };
+                    send_notification(&finish_events, &state_for_finish, AppServerNotification::Error { conversation_id: conversation_id.clone(), message }).await;
                 }
                 send_notification(&finish_events, &state_for_finish, AppServerNotification::FrontendStateChanged { conversation_id: conversation_id.clone(), mode: agent_protocol::FrontendMode::Idle }).await;
                 listener.finish_turn(agent_protocol::TurnState::Failed).await;

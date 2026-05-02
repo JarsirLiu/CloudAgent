@@ -4,6 +4,10 @@ use agent_core::{RolloutItem, ToolCall};
 use agent_protocol::{EventMsg, ServerRequest, ServerRequestDecision, TurnState};
 use anyhow::{Result, bail};
 
+pub(crate) const CONVERSATION_BUSY_ERROR_CODE: &str = "ERR_CONVERSATION_BUSY";
+pub(crate) const CONVERSATION_BUSY_ERROR_MESSAGE: &str =
+    "conversation is busy; concurrent turns on the same conversation are not allowed";
+
 pub(crate) async fn run_turn_with_approval<E, F, Fut>(
     runtime: &AgentRuntime,
     conversation_id: &str,
@@ -34,7 +38,11 @@ where
         .start_turn(conversation_id.to_string(), turn_id.clone())
         .await
     else {
-        bail!("conversation is busy; concurrent turns on the same conversation are not allowed");
+        bail!(
+            "{}: {}",
+            CONVERSATION_BUSY_ERROR_CODE,
+            CONVERSATION_BUSY_ERROR_MESSAGE
+        );
     };
 
     let mut history = runtime.load_history(conversation_id).await?;
@@ -151,5 +159,22 @@ where
             };
             Ok(outcome)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE};
+
+    #[test]
+    fn busy_error_message_is_stable() {
+        let error = format!(
+            "{}: {}",
+            CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE
+        );
+        assert_eq!(
+            error,
+            "ERR_CONVERSATION_BUSY: conversation is busy; concurrent turns on the same conversation are not allowed"
+        );
     }
 }
