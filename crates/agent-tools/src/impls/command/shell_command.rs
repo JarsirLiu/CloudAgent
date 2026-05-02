@@ -26,7 +26,7 @@ impl ShellCommandTool {
             vec!["explore", "edit", "verify", "general"],
             ToolSpec {
                 name: "shell_command".to_string(),
-                description: "Run a local shell command for build, test, git, or high-density workspace inspection.".to_string(),
+                description: "Run a local shell command for build, test, git, and high-density workspace inspection. Prefer rg, git ls-files, git grep, and other read-only commands when searching a repository.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -138,8 +138,10 @@ impl LocalTool for ShellCommandLocalTool {
         let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         let exit_code = status.code().unwrap_or(-1);
         let current_directory = workdir.display().to_string();
+        let command_summary = summarize_command(&args.command);
         let content = format!(
-            "command: {}\ncurrent_directory: {}\nexit_code: {}\nsuccess: {}\n\nstdout:\n{}\n\nstderr:\n{}",
+            "kind: {}\ncommand: {}\ncurrent_directory: {}\nexit_code: {}\nsuccess: {}\n\nstdout:\n{}\n\nstderr:\n{}",
+            command_summary,
             args.command,
             current_directory,
             exit_code,
@@ -174,6 +176,92 @@ impl LocalTool for ShellCommandLocalTool {
             }),
         })
     }
+}
+
+fn summarize_command(command: &str) -> &'static str {
+    let normalized = command.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return "unknown";
+    }
+    if contains_write_operator(&normalized) || contains_network_indicator(&normalized) {
+        return "action";
+    }
+
+    let Some(program) = normalized.split_whitespace().next() else {
+        return "unknown";
+    };
+
+    match program {
+        "rg" | "grep" | "findstr" | "select-string" => "search",
+        "git" if normalized.starts_with("git ls-files") => "list files",
+        "git" if normalized.starts_with("git grep") => "search",
+        "git"
+            if normalized.starts_with("git log")
+                || normalized.starts_with("git status")
+                || normalized.starts_with("git diff")
+                || normalized.starts_with("git show")
+                || normalized.starts_with("git branch")
+                || normalized.starts_with("git rev-parse")
+                || normalized.starts_with("git cat-file") =>
+        {
+            "inspect"
+        }
+        "pwd" | "ls" | "dir" | "cat" | "type" | "head" | "tail" | "find" | "tree" => "inspect",
+        "fd" => "find files",
+        "get-childitem" | "get-content" => "inspect",
+        "measure-object" | "where-object" | "sort-object" | "select-object" => "inspect",
+        _ => "action",
+    }
+}
+
+fn contains_write_operator(command: &str) -> bool {
+    let write_markers = [
+        " >",
+        ">>",
+        " out-file",
+        " set-content",
+        " add-content",
+        " tee-object",
+        " remove-item",
+        " move-item",
+        " copy-item",
+        " rename-item",
+        " new-item",
+        " set-item",
+        " rm ",
+        " del ",
+        " mv ",
+        " cp ",
+        " chmod ",
+        " chown ",
+        " mkdir ",
+        " rmdir ",
+        " sed -i",
+    ];
+    write_markers.iter().any(|marker| command.contains(marker))
+}
+
+fn contains_network_indicator(command: &str) -> bool {
+    let network_markers = [
+        "curl ",
+        "wget ",
+        "invoke-webrequest",
+        "invoke-restmethod",
+        "http://",
+        "https://",
+        " ping ",
+        "ssh ",
+        "scp ",
+        "ftp ",
+        "npm install",
+        "pnpm install",
+        "yarn install",
+        "pip install",
+        "cargo install",
+    ];
+    network_markers
+        .iter()
+        .any(|marker| command.contains(marker))
 }
 
 fn preferred_windows_shell() -> String {
@@ -229,5 +317,13 @@ mod tests {
     #[test]
     fn command_exists_rejects_missing_binary() {
         assert!(!command_exists("cloudagent-definitely-missing-command"));
+    }
+
+    #[test]
+    fn summarize_command_classifies_common_read_only_commands() {
+        assert_eq!(summarize_command("rg -n TODO src"), "search");
+        assert_eq!(summarize_command("git ls-files crates"), "list files");
+        assert_eq!(summarize_command("git status"), "inspect");
+        assert_eq!(summarize_command("Set-Content out.txt hi"), "action");
     }
 }

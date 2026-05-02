@@ -32,7 +32,7 @@ impl FuzzyFileSearchTool {
             vec!["explore", "general"],
             ToolSpec {
                 name: "fuzzy_file_search".to_string(),
-                description: "Find candidate files using fuzzy path and file-name matching. Prefer this over manual directory traversal when locating implementation files.".to_string(),
+                description: "Find the most likely files in a repository quickly. Use this before directory traversal when you need to locate a module, test, config, or implementation file by name, path fragment, or approximate match.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {

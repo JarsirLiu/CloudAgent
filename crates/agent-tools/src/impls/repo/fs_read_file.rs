@@ -20,7 +20,7 @@ impl FsReadFileTool {
             ToolSpec {
                 name: "fs_read_file".to_string(),
                 description: format!(
-                    "Read a known file through the shared file access path. Use this after locating a candidate file. Maximum characters per request: {max_read_chars}."
+                    "Read a known file through the shared file access path. Use this after you already know the path. Do not use directory traversal to inspect file contents. Maximum characters per request: {max_read_chars}."
                 ),
                 parameters: json!({
                     "type": "object",
