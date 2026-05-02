@@ -42,8 +42,8 @@ impl ChatComposer {
 
         if key.modifiers == KeyModifiers::CONTROL {
             return Some(match key.code {
-                KeyCode::Char('c') | KeyCode::Char('q') => ComposerIntent::Exit,
-                KeyCode::Char('k') => ComposerIntent::Interrupt,
+                KeyCode::Char('c') => ComposerIntent::Interrupt,
+                KeyCode::Char('q') => ComposerIntent::Exit,
                 KeyCode::Char('j') => self.submit(),
                 _ => {
                     self.textarea.handle_key(key);

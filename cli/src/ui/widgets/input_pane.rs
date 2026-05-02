@@ -40,7 +40,7 @@ impl InputPane {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
-        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('k') {
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
             return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
         }
 
@@ -353,7 +353,7 @@ mod tests {
     use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
 
     #[test]
-    fn ctrl_k_interrupts_even_when_server_request_overlay_is_active() {
+    fn ctrl_c_interrupts_even_when_server_request_overlay_is_active() {
         let mut pane = InputPane::new();
         pane.set_server_request(ServerRequestInlineState {
             request_id: RequestId::String("req-1".to_string()),
@@ -362,7 +362,7 @@ mod tests {
         });
 
         let action = pane.handle_key(KeyEvent {
-            code: KeyCode::Char('k'),
+            code: KeyCode::Char('c'),
             modifiers: KeyModifiers::CONTROL,
             kind: KeyEventKind::Press,
             state: crossterm::event::KeyEventState::NONE,

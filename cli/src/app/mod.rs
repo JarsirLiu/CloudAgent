@@ -224,9 +224,14 @@ impl TuiApp {
                 self.console_state.mode,
             )),
             InputPaneAction::Composer(ComposerIntent::Interrupt) => {
-                Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
-                    conversation_id: self.conversation_id.clone(),
-                }))
+                if self.console_state.mode == FrontendMode::Idle {
+                    self.run_state.should_exit = true;
+                    Some(ParsedInput::Command(AppClientCommand::Exit))
+                } else {
+                    Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
+                        conversation_id: self.conversation_id.clone(),
+                    }))
+                }
             }
             InputPaneAction::Composer(ComposerIntent::Compact) => Some(ParsedInput::Command(
                 AppClientCommand::CompactConversation {
@@ -466,6 +471,21 @@ mod tests {
             cells[0].tone,
             crate::ui::widgets::history_cell::HistoryTone::Control
         );
+    }
+
+    #[test]
+    fn ctrl_c_exits_when_idle() {
+        let mut app = TuiApp::new("default".to_string(), "test");
+
+        let input = app
+            .handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+            .expect("ctrl+c should produce exit input");
+
+        assert!(matches!(
+            input,
+            ParsedInput::Command(AppClientCommand::Exit)
+        ));
+        assert!(app.run_state.should_exit);
     }
 
     #[test]
@@ -885,10 +905,10 @@ mod tests {
             ) {
                 saw_server_request = true;
                 let input = app
-                    .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
-                    .expect("ctrl+k should produce interrupt input");
+                    .handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+                    .expect("ctrl+c should produce interrupt input");
                 handle_tui_input("default", &mut app, &client, input)
-                    .expect("ctrl+k interrupt turn");
+                    .expect("ctrl+c interrupt turn");
             }
             if matches!(
                 &event,

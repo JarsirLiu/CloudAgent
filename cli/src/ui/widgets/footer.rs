@@ -70,8 +70,8 @@ pub fn status_line(
 
 pub fn hint_line(mode: FrontendMode, width: usize) -> Line<'static> {
     let hint = match mode {
-        FrontendMode::Idle => "  Enter submit  .  Ctrl+K interrupt  .  / commands",
-        FrontendMode::Running => "  Ctrl+K interrupt the current turn",
+        FrontendMode::Idle => "  Enter submit  .  Ctrl+C exit  .  / commands",
+        FrontendMode::Running => "  Ctrl+C interrupt the current turn",
         FrontendMode::WaitingForServerRequest => "  Enter submit  .  y approve  .  n deny",
     };
     let hint = truncate_single_line(hint, width.saturating_sub(1));
