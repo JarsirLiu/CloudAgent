@@ -39,8 +39,10 @@ async fn main() -> Result<()> {
 
 async fn run_console_mode(runtime: Arc<AgentRuntime>) -> Result<()> {
     let conversation_id = runtime.default_conversation_id().to_string();
+    let workspace_root = std::env::current_dir()?;
     run_console(ConsoleConfig {
         conversation_id: conversation_id.clone(),
+        workspace_root,
         auto_approve: true,
         auto_approve_reason: Some("auto-approved in local daemon console".to_string()),
         connection: ConsoleConnection::InProcess { runtime },
