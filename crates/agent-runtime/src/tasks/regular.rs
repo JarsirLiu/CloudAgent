@@ -4,7 +4,7 @@ use crate::{AgentRuntime, emit_event};
 use agent_core::{
     CompactionSummary, ContextCompactionConfig, ContextFragment, ContextManager,
     ConversationHistory, ModelUsage, RolloutItem, apply_history_compaction,
-    build_compaction_summary_request, plan_history_compaction,
+    build_compaction_summary_request, plan_manual_history_compaction,
 };
 use agent_protocol::{
     EventMsg, ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemDeltaKind,
@@ -78,6 +78,8 @@ where
     let mut denied_requests = HashSet::new();
     let environment_context = runtime.environment_context();
     let mut turn_total_usage = ModelUsage::default();
+    let mut last_sdk_context_tokens: Option<usize> = None;
+    let mut history_len_at_last_sdk_usage: Option<usize> = None;
 
     for _ in 0..runtime.policy.max_tool_roundtrips {
         if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
@@ -125,8 +127,28 @@ where
                 .context_compaction_summary_source_tokens,
         };
 
-        if let Some(compaction_plan) =
-            plan_history_compaction(&context_manager.history().messages, compaction_config)
+        let trigger_tokens = ((compaction_config.model_context_window as f32)
+            * compaction_config.trigger_ratio) as usize;
+        let available_history_tokens = trigger_tokens
+            .saturating_sub(compaction_config.request_overhead_tokens)
+            .max(1);
+        let estimated_total_tokens = if let Some(sdk_tokens) = last_sdk_context_tokens {
+            let delta_start = history_len_at_last_sdk_usage
+                .unwrap_or_else(|| context_manager.history().messages.len())
+                .min(context_manager.history().messages.len());
+            let local_delta_tokens =
+                estimate_history_tokens(&context_manager.history().messages[delta_start..]);
+            sdk_tokens.saturating_add(local_delta_tokens)
+        } else {
+            estimate_history_tokens(&context_manager.history().messages)
+        };
+
+        if estimated_total_tokens > available_history_tokens
+            && let Some(compaction_plan) = plan_manual_history_compaction(
+                &context_manager.history().messages,
+                compaction_config,
+                /*minimum_history_tokens*/ 1,
+            )
         {
             let pre_message_count = context_manager.history().messages.len();
             let pre_context_tokens_estimate =
@@ -277,6 +299,7 @@ where
         );
         if let Some(usage) = response.usage.clone() {
             turn_total_usage.add_assign(&usage);
+            last_sdk_context_tokens = Some(usage.total_tokens as usize);
             emit_event(
                 &mut events,
                 on_event,
@@ -291,6 +314,7 @@ where
 
         let assistant_response_item =
             context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());
+        history_len_at_last_sdk_usage = Some(context_manager.history().messages.len());
         runtime
             .persist_rollout_items(
                 conversation_id,

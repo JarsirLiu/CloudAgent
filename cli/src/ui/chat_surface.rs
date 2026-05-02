@@ -244,12 +244,12 @@ fn status_meta_text(app: &TuiApp) -> String {
             format_tokens(usage.total_tokens)
         ));
     }
-    if let (Some(total), Some(window)) = (
-        &app.run_state.total_turn_usage,
+    if let (Some(last), Some(window)) = (
+        &app.run_state.last_turn_usage,
         app.run_state.model_context_window,
     ) && window > 0
     {
-        let percent = total.total_tokens.saturating_mul(100) / window;
+        let percent = last.total_tokens.saturating_mul(100) / window;
         parts.push(format!("context {percent}%"));
     }
     if let Some(activity) = &app.run_state.current_tool_activity {
