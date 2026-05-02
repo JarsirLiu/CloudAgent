@@ -2,7 +2,7 @@ use crate::conversation_listener::ConversationListenerHandle;
 use crate::conversation_subscriptions::ConversationSubscriptions;
 use crate::conversation_service;
 use crate::server_request_service;
-use crate::server_request_coordinator::ServerRequestCoordinator;
+use crate::server_request_coordinator::{ResolvedServerRequest, ServerRequestCoordinator};
 use crate::turn_service;
 use agent_core::ConversationTurn;
 use agent_protocol::{AppClientCommand, AppServerMessage, ServerRequestDecision};
@@ -17,7 +17,7 @@ pub(crate) struct ServerState {
     active_conversation_id: String,
     subscriptions: ConversationSubscriptions,
     server_requests: ServerRequestCoordinator,
-    turn_tasks: Vec<JoinHandle<()>>,
+    turn_tasks_by_conversation: HashMap<String, Vec<JoinHandle<()>>>,
     active_listeners: HashMap<String, ConversationListenerHandle>,
 }
 
@@ -27,18 +27,34 @@ impl ServerState {
             active_conversation_id: default_conversation_id.clone(),
             subscriptions: ConversationSubscriptions::new(default_conversation_id),
             server_requests: ServerRequestCoordinator::new(),
-            turn_tasks: Vec::new(),
+            turn_tasks_by_conversation: HashMap::new(),
             active_listeners: HashMap::new(),
         }
     }
 
-    pub(crate) fn track_turn_task(&mut self, task: JoinHandle<()>) {
-        self.turn_tasks.retain(|task| !task.is_finished());
-        self.turn_tasks.push(task);
+    pub(crate) fn track_turn_task(&mut self, conversation_id: String, task: JoinHandle<()>) {
+        let tasks = self
+            .turn_tasks_by_conversation
+            .entry(conversation_id)
+            .or_default();
+        tasks.retain(|task| !task.is_finished());
+        tasks.push(task);
     }
 
-    pub(crate) fn take_turn_tasks(&mut self) -> Vec<JoinHandle<()>> {
-        std::mem::take(&mut self.turn_tasks)
+    pub(crate) fn take_turn_tasks_for_conversation(
+        &mut self,
+        conversation_id: &str,
+    ) -> Vec<JoinHandle<()>> {
+        self.turn_tasks_by_conversation
+            .remove(conversation_id)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn take_all_turn_tasks(&mut self) -> Vec<JoinHandle<()>> {
+        self.turn_tasks_by_conversation
+            .drain()
+            .flat_map(|(_, tasks)| tasks)
+            .collect()
     }
 
     pub(crate) fn set_active_listener(
@@ -84,11 +100,7 @@ impl ServerState {
         &mut self,
         request_id: &agent_protocol::RequestId,
         decision: ServerRequestDecision,
-    ) -> Option<(
-        String,
-        agent_protocol::ServerRequest,
-        ServerRequestDecision,
-    )> {
+    ) -> Option<ResolvedServerRequest> {
         self.server_requests.resolve(request_id, decision)
     }
 
@@ -195,6 +207,8 @@ pub(crate) async fn handle_command(
                 conversation_id.clone(),
             )
             .await?;
+            conversation_service::replay_frontend_state(&runtime, event_tx, &state, &conversation_id)
+                .await?;
             server_request_service::replay_pending_for_conversation(
                 event_tx,
                 &state,
@@ -229,6 +243,8 @@ pub(crate) async fn handle_command(
         AppClientCommand::SubscribeConversation { conversation_id } => {
             conversation_service::subscribe_conversation(event_tx, &state, conversation_id.clone())
                 .await;
+            conversation_service::replay_frontend_state(&runtime, event_tx, &state, &conversation_id)
+                .await?;
             server_request_service::replay_pending_for_conversation(
                 event_tx,
                 &state,

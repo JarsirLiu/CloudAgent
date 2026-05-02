@@ -11,7 +11,7 @@ pub(crate) async fn resolve_command(
     runtime: &Arc<AgentRuntime>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
-    conversation_id: String,
+    _conversation_id: String,
     request_id: RequestId,
     decision: ServerRequestDecision,
 ) {
@@ -19,19 +19,19 @@ pub(crate) async fn resolve_command(
         let mut state_guard = state.lock().await;
         state_guard.resolve_server_request(&request_id, decision)
     };
-    if let Some((turn_id, request, decision)) = resolved {
+    if let Some(resolved) = resolved {
         runtime
-            .resolve_pending_request(&conversation_id, &request_id)
+            .resolve_pending_request(&resolved.conversation_id, &request_id)
             .await;
         send_notification(
             event_tx,
             state,
             AppServerNotification::ServerRequestResolved {
-                conversation_id,
-                turn_id,
+                conversation_id: resolved.conversation_id,
+                turn_id: resolved.turn_id,
                 request_id,
-                request,
-                decision,
+                request: resolved.request,
+                decision: resolved.decision,
             },
         )
         .await;
