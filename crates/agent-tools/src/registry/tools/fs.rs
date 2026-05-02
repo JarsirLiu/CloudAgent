@@ -51,7 +51,14 @@ impl LocalTool for GetMetadataLocalTool {
         Ok(ToolInvocationOutput {
             summary: format!("metadata for {}", path.display()),
             content: serde_json::to_string_pretty(&value)?,
-            structured: None,
+            structured: Some(agent_protocol::StructuredToolResult::GetMetadata {
+                path: path.display().to_string(),
+                exists: true,
+                is_file: metadata.is_file(),
+                is_dir: metadata.is_dir(),
+                size: metadata.len(),
+                readonly: metadata.permissions().readonly(),
+            }),
         })
     }
 }

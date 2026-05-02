@@ -85,6 +85,18 @@ pub enum StructuredToolResult {
     ReadFiles {
         file_count: usize,
     },
+    GetMetadata {
+        path: String,
+        exists: bool,
+        is_file: bool,
+        is_dir: bool,
+        size: u64,
+        readonly: bool,
+    },
+    ApplyPatch {
+        files_changed: usize,
+        status: WriteFileStatus,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
