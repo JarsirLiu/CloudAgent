@@ -66,6 +66,8 @@ impl ToolRegistry {
         register(&mut tools, WriteFileTool);
         register_alias(&mut tools, "fs/writeFile", "write_file");
         register(&mut tools, ApplyPatchLocalTool);
+        register_alias(&mut tools, "apply_patch", "edit_file");
+        register_alias(&mut tools, "fs/editFile", "edit_file");
 
         Self {
             tools,

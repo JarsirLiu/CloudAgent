@@ -11,7 +11,7 @@ impl ApplyPatchTool {
             ToolRisk::Medium,
             vec!["edit", "fs", "general"],
             ToolSpec {
-                name: "apply_patch".to_string(),
+            name: "edit_file".to_string(),
                 description: "Apply a focused patch to existing files. Prefer this over whole-file rewrites for code changes.".to_string(),
                 parameters: json!({
                     "type": "object",

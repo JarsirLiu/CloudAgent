@@ -588,6 +588,10 @@ fn denied_tool_result(
                 status: WriteFileStatus::Declined,
             })
         }
+        "edit_file" | "apply_patch" => Some(StructuredToolResult::ApplyPatch {
+            files_changed: 0,
+            status: WriteFileStatus::Declined,
+        }),
         _ => None,
     }
 }
@@ -599,6 +603,9 @@ fn default_rejection_message(tool_name: &str) -> String {
         }
         "write_file" => {
             "patch rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
+        }
+        "edit_file" | "apply_patch" => {
+            "edit rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
         }
         _ => {
             "tool call rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
