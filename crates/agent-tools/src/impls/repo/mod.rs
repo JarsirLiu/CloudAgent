@@ -1,9 +1,11 @@
 mod common;
+mod executor;
 mod find_files;
 mod read_file;
 mod read_files;
 mod search_text;
 
+pub(crate) use executor::{FindFilesLocalTool, ReadFileLocalTool, ReadFilesLocalTool, SearchTextLocalTool};
 pub use find_files::{FindFilesArgs, FindFilesTool};
 pub use read_file::ReadFileTool;
 pub use read_files::{ReadFilesArgs, ReadFilesTool};

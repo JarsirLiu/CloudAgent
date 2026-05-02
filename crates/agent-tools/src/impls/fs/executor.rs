@@ -13,8 +13,8 @@ use std::collections::BTreeSet;
 use tokio::fs;
 
 pub(crate) struct GetMetadataLocalTool;
-pub(crate) struct ReadDirectoryTool;
-pub(crate) struct WriteFileTool;
+pub(crate) struct ReadDirectoryLocalTool;
+pub(crate) struct WriteFileLocalTool;
 pub(crate) struct EditFileLocalTool;
 
 #[derive(Deserialize)]
@@ -71,7 +71,7 @@ impl LocalTool for GetMetadataLocalTool {
 }
 
 #[async_trait]
-impl LocalTool for ReadDirectoryTool {
+impl LocalTool for ReadDirectoryLocalTool {
     fn spec(&self) -> ToolSpec {
         ReadDirectoryDescriptorTool::descriptor().spec
     }
@@ -101,7 +101,7 @@ impl LocalTool for ReadDirectoryTool {
 }
 
 #[async_trait]
-impl LocalTool for WriteFileTool {
+impl LocalTool for WriteFileLocalTool {
     fn spec(&self) -> ToolSpec {
         WriteFileDescriptorTool::descriptor().spec
     }

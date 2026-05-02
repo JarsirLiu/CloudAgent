@@ -16,7 +16,7 @@ pub(crate) struct FindFilesLocalTool;
 pub(crate) struct ReadFilesLocalTool {
     pub(crate) max_read_chars: usize,
 }
-pub(crate) struct ReadFileTool {
+pub(crate) struct ReadFileLocalTool {
     pub(crate) max_read_chars: usize,
 }
 
@@ -209,7 +209,7 @@ impl LocalTool for ReadFilesLocalTool {
 }
 
 #[async_trait]
-impl LocalTool for ReadFileTool {
+impl LocalTool for ReadFileLocalTool {
     fn spec(&self) -> ToolSpec {
         ReadFileDescriptorTool::descriptor(self.max_read_chars).spec
     }

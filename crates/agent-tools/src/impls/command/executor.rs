@@ -11,7 +11,7 @@ use std::time::Instant;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
-pub(crate) struct ShellCommandTool;
+pub(crate) struct ShellCommandLocalTool;
 
 #[derive(Deserialize)]
 struct ShellCommandArgs {
@@ -23,7 +23,7 @@ struct ShellCommandArgs {
 }
 
 #[async_trait]
-impl LocalTool for ShellCommandTool {
+impl LocalTool for ShellCommandLocalTool {
     fn spec(&self) -> ToolSpec {
         ShellCommandDescriptorTool::descriptor().spec
     }
@@ -33,7 +33,6 @@ impl LocalTool for ShellCommandTool {
         let workdir = resolve_workspace_path(&ctx.workspace_root, args.workdir.as_deref())?;
         let timeout_ms = args.timeout_ms.unwrap_or(ctx.default_shell_timeout_ms).max(1_000);
         let started_at = Instant::now();
-
         let mut command = if cfg!(windows) {
             let mut cmd = Command::new("powershell");
             cmd.arg("-NoLogo").arg("-NoProfile").arg("-Command").arg(&args.command);
@@ -45,13 +44,11 @@ impl LocalTool for ShellCommandTool {
         };
         command.current_dir(&workdir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         command.kill_on_drop(true);
-
         let mut child = command.spawn()?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("failed to capture command stdout"))?;
         let stderr = child.stderr.take().ok_or_else(|| anyhow!("failed to capture command stderr"))?;
         let stdout_task = tokio::spawn(read_streaming_pipe(stdout, ToolOutputStream::Stdout, ctx.output_tx.clone()));
         let stderr_task = tokio::spawn(read_streaming_pipe(stderr, ToolOutputStream::Stderr, ctx.output_tx.clone()));
-
         let status = tokio::select! {
             _ = ctx.cancellation_token.cancelled() => {
                 let _ = child.kill().await;
@@ -69,7 +66,6 @@ impl LocalTool for ShellCommandTool {
                 }
             }
         };
-
         let stdout = String::from_utf8_lossy(&stdout_task.await??).trim().to_string();
         let stderr = String::from_utf8_lossy(&stderr_task.await??).trim().to_string();
         let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
@@ -84,7 +80,6 @@ impl LocalTool for ShellCommandTool {
             if stdout.is_empty() { "(empty)" } else { &stdout },
             if stderr.is_empty() { "(empty)" } else { &stderr },
         );
-
         Ok(ToolInvocationOutput {
             content: content.clone(),
             structured: Some(StructuredToolResult::CommandExecution {

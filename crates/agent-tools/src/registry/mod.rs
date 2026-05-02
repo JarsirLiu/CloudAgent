@@ -1,9 +1,4 @@
-mod shared;
-mod tools {
-    pub mod command;
-    pub mod fs;
-    pub mod repo;
-}
+pub(crate) mod shared;
 
 use crate::impls::{
     command::ShellCommandTool as ShellCommandDescriptorTool,
@@ -22,9 +17,11 @@ use async_trait::async_trait;
 use shared::{LocalTool, register, structured_failure_result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tools::command::ShellCommandTool;
-use tools::fs::{EditFileLocalTool, GetMetadataLocalTool, ReadDirectoryTool, WriteFileTool};
-use tools::repo::{FindFilesLocalTool, ReadFileTool, ReadFilesLocalTool, SearchTextLocalTool};
+use crate::impls::command::ShellCommandLocalTool;
+use crate::impls::fs::{
+    EditFileLocalTool, GetMetadataLocalTool, ReadDirectoryLocalTool, WriteFileLocalTool,
+};
+use crate::impls::repo::{FindFilesLocalTool, ReadFileLocalTool, ReadFilesLocalTool, SearchTextLocalTool};
 
 #[derive(Clone)]
 pub struct ToolRegistry {
@@ -48,14 +45,14 @@ impl ToolRegistry {
         ];
 
         let mut tools: BTreeMap<String, Arc<dyn LocalTool>> = BTreeMap::new();
-        register(&mut tools, ShellCommandTool);
+        register(&mut tools, ShellCommandLocalTool);
         register(&mut tools, SearchTextLocalTool);
         register(&mut tools, FindFilesLocalTool);
         register(&mut tools, ReadFilesLocalTool { max_read_chars });
         register(&mut tools, GetMetadataLocalTool);
-        register(&mut tools, ReadDirectoryTool);
-        register(&mut tools, ReadFileTool { max_read_chars });
-        register(&mut tools, WriteFileTool);
+        register(&mut tools, ReadDirectoryLocalTool);
+        register(&mut tools, ReadFileLocalTool { max_read_chars });
+        register(&mut tools, WriteFileLocalTool);
         register(&mut tools, EditFileLocalTool);
 
         Self {
