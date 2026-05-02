@@ -1,4 +1,4 @@
-use crate::v2::spec::{ToolCategory, ToolDescriptor, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
 use serde_json::json;
 

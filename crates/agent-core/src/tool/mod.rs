@@ -104,6 +104,9 @@ pub struct ToolEvent {
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
     fn specs(&self) -> Vec<ToolSpec>;
+    fn specs_for_context(&self, _mode: &str, _task_kind: &str) -> Vec<ToolSpec> {
+        self.specs()
+    }
 
     async fn execute(&self, call: ToolCall, ctx: &ToolExecutionContext) -> Result<ToolResult>;
 }

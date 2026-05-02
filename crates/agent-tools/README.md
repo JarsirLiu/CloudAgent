@@ -138,6 +138,22 @@ The main performance goal of the tool system is not simply "more tools". It is:
 
 This is why repository exploration and batch reading are first-class concerns in v2.
 
+### Make low-value search paths impossible by default
+
+The agent should not waste time searching generated trees, vendored dependencies, or ignored
+artifacts unless the user explicitly asks for them.
+
+Repository exploration tools should therefore default to:
+
+- respecting `.gitignore` when practical
+- skipping common dependency directories such as `node_modules`
+- skipping build output trees such as `dist`, `build`, `target`, and `.next`
+- skipping cache and virtual-environment directories such as `.cache`, `.venv`, `venv`, and
+  `__pycache__`
+
+This behavior should live in the tool implementation and policy layer, not in the model prompt.
+The model should not need to remember which junk directories to avoid.
+
 ### Keep mode selection outside the model when possible
 
 The model should not be solely responsible for deciding which categories of tools are available.
@@ -200,6 +216,8 @@ Holds persistent strategy knobs and runtime-adjacent defaults such as:
 - maximum directory-only exploration rounds
 - whether batch reads should be encouraged
 - the default exploration mode
+- repository search defaults such as ignored directories and whether `.gitignore` should be
+  respected
 
 This is not yet wired into runtime enforcement, but this is where that policy belongs.
 
@@ -247,8 +265,11 @@ Primary tools:
 
 - `search_text`
 - `find_files`
-- `read_file_v2`
+- `read_file`
 - `read_files`
+
+Default repository exploration behavior should exclude ignored and generated trees unless a future
+tool argument explicitly opts in.
 
 This domain should become the default for questions like:
 
@@ -266,7 +287,7 @@ Primary purpose:
 Primary tools:
 
 - `apply_patch`
-- `write_file_v2`
+- `write_file`
 
 Long-term, patch-oriented editing should be the default path for code changes.
 
@@ -281,7 +302,7 @@ Primary purpose:
 
 Primary tools:
 
-- `shell_command_v2`
+- `shell_command`
 
 This domain is important, but it should not be the only strategy for repository discovery.
 
@@ -382,6 +403,8 @@ Implement the execution path for:
 Goal:
 
 - replace directory-walk-heavy exploration with search-first discovery
+- make search behavior respect ignore rules and skip low-value generated or dependency trees by
+  default
 
 Success metric:
 

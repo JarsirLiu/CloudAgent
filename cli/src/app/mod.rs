@@ -841,8 +841,8 @@ mod tests {
         assert!(live_cells.iter().any(|cell| cell.body == "approved"));
         assert!(live_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-                && cell.body.starts_with("current directory is ")
-                && cell.body.ends_with("\\workspace")
+                && (cell.body.contains("shell command finished with exit code 0")
+                    || cell.body.contains("exit_code: 0"))
         }));
         assert!(live_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent

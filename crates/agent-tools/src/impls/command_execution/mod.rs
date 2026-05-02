@@ -1,4 +1,4 @@
-use crate::v2::spec::{ToolCategory, ToolDescriptor, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
 use serde_json::json;
 
@@ -11,7 +11,7 @@ impl ShellCommandToolV2 {
             ToolRisk::High,
             vec!["explore", "edit", "verify", "general"],
             ToolSpec {
-                name: "shell_command_v2".to_string(),
+                name: "shell_command".to_string(),
                 description: "Run a local shell command for build, test, git, or high-density workspace inspection.".to_string(),
                 parameters: json!({
                     "type": "object",

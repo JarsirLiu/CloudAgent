@@ -72,7 +72,9 @@ where
     let mut events = Vec::new();
     let mut last_model_name = None;
     let mut assistant_item_seq: usize = 0;
-    let tool_specs = runtime.tools.specs();
+    let tool_specs = runtime
+        .tools
+        .specs_for_context("explore", "repository_analysis");
     let mut denied_requests = HashSet::new();
     let environment_context = runtime.environment_context();
     let mut turn_total_usage = ModelUsage::default();

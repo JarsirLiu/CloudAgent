@@ -1,4 +1,4 @@
-use crate::v2::spec::{ToolCategory, ToolDescriptor, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
 use serde_json::json;
 
@@ -38,7 +38,7 @@ impl WriteFileToolV2 {
             ToolRisk::High,
             vec!["edit", "fs", "general"],
             ToolSpec {
-                name: "write_file_v2".to_string(),
+                name: "write_file".to_string(),
                 description: "Create or replace a file when patch-based editing is not appropriate.".to_string(),
                 parameters: json!({
                     "type": "object",
