@@ -8,7 +8,7 @@ mod tools {
 use crate::impls::{
     command::ShellCommandTool as ShellCommandDescriptorTool,
     fs::{
-        ApplyPatchTool, GetMetadataTool, ReadDirectoryTool as ReadDirectoryDescriptorTool,
+        EditFileTool, GetMetadataTool, ReadDirectoryTool as ReadDirectoryDescriptorTool,
         WriteFileTool as WriteFileDescriptorTool,
     },
     repo::{FindFilesTool, ReadFileTool as ReadFileDescriptorTool, ReadFilesTool, SearchTextTool},
@@ -23,7 +23,7 @@ use shared::{LocalTool, register, structured_failure_result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tools::command::ShellCommandTool;
-use tools::fs::{ApplyPatchLocalTool, GetMetadataLocalTool, ReadDirectoryTool, WriteFileTool};
+use tools::fs::{EditFileLocalTool, GetMetadataLocalTool, ReadDirectoryTool, WriteFileTool};
 use tools::repo::{FindFilesLocalTool, ReadFileTool, ReadFilesLocalTool, SearchTextLocalTool};
 
 #[derive(Clone)]
@@ -40,7 +40,7 @@ impl ToolRegistry {
             FindFilesTool::descriptor(),
             ReadFileDescriptorTool::descriptor(max_read_chars),
             ReadFilesTool::descriptor(max_read_chars),
-            ApplyPatchTool::descriptor(),
+            EditFileTool::descriptor(),
             WriteFileDescriptorTool::descriptor(),
             ShellCommandDescriptorTool::descriptor(),
             GetMetadataTool::descriptor(),
@@ -50,6 +50,7 @@ impl ToolRegistry {
         let mut tools: BTreeMap<String, Arc<dyn LocalTool>> = BTreeMap::new();
         register(&mut tools, ShellCommandTool);
         register_alias(&mut tools, "command/exec", "shell_command");
+        register_alias(&mut tools, "command/git", "shell_command");
         register(&mut tools, SearchTextLocalTool);
         register_alias(&mut tools, "repo/searchText", "search_text");
         register(&mut tools, FindFilesLocalTool);
@@ -65,7 +66,7 @@ impl ToolRegistry {
         register_alias(&mut tools, "repo/readFile", "read_file");
         register(&mut tools, WriteFileTool);
         register_alias(&mut tools, "fs/writeFile", "write_file");
-        register(&mut tools, ApplyPatchLocalTool);
+        register(&mut tools, EditFileLocalTool);
         register_alias(&mut tools, "apply_patch", "edit_file");
         register_alias(&mut tools, "fs/editFile", "edit_file");
 

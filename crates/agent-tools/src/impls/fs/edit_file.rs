@@ -2,9 +2,9 @@ use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
 use serde_json::json;
 
-pub struct ApplyPatchTool;
+pub struct EditFileTool;
 
-impl ApplyPatchTool {
+impl EditFileTool {
     pub fn descriptor() -> ToolDescriptor {
         ToolDescriptor::new(
             ToolCategory::WorkspaceFileOps,

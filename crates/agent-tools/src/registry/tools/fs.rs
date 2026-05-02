@@ -1,5 +1,5 @@
 use crate::impls::fs::{
-    ApplyPatchTool as ApplyPatchDescriptorTool, GetMetadataTool,
+    EditFileTool as EditFileDescriptorTool, GetMetadataTool,
     ReadDirectoryTool as ReadDirectoryDescriptorTool,
     WriteFileTool as WriteFileDescriptorTool,
 };
@@ -15,7 +15,7 @@ use tokio::fs;
 pub(crate) struct GetMetadataLocalTool;
 pub(crate) struct ReadDirectoryTool;
 pub(crate) struct WriteFileTool;
-pub(crate) struct ApplyPatchLocalTool;
+pub(crate) struct EditFileLocalTool;
 
 #[derive(Deserialize)]
 struct GetMetadataArgs {
@@ -35,7 +35,7 @@ struct WriteFileArgs {
 }
 
 #[derive(Deserialize)]
-struct ApplyPatchArgs {
+struct EditFileArgs {
     patch: String,
 }
 
@@ -126,12 +126,12 @@ impl LocalTool for WriteFileTool {
 }
 
 #[async_trait]
-impl LocalTool for ApplyPatchLocalTool {
+impl LocalTool for EditFileLocalTool {
     fn spec(&self) -> ToolSpec {
-        ApplyPatchDescriptorTool::descriptor().spec
+        EditFileDescriptorTool::descriptor().spec
     }
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
-        let args: ApplyPatchArgs = serde_json::from_value(arguments)?;
+        let args: EditFileArgs = serde_json::from_value(arguments)?;
         let file_patches = parse_unified_patch(&args.patch)?;
         if file_patches.is_empty() {
             anyhow::bail!("patch did not contain any editable file hunks");
