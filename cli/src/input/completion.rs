@@ -1,11 +1,13 @@
 use crate::input::slash_command::{SlashCommand, SlashCommandSpec};
+use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandSuggestion {
-    pub(crate) command: SlashCommand,
+    pub(crate) command: Option<SlashCommand>,
     pub(crate) name: &'static str,
     pub(crate) description: &'static str,
     pub(crate) argument_hint: Option<&'static str>,
+    pub(crate) insertion: &'static str,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -18,6 +20,19 @@ pub(crate) struct CompletionState {
 
 impl CompletionState {
     pub(crate) fn sync_from_input(&mut self, text: &str, byte_cursor: usize) {
+        if let Some(arg_prefix) = filter_arg_prefix_at_cursor(text, byte_cursor) {
+            if self.prefix != format!("filter:{arg_prefix}") {
+                self.selected = 0;
+                self.prefix = format!("filter:{arg_prefix}");
+            }
+            self.suggestions = filter_value_suggestions(arg_prefix);
+            self.active = true;
+            if self.selected >= self.suggestions.len() {
+                self.selected = 0;
+            }
+            return;
+        }
+
         let Some(prefix) = slash_prefix_at_cursor(text, byte_cursor) else {
             self.clear();
             return;
@@ -101,12 +116,46 @@ impl CompletionState {
 impl From<SlashCommandSpec> for CommandSuggestion {
     fn from(spec: SlashCommandSpec) -> Self {
         Self {
-            command: spec.command,
+            command: Some(spec.command),
             name: spec.name,
             description: spec.description,
             argument_hint: spec.argument_hint,
+            insertion: spec.name,
         }
     }
+}
+
+fn filter_value_suggestions(prefix: &str) -> Vec<CommandSuggestion> {
+    let enabled = read_global_filter_enabled();
+    let values: [(&str, &str); 2] = if enabled {
+        [
+            ("on", "enable pre-LLM input filtering (current)"),
+            ("off", "disable pre-LLM input filtering"),
+        ]
+    } else {
+        [
+            ("off", "disable pre-LLM input filtering (current)"),
+            ("on", "enable pre-LLM input filtering"),
+        ]
+    };
+    values
+        .into_iter()
+        .filter(|(value, _)| prefix.is_empty() || value.starts_with(prefix))
+        .map(|(value, description)| CommandSuggestion {
+            command: None,
+            name: value,
+            description,
+            argument_hint: None,
+            insertion: value,
+        })
+        .collect()
+}
+
+fn read_global_filter_enabled() -> bool {
+    let Ok(text) = fs::read_to_string("data/ui-settings.json") else {
+        return false;
+    };
+    text.contains("\"pre_llm_filter_enabled\": true")
 }
 
 fn matches_command(command: SlashCommandSpec, prefix: &str) -> bool {
@@ -132,6 +181,36 @@ fn slash_prefix_at_cursor(text: &str, byte_cursor: usize) -> Option<&str> {
 
     let prefix = &text[1..token_end];
     if prefix.contains('/') {
+        return None;
+    }
+    Some(prefix)
+}
+
+fn filter_arg_prefix_at_cursor(text: &str, byte_cursor: usize) -> Option<&str> {
+    if !text.is_char_boundary(byte_cursor) || !text.starts_with("/filter") {
+        return None;
+    }
+    let first_line_end = text.find('\n').unwrap_or(text.len());
+    if byte_cursor > first_line_end {
+        return None;
+    }
+    let line = &text[..first_line_end];
+    let Some(after_cmd) = line.strip_prefix("/filter") else {
+        return None;
+    };
+    if !after_cmd.is_empty() && !after_cmd.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let arg_start = "/filter".len();
+    if byte_cursor < arg_start {
+        return None;
+    }
+    let cursor_slice = &text[arg_start..byte_cursor];
+    if cursor_slice.contains('\n') {
+        return None;
+    }
+    let prefix = cursor_slice.trim_start();
+    if prefix.contains(char::is_whitespace) {
         return None;
     }
     Some(prefix)

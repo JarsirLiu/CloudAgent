@@ -79,10 +79,13 @@ impl ChatComposer {
                 }
                 KeyCode::Enter => {
                     if let Some(selected) = self.completion.selected() {
-                        let command = selected.command;
-                        self.textarea.clear();
-                        self.completion.clear();
-                        return Some(action_for_command(command, ""));
+                        if let Some(command) = selected.command {
+                            self.textarea.clear();
+                            self.completion.clear();
+                            return Some(action_for_command(command, ""));
+                        }
+                        self.accept_selected_completion();
+                        return Some(ComposerIntent::None);
                     }
                 }
                 _ => {}
@@ -228,8 +231,12 @@ impl ChatComposer {
         let Some(selected) = self.completion.selected() else {
             return;
         };
-        self.textarea
-            .set_text(format!("/{} ", selected.command.name()));
+        if let Some(command) = selected.command {
+            self.textarea.set_text(format!("/{} ", command.name()));
+        } else if self.textarea.text().starts_with("/filter") {
+            self.textarea
+                .set_text(format!("/filter {} ", selected.insertion));
+        }
         self.completion.clear();
     }
 }
@@ -260,6 +267,7 @@ fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
         SlashCommand::ArchiveConversation => {
             ComposerIntent::ArchiveConversation(args.trim().to_string())
         }
+        SlashCommand::Filter => ComposerIntent::Filter(args.trim().to_string()),
         SlashCommand::Exit => ComposerIntent::Exit,
     }
 }

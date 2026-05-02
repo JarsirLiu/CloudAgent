@@ -8,6 +8,7 @@ pub(crate) enum ComposerIntent {
     SessionSwitch(String),
     SetTitle(String),
     ArchiveConversation(String),
+    Filter(String),
     Exit,
     Reset,
     Copy,

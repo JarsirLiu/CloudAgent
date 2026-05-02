@@ -1,5 +1,6 @@
 use crate::app::TuiApp;
 use crate::app::effects::copy_text_to_clipboard;
+use crate::app::filter_toggle::apply_filter_toggle;
 use crate::app::parse::ParsedInput;
 use crate::input::slash_command::slash_command_help_text;
 use crate::state::reducer::{ItemDispatch, ServerAction};
@@ -116,6 +117,16 @@ pub(crate) fn handle_tui_input(
             client.send_command(AppClientCommand::ArchiveConversation {
                 conversation_id: trimmed.to_string(),
             })?;
+        }
+        ParsedInput::LocalFilterToggle(raw_args) => {
+            if let Err(usage) = apply_filter_toggle(app, &raw_args) {
+                app.push_cell(HistoryCell::from_message(
+                    "conversation",
+                    usage,
+                    HistoryTone::Warning,
+                ));
+                return Ok(false);
+            }
         }
         ParsedInput::Command(command) => {
             if let AppClientCommand::Exit = command {

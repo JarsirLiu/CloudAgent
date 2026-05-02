@@ -8,6 +8,7 @@ pub(crate) enum SlashCommand {
     NewConversation,
     SetTitle,
     ArchiveConversation,
+    Filter,
     Clear,
     Exit,
 }
@@ -85,6 +86,14 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         aliases: &[],
         description: "archive a conversation",
         argument_hint: Some("<id>"),
+        supports_inline_args: true,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Filter,
+        name: "filter",
+        aliases: &[],
+        description: "toggle pre-LLM input filtering: /filter on|off",
+        argument_hint: Some("<on|off>"),
         supports_inline_args: true,
     },
     SlashCommandSpec {

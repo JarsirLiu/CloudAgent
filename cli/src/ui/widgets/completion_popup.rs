@@ -23,11 +23,12 @@ pub(crate) fn completion_popup_lines(
     for (offset, suggestion) in suggestions.iter().enumerate() {
         let index = window_start + offset;
         let selected = index == completion.selected_index();
-        let name = format!(
-            "/{:<width$}",
-            suggestion.name,
-            width = COMMAND_COLUMN_WIDTH - 1
-        );
+        let label = if suggestion.command.is_some() {
+            format!("/{}", suggestion.name)
+        } else {
+            suggestion.name.to_string()
+        };
+        let name = format!("{:<width$}", label, width = COMMAND_COLUMN_WIDTH);
         let marker = if selected {
             "> "
         } else {

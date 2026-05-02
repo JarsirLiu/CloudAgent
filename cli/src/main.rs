@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
 
     run_console(ConsoleConfig {
         conversation_id: conversation_id.clone(),
+        workspace_root: std::env::current_dir()?,
         auto_approve: false,
         auto_approve_reason: None,
         connection,

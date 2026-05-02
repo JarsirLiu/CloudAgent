@@ -1,9 +1,11 @@
 pub mod actions;
 pub mod effects;
+mod filter_toggle;
 mod items;
 mod parse;
 
 use crate::app::actions::{execute_server_action, handle_tui_input};
+use crate::app::filter_toggle::load_filter_enabled;
 use crate::app::parse::{ParsedInput, parse_line};
 use crate::input::intent::ComposerIntent;
 use crate::state::reducer::{TurnDispatch, apply_server_message};
@@ -24,11 +26,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal as _};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ConsoleConfig {
     pub conversation_id: String,
+    pub workspace_root: PathBuf,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
     pub connection: ConsoleConnection,
@@ -68,10 +72,11 @@ pub(crate) struct TuiApp {
     pending_history_cells: VecDeque<HistoryCell>,
     pending_history_rebuild: bool,
     pub(crate) session_picker_requested: bool,
+    pub(crate) workspace_root: PathBuf,
 }
 
 impl TuiApp {
-    fn new(conversation_id: String, connection_label: &str) -> Self {
+    fn new(conversation_id: String, connection_label: &str, workspace_root: PathBuf) -> Self {
         Self {
             conversation_id,
             conversation_summaries: Vec::new(),
@@ -86,6 +91,7 @@ impl TuiApp {
             pending_history_cells: VecDeque::new(),
             pending_history_rebuild: false,
             session_picker_requested: false,
+            workspace_root,
         }
     }
 
@@ -291,6 +297,9 @@ impl TuiApp {
             InputPaneAction::Composer(ComposerIntent::ArchiveConversation(conversation_id)) => {
                 Some(ParsedInput::LocalConversationArchive(conversation_id))
             }
+            InputPaneAction::Composer(ComposerIntent::Filter(args)) => {
+                Some(ParsedInput::LocalFilterToggle(args))
+            }
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
             InputPaneAction::Composer(ComposerIntent::Help) => Some(ParsedInput::LocalHelp),
             InputPaneAction::Composer(ComposerIntent::UnknownCommand(command)) => {
@@ -368,7 +377,12 @@ pub async fn run_console(config: ConsoleConfig) -> Result<()> {
 async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     let conversation_id = config.conversation_id.clone();
     let mut client = create_client(&config, conversation_id.clone()).await?;
-    let mut app = TuiApp::new(conversation_id.clone(), config.connection.label());
+    let mut app = TuiApp::new(
+        conversation_id.clone(),
+        config.connection.label(),
+        config.workspace_root.clone(),
+    );
+    app.run_state.pre_llm_filter_enabled = load_filter_enabled(&app.workspace_root);
     client.send_command(AppClientCommand::RequestConversationHistory {
         conversation_id: conversation_id.clone(),
     })?;

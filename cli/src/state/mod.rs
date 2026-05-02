@@ -47,6 +47,7 @@ pub struct RunState {
     pub model_context_window: Option<u64>,
     pub should_exit: bool,
     pub expand_tool_details: bool,
+    pub pre_llm_filter_enabled: bool,
 }
 
 impl RunState {
@@ -61,6 +62,7 @@ impl RunState {
             model_context_window: None,
             should_exit: false,
             expand_tool_details: false,
+            pre_llm_filter_enabled: false,
         }
     }
 }
