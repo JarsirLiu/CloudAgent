@@ -134,16 +134,14 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 AppServerNotification::ContextCompacted {
                     pre_context_tokens_estimate,
                     post_context_tokens_estimate,
-                    preserved_tail_count,
                     ..
                 } => {
                     let summary = format!(
-                        "Context compacted: ~{} -> ~{} tokens, preserved {} recent items",
-                        pre_context_tokens_estimate,
-                        post_context_tokens_estimate,
-                        preserved_tail_count
+                        "Context compacted: ~{} -> ~{} tokens",
+                        pre_context_tokens_estimate, post_context_tokens_estimate
                     );
                     actions.push(ServerAction::SetStatusNotice(Some(summary.clone())));
+                    actions.push(ServerAction::ClearLastToolName);
                     actions.push(ServerAction::PushInfoCell(summary));
                 }
                 AppServerNotification::ContextCompactionStarted {
