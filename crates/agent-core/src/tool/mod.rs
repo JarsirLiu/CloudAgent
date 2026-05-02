@@ -74,6 +74,17 @@ pub enum StructuredToolResult {
         bytes_written: usize,
         status: WriteFileStatus,
     },
+    SearchText {
+        match_count: usize,
+        file_count: usize,
+        truncated: bool,
+    },
+    FindFiles {
+        file_count: usize,
+    },
+    ReadFiles {
+        file_count: usize,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]

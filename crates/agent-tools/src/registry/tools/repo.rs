@@ -35,10 +35,15 @@ impl LocalTool for SearchTextLocalTool {
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: SearchTextArgs = serde_json::from_value(arguments)?;
         if let Ok(Some(content)) = run_search_text_with_rg(&ctx.workspace_root, &args).await {
+            let match_count = content.lines().skip(1).count();
             return Ok(ToolInvocationOutput {
                 summary: "found matches".to_string(),
                 content,
-                structured: None,
+                structured: Some(agent_protocol::StructuredToolResult::SearchText {
+                    match_count,
+                    file_count: 0,
+                    truncated: false,
+                }),
             });
         }
         let output = run_search_text(&ctx.workspace_root, args).await?;
@@ -46,7 +51,15 @@ impl LocalTool for SearchTextLocalTool {
             format!("{}:{}: {}", m.path, m.line, m.preview)
         }).collect::<Vec<_>>().join("\n\n");
         let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches in {} files.\n{}", output.match_count, output.file_count, lines) };
-        Ok(ToolInvocationOutput { content, summary: format!("found {} matches across {} files", output.match_count, output.file_count), structured: None })
+        Ok(ToolInvocationOutput {
+            content,
+            summary: format!("found {} matches across {} files", output.match_count, output.file_count),
+            structured: Some(agent_protocol::StructuredToolResult::SearchText {
+                match_count: output.match_count,
+                file_count: output.file_count,
+                truncated: output.truncated,
+            }),
+        })
     }
 }
 
@@ -127,7 +140,13 @@ impl LocalTool for FindFilesLocalTool {
         matches.sort();
         let matches = matches.into_iter().skip(offset).take(max_results).collect::<Vec<_>>();
         let content = if matches.is_empty() { "No files found".to_string() } else { matches.join("\n") };
-        Ok(ToolInvocationOutput { summary: format!("found {} files", matches.len()), content, structured: None })
+        Ok(ToolInvocationOutput {
+            summary: format!("found {} files", matches.len()),
+            content,
+            structured: Some(agent_protocol::StructuredToolResult::FindFiles {
+                file_count: matches.len(),
+            }),
+        })
     }
 }
 
@@ -183,7 +202,13 @@ impl LocalTool for ReadFilesLocalTool {
             let rel = resolved.strip_prefix(&ctx.workspace_root).unwrap_or(&resolved).to_string_lossy().replace('\\', "/");
             blocks.push(format!("== {} ==\n{}", rel, lines.join("\n")));
         }
-        Ok(ToolInvocationOutput { summary: format!("read {} files", blocks.len()), content: blocks.join("\n\n"), structured: None })
+        Ok(ToolInvocationOutput {
+            summary: format!("read {} files", blocks.len()),
+            content: blocks.join("\n\n"),
+            structured: Some(agent_protocol::StructuredToolResult::ReadFiles {
+                file_count: blocks.len(),
+            }),
+        })
     }
 }
 
