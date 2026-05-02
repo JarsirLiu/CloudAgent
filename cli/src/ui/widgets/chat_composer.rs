@@ -34,7 +34,7 @@ impl ChatComposer {
             return None;
         }
 
-        if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::SHIFT {
+        if key.code == KeyCode::Enter && is_newline_shortcut(key.modifiers) {
             self.textarea.insert_str("\n");
             self.sync_completion();
             return None;
@@ -234,6 +234,12 @@ impl ChatComposer {
     }
 }
 
+fn is_newline_shortcut(modifiers: KeyModifiers) -> bool {
+    let shift_only = modifiers.contains(KeyModifiers::SHIFT)
+        && !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    shift_only || modifiers == KeyModifiers::ALT || modifiers == KeyModifiers::CONTROL
+}
+
 fn action_for_command(command: SlashCommand) -> ComposerIntent {
     match command {
         SlashCommand::Clear => ComposerIntent::Reset,
@@ -346,6 +352,30 @@ mod tests {
         type_text(&mut composer, "first");
 
         let action = composer.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        type_text(&mut composer, "second");
+
+        assert_eq!(action, None);
+        assert_eq!(composer.textarea.text(), "first\nsecond");
+    }
+
+    #[test]
+    fn alt_enter_inserts_newline_without_submitting() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "first");
+
+        let action = composer.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        type_text(&mut composer, "second");
+
+        assert_eq!(action, None);
+        assert_eq!(composer.textarea.text(), "first\nsecond");
+    }
+
+    #[test]
+    fn ctrl_enter_inserts_newline_without_submitting() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "first");
+
+        let action = composer.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         type_text(&mut composer, "second");
 
         assert_eq!(action, None);
