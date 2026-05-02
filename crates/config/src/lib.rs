@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use agent_memory::{MemoryConfig, MemoryMode};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,7 @@ pub struct RuntimeConfig {
     pub context_compaction_preserved_user_turns: usize,
     pub context_compaction_preserved_tail_tokens: usize,
     pub context_compaction_summary_source_tokens: usize,
+    pub memory: MemoryConfig,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -70,6 +72,16 @@ struct PartialRuntimeConfig {
     context_compaction_preserved_user_turns: Option<usize>,
     context_compaction_preserved_tail_tokens: Option<usize>,
     context_compaction_summary_source_tokens: Option<usize>,
+    memory: Option<PartialMemoryConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct PartialMemoryConfig {
+    enabled: Option<bool>,
+    mode: Option<String>,
+    root_dir: Option<PathBuf>,
+    max_inject_chars: Option<usize>,
+    min_turns_to_persist: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -125,6 +137,7 @@ impl AgentConfig {
                 context_compaction_preserved_user_turns: 3,
                 context_compaction_preserved_tail_tokens: 12_000,
                 context_compaction_summary_source_tokens: 24_000,
+                memory: MemoryConfig::default(),
             },
             llm: LlmConfig {
                 base_url: "https://api.openai.com/v1".to_string(),
@@ -189,6 +202,23 @@ impl AgentConfig {
             }
             if let Some(value) = runtime.context_compaction_summary_source_tokens {
                 self.runtime.context_compaction_summary_source_tokens = value.max(1_024);
+            }
+            if let Some(memory) = runtime.memory {
+                if let Some(value) = memory.enabled {
+                    self.runtime.memory.enabled = value;
+                }
+                if let Some(value) = memory.mode {
+                    self.runtime.memory.mode = parse_memory_mode(&value);
+                }
+                if let Some(value) = memory.root_dir {
+                    self.runtime.memory.root_dir = absolutize_path(&self.workspace_root, value);
+                }
+                if let Some(value) = memory.max_inject_chars {
+                    self.runtime.memory.max_inject_chars = value.max(256);
+                }
+                if let Some(value) = memory.min_turns_to_persist {
+                    self.runtime.memory.min_turns_to_persist = value.max(1);
+                }
             }
             let trigger_tokens = ((self.runtime.model_context_window as f32)
                 * self.runtime.context_compaction_trigger_ratio)
@@ -354,6 +384,22 @@ impl AgentConfig {
         {
             self.tools.max_read_chars = parsed.max(1_024);
         }
+        if let Ok(value) = env::var("CLOUDAGENT_MEMORY_ENABLED")
+            && let Ok(parsed) = value.parse::<bool>()
+        {
+            self.runtime.memory.enabled = parsed;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_MEMORY_MODE") {
+            self.runtime.memory.mode = parse_memory_mode(&value);
+        }
+    }
+}
+
+fn parse_memory_mode(value: &str) -> MemoryMode {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "basic" => MemoryMode::Basic,
+        "evolve" => MemoryMode::Evolve,
+        _ => MemoryMode::Off,
     }
 }
 

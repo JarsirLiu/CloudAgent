@@ -8,6 +8,7 @@ use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 mod session_index;
+pub mod memory_repo;
 
 #[derive(Clone, Debug)]
 pub struct JsonConversationStore {

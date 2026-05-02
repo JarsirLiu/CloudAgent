@@ -6,6 +6,7 @@ mod tools;
 use agent_core::{
     AgentContext, ChatModel, EnvironmentContext, ExecutionPolicy, ToolCall, ToolExecutor,
 };
+use agent_memory::LongTermMemoryFacade;
 use agent_tools::ToolRegistry;
 use anyhow::Result;
 use config::AgentConfig;
@@ -42,6 +43,7 @@ pub struct AgentRuntime {
     state: RuntimeState,
     store: JsonConversationStore,
     rollout_recorder: RolloutRecorder,
+    memory: LongTermMemoryFacade,
     session_approvals: StdMutex<HashSet<String>>,
 }
 
@@ -57,6 +59,7 @@ impl AgentRuntime {
         let tools = Arc::new(ToolRegistry::new(config.tools.max_read_chars));
         let store = JsonConversationStore::new(config.runtime.conversation_store_dir.clone());
         let rollout_recorder = RolloutRecorder::new(store.clone());
+        let memory = LongTermMemoryFacade::new(config.runtime.memory.clone())?;
 
         let system_prompt = config.runtime.system_prompt.clone();
 
@@ -69,6 +72,7 @@ impl AgentRuntime {
             state: RuntimeState::new(system_prompt),
             store,
             rollout_recorder,
+            memory,
             session_approvals: StdMutex::new(HashSet::new()),
         })
     }

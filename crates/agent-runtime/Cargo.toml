@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+agent-memory = { path = "../agent-memory" }
 agent-core = { path = "../agent-core" }
 agent-protocol = { path = "../agent-protocol" }
 agent-tools = { path = "../agent-tools" }
