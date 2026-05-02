@@ -3,7 +3,7 @@ use crate::tools::ToolBatchRunner;
 use crate::{AgentRuntime, emit_event};
 use agent_core::{
     CompactionSummary, ContextCompactionConfig, ContextFragment, ContextManager,
-    ConversationHistory, ModelUsage, RolloutItem, apply_history_compaction,
+    ContextInputFilterService, ConversationHistory, FilterPolicy, ModelUsage, RolloutItem, apply_history_compaction,
     build_compaction_summary_request, plan_manual_history_compaction,
 };
 use agent_protocol::{
@@ -12,6 +12,7 @@ use agent_protocol::{
 };
 use anyhow::Result;
 use std::collections::HashSet;
+use std::fs;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
@@ -211,10 +212,17 @@ where
             );
         }
 
-        let model_request = context_manager.build_current_model_request_with_fragments(
+        let mut model_request = context_manager.build_current_model_request_with_fragments(
             std::slice::from_ref(&environment_context),
             tool_specs.clone(),
             runtime.config.llm.temperature,
+        );
+        let filter_service = ContextInputFilterService::new();
+        model_request.messages = filter_service.filter_for_model(
+            model_request.messages,
+            FilterPolicy {
+                enabled: is_global_pre_llm_filter_enabled(runtime),
+            },
         );
 
         emit_event(
@@ -420,6 +428,24 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
+}
+
+fn is_global_pre_llm_filter_enabled(runtime: &AgentRuntime) -> bool {
+    let path = runtime
+        .config
+        .workspace_root
+        .join("data")
+        .join("ui-settings.json");
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| {
+            v.get("pre_llm_filter_enabled")
+                .and_then(|b| b.as_bool())
+        })
+        .unwrap_or(false)
 }
 
 pub(crate) fn estimate_request_overhead_tokens(

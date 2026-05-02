@@ -8,9 +8,9 @@ pub mod turn;
 
 pub use context::{
     AgentContext, CompactionSummary, ContextCompactionConfig, ContextCompactionPlan,
-    ContextCompactionResult, ContextFragment, ContextManager, EnvironmentContext, ModelContext,
-    ToolExecutionContext, apply_history_compaction, build_compaction_summary_request,
-    plan_history_compaction, plan_manual_history_compaction,
+    ContextCompactionResult, ContextFragment, ContextInputFilterService, ContextManager,
+    EnvironmentContext, FilterPolicy, ModelContext, ToolExecutionContext, apply_history_compaction,
+    build_compaction_summary_request, plan_history_compaction, plan_manual_history_compaction,
 };
 pub use conversation::{
     ActiveConversationTurn, ConversationHistory, ConversationState, ConversationTurn,

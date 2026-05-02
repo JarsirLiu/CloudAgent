@@ -1,6 +1,7 @@
 mod compaction;
 mod environment;
 mod fragments;
+mod input_filter;
 mod manager;
 mod tool_context;
 
@@ -11,5 +12,6 @@ pub use compaction::{
 };
 pub use environment::EnvironmentContext;
 pub use fragments::ContextFragment;
+pub use input_filter::{ContextInputFilterService, FilterPolicy};
 pub use manager::{ContextManager, ModelContext};
 pub use tool_context::{AgentContext, ToolExecutionContext};
