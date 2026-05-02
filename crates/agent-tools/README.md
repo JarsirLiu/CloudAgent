@@ -1,36 +1,138 @@
 # agent-tools
 
-`agent-tools` is the product-layer tool system for `cloudagent`.
+`agent-tools` is the product-facing tool layer for `cloudagent`.
 
-This crate is responsible for:
+This crate should not grow into a catalog of many mediocre tools. Its job is to expose a small,
+stable, well-described set of high-value capabilities that the agent can rely on across large real
+world repositories.
 
-- defining the default local tools exposed to the agent
-- organizing tools by task domain rather than only by low-level capability
-- selecting which tools should be visible for a given mode or task
-- hosting concrete tool implementations and their product-facing descriptions
+The current direction is:
 
-This crate is not responsible for the core tool protocol itself. Core tool abstractions such as
-`ToolSpec`, `ToolCall`, `ToolResult`, and `ToolExecutor` belong in `agent-core`.
+- align core tool architecture with Codex
+- absorb strong single-tool design ideas from Claude Code
+- remove low-value exploration loops
+- prefer fewer, more reliable tools over a larger tool surface
 
-## Why This Crate Exists
+## Tool Philosophy
 
-The original tool system was intentionally thin: a single registry with a few primitive tools such
-as directory listing, file reading, file writing, and shell execution.
+The long-term goal is not "more tools". The goal is:
 
-That shape was easy to start with, but it has long-term weaknesses:
+- stable behavior
+- high information density per call
+- predictable outputs
+- strong Windows and large-repo behavior
+- low model roundtrip count
 
-- repository analysis tends to degrade into directory-by-directory traversal
-- the model must infer too much tool strategy from prompt text alone
-- there is no stable place to express tool categories, task modes, or selection policy
-- all tools are exposed at the same conceptual layer even when their use cases differ sharply
+That means `cloudagent` should converge on a compact core toolset instead of maintaining many
+partially overlapping primitives.
 
-The v2 structure in this crate is intended to solve those weaknesses by separating:
+## Reference Strategy
 
-- core protocol from product policy
-- tool implementation from tool exposure
-- task-oriented toolsets from raw file-system primitives
+Two reference systems matter here, but they should influence different layers.
 
-## Architectural Position
+### Codex as the architecture reference
+
+Codex is the primary reference for:
+
+- keeping the exposed tool surface small
+- building around core capabilities instead of many ad hoc tools
+- using shell workflows where they are the highest-fidelity path
+- treating file search and file reading as infrastructure, not one-off helpers
+- consolidating editing around a patch-first workflow
+
+### Claude Code as the single-tool UX reference
+
+Claude Code is the secondary reference for:
+
+- strong tool descriptions
+- strict schemas
+- safe defaults
+- concise model-readable summaries
+- clarifying when a tool should and should not be used
+
+In short:
+
+- architecture and tool catalog shape should lean Codex
+- per-tool ergonomics should learn from Claude Code
+
+## Target Core Toolset
+
+The default tool stack should converge on a very small set of core capabilities.
+
+### 1. `shell_command`
+
+Primary purpose:
+
+- build
+- test
+- inspect runtime state
+- run high-fidelity repo search workflows such as `rg`, `git`, and other real shell commands
+
+Long-term expectation:
+
+- this is the preferred path for advanced text search
+- command safety, approval policy, and platform behavior must be robust
+
+### 2. `apply_patch`
+
+Primary purpose:
+
+- make code changes through a single patch-first editing path
+
+Long-term expectation:
+
+- this becomes the primary editing tool
+- other editing entry points should converge into this workflow or disappear
+
+### 3. `fs_read_file`
+
+Primary purpose:
+
+- read known files reliably
+- support targeted inspection after file discovery
+
+Long-term expectation:
+
+- this should be backed by a shared file-reading layer
+- binary detection, truncation, encoding fallback, and path safety should be centralized
+
+### 4. `fuzzy_file_search`
+
+Primary purpose:
+
+- locate candidate files quickly in large repositories
+
+Long-term expectation:
+
+- this should evolve toward a Codex-style fuzzy file search capability
+- file discovery should not depend on repeated directory walking
+
+### 5. `fs_stat`
+
+Primary purpose:
+
+- answer focused metadata questions cheaply
+
+Long-term expectation:
+
+- this remains a narrow helper, not a primary exploration path
+
+## Tools That Are Transitional, Not Final
+
+Several existing tools are useful during migration, but they should not define the long-term
+product shape.
+
+- `read_files`
+- `read_directory`
+- `write_file`
+- `edit_file`
+- the current transitional `find_files`
+- the current transitional `search_text`
+
+These may continue to exist for compatibility while the new core toolset is built out, but they
+should be treated as bridges rather than permanent product commitments.
+
+## Architectural Layers
 
 The tool system should be understood in three layers.
 
@@ -46,469 +148,107 @@ Examples:
 - `ToolExecutionContext`
 - `ToolExecutor`
 
-This layer defines the language used by the runtime, the model adapter, and tool implementations.
-It should remain stable and should not know the product's default tool catalog.
+This layer defines stable protocol concepts and must remain independent of the default product
+catalog.
 
 ### 2. Product tool layer
 
 Owned by `agent-tools`.
 
-Examples:
+Responsibilities:
 
-- default local tool implementations
-- tool descriptors
-- tool categories
-- tool risks
-- tool mode tags
-- toolset construction
-- task and mode based tool selection
+- define the default local tool catalog
+- describe tools in a model-friendly way
+- group shared file access, search, edit, and command behaviors
+- encode product-level tool strategy
 
-This layer is intentionally opinionated. It represents how `cloudagent` wants to package its tools
-for real work.
+This layer should be opinionated, but it should stay compact.
 
 ### 3. Runtime orchestration layer
 
 Owned by `agent-runtime`.
 
-Examples:
+Responsibilities:
 
-- which task kind is currently active
-- which tool mode should be used for this turn
-- roundtrip guardrails
-- approval routing
-- tool call policy across multiple model turns
+- decide which tools are exposed for a turn
+- enforce approvals and guardrails
+- coordinate cancellation and policy
 
-This layer decides when and how to expose subsets of the product tool layer to the model.
+This layer decides availability over time. It should not compensate for a bloated or low-quality
+tool catalog.
 
-## Design Principles
+## Design Rules
 
-The long-term tool system should follow these principles.
+### Prefer infrastructure over ad hoc helpers
 
-### Prefer task-oriented tools over primitive-only tools
+File reading, file discovery, and editing should be shared capabilities, not separate piles of
+copy-pasted logic hidden inside many tools.
 
-The agent should not have to reconstruct repository analysis from repeated `list_dir` and
-single-file reads. The default tool catalog should offer higher-information tools such as:
+### Prefer shell for high-fidelity search
 
-- text search
-- file finding
-- batch file reading
-- patch-based editing
+When the highest quality answer comes from `rg`, `git`, or another real command, the system should
+lean on `shell_command` rather than forcing a weaker custom replica.
 
-Primitive file-system operations still matter, but they should be supporting tools rather than the
-default reasoning path.
+### Keep the tool surface small
 
-### Separate stable abstractions from evolving strategy
+Every exposed tool creates model choice complexity. A weak tool is worse than no tool.
 
-The following belong in `agent-core` because they are stable protocol concepts:
+### Make tool descriptions carry strategy
 
-- call and result types
-- executor traits
-- model-visible tool schema primitives
+The model should learn key behavior from the tool descriptor itself:
 
-The following belong in `agent-tools` or `agent-runtime` because they are product strategy:
+- what the tool is best at
+- what neighboring tools it should replace
+- when not to use it
 
-- which tools exist by default
-- how tools are grouped into modes
-- when repository analysis should prefer search over directory traversal
-- which toolset is exposed in a given turn
+### Bake defaults into the implementation
 
-### Make tool descriptions do real work
+The model should not need to remember:
 
-Long-term behavior should not rely only on a large persistent system prompt.
+- which directories are junk
+- when to batch reads
+- when to avoid directory-only exploration
 
-Each tool descriptor should help the model answer questions such as:
+Those defaults belong in the implementation and policy layers.
 
-- when should this tool be chosen
-- what is it better at than neighboring tools
-- what should not be done with this tool
+## Migration Direction
 
-For example:
+The migration target is not "finish v2 exactly as first imagined". The target is to reach a
+Codex-shaped core tool stack as quickly as possible without sacrificing reliability.
 
-- repository search tools should say they are preferred for locating implementations
-- directory listing tools should explicitly say they are not the primary discovery path
-- batch read tools should say they exist to reduce model roundtrips
+Recommended order:
 
-### Optimize for fewer model roundtrips
+1. tighten documentation around the final target
+2. strengthen the current transitional implementations only when they directly support the target
+3. converge file reading into a shared `fs_read_file` path
+4. converge editing into `apply_patch`
+5. replace transitional file discovery with `fuzzy_file_search`
+6. reduce or remove tools that no longer justify exposure
 
-The main performance goal of the tool system is not simply "more tools". It is:
+## What Belongs Here
 
-- higher information density per tool call
-- fewer exploratory model turns
-- earlier access to the actual implementation files
+Put code in `agent-tools` if:
 
-This is why repository exploration and batch reading are first-class concerns in v2.
+- it defines a default local tool that should remain part of the product
+- it implements shared tool-facing behavior for reading, searching, editing, or command execution
+- it improves model-facing tool descriptions and strategy
 
-### Make low-value search paths impossible by default
+Put code elsewhere if:
 
-The agent should not waste time searching generated trees, vendored dependencies, or ignored
-artifacts unless the user explicitly asks for them.
-
-Repository exploration tools should therefore default to:
-
-- respecting `.gitignore` when practical
-- skipping common dependency directories such as `node_modules`
-- skipping build output trees such as `dist`, `build`, `target`, and `.next`
-- skipping cache and virtual-environment directories such as `.cache`, `.venv`, `venv`, and
-  `__pycache__`
-
-This behavior should live in the tool implementation and policy layer, not in the model prompt.
-The model should not need to remember which junk directories to avoid.
-
-### Keep mode selection outside the model when possible
-
-The model should not be solely responsible for deciding which categories of tools are available.
-That decision should be strongly shaped by the runtime and this crate's selection layer.
-
-## Current v2 Skeleton
-
-The current v2 layout is:
-
-```text
-src/v2/
-├─ mod.rs
-├─ spec/
-│  └─ mod.rs
-├─ selection/
-│  └─ mod.rs
-├─ policy/
-│  └─ mod.rs
-├─ registry/
-│  └─ mod.rs
-└─ impls/
-   ├─ mod.rs
-   ├─ repository_exploration/
-   │  └─ mod.rs
-   ├─ code_editing/
-   │  └─ mod.rs
-   ├─ command_execution/
-   │  └─ mod.rs
-   └─ workspace_file_ops/
-      └─ mod.rs
-```
-
-These modules have distinct responsibilities.
-
-### `spec`
-
-Holds product-facing tool metadata:
-
-- `ToolCategory`
-- `ToolRisk`
-- `ToolDescriptor`
-
-This layer enriches the lower-level `ToolSpec` from `agent-core` with product semantics.
-
-### `selection`
-
-Holds selection concepts:
-
-- `TaskKind`
-- `ToolMode`
-- `ToolSelector`
-
-This layer answers the question: "Given the current task and mode, which tool descriptors should
-be visible?"
-
-### `policy`
-
-Holds persistent strategy knobs and runtime-adjacent defaults such as:
-
-- maximum directory-only exploration rounds
-- whether batch reads should be encouraged
-- the default exploration mode
-- repository search defaults such as ignored directories and whether `.gitignore` should be
-  respected
-
-This is not yet wired into runtime enforcement, but this is where that policy belongs.
-
-### `registry`
-
-Holds `ToolRegistry`, which is the product registry for the default tool catalog.
-
-Its responsibilities are:
-
-- constructing the default descriptor list
-- exposing all descriptors for inspection
-- returning filtered `ToolSpec`s by `(ToolMode, TaskKind)`
-
-Long-term, it should also own execution routing for v2 tools.
-
-### `impls`
-
-Holds concrete product tool families organized by task domain instead of only raw primitives.
-
-Current domains:
-
-- `repository_exploration`
-- `code_editing`
-- `command_execution`
-- `workspace_file_ops`
-
-Later domains may include:
-
-- `external_resources`
-- `agent_coordination`
-
-## Tool Domains
-
-The default long-term catalog should be organized around the following task domains.
-
-### Repository exploration
-
-Primary purpose:
-
-- understand how the codebase works
-- locate implementations
-- gather evidence for architectural explanations
-
-Primary tools:
-
-- `search_text`
-- `find_files`
-- `read_file`
-- `read_files`
-
-Default repository exploration behavior should exclude ignored and generated trees unless a future
-tool argument explicitly opts in.
-
-This domain should become the default for questions like:
-
-- "How does this mechanism work?"
-- "Where is this feature implemented?"
-- "What owns this workflow?"
-
-### Code editing
-
-Primary purpose:
-
-- modify existing code safely
-- create new files when patching is not appropriate
-
-Primary tools:
-
-- `apply_patch`
-- `write_file`
-
-Long-term, patch-oriented editing should be the default path for code changes.
-
-### Command execution
-
-Primary purpose:
-
-- build
-- test
-- inspect system state
-- use high-density shell workflows when appropriate
-
-Primary tools:
-
-- `shell_command`
-
-This domain is important, but it should not be the only strategy for repository discovery.
-
-### Workspace file operations
-
-Primary purpose:
-
-- confirm file-system structure
-- inspect metadata
-- perform targeted file-system operations
-
-Primary tools:
-
-- `get_metadata`
-- `read_directory`
-
-This domain is intentionally secondary for repository analysis.
-
-## Default Tool Modes
-
-The long-term runtime should expose different tool subsets depending on the task.
-
-### Explore mode
-
-Use for:
-
-- codebase analysis
-- architecture questions
-- implementation discovery
-
-Recommended visible tools:
-
-- repository exploration tools
-- selected command execution tools
-- selected file metadata tools
-
-### Edit mode
-
-Use for:
-
-- making code changes
-- generating new files
-- targeted follow-up inspection
-
-Recommended visible tools:
-
-- code editing tools
-- read tools
-- shell command for validation
-
-### Verify mode
-
-Use for:
-
-- build
-- test
-- targeted re-checks
-
-Recommended visible tools:
-
-- shell command
-- focused file reads
-- metadata as needed
-
-### Full mode
-
-Use sparingly when the runtime explicitly wants the whole default catalog.
-
-## What Must Move Out of the Persistent System Prompt
-
-The persistent system prompt should hold only high-level behavior rules, for example:
-
-- prefer high-information inspection
-- batch independent calls when possible
-- avoid repeated directory-only exploration
-
-The following should not depend primarily on the global prompt:
-
-- exact differences between repository search and directory listing
-- when batch reads are preferred over single-file reads
-- which tools belong to explore versus edit mode
-- permission and deny-rule filtering
-
-Those concerns belong in tool descriptors, selection, and runtime policy.
-
-## Long-Term Implementation Roadmap
-
-This crate should be implemented in stages.
-
-### Phase 1: make repository exploration real
-
-Implement the execution path for:
-
-- `search_text`
-- `find_files`
-- `read_files`
-
-Goal:
-
-- replace directory-walk-heavy exploration with search-first discovery
-- make search behavior respect ignore rules and skip low-value generated or dependency trees by
-  default
-
-Success metric:
-
-- fewer model requests for architecture questions
-- fewer consecutive directory-only rounds
-
-### Phase 2: wire v2 registry execution
-
-Teach `ToolRegistry` to:
-
-- hold executable tool instances
-- route `ToolCall`s by tool name
-- return `ToolResult`s through the core protocol
-
-At this stage, v2 becomes runnable instead of being descriptor-only.
-
-### Phase 3: integrate with runtime selection
-
-Update `agent-runtime` so it can request:
-
-- `specs_for_mode(ToolMode::Explore, TaskKind::RepositoryAnalysis)`
-- `specs_for_mode(ToolMode::Edit, TaskKind::CodeEdit)`
-
-The runtime should stop exposing all tools all the time.
-
-### Phase 4: move editing to patch-first workflows
-
-Implement and prefer:
-
-- patch-based editing
-- smaller write surface area
-- explicit code change reporting
-
-### Phase 5: add runtime guardrails
-
-Examples:
-
-- cap directory-only exploration rounds
-- prefer batch reads when multiple candidate files are obvious
-- reject or rewrite known low-value exploration loops
-
-## Migration Strategy
-
-The current v1 registry remains in place during transition.
-
-That is intentional.
-
-Recommended migration order:
-
-1. keep v1 operational
-2. implement repository exploration tools in v2
-3. allow selected runtime paths to use v2 explore mode
-4. validate that logs show fewer roundtrips
-5. migrate editing paths
-6. retire v1 only after v2 is complete enough
-
-This avoids a large unstable cutover.
-
-## What Belongs Here vs Elsewhere
-
-Use this rule when deciding where new code should live.
-
-Put it in `agent-core` if:
-
-- it defines a stable tool protocol concept
-- it does not depend on the default tool catalog
-- it should remain valid across multiple tool product strategies
-
-Put it in `agent-tools` if:
-
-- it defines a concrete default tool
-- it describes how a tool should be presented to the model
-- it groups or selects tools by task domain
-- it encodes product-level strategy for tool exposure
-
-Put it in `agent-runtime` if:
-
-- it decides which tool mode to use during a turn
-- it enforces roundtrip guardrails
-- it coordinates approvals, cancellation, and tool availability over time
+- it is only a stable protocol concept
+- it is runtime policy rather than tool behavior
+- it is a one-off compatibility bridge that should be short-lived
 
 ## Immediate Development Rule
 
-From this point forward, new default local tools should not be added directly as flat v1-style
-primitives unless there is a strong short-term reason.
+From this point forward, do not add new default tools just to fill gaps in the current transitional
+surface.
 
-New tool work should prefer the v2 structure and should answer these questions before
-implementation:
+Before adding or keeping a tool, answer:
 
-1. Which task domain does the tool belong to?
-2. Which mode tags should it carry?
-3. What existing low-level behavior does it replace or reduce?
-4. Does it increase information density per model turn?
-5. Is it a stable product tool, or just a temporary bridge?
+1. Does this belong in the final compact core toolset?
+2. Is it stronger than using one of the existing core capabilities?
+3. Is it infrastructure-backed, or is it another ad hoc wrapper?
+4. Will it reduce roundtrips and improve reliability in large repositories?
 
-## Near-Term Next Steps
-
-The next implementation work in this crate should be:
-
-1. implement `search_text`
-2. implement `find_files`
-3. implement `read_files`
-4. teach `ToolRegistry` to execute calls
-5. connect runtime explore mode to v2 selection
-
-That sequence creates the first real end-to-end improvement without forcing a full rewrite in one
-pass.
+If the answer is no, the tool should probably not exist.

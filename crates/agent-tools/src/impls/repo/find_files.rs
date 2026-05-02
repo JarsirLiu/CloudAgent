@@ -1,4 +1,4 @@
-use super::common::{load_gitignore_patterns, should_ignore_name};
+use super::common::{collect_repo_entries, rank_file_match, sort_ranked_paths};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
-use tokio::fs;
 
 pub struct FindFilesTool;
 
@@ -76,45 +75,35 @@ impl LocalTool for FindFilesLocalTool {
         let offset = args.offset.unwrap_or(0);
         let case_sensitive = args.case_sensitive.unwrap_or(false);
         let root = resolve_workspace_path(&ctx.workspace_root, args.path_scope.as_deref())?;
-        let gitignore_patterns = load_gitignore_patterns(&ctx.workspace_root).await;
-        let mut stack = vec![root];
-        let mut matches = Vec::new();
-        while let Some(dir) = stack.pop() {
-            let mut entries = match fs::read_dir(&dir).await {
-                Ok(entries) => entries,
-                Err(_) => continue,
-            };
-            while let Some(entry) = entries.next_entry().await? {
-                let path = entry.path();
-                let name = entry.file_name().to_string_lossy().to_string();
-                let metadata = match entry.metadata().await {
-                    Ok(metadata) => metadata,
-                    Err(_) => continue,
-                };
-                if metadata.is_dir() {
-                    if should_ignore_name(&name, &gitignore_patterns) {
-                        continue;
-                    }
-                    stack.push(path);
-                    continue;
-                }
-                if metadata.is_file() && file_name_matches(&name, &pattern, case_sensitive) {
-                    let rel = path
-                        .strip_prefix(&ctx.workspace_root)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .replace('\\', "/");
-                    matches.push(rel);
-                    if matches.len() >= max_results + offset {
-                        break;
-                    }
-                }
-            }
-            if matches.len() >= max_results + offset {
-                break;
-            }
-        }
-        matches.sort();
+        let workspace_root = ctx.workspace_root.clone();
+        let pattern = if case_sensitive {
+            pattern
+        } else {
+            pattern.to_ascii_lowercase()
+        };
+        let matches = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+            let entries = collect_repo_entries(&workspace_root, &root)?;
+            let mut ranked = entries
+                .into_iter()
+                .filter_map(|entry| {
+                    let candidate_name = if case_sensitive {
+                        entry.file_name.clone()
+                    } else {
+                        entry.file_name.to_ascii_lowercase()
+                    };
+                    let candidate_path = if case_sensitive {
+                        entry.relative_path.clone()
+                    } else {
+                        entry.relative_path.to_ascii_lowercase()
+                    };
+                    rank_file_match(&candidate_path, &candidate_name, &pattern)
+                        .map(|score| (score, entry.relative_path))
+                })
+                .collect::<Vec<_>>();
+            sort_ranked_paths(&mut ranked);
+            Ok(ranked.into_iter().map(|(_, path)| path).collect())
+        })
+        .await??;
         let matches = matches
             .into_iter()
             .skip(offset)
@@ -132,35 +121,4 @@ impl LocalTool for FindFilesLocalTool {
             }),
         })
     }
-}
-
-fn file_name_matches(name: &str, pattern: &str, case_sensitive: bool) -> bool {
-    let (name, pattern) = if case_sensitive {
-        (name.to_string(), pattern.to_string())
-    } else {
-        (name.to_lowercase(), pattern.to_lowercase())
-    };
-    wildcard_match(&pattern, &name) || name.contains(&pattern)
-}
-
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
-    let s: Vec<char> = text.chars().collect();
-    let mut dp = vec![vec![false; s.len() + 1]; p.len() + 1];
-    dp[0][0] = true;
-    for i in 1..=p.len() {
-        if p[i - 1] == '*' {
-            dp[i][0] = dp[i - 1][0];
-        }
-    }
-    for i in 1..=p.len() {
-        for j in 1..=s.len() {
-            dp[i][j] = match p[i - 1] {
-                '*' => dp[i - 1][j] || dp[i][j - 1],
-                '?' => dp[i - 1][j - 1],
-                c => dp[i - 1][j - 1] && c == s[j - 1],
-            };
-        }
-    }
-    dp[p.len()][s.len()]
 }

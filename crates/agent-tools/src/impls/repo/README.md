@@ -1,214 +1,142 @@
-# Repository Exploration Tools
+# Repository Access Transition Notes
 
-This module family is the long-term home for repository-analysis-first tools.
+This directory currently holds transitional repository-access implementations.
 
-The first tool to implement here should be `search_text`.
+It is not the final long-term tool shape.
 
-## Reference Mapping
+The purpose of this module family is to bridge the gap between the older primitive exploration
+path and a smaller, stronger tool stack aligned with Codex-style architecture.
 
-When borrowing ideas from other agents, the recommended mapping is:
+## Final Direction
 
-- `search_text` -> Claude Code `GrepTool`
-- `find_files` -> Claude Code `GlobTool`
-- `read_file` -> Claude Code `FileReadTool`
-- `read_files` -> local enhancement for reducing roundtrips
+Long-term, repository analysis should converge on these capabilities:
 
-For concrete single-tool design, prefer Claude Code as the reference.
-For system-level tool exposure and orchestration, prefer Codex as the reference.
+- `fuzzy_file_search` for candidate file discovery
+- `fs_read_file` for reliable file reading
+- `shell_command` for high-fidelity text search via `rg`, `git`, and other native workflows
 
-## Why `search_text` Comes First
+That means the current repo tools in this directory should be treated as migration helpers, not
+permanent product commitments.
 
-The old tool path encouraged this pattern:
+## What This Directory Is For
 
-- list a directory
-- list a child directory
-- list another child directory
-- read one file
+Right now this directory is the best place to concentrate shared repository-facing behavior such
+as:
 
-That creates too many model roundtrips and wastes context on structure discovery.
+- ignore-aware walking
+- path normalization
+- text decoding and truncation
+- file-match ranking
+- transitional search helpers
 
-`search_text` should become the default implementation-locating tool for questions such as:
+Those shared pieces are useful even if some current tool names disappear later.
 
-- where is this mechanism implemented
-- which files mention this symbol
-- what calls this function or type
-- where does this workflow begin
+## What Is Transitional
 
-## Claude Code Design Lessons
-
-The most important ideas to copy from Claude Code `GrepTool` are:
-
-### 1. The tool has a strong opinionated description
-
-Claude Code explicitly tells the model to use `GrepTool` for search instead of shelling out to
-`grep` or `rg`.
-
-For `cloudagent`, `search_text` should similarly state:
-
-- use this tool first for implementation discovery
-- prefer this over repeated directory walking
-- do not use generic shell search unless there is a task-specific reason
-
-### 2. The tool has a strict input schema
-
-Claude Code does not accept vague free-form search input. It strongly models search parameters.
-
-`search_text` should do the same in Rust.
-
-The first version does not need every advanced option, but it should still use a typed argument
-model instead of raw ad hoc JSON handling.
-
-### 3. The tool applies safe defaults
-
-Claude Code limits result volume and excludes noisy directories.
-
-`search_text` should default to:
-
-- respecting `.gitignore` when practical
-- excluding common dependency and build output directories
-- truncating result count by default
-- returning relative paths when possible to save tokens
-
-### 4. The tool returns structured output
-
-Claude Code tools do not only dump text. They expose structured fields that are easier to reason
-about in later layers.
-
-`search_text` should return:
-
-- total match count
-- matched file count
-- whether output was truncated
-- the actual match entries
-
-### 5. The tool gives the model a concise textual summary
-
-Even with structured output, the model still benefits from a compact human-readable summary.
-
-That summary should say things like:
-
-- found 12 matches in 4 files
-- showing first 8 matches
-
-Then list the top hits in a predictable format.
-
-## First-Version Contract for `search_text`
-
-The first version should intentionally stay narrower than Claude Code `GrepTool`, but the shape
-should be compatible with future growth.
-
-### Tool name
+The following current tools are transitional:
 
 - `search_text`
+- `find_files`
+- `read_file`
+- `read_files`
 
-### Primary purpose
+They may continue to evolve while the system is being stabilized, but they should not be mistaken
+for the final public tool surface.
 
-- locate implementations by keyword or simple pattern
-- reduce exploratory directory traversal
+### `search_text`
 
-### First-version input arguments
+`search_text` is currently a bridge tool.
 
-- `query: string`
-- `path_scope?: string`
-- `max_results?: integer`
+Its job is to improve on directory-walk-heavy exploration while the system moves toward stronger
+shell-first search behavior. It can continue to exist during migration, but it should not become
+the long-term center of the architecture.
 
-The first version may postpone:
+For high-fidelity search, the long-term preferred path is:
 
-- regex mode
-- glob filtering
-- multiline matching
-- type filtering
-- pagination
+- `shell_command`
+- `rg`
+- `git grep` or similar native repo commands when appropriate
 
-Those can be added after the core execution path is stable.
+### `find_files`
 
-### First-version output structure
+`find_files` is also transitional.
 
-- `match_count: usize`
-- `file_count: usize`
-- `truncated: bool`
-- `results: SearchTextMatch[]`
+Its long-term direction is not "better globbing". Its long-term direction is to evolve toward a
+real `fuzzy_file_search` capability with better ranking, session support, and large-repo behavior.
 
-Where each `SearchTextMatch` contains:
+### `read_file`
 
-- `path: String`
-- `line: usize`
-- `preview: String`
+`read_file` is the closest transitional tool to a final capability, but even here the end state is
+not a repo-local helper. The end state is a shared `fs_read_file` path with centralized handling
+for:
 
-### Suggested textual result shape
+- truncation
+- binary detection
+- encoding fallback
+- path safety
 
-```text
-Found 9 matches in 3 files.
-Showing first 9 matches.
+### `read_files`
 
-crates/agent-runtime/src/tasks/regular.rs:126: if let Some(compaction_plan) = ...
-crates/agent-memory/src/lib.rs:42: pub struct MemoryCompactor ...
-...
-```
+`read_files` should be treated as temporary.
 
-## Search Defaults
+Batch reads can still be useful during migration, but the long-term design should avoid exposing a
+separate standalone read tool if the same outcome can be achieved through a stronger shared file
+read layer and better model strategy.
 
-`search_text` should not rely on the model to remember junk directories.
+## Design Principles for Transitional Work
 
-The implementation should default to excluding at least:
+Even while these tools are transitional, changes here should still follow strong rules.
 
-- `.git`
-- `.hg`
-- `.svn`
-- `node_modules`
-- `dist`
-- `build`
-- `target`
-- `target-verify`
-- `.next`
-- `.nuxt`
-- `.turbo`
-- `.cache`
-- `coverage`
-- `.venv`
-- `venv`
-- `__pycache__`
+### Prefer shared helpers over per-tool duplication
 
-Long-term behavior should also respect `.gitignore` when practical.
+If a repo tool needs:
 
-If a future task really needs to search ignored content, that should require explicit opt-in via
-tool arguments rather than being the default path.
+- text decoding
+- ignore-aware walking
+- truncation rules
+- ranking rules
 
-## Suggested Rust Shape
+that behavior should live in shared helpers instead of being reimplemented in each tool.
 
-The Rust implementation should eventually be split into the same conceptual pieces used by strong
-Claude-style tools:
+### Prefer native search engines when possible
 
-- `SearchTextArgs`
-- `SearchTextMatch`
-- `SearchTextOutput`
-- `descriptor()`
-- `validate(...)`
-- `run(...)`
-- `render_summary(...)`
+If `rg` can provide a better answer than a custom text scan, prefer `rg`.
 
-This makes the tool easier to evolve without turning it into a single large function.
+Fallback logic is acceptable, but the highest-quality engine should be the primary path.
 
-## Non-Goals for the First Version
+### Do not optimize transitional tools into permanent sprawl
 
-The first version does not need to:
+It is fine to improve current tools when they directly support the migration target. It is not fine
+to keep inventing adjacent repo tools that expand the long-term surface area.
 
-- match every `ripgrep` feature
-- handle every encoding edge case
-- support arbitrary binary inspection
-- replace shell command usage for advanced search workflows
+### Keep outputs model-readable
 
-It only needs to be the default high-value search tool for repository analysis.
+Claude Code remains a useful reference for single-tool design. Transitional tools should still aim
+for:
 
-## Implementation Standard
+- strict schemas
+- good defaults
+- concise summaries
+- predictable output formatting
 
-Before `search_text` is considered complete, it should satisfy all of the following:
+## Near-Term Priorities
 
-1. The schema is typed and validated.
-2. The tool skips ignored and generated trees by default.
-3. The result volume is capped by default.
-4. The output is both structured and model-readable.
-5. The tool is clearly better than directory walking for implementation discovery.
+Work in this directory should favor the following sequence:
 
-If it does not satisfy those conditions, it is not yet good enough to replace the old exploration
-path.
+1. strengthen shared repo helpers
+2. improve `read_file` toward a reusable `fs_read_file` implementation path
+3. improve `find_files` toward `fuzzy_file_search`
+4. let `search_text` use native search engines where practical
+5. remove duplicated logic that would block the final consolidation
+
+## What Not To Do
+
+Avoid using this directory as the long-term home for:
+
+- many small one-off repo tools
+- separate read variants that duplicate each other
+- directory-walk-first exploration strategies
+- product commitments to transitional tool names
+
+The point of this module family is to help us get to a stable final tool stack faster, not to
+freeze the current transition state in place.

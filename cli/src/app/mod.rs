@@ -699,7 +699,10 @@ mod tests {
                 .expect("approve request");
             }
         }
-        assert!(saw_server_request, "expected a tool approval request");
+        assert!(
+            !saw_server_request,
+            "safe workspace read commands should not trigger approval"
+        );
 
         let live_cells = app.transcript_state.transcript.cells();
         assert!(
@@ -857,7 +860,7 @@ mod tests {
                         "id": "call_interrupt",
                         "function": {
                             "name": "shell_command",
-                            "arguments": "{\"command\":\"pwd\"}"
+                            "arguments": "{\"command\":\"Get-ChildItem -Force\"}"
                         }
                     }]
                 }
@@ -1019,7 +1022,8 @@ mod tests {
         assert!(
             rebuilt_cells
                 .iter()
-                .any(|cell| cell.label == "shell_command" && cell.body.contains("failed `pwd`")),
+                .any(|cell| cell.label == "shell_command"
+                    && cell.body.contains("failed `Get-ChildItem -Force`")),
             "rebuilt cells: {debug_cells:?}"
         );
         assert!(!rebuilt_cells.iter().any(|cell| cell.label == "request"));
@@ -1045,7 +1049,7 @@ mod tests {
                             "id": "call_one",
                             "function": {
                                 "name": "shell_command",
-                                "arguments": "{\"command\":\"pwd\"}"
+                            "arguments": "{\"command\":\"pwd\"}"
                             }
                         }]
                     }
@@ -1112,7 +1116,6 @@ mod tests {
                 ))
                 .expect("submit turn");
 
-            let mut saw_server_request = false;
             let mut saw_turn_completed = false;
             let mut saw_idle = false;
             while !saw_turn_completed || !saw_idle {
@@ -1120,21 +1123,6 @@ mod tests {
                     .await
                     .expect("timed out waiting for client event")
                     .expect("client event");
-                if let AppServerEvent::Message(AppServerMessage::Request(
-                    agent_protocol::AppServerRequest::ServerRequest { request_id, .. },
-                )) = &event
-                {
-                    saw_server_request = true;
-                    client
-                        .send_command(AppClientCommand::ResolveServerRequest {
-                            conversation_id: "default".to_string(),
-                            request_id: request_id.clone(),
-                            decision: agent_protocol::ServerRequestDecision::accept(Some(
-                                "ok".to_string(),
-                            )),
-                        })
-                        .expect("approve request");
-                }
                 if matches!(
                     &event,
                     AppServerEvent::Message(AppServerMessage::Notification(
@@ -1156,7 +1144,6 @@ mod tests {
                 }
                 app.handle_client_event(event);
             }
-            assert!(saw_server_request, "expected server request for tool turn");
         }
 
         client
@@ -1248,7 +1235,7 @@ mod tests {
                                 "id": "call_denied",
                                 "function": {
                                     "name": "shell_command",
-                                    "arguments": "{\"command\":\"pwd\"}"
+                                    "arguments": "{\"command\":\"Get-ChildItem -Force\"}"
                                 }
                             },
                             {
@@ -1256,7 +1243,7 @@ mod tests {
                                 "id": "call_allowed",
                                 "function": {
                                     "name": "shell_command",
-                                    "arguments": "{\"command\":\"pwd\"}"
+                                    "arguments": "{\"command\":\"Get-ChildItem -Force\"}"
                                 }
                             }
                         ]

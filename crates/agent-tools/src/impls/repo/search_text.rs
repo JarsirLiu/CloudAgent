@@ -1,15 +1,19 @@
-use super::common::{load_gitignore_patterns, resolve_workspace_path, should_ignore_name};
+use super::common::{
+    DEFAULT_IGNORED_DIRS, collect_repo_entries, is_probably_text_file, read_text_lossy,
+    resolve_workspace_path,
+};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolSpec};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use tokio::fs;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 pub struct SearchTextTool;
 
@@ -114,7 +118,7 @@ pub async fn run_search_text(
     workspace_root: &Path,
     args: SearchTextArgs,
 ) -> Result<SearchTextOutput> {
-    let query = args.query.trim();
+    let query = args.query.trim().to_string();
     if query.is_empty() {
         bail!("`query` must not be empty");
     }
@@ -128,125 +132,180 @@ pub async fn run_search_text(
         .max_results
         .unwrap_or(DEFAULT_MAX_RESULTS)
         .clamp(1, HARD_MAX_RESULTS);
-    let case_sensitive = args.case_sensitive.unwrap_or(true);
-    let gitignore_patterns = load_gitignore_patterns(workspace_root).await;
-
-    let mut files = Vec::new();
-    collect_text_files(&base, &base, &gitignore_patterns, &mut files).await?;
-
-    let mut results = Vec::new();
-    let mut files_with_matches = BTreeSet::new();
-
-    for file_path in files {
-        if results.len() >= max_results {
-            break;
-        }
-        let text = match fs::read_to_string(&file_path).await {
-            Ok(text) => text,
-            Err(_) => continue,
-        };
-
-        let rel = file_path
-            .strip_prefix(workspace_root)
-            .unwrap_or(&file_path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        for (idx, line) in text.lines().enumerate() {
-            if !line_matches(query, line, case_sensitive) {
-                continue;
-            }
-            files_with_matches.insert(rel.clone());
-            results.push(SearchTextMatch {
-                path: rel.clone(),
-                line: idx + 1,
-                preview: line.trim().to_string(),
-            });
-            if results.len() >= max_results {
-                break;
-            }
-        }
+    let case_sensitive = args.case_sensitive.unwrap_or(false);
+    let workspace_root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    if let Some(output) =
+        run_search_text_with_ripgrep(&workspace_root, &base, &query, case_sensitive, max_results)
+            .await?
+    {
+        return Ok(output);
     }
 
-    Ok(SearchTextOutput {
-        match_count: results.len(),
-        file_count: files_with_matches.len(),
-        truncated: results.len() >= max_results,
-        results,
+    tokio::task::spawn_blocking(move || {
+        let entries = collect_repo_entries(&workspace_root, &base)?;
+        let mut results = Vec::new();
+        let mut files_with_matches = BTreeSet::new();
+        let normalized_query = if case_sensitive {
+            query.to_string()
+        } else {
+            query.to_ascii_lowercase()
+        };
+
+        for entry in entries {
+            if results.len() >= max_results || !is_probably_text_file(&entry.absolute_path) {
+                continue;
+            }
+            let text = match read_text_lossy(&entry.absolute_path) {
+                Ok(text) => text,
+                Err(_) => continue,
+            };
+            for (idx, line) in text.lines().enumerate() {
+                if !line_matches(&normalized_query, line, case_sensitive) {
+                    continue;
+                }
+                files_with_matches.insert(entry.relative_path.clone());
+                results.push(SearchTextMatch {
+                    path: entry.relative_path.clone(),
+                    line: idx + 1,
+                    preview: line.trim().to_string(),
+                });
+                if results.len() >= max_results {
+                    break;
+                }
+            }
+        }
+
+        Ok(SearchTextOutput {
+            match_count: results.len(),
+            file_count: files_with_matches.len(),
+            truncated: results.len() >= max_results,
+            results,
+        })
     })
+    .await?
 }
 
 fn line_matches(query: &str, line: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         line.contains(query)
     } else {
-        line.to_lowercase().contains(&query.to_lowercase())
+        line.to_ascii_lowercase().contains(query)
     }
 }
 
-async fn collect_text_files(
+async fn run_search_text_with_ripgrep(
     workspace_root: &Path,
-    current: &Path,
-    gitignore_patterns: &[String],
-    out: &mut Vec<PathBuf>,
-) -> Result<()> {
-    let mut stack = vec![current.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let mut entries = fs::read_dir(&dir)
-            .await
-            .with_context(|| format!("failed to read directory {}", dir.display()))?;
+    base: &Path,
+    query: &str,
+    case_sensitive: bool,
+    max_results: usize,
+) -> Result<Option<SearchTextOutput>> {
+    let mut command = Command::new("rg");
+    command
+        .arg("--json")
+        .arg("--line-number")
+        .arg("--color")
+        .arg("never")
+        .arg("--hidden")
+        .arg("--follow")
+        .arg("--no-messages");
+    if !case_sensitive {
+        command.arg("--ignore-case");
+    }
+    for ignored_dir in DEFAULT_IGNORED_DIRS {
+        command.arg("--glob").arg(format!("!**/{ignored_dir}/**"));
+    }
+    command.arg(query).arg(base);
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::null());
 
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            let metadata = entry.metadata().await?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => return Ok(None),
+    };
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            let _ = child.kill().await;
+            return Ok(None);
+        }
+    };
 
-            if metadata.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if should_ignore_name(&name, gitignore_patterns) {
-                    continue;
-                }
-                stack.push(path);
-                continue;
-            }
+    let mut reader = BufReader::new(stdout).lines();
+    let mut results = Vec::new();
+    let mut files_with_matches = BTreeSet::new();
 
-            if metadata.is_file()
-                && is_probably_text_file(&path)
-                && path.starts_with(workspace_root)
-            {
-                out.push(path);
+    while let Some(line) = reader.next_line().await? {
+        if let Some(search_match) = parse_ripgrep_match_line(&line, workspace_root)? {
+            files_with_matches.insert(search_match.path.clone());
+            results.push(search_match);
+            if results.len() >= max_results {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Ok(Some(SearchTextOutput {
+                    match_count: results.len(),
+                    file_count: files_with_matches.len(),
+                    truncated: true,
+                    results,
+                }));
             }
         }
     }
-    Ok(())
+
+    let status = child.wait().await?;
+    if !status.success() && status.code() != Some(1) {
+        return Ok(None);
+    }
+    Ok(Some(SearchTextOutput {
+        match_count: results.len(),
+        file_count: files_with_matches.len(),
+        truncated: false,
+        results,
+    }))
 }
 
-fn is_probably_text_file(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-        return true;
+fn parse_ripgrep_match_line(line: &str, workspace_root: &Path) -> Result<Option<SearchTextMatch>> {
+    let payload: Value = match serde_json::from_str(line) {
+        Ok(payload) => payload,
+        Err(_) => return Ok(None),
     };
-    !matches!(
-        ext.to_ascii_lowercase().as_str(),
-        "png"
-            | "jpg"
-            | "jpeg"
-            | "gif"
-            | "webp"
-            | "ico"
-            | "pdf"
-            | "zip"
-            | "gz"
-            | "xz"
-            | "tar"
-            | "7z"
-            | "exe"
-            | "dll"
-            | "so"
-            | "dylib"
-            | "woff"
-            | "woff2"
-            | "ttf"
-            | "otf"
-            | "mp4"
-            | "mp3"
-            | "wav"
-    )
+    if payload.get("type").and_then(Value::as_str) != Some("match") {
+        return Ok(None);
+    }
+
+    let absolute_path = payload
+        .get("data")
+        .and_then(|data| data.get("path"))
+        .and_then(|path| path.get("text"))
+        .and_then(Value::as_str)
+        .map(PathBuf::from);
+    let Some(absolute_path) = absolute_path else {
+        return Ok(None);
+    };
+    let relative_path = absolute_path
+        .strip_prefix(workspace_root)
+        .unwrap_or(&absolute_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let line_number = payload
+        .get("data")
+        .and_then(|data| data.get("line_number"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let preview = payload
+        .get("data")
+        .and_then(|data| data.get("lines"))
+        .and_then(|lines| lines.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    Ok(Some(SearchTextMatch {
+        path: relative_path,
+        line: line_number,
+        preview,
+    }))
 }

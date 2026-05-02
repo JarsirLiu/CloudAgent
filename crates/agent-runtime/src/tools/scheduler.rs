@@ -1,3 +1,4 @@
+use crate::tools::approval_policy::approval_requirement_for_tool;
 use crate::{AgentRuntime, emit_event, summarize_arguments};
 use agent_core::{ContextManager, RolloutItem};
 use agent_protocol::{
@@ -103,11 +104,16 @@ impl<'a> ToolBatchRunner<'a> {
                 continue;
             }
 
-            if spec.requires_approval && !self.runtime.is_tool_approved_for_session(&call) {
+            let approval_requirement =
+                approval_requirement_for_tool(spec, &call, &self.runtime.context.workspace_root);
+            if approval_requirement.requires_approval
+                && !self.runtime.is_tool_approved_for_session(&call)
+            {
                 let approved = self
                     .request_approval(
                         &call,
                         spec,
+                        approval_requirement.reason.as_deref(),
                         &tool_item_id,
                         context_manager,
                         events,
@@ -192,6 +198,7 @@ impl<'a> ToolBatchRunner<'a> {
         &self,
         call: &ToolCall,
         spec: &ToolSpec,
+        approval_reason: Option<&str>,
         tool_item_id: &str,
         context_manager: &mut ContextManager,
         events: &mut Vec<EventMsg>,
@@ -218,9 +225,8 @@ impl<'a> ToolBatchRunner<'a> {
                 turn_id: self.turn_id.to_string(),
                 tool_call_id: call.id.clone(),
                 tool_name: call.name.clone(),
-                reason: spec
-                    .approval_reason
-                    .clone()
+                reason: approval_reason
+                    .map(ToOwned::to_owned)
                     .unwrap_or_else(|| format!("Tool `{}` requires approval.", call.name)),
                 arguments_preview: summarize_arguments(&call.arguments),
             },
