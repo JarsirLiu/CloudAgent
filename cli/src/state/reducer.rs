@@ -126,6 +126,7 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     actions.push(ServerAction::SetConversationList(conversations.clone()));
                     actions.push(ServerAction::PushInfoCell(render_conversation_list(
                         conversations,
+                        message.conversation_id().unwrap_or_default(),
                     )));
                 }
                 AppServerNotification::ConversationSwitched { conversation_id } => {
@@ -257,15 +258,24 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     ServerMessageReduce { actions }
 }
 
-fn render_conversation_list(conversations: &[agent_protocol::ConversationSummary]) -> String {
+fn render_conversation_list(
+    conversations: &[agent_protocol::ConversationSummary],
+    active_conversation_id: &str,
+) -> String {
     if conversations.is_empty() {
-        return "No conversations yet".to_string();
+        return "No sessions yet.\nUse `/new <session-id>` to create one.".to_string();
     }
-    let mut lines = Vec::with_capacity(conversations.len() + 1);
-    lines.push("Conversations".to_string());
+    let mut lines = Vec::with_capacity(conversations.len() + 3);
+    lines.push("Sessions".to_string());
     for conversation in conversations {
+        let active = if conversation.conversation_id == active_conversation_id {
+            "*"
+        } else {
+            " "
+        };
         lines.push(format!(
-            "- {}{} ({})",
+            "{} {}{} ({})",
+            active,
             conversation.conversation_id,
             conversation
                 .title
@@ -275,6 +285,8 @@ fn render_conversation_list(conversations: &[agent_protocol::ConversationSummary
             pluralize_messages(conversation.message_count)
         ));
     }
+    lines.push(String::new());
+    lines.push("Use `/session <session-id>` to switch, `/new <session-id>` to create.".to_string());
     lines.join("\n")
 }
 

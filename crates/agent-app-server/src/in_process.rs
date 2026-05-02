@@ -84,6 +84,7 @@ pub fn start_in_process(
                 }
                 ServerMessage::Command(command) => {
                     let command_conversation_id = command.conversation_id().map(str::to_string);
+                    let should_mark_active = matches!(command, AppClientCommand::SubmitTurn(_));
                     if handle_command(
                         runtime.clone(),
                         command,
@@ -101,7 +102,7 @@ pub fn start_in_process(
                                 message: "command handling failed".to_string(),
                             },
                         ));
-                    } else if let Some(id) = command_conversation_id {
+                    } else if let (Some(id), true) = (command_conversation_id, should_mark_active) {
                         let _ = runtime.mark_active_conversation(&id).await;
                     }
                 }

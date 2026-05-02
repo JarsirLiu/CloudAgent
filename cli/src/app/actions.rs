@@ -55,28 +55,31 @@ pub(crate) fn handle_tui_input(
             ));
         }
         ParsedInput::LocalConversationCreate(new_conversation_id) => {
+            app.input_pane.clear_session_picker();
             let trimmed = new_conversation_id.trim();
-            if trimmed.is_empty() {
-                app.push_cell(HistoryCell::from_message(
-                    "conversation",
-                    "Usage: /new <conversation-id>",
-                    HistoryTone::Warning,
-                ));
-                return Ok(false);
-            }
+            let conversation_id = if trimmed.is_empty() {
+                let millis = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                format!("session-{millis}")
+            } else {
+                trimmed.to_string()
+            };
             client.send_command(AppClientCommand::CreateConversation {
-                conversation_id: trimmed.to_string(),
+                conversation_id: conversation_id.clone(),
             })?;
             client.send_command(AppClientCommand::SwitchConversation {
-                conversation_id: trimmed.to_string(),
+                conversation_id: conversation_id.clone(),
             })?;
         }
         ParsedInput::LocalConversationSwitch(target_conversation_id) => {
+            app.input_pane.clear_session_picker();
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
                 app.push_cell(HistoryCell::from_message(
                     "conversation",
-                    "Usage: /session <conversation-id>",
+                    "Usage: /session <session-id>",
                     HistoryTone::Warning,
                 ));
                 return Ok(false);
@@ -105,7 +108,7 @@ pub(crate) fn handle_tui_input(
             if trimmed.is_empty() {
                 app.push_cell(HistoryCell::from_message(
                     "conversation",
-                    "Usage: /archive <conversation-id>",
+                    "Usage: /archive <session-id>",
                     HistoryTone::Warning,
                 ));
                 return Ok(false);
@@ -202,10 +205,17 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.run_state.status_notice = notice;
         }
         ServerAction::SetConversationList(conversations) => {
-            app.set_conversation_summaries(conversations);
+            app.set_conversation_summaries(conversations.clone());
+            if app.session_picker_requested {
+                app.input_pane
+                    .set_session_picker(conversations, &app.conversation_id);
+                app.session_picker_requested = false;
+            }
         }
         ServerAction::SwitchConversation(conversation_id) => {
+            app.input_pane.clear_session_picker();
             app.switch_conversation(conversation_id);
+            app.session_picker_requested = false;
         }
         ServerAction::SetHistoryLoaded(loaded) => {
             app.run_state.history_loaded = loaded;
@@ -251,7 +261,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             ));
         }
         ServerAction::PushInfoCell(message) => {
-            app.input_pane.clear_views();
             app.push_cell(HistoryCell::from_message(
                 "context",
                 message,

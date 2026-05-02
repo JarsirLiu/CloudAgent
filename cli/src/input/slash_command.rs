@@ -67,8 +67,8 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         command: SlashCommand::NewConversation,
         name: "new",
         aliases: &[],
-        description: "create a new conversation",
-        argument_hint: Some("<id>"),
+        description: "create and switch to a new session",
+        argument_hint: Some("[session-id]"),
         supports_inline_args: true,
     },
     SlashCommandSpec {

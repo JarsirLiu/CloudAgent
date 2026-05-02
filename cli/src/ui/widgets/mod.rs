@@ -4,6 +4,7 @@ pub mod completion_popup;
 pub mod footer;
 pub mod history_cell;
 pub mod input_pane;
+pub mod session_picker;
 pub mod server_request_overlay;
 pub mod text_effects;
 pub mod textarea;

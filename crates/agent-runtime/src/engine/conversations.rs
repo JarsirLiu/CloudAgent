@@ -51,7 +51,8 @@ impl AgentRuntime {
     }
 
     pub async fn create_conversation(&self, conversation_id: &str) -> Result<()> {
-        self.store.create_conversation(conversation_id).await
+        let _ = conversation_id;
+        Ok(())
     }
 
     pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {

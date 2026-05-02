@@ -127,30 +127,11 @@ pub(crate) async fn replay_frontend_state(
 
 pub(crate) async fn create_conversation(
     runtime: &Arc<AgentRuntime>,
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
+    _event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    _state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<()> {
     runtime.create_conversation(&conversation_id).await?;
-    let conversations = runtime.list_conversations().await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationList {
-            conversation_id: conversation_id.clone(),
-            conversations,
-        },
-    )
-    .await;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::Info {
-            conversation_id,
-            message: "conversation created".to_string(),
-        },
-    )
-    .await;
     Ok(())
 }
 

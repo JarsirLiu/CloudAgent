@@ -14,7 +14,10 @@ use crate::ui::chat_surface::ChatSurface;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
 use agent_app_server_client::AppServerEvent;
-use agent_protocol::{AppClientCommand, AppServerMessage, ConversationSummary, FrontendMode};
+use agent_protocol::{
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest,
+    ConversationSummary, FrontendMode,
+};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -64,6 +67,7 @@ pub(crate) struct TuiApp {
     welcome_animation_pause_ticks: u8,
     pending_history_cells: VecDeque<HistoryCell>,
     pending_history_rebuild: bool,
+    pub(crate) session_picker_requested: bool,
 }
 
 impl TuiApp {
@@ -81,6 +85,7 @@ impl TuiApp {
             welcome_animation_pause_ticks: 0,
             pending_history_cells: VecDeque::new(),
             pending_history_rebuild: false,
+            session_picker_requested: false,
         }
     }
 
@@ -158,9 +163,27 @@ impl TuiApp {
     }
 
     fn handle_server_message(&mut self, message: &AppServerMessage) {
+        if !self.should_apply_server_message(message) {
+            return;
+        }
         let reduced = apply_server_message(message);
         for action in reduced.actions {
             execute_server_action(self, action);
+        }
+    }
+
+    fn should_apply_server_message(&self, message: &AppServerMessage) -> bool {
+        match message {
+            AppServerMessage::Notification(AppServerNotification::ConversationList { .. })
+            | AppServerMessage::Notification(AppServerNotification::ConversationSwitched { .. }) => {
+                true
+            }
+            AppServerMessage::Notification(notification) => {
+                notification.conversation_id() == self.conversation_id
+            }
+            AppServerMessage::Request(AppServerRequest::ServerRequest {
+                conversation_id, ..
+            }) => conversation_id == &self.conversation_id,
         }
     }
 
@@ -253,6 +276,7 @@ impl TuiApp {
                 },
             )),
             InputPaneAction::Composer(ComposerIntent::Session) => {
+                self.session_picker_requested = true;
                 Some(ParsedInput::Command(AppClientCommand::ListConversations))
             }
             InputPaneAction::Composer(ComposerIntent::NewConversation(conversation_id)) => {
@@ -679,7 +703,6 @@ mod tests {
         let mut app = TuiApp::new("default".to_string(), "in-process");
 
         handle_tui_input(
-            "default",
             &mut app,
             &client,
             ParsedInput::Command(AppClientCommand::SubmitTurn(
@@ -716,7 +739,6 @@ mod tests {
             if let Some(request_id) = request_id {
                 saw_server_request = true;
                 handle_tui_input(
-                    "default",
                     &mut app,
                     &client,
                     ParsedInput::ServerRequestAnswer {
@@ -911,7 +933,6 @@ mod tests {
         let mut app = TuiApp::new("default".to_string(), "in-process");
 
         handle_tui_input(
-            "default",
             &mut app,
             &client,
             ParsedInput::Command(AppClientCommand::SubmitTurn(
@@ -939,7 +960,7 @@ mod tests {
                 let input = app
                     .handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
                     .expect("ctrl+c should produce interrupt input");
-                handle_tui_input("default", &mut app, &client, input)
+                handle_tui_input(&mut app, &client, input)
                     .expect("ctrl+c interrupt turn");
             }
             if matches!(

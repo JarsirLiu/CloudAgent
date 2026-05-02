@@ -17,8 +17,8 @@ pub(crate) fn completion_popup_lines(
 
     let mut lines = Vec::new();
     let (window_start, suggestions) = completion.visible_window(MAX_ROWS);
-    let has_more_above = window_start > 0;
-    let has_more_below = window_start + suggestions.len() < completion.suggestions().len();
+    let _has_more_above = window_start > 0;
+    let _has_more_below = window_start + suggestions.len() < completion.suggestions().len();
 
     for (offset, suggestion) in suggestions.iter().enumerate() {
         let index = window_start + offset;
@@ -30,10 +30,6 @@ pub(crate) fn completion_popup_lines(
         );
         let marker = if selected {
             "> "
-        } else if offset == 0 && has_more_above {
-            "↑ "
-        } else if offset + 1 == suggestions.len() && has_more_below {
-            "↓ "
         } else {
             "  "
         };
