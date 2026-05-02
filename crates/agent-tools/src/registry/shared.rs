@@ -151,22 +151,10 @@ pub(crate) fn resolve_workspace_path(
 
 pub(crate) fn structured_failure_result(
     tool_name: &str,
-    arguments: &Value,
+    _arguments: &Value,
 ) -> Option<StructuredToolResult> {
     match tool_name {
-        "write_file" => {
-            let path = arguments
-                .get("path")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default()
-                .to_string();
-            Some(StructuredToolResult::WriteFile {
-                path,
-                bytes_written: 0,
-                status: WriteFileStatus::Failed,
-            })
-        }
-        "apply_patch" | "edit_file" => Some(StructuredToolResult::EditFile {
+        "apply_patch" => Some(StructuredToolResult::EditFile {
             files_changed: 0,
             status: WriteFileStatus::Failed,
         }),

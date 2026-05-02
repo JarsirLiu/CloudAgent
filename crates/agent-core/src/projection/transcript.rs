@@ -448,7 +448,7 @@ fn transcript_item_from_item_start(
         }),
         TurnItemKind::FileChange => Some(TranscriptItem::FileChange {
             id: item_id.to_string(),
-            tool_name: "write_file".to_string(),
+            tool_name: "apply_patch".to_string(),
             path: title,
             status: crate::tool::WriteFileStatus::InProgress,
             bytes_written: 0,

@@ -1,7 +1,7 @@
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use ignore::WalkBuilder;
 use std::cmp::Reverse;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub(crate) const DEFAULT_IGNORED_DIRS: &[&str] = &[
     ".git",
@@ -24,41 +24,8 @@ pub(crate) const DEFAULT_IGNORED_DIRS: &[&str] = &[
 
 #[derive(Clone, Debug)]
 pub(crate) struct RepoEntry {
-    pub(crate) absolute_path: PathBuf,
     pub(crate) relative_path: String,
     pub(crate) file_name: String,
-}
-
-pub(crate) fn resolve_workspace_path(workspace_root: &Path, value: &str) -> Result<PathBuf> {
-    let root = workspace_root
-        .canonicalize()
-        .unwrap_or_else(|_| workspace_root.to_path_buf());
-    let input = Path::new(value);
-    if input.is_absolute() {
-        bail!("absolute paths are not allowed; use workspace-relative paths");
-    }
-
-    let mut candidate = root.clone();
-    for component in input.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::Normal(segment) => candidate.push(segment),
-            std::path::Component::ParentDir => {
-                if !candidate.pop() || !candidate.starts_with(&root) {
-                    bail!("path escapes the workspace root");
-                }
-            }
-            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
-                bail!("unsupported path component")
-            }
-        }
-    }
-
-    if !candidate.starts_with(&root) {
-        bail!("path escapes the workspace root");
-    }
-
-    Ok(candidate)
 }
 
 pub(crate) fn collect_repo_entries(
@@ -107,7 +74,6 @@ pub(crate) fn collect_repo_entries(
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_else(|| relative_path.clone());
         entries.push(RepoEntry {
-            absolute_path: path.to_path_buf(),
             relative_path,
             file_name,
         });
@@ -173,44 +139,6 @@ pub(crate) fn rank_file_match(
 
 pub(crate) fn sort_ranked_paths(matches: &mut [(usize, String)]) {
     matches.sort_by_key(|(score, path)| (Reverse(*score), path.clone()));
-}
-
-pub(crate) fn read_text_lossy(path: &Path) -> Result<String> {
-    let bytes =
-        std::fs::read(path).with_context(|| format!("failed to read file {}", path.display()))?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
-}
-
-pub(crate) fn is_probably_text_file(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-        return true;
-    };
-    !matches!(
-        ext.to_ascii_lowercase().as_str(),
-        "png"
-            | "jpg"
-            | "jpeg"
-            | "gif"
-            | "webp"
-            | "ico"
-            | "pdf"
-            | "zip"
-            | "gz"
-            | "xz"
-            | "tar"
-            | "7z"
-            | "exe"
-            | "dll"
-            | "so"
-            | "dylib"
-            | "woff"
-            | "woff2"
-            | "ttf"
-            | "otf"
-            | "mp4"
-            | "mp3"
-            | "wav"
-    )
 }
 
 fn normalize_for_match(input: &str) -> String {

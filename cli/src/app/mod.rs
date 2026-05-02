@@ -860,7 +860,7 @@ mod tests {
                         "id": "call_interrupt",
                         "function": {
                             "name": "shell_command",
-                            "arguments": "{\"command\":\"Get-ChildItem -Force\"}"
+                            "arguments": "{\"command\":\"Set-Content out.txt hi\"}"
                         }
                     }]
                 }
@@ -1023,7 +1023,7 @@ mod tests {
             rebuilt_cells
                 .iter()
                 .any(|cell| cell.label == "shell_command"
-                    && cell.body.contains("failed `Get-ChildItem -Force`")),
+                    && cell.body.contains("failed `Set-Content out.txt hi`")),
             "rebuilt cells: {debug_cells:?}"
         );
         assert!(!rebuilt_cells.iter().any(|cell| cell.label == "request"));
@@ -1232,20 +1232,20 @@ mod tests {
                         "tool_calls": [
                             {
                                 "index": 0,
-                                "id": "call_denied",
-                                "function": {
-                                    "name": "shell_command",
-                                    "arguments": "{\"command\":\"Get-ChildItem -Force\"}"
-                                }
-                            },
-                            {
-                                "index": 1,
-                                "id": "call_allowed",
-                                "function": {
-                                    "name": "shell_command",
-                                    "arguments": "{\"command\":\"Get-ChildItem -Force\"}"
-                                }
+                            "id": "call_denied",
+                            "function": {
+                                "name": "shell_command",
+                                "arguments": "{\"command\":\"Set-Content out.txt hi\"}"
                             }
+                        },
+                        {
+                            "index": 1,
+                            "id": "call_allowed",
+                            "function": {
+                                "name": "shell_command",
+                                "arguments": "{\"command\":\"Set-Content other.txt hi\"}"
+                            }
+                        }
                         ]
                     }
                 }]

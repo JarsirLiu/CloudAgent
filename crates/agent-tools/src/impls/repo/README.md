@@ -35,53 +35,29 @@ Those shared pieces are useful even if some current tool names disappear later.
 
 The following current tools are transitional:
 
-- `search_text`
-- `find_files`
-- `read_file`
-- `read_files`
+- `fuzzy_file_search`
+- `fs_read_file`
 
 They may continue to evolve while the system is being stabilized, but they should not be mistaken
 for the final public tool surface.
 
-### `search_text`
+### `fuzzy_file_search`
 
-`search_text` is currently a bridge tool.
+`fuzzy_file_search` is still transitional at the implementation level.
 
-Its job is to improve on directory-walk-heavy exploration while the system moves toward stronger
-shell-first search behavior. It can continue to exist during migration, but it should not become
-the long-term center of the architecture.
+Its long-term direction is to gain stronger ranking, session support, and large-repo behavior so
+that file discovery feels closer to the Codex implementation.
 
-For high-fidelity search, the long-term preferred path is:
+### `fs_read_file`
 
-- `shell_command`
-- `rg`
-- `git grep` or similar native repo commands when appropriate
-
-### `find_files`
-
-`find_files` is also transitional.
-
-Its long-term direction is not "better globbing". Its long-term direction is to evolve toward a
-real `fuzzy_file_search` capability with better ranking, session support, and large-repo behavior.
-
-### `read_file`
-
-`read_file` is the closest transitional tool to a final capability, but even here the end state is
-not a repo-local helper. The end state is a shared `fs_read_file` path with centralized handling
+`fs_read_file` is closer to a final capability, but the current implementation still needs to keep
+moving toward a stronger shared file access path with centralized handling
 for:
 
 - truncation
 - binary detection
 - encoding fallback
 - path safety
-
-### `read_files`
-
-`read_files` should be treated as temporary.
-
-Batch reads can still be useful during migration, but the long-term design should avoid exposing a
-separate standalone read tool if the same outcome can be achieved through a stronger shared file
-read layer and better model strategy.
 
 ## Design Principles for Transitional Work
 
@@ -100,7 +76,7 @@ that behavior should live in shared helpers instead of being reimplemented in ea
 
 ### Prefer native search engines when possible
 
-If `rg` can provide a better answer than a custom text scan, prefer `rg`.
+If `rg` can provide a better answer than a custom search helper, prefer `rg`.
 
 Fallback logic is acceptable, but the highest-quality engine should be the primary path.
 
@@ -124,9 +100,9 @@ for:
 Work in this directory should favor the following sequence:
 
 1. strengthen shared repo helpers
-2. improve `read_file` toward a reusable `fs_read_file` implementation path
-3. improve `find_files` toward `fuzzy_file_search`
-4. let `search_text` use native search engines where practical
+2. improve `fs_read_file` toward a reusable shared file access path
+3. improve `fuzzy_file_search` toward stronger ranking and session behavior
+4. strengthen shell-first native search workflows where practical
 5. remove duplicated logic that would block the final consolidation
 
 ## What Not To Do

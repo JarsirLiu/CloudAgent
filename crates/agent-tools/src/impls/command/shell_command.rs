@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
+use std::env;
 use std::process::Stdio;
 use std::time::Instant;
 use tokio::process::Command;
@@ -75,7 +76,7 @@ impl LocalTool for ShellCommandLocalTool {
             .max(1_000);
         let started_at = Instant::now();
         let mut command = if cfg!(windows) {
-            let mut cmd = Command::new("powershell");
+            let mut cmd = Command::new(preferred_windows_shell());
             cmd.arg("-NoLogo")
                 .arg("-NoProfile")
                 .arg("-Command")
@@ -175,6 +176,39 @@ impl LocalTool for ShellCommandLocalTool {
     }
 }
 
+fn preferred_windows_shell() -> String {
+    find_windows_shell().unwrap_or_else(|| "powershell".to_string())
+}
+
+fn find_windows_shell() -> Option<String> {
+    for candidate in ["pwsh.exe", "pwsh", "powershell.exe", "powershell"] {
+        if command_exists(candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+fn command_exists(candidate: &str) -> bool {
+    if candidate.contains('\\') || candidate.contains('/') {
+        return std::path::Path::new(candidate).exists();
+    }
+    let path_value = env::var_os("PATH");
+    let Some(path_value) = path_value else {
+        return false;
+    };
+    env::split_paths(&path_value).any(|dir| {
+        let direct = dir.join(candidate);
+        if direct.exists() {
+            return true;
+        }
+        if direct.extension().is_none() {
+            return dir.join(format!("{candidate}.exe")).exists();
+        }
+        false
+    })
+}
+
 fn windows_utf8_command(command: &str) -> String {
     format!(
         concat!(
@@ -186,4 +220,14 @@ fn windows_utf8_command(command: &str) -> String {
         ),
         command = command
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_exists_rejects_missing_binary() {
+        assert!(!command_exists("cloudagent-definitely-missing-command"));
+    }
 }

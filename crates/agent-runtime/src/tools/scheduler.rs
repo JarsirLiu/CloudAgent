@@ -580,19 +580,7 @@ fn denied_tool_result(
                 duration_ms: None,
             })
         }
-        "write_file" => {
-            let path = arguments
-                .get("path")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default()
-                .to_string();
-            Some(StructuredToolResult::WriteFile {
-                path,
-                bytes_written: 0,
-                status: WriteFileStatus::Declined,
-            })
-        }
-        "edit_file" | "apply_patch" => Some(StructuredToolResult::EditFile {
+        "apply_patch" => Some(StructuredToolResult::EditFile {
             files_changed: 0,
             status: WriteFileStatus::Declined,
         }),
@@ -605,10 +593,7 @@ fn default_rejection_message(tool_name: &str) -> String {
         "shell_command" => {
             "exec command rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
         }
-        "write_file" => {
-            "patch rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
-        }
-        "edit_file" | "apply_patch" => {
+        "apply_patch" => {
             "edit rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
         }
         _ => {

@@ -113,7 +113,9 @@ fn is_safe_readonly_command(command: &str) -> bool {
     };
 
     match program {
-        "pwd" | "ls" | "dir" | "cat" | "type" | "head" | "tail" | "find" | "tree" => true,
+        "pwd" | "ls" | "dir" | "cat" | "type" | "head" | "tail" | "find" | "tree" | "rg" | "fd"
+        | "findstr" | "select-string" | "get-childitem" | "get-content" | "measure-object"
+        | "where-object" | "sort-object" | "select-object" => true,
         "git" => is_safe_git_command(&normalized),
         _ => false,
     }
@@ -182,6 +184,8 @@ fn is_safe_git_command(command: &str) -> bool {
         "git branch",
         "git rev-parse",
         "git ls-files",
+        "git grep",
+        "git cat-file",
     ];
     safe_git_prefixes
         .iter()
@@ -257,6 +261,23 @@ mod tests {
         );
 
         assert_eq!(requirement, ApprovalRequirement::not_required());
+    }
+
+    #[test]
+    fn rg_and_git_grep_skip_approval() {
+        for command in [
+            "rg -n approval_policy crates/agent-runtime/src/tools",
+            "git grep approval_policy crates/agent-runtime/src/tools",
+            "git ls-files crates/agent-tools/src",
+        ] {
+            let requirement = approval_requirement_for_tool(
+                &shell_spec(),
+                &shell_call(command),
+                Path::new("D:\\learn\\gifti\\cloudagent"),
+            );
+
+            assert_eq!(requirement, ApprovalRequirement::not_required());
+        }
     }
 
     #[test]

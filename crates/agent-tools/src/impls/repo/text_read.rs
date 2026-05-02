@@ -27,16 +27,6 @@ impl TextReadOptions {
             include_line_numbers: true,
         }
     }
-
-    pub(crate) fn for_batch_file(max_chars: usize, max_lines: Option<usize>) -> Self {
-        Self {
-            start_line: 1,
-            max_lines: max_lines.unwrap_or(300).clamp(1, 2_000),
-            max_chars: max_chars.max(128),
-            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
-            include_line_numbers: true,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

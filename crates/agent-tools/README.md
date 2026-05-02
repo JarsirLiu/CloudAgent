@@ -122,12 +122,8 @@ Long-term expectation:
 Several existing tools are useful during migration, but they should not define the long-term
 product shape.
 
-- `read_files`
-- `read_directory`
-- `write_file`
-- `edit_file`
-- the current transitional `find_files`
-- the current transitional `search_text`
+- the current transitional implementation behind `fuzzy_file_search`
+- the current transitional implementation behind `fs_read_file`
 
 These may continue to exist for compatibility while the new core toolset is built out, but they
 should be treated as bridges rather than permanent product commitments.

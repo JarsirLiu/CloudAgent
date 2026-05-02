@@ -263,14 +263,10 @@ fn render_meta(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
 fn pretty_tool_title(label: &str) -> String {
     match label {
         "shell_command" | "tool" => "command".to_string(),
-        "read_file" => "read file".to_string(),
-        "read_files" => "read files".to_string(),
-        "list_directory" => "list directory".to_string(),
-        "find_files" => "find files".to_string(),
-        "search_text" => "search text".to_string(),
-        "write_file" => "write file".to_string(),
-        "edit_file" => "edit file".to_string(),
         "apply_patch" => "apply patch".to_string(),
+        "fs_read_file" => "read file".to_string(),
+        "fuzzy_file_search" => "find files".to_string(),
+        "fs_stat" => "file info".to_string(),
         "conversation" => "conversation".to_string(),
         "reasoning" => "reasoning".to_string(),
         other => other.replace('_', " "),

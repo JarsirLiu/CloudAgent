@@ -2,11 +2,8 @@ pub(crate) mod shared;
 
 use crate::impls::{
     command::ShellCommandTool as ShellCommandDescriptorTool,
-    fs::{
-        EditFileTool, GetMetadataTool, ReadDirectoryTool as ReadDirectoryDescriptorTool,
-        WriteFileTool as WriteFileDescriptorTool,
-    },
-    repo::{FindFilesTool, ReadFileTool as ReadFileDescriptorTool, ReadFilesTool, SearchTextTool},
+    fs::{ApplyPatchLocalTool, ApplyPatchTool, FsStatLocalTool, FsStatTool},
+    repo::{FsReadFileLocalTool, FsReadFileTool, FuzzyFileSearchLocalTool, FuzzyFileSearchTool},
 };
 use crate::selection::{TaskKind, ToolMode, ToolSelector};
 use crate::spec::ToolDescriptor;
@@ -15,12 +12,6 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::impls::command::ShellCommandLocalTool;
-use crate::impls::fs::{
-    EditFileLocalTool, GetMetadataLocalTool, ReadDirectoryLocalTool, WriteFileLocalTool,
-};
-use crate::impls::repo::{
-    FindFilesLocalTool, ReadFileLocalTool, ReadFilesLocalTool, SearchTextLocalTool,
-};
 use shared::{LocalTool, register, structured_failure_result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -35,27 +26,19 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn new(max_read_chars: usize) -> Self {
         let descriptors = vec![
-            SearchTextTool::descriptor(),
-            FindFilesTool::descriptor(),
-            ReadFileDescriptorTool::descriptor(max_read_chars),
-            ReadFilesTool::descriptor(max_read_chars),
-            EditFileTool::descriptor(),
-            WriteFileDescriptorTool::descriptor(),
             ShellCommandDescriptorTool::descriptor(),
-            GetMetadataTool::descriptor(),
-            ReadDirectoryDescriptorTool::descriptor(),
+            FuzzyFileSearchTool::descriptor(),
+            FsReadFileTool::descriptor(max_read_chars),
+            ApplyPatchTool::descriptor(),
+            FsStatTool::descriptor(),
         ];
 
         let mut tools: BTreeMap<String, Arc<dyn LocalTool>> = BTreeMap::new();
         register(&mut tools, ShellCommandLocalTool);
-        register(&mut tools, SearchTextLocalTool);
-        register(&mut tools, FindFilesLocalTool);
-        register(&mut tools, ReadFilesLocalTool { max_read_chars });
-        register(&mut tools, GetMetadataLocalTool);
-        register(&mut tools, ReadDirectoryLocalTool);
-        register(&mut tools, ReadFileLocalTool { max_read_chars });
-        register(&mut tools, WriteFileLocalTool);
-        register(&mut tools, EditFileLocalTool);
+        register(&mut tools, FuzzyFileSearchLocalTool);
+        register(&mut tools, FsReadFileLocalTool { max_read_chars });
+        register(&mut tools, ApplyPatchLocalTool);
+        register(&mut tools, FsStatLocalTool);
 
         Self {
             tools,
@@ -76,7 +59,10 @@ impl ToolRegistry {
 #[async_trait]
 impl ToolExecutor for ToolRegistry {
     fn specs(&self) -> Vec<ToolSpec> {
-        self.tools.values().map(|tool| tool.spec()).collect()
+        self.descriptors
+            .iter()
+            .map(|descriptor| descriptor.spec.clone())
+            .collect()
     }
 
     fn specs_for_context(&self, mode: &str, task_kind: &str) -> Vec<ToolSpec> {
