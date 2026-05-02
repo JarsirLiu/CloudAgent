@@ -150,6 +150,10 @@ pub enum EventMsg {
         post_message_count: usize,
         preserved_tail_count: usize,
     },
+    ContextCompactionStarted {
+        turn_id: TurnId,
+        estimated_tokens: u64,
+    },
     ItemStarted {
         turn_id: TurnId,
         item_id: String,

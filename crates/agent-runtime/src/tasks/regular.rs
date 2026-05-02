@@ -150,6 +150,14 @@ where
                 /*minimum_history_tokens*/ 1,
             )
         {
+            emit_event(
+                &mut events,
+                on_event,
+                EventMsg::ContextCompactionStarted {
+                    turn_id: turn_id.to_string(),
+                    estimated_tokens: estimated_total_tokens as u64,
+                },
+            );
             let pre_message_count = context_manager.history().messages.len();
             let pre_context_tokens_estimate =
                 estimate_history_tokens(&context_manager.history().messages) as u64;

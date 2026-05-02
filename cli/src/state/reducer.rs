@@ -118,9 +118,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
-                    if message.to_ascii_lowercase().contains("compact") {
-                        actions.push(ServerAction::PushInfoCell(message.clone()));
-                    }
                 }
                 AppServerNotification::TokenUsageUpdated {
                     last_usage,
@@ -146,6 +143,13 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                         post_context_tokens_estimate,
                         preserved_tail_count
                     );
+                    actions.push(ServerAction::SetStatusNotice(Some(summary.clone())));
+                    actions.push(ServerAction::PushInfoCell(summary));
+                }
+                AppServerNotification::ContextCompactionStarted {
+                    estimated_tokens, ..
+                } => {
+                    let summary = format!("Compacting context... (~{} tokens)", estimated_tokens);
                     actions.push(ServerAction::SetStatusNotice(Some(summary.clone())));
                     actions.push(ServerAction::PushInfoCell(summary));
                 }

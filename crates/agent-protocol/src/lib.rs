@@ -170,6 +170,11 @@ pub enum AppServerNotification {
         post_message_count: usize,
         preserved_tail_count: usize,
     },
+    ContextCompactionStarted {
+        conversation_id: String,
+        turn_id: TurnId,
+        estimated_tokens: u64,
+    },
     ItemCompleted {
         conversation_id: String,
         turn_id: TurnId,
@@ -260,6 +265,9 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::ContextCompacted {
+                conversation_id, ..
+            }
+            | Self::ContextCompactionStarted {
                 conversation_id, ..
             }
             | Self::ItemCompleted {
@@ -373,6 +381,7 @@ pub fn classify_notification(
         | AppServerNotification::ServerRequestResolved { .. }
         | AppServerNotification::TokenUsageUpdated { .. }
         | AppServerNotification::ContextCompacted { .. }
+        | AppServerNotification::ContextCompactionStarted { .. }
         | AppServerNotification::TurnFailed { .. }
         | AppServerNotification::TurnCancelled { .. }
         | AppServerNotification::ConversationStatus { .. }
@@ -624,6 +633,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "turn/contextCompacted",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::ContextCompactionStarted { .. } => (
+            "turn/contextCompactionStarted",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ItemCompleted { .. } => (
             "item/completed",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -708,6 +721,7 @@ fn parse_server_notification(
         | "item/fileChange/outputDelta"
         | "turn/tokenUsageUpdated"
         | "turn/contextCompacted"
+        | "turn/contextCompactionStarted"
         | "item/jsonPatch/delta"
         | "item/completed"
         | "serverRequest/requested"

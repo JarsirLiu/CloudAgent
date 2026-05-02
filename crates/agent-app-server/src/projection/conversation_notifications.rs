@@ -115,6 +115,14 @@ impl ConversationNotificationProjector {
                 post_message_count: *post_message_count,
                 preserved_tail_count: *preserved_tail_count,
             }],
+            EventMsg::ContextCompactionStarted {
+                turn_id,
+                estimated_tokens,
+            } => vec![AppServerNotification::ContextCompactionStarted {
+                conversation_id: self.conversation_id.clone(),
+                turn_id: turn_id.clone(),
+                estimated_tokens: *estimated_tokens,
+            }],
             EventMsg::ServerRequestRequested { turn_id, request } => {
                 vec![AppServerNotification::ServerRequestRequested {
                     conversation_id: self.conversation_id.clone(),

@@ -175,6 +175,7 @@ impl ConversationHistoryBuilder {
             | EventMsg::ModelResponseReceived { .. }
             | EventMsg::TokenUsageUpdated { .. }
             | EventMsg::ContextCompacted { .. }
+            | EventMsg::ContextCompactionStarted { .. }
             | EventMsg::ServerRequestRequested { .. }
             | EventMsg::ServerRequestResolved { .. } => {}
         }
