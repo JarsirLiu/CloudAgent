@@ -1,12 +1,16 @@
 use super::common::{DEFAULT_IGNORED_DIRS, resolve_workspace_path};
+use crate::registry::shared::{LocalTool, ToolInvocationOutput};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
-use agent_core::ToolSpec;
+use agent_core::{ToolExecutionContext, ToolSpec};
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use tokio::process::Command;
 
 pub struct SearchTextTool;
 
@@ -66,6 +70,47 @@ impl SearchTextTool {
             },
         )
     }
+}
+
+pub(crate) struct SearchTextLocalTool;
+
+#[async_trait]
+impl LocalTool for SearchTextLocalTool {
+    fn spec(&self) -> ToolSpec { SearchTextTool::descriptor().spec }
+    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
+        let args: SearchTextArgs = serde_json::from_value(arguments)?;
+        if let Ok(Some(content)) = run_search_text_with_rg(&ctx.workspace_root, &args).await {
+            let match_count = content.lines().skip(1).count();
+            return Ok(ToolInvocationOutput {
+                content,
+                structured: Some(agent_protocol::StructuredToolResult::SearchText { match_count, file_count: 0, truncated: false }),
+            });
+        }
+        let output = run_search_text(&ctx.workspace_root, args).await?;
+        let lines = output.results.iter().map(|m| format!("{}:{}: {}", m.path, m.line, m.preview)).collect::<Vec<_>>().join("\n\n");
+        let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches in {} files.\n{}", output.match_count, output.file_count, lines) };
+        Ok(ToolInvocationOutput {
+            content,
+            structured: Some(agent_protocol::StructuredToolResult::SearchText { match_count: output.match_count, file_count: output.file_count, truncated: output.truncated }),
+        })
+    }
+}
+
+async fn run_search_text_with_rg(workspace_root: &std::path::Path, args: &SearchTextArgs) -> Result<Option<String>> {
+    let probe = Command::new("rg").arg("--version").output().await;
+    if probe.is_err() { return Ok(None); }
+    let mut cmd = Command::new("rg");
+    cmd.current_dir(workspace_root);
+    cmd.arg("--line-number").arg("--with-filename").arg("--color").arg("never");
+    cmd.arg("--max-count").arg(args.max_results.unwrap_or(100).to_string());
+    if args.case_sensitive == Some(false) { cmd.arg("-i"); }
+    cmd.arg("-F").arg(&args.query);
+    if let Some(scope) = args.path_scope.as_deref().filter(|v| !v.trim().is_empty()) { cmd.arg(scope); } else { cmd.arg("."); }
+    let output = cmd.output().await?;
+    if !output.status.success() && output.stdout.is_empty() { return Ok(None); }
+    let lines: Vec<String> = String::from_utf8_lossy(&output.stdout).lines().map(|s| s.to_string()).collect();
+    let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches.\n{}", lines.len(), lines.join("\n")) };
+    Ok(Some(content))
 }
 
 pub async fn run_search_text(workspace_root: &Path, args: SearchTextArgs) -> Result<SearchTextOutput> {

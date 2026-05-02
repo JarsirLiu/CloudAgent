@@ -1,5 +1,4 @@
-mod executor;
 mod shell_command;
 
-pub(crate) use executor::ShellCommandLocalTool;
+pub(crate) use shell_command::ShellCommandLocalTool;
 pub use shell_command::ShellCommandTool;
