@@ -161,7 +161,7 @@ impl<'a> ToolBatchRunner<'a> {
                 return Ok(ToolBatchOutcome { cancelled: true });
             }
 
-            if !tool_streamed_output && !result.summary.trim().is_empty() {
+            if !tool_streamed_output && !result.content.trim().is_empty() {
                 emit_event(
                     events,
                     on_event,
@@ -169,7 +169,7 @@ impl<'a> ToolBatchRunner<'a> {
                         turn_id: self.turn_id.to_string(),
                         item_id: tool_item_id.clone(),
                         kind: spec.delta_kind.clone(),
-                        delta: result.summary.clone(),
+                        delta: result.content.clone(),
                     },
                 );
             }
@@ -305,7 +305,6 @@ impl<'a> ToolBatchRunner<'a> {
             tool_call_id: call.id.clone(),
             name: call.name.clone(),
             content: content.clone(),
-            summary: "tool execution skipped".to_string(),
             is_error: true,
             structured: denied_tool_result(call.name.as_str(), &call.arguments, reason.to_string()),
         };
@@ -402,7 +401,6 @@ impl<'a> ToolBatchRunner<'a> {
             tool_call_id: call.id.clone(),
             name: call.name.clone(),
             content: message,
-            summary: "tool lookup failed".to_string(),
             is_error: true,
             structured: None,
         };
@@ -450,7 +448,7 @@ fn transcript_item_from_tool_result(
             stderr: stderr.clone(),
             aggregated_output: aggregated_output.clone(),
             duration_ms: *duration_ms,
-            summary: result.summary.clone(),
+            summary: result.content.clone(),
         },
         Some(StructuredToolResult::WriteFile {
             path,
@@ -462,13 +460,13 @@ fn transcript_item_from_tool_result(
             path: path.clone(),
             status: status.clone(),
             bytes_written: *bytes_written,
-            summary: result.summary.clone(),
+            summary: result.content.clone(),
         },
         _ => TranscriptItem::ToolResult {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
             content: result.content.clone(),
-            summary: result.summary.clone(),
+            summary: result.content.clone(),
             structured: result.structured.clone(),
         },
     }

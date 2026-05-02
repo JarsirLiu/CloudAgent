@@ -41,7 +41,6 @@ pub struct ToolResult {
     pub tool_call_id: String,
     pub name: String,
     pub content: String,
-    pub summary: String,
     pub is_error: bool,
     pub structured: Option<StructuredToolResult>,
 }

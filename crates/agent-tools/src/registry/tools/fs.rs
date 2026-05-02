@@ -58,7 +58,6 @@ impl LocalTool for GetMetadataLocalTool {
             "readonly": metadata.permissions().readonly()
         });
         Ok(ToolInvocationOutput {
-            summary: format!("metadata for {}", path.display()),
             content: serde_json::to_string_pretty(&value)?,
             structured: Some(agent_protocol::StructuredToolResult::GetMetadata {
                 path: path.display().to_string(),
@@ -94,7 +93,6 @@ impl LocalTool for ReadDirectoryTool {
         items.sort_by(|l, r| l["name"].as_str().unwrap_or_default().cmp(r["name"].as_str().unwrap_or_default()));
         Ok(ToolInvocationOutput {
             content: serde_json::to_string_pretty(&items)?,
-            summary: format!("listed {} entries", items.len()),
             structured: Some(agent_protocol::StructuredToolResult::ListDirectory {
                 path: path.display().to_string(),
                 entry_count: items.len(),
@@ -119,7 +117,6 @@ impl LocalTool for WriteFileTool {
         fs::write(&path, args.content).await?;
         Ok(ToolInvocationOutput {
             content: format!("Wrote {}", path.display()),
-            summary: format!("wrote {}", path.display()),
             structured: Some(agent_protocol::StructuredToolResult::WriteFile {
                 path: path.display().to_string(),
                 bytes_written,
@@ -157,7 +154,6 @@ impl LocalTool for ApplyPatchLocalTool {
 
         Ok(ToolInvocationOutput {
             content: format!("Applied patch. files_changed={files_changed}"),
-            summary: "applied patch".to_string(),
             structured: Some(agent_protocol::StructuredToolResult::ApplyPatch {
                 files_changed,
                 status: agent_protocol::WriteFileStatus::Completed,

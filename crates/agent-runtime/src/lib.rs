@@ -677,7 +677,6 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             name: "shell_command".to_string(),
             content: "D:\\work".to_string(),
-            summary: "D:\\work".to_string(),
             is_error: false,
             structured: None,
         });

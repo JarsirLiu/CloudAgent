@@ -86,7 +86,6 @@ impl LocalTool for ShellCommandTool {
         );
 
         Ok(ToolInvocationOutput {
-            summary: format!("shell command finished with exit code {exit_code}"),
             content: content.clone(),
             structured: Some(StructuredToolResult::CommandExecution {
                 command: args.command,

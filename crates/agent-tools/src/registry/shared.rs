@@ -16,7 +16,6 @@ pub(crate) trait LocalTool: Send + Sync {
 #[derive(Clone, Debug)]
 pub(crate) struct ToolInvocationOutput {
     pub(crate) content: String,
-    pub(crate) summary: String,
     pub(crate) structured: Option<StructuredToolResult>,
 }
 

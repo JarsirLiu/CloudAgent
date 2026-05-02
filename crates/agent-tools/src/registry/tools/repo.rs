@@ -37,7 +37,6 @@ impl LocalTool for SearchTextLocalTool {
         if let Ok(Some(content)) = run_search_text_with_rg(&ctx.workspace_root, &args).await {
             let match_count = content.lines().skip(1).count();
             return Ok(ToolInvocationOutput {
-                summary: "found matches".to_string(),
                 content,
                 structured: Some(agent_protocol::StructuredToolResult::SearchText {
                     match_count,
@@ -53,7 +52,6 @@ impl LocalTool for SearchTextLocalTool {
         let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches in {} files.\n{}", output.match_count, output.file_count, lines) };
         Ok(ToolInvocationOutput {
             content,
-            summary: format!("found {} matches across {} files", output.match_count, output.file_count),
             structured: Some(agent_protocol::StructuredToolResult::SearchText {
                 match_count: output.match_count,
                 file_count: output.file_count,
@@ -141,7 +139,6 @@ impl LocalTool for FindFilesLocalTool {
         let matches = matches.into_iter().skip(offset).take(max_results).collect::<Vec<_>>();
         let content = if matches.is_empty() { "No files found".to_string() } else { matches.join("\n") };
         Ok(ToolInvocationOutput {
-            summary: format!("found {} files", matches.len()),
             content,
             structured: Some(agent_protocol::StructuredToolResult::FindFiles {
                 file_count: matches.len(),
@@ -203,7 +200,6 @@ impl LocalTool for ReadFilesLocalTool {
             blocks.push(format!("== {} ==\n{}", rel, lines.join("\n")));
         }
         Ok(ToolInvocationOutput {
-            summary: format!("read {} files", blocks.len()),
             content: blocks.join("\n\n"),
             structured: Some(agent_protocol::StructuredToolResult::ReadFiles {
                 file_count: blocks.len(),
@@ -230,7 +226,6 @@ impl LocalTool for ReadFileTool {
         let char_count = content.chars().count();
         let truncated = content.ends_with("\n\n[truncated]");
         Ok(ToolInvocationOutput {
-            summary: format!("read {}", path.display()),
             content,
             structured: Some(agent_protocol::StructuredToolResult::ReadFile {
                 path: path.display().to_string(),
