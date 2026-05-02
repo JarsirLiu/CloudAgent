@@ -60,8 +60,8 @@ impl ServerRequestOverlay {
 }
 
 const REPLY_PROMPT_WIDTH: usize = 10;
-const REPLY_LINE_INDEX: u16 = 5;
-const COMPACT_APPROVAL_HEIGHT: u16 = 6;
+const REPLY_LINE_INDEX: u16 = 6;
+const COMPACT_APPROVAL_HEIGHT: u16 = 8;
 
 impl BottomPaneView for ServerRequestOverlay {
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
@@ -121,16 +121,19 @@ impl BottomPaneView for ServerRequestOverlay {
 
     fn render_lines(&self, area_width: u16) -> Vec<Line<'static>> {
         let accent = Color::Rgb(255, 184, 76);
-        let soft = Color::Rgb(150, 150, 160);
+        let command_fg = Color::Rgb(226, 230, 240);
+        let muted = Color::Rgb(92, 96, 118);
         let title_bg = Color::Rgb(42, 34, 18);
         let option_bg = Color::Rgb(38, 42, 55);
         let title_width = area_width.saturating_sub(22) as usize;
-        let detail_width = area_width.saturating_sub(4) as usize;
+        let content_width = area_width.saturating_sub(6) as usize;
         let queue_label = if self.queue.is_empty() {
             String::new()
         } else {
             format!("  +{} queued", self.queue.len())
         };
+        let (command_text, _reason_text) = split_detail(&self.state.detail);
+        let command_line = compact_command(command_text, content_width);
         let option_style = |selected: bool| {
             if selected {
                 Style::default()
@@ -152,31 +155,33 @@ impl BottomPaneView for ServerRequestOverlay {
             }
         };
 
-        let mut lines = vec![
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    " ACTION REQUIRED ",
-                    Style::default()
-                        .fg(accent)
-                        .bg(title_bg)
-                        .add_modifier(Modifier::BOLD),
+        let mut lines = vec![Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                " ACTION REQUIRED ",
+                Style::default()
+                    .fg(accent)
+                    .bg(title_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                truncate_to_width(
+                    &format!(
+                        "{}{}{}",
+                        simplify_title(&self.state.title),
+                        if command_line.is_empty() { "" } else { "  " },
+                        command_line
+                    ),
+                    title_width,
                 ),
-                Span::raw(" "),
-                Span::styled(
-                    truncate_to_width(&format!("{}{}", self.state.title, queue_label), title_width),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    truncate_to_width(&self.state.detail, detail_width),
-                    Style::default().fg(soft),
-                ),
-            ]),
+                Style::default().fg(command_fg).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(queue_label, Style::default().fg(muted)),
+        ])];
+        lines.push(Line::raw(""));
+
+        lines.extend([
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
@@ -184,10 +189,7 @@ impl BottomPaneView for ServerRequestOverlay {
                     marker_style(self.selected == 0, Color::Rgb(100, 255, 100)),
                 ),
                 Span::styled("Approve once", option_style(self.selected == 0)),
-                Span::styled(
-                    "  run this command one time",
-                    Style::default().fg(Color::Rgb(92, 96, 118)),
-                ),
+                Span::styled("  one-time approval", Style::default().fg(muted)),
             ]),
             Line::from(vec![
                 Span::raw("  "),
@@ -198,7 +200,7 @@ impl BottomPaneView for ServerRequestOverlay {
                 Span::styled("Approve for session", option_style(self.selected == 1)),
                 Span::styled(
                     "  remember this tool permission",
-                    Style::default().fg(Color::Rgb(92, 96, 118)),
+                    Style::default().fg(muted),
                 ),
             ]),
             Line::from(vec![
@@ -208,25 +210,24 @@ impl BottomPaneView for ServerRequestOverlay {
                     marker_style(self.selected == 2, Color::Rgb(255, 100, 100)),
                 ),
                 Span::styled("Deny", option_style(self.selected == 2)),
-                Span::styled(
-                    "  skip this tool call",
-                    Style::default().fg(Color::Rgb(92, 96, 118)),
-                ),
+                Span::styled("  skip this tool call", Style::default().fg(muted)),
             ]),
-        ];
+        ]);
 
         if self.reply.is_empty() {
-            lines.push(
-                Line::from(Span::styled(
-                    "  ↑/↓ select  ·  Enter confirm  ·  y approve  ·  a session  ·  n deny  ·  / commands",
-                    Style::default().fg(Color::Rgb(62, 62, 78)),
-                )),
-            );
+            while lines.len() + 1 < COMPACT_APPROVAL_HEIGHT as usize {
+                lines.push(Line::raw(""));
+            }
+            lines.push(Line::from(Span::styled(
+                "  Enter confirm  ·  ↑/↓ select  ·  y approve  ·  a session  ·  n deny",
+                Style::default().fg(Color::Rgb(62, 62, 78)),
+            )));
         } else {
             let reply_width = area_width
                 .saturating_sub(REPLY_PROMPT_WIDTH as u16 + 2)
                 .max(1) as usize;
             let reply_lines = self.reply.wrapped_lines(self.reply.text(), reply_width);
+            lines.push(Line::raw(""));
             for (index, reply_line) in reply_lines.into_iter().enumerate() {
                 let prompt = if index == 0 {
                     "  note    "
@@ -340,6 +341,47 @@ fn truncate_to_width(value: &str, max_width: usize) -> String {
     out
 }
 
+fn split_detail(detail: &str) -> (&str, &str) {
+    let mut command = "";
+    let mut reason = "";
+    for line in detail.lines() {
+        if let Some(value) = line.strip_prefix("args:") {
+            command = value.trim();
+        } else if let Some(value) = line.strip_prefix("reason:") {
+            reason = value.trim();
+        }
+    }
+    (command, reason)
+}
+
+fn simplify_title(title: &str) -> String {
+    title
+        .strip_prefix("tool `")
+        .and_then(|rest| rest.strip_suffix("` wants to run"))
+        .map(|tool| format!("{tool} wants to run"))
+        .unwrap_or_else(|| title.to_string())
+}
+
+fn compact_command(command: &str, width: usize) -> String {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(extracted) = extract_command_from_json(trimmed) {
+        return truncate_to_width(extracted, width);
+    }
+    truncate_to_width(trimmed, width)
+}
+
+fn extract_command_from_json(input: &str) -> Option<&str> {
+    let marker = "\"command\":";
+    let start = input.find(marker)? + marker.len();
+    let rest = input[start..].trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
 fn selected_decision(selected: usize) -> ServerRequestDecisionKind {
     match selected {
         0 => ServerRequestDecisionKind::Accept,
@@ -421,7 +463,7 @@ mod tests {
             .cursor_position(Rect::new(0, 20, 80, 16))
             .expect("cursor");
 
-        assert_eq!(y, 25);
+        assert_eq!(y, 26);
     }
 
     #[test]
