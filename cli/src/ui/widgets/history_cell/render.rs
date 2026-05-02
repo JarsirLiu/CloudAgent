@@ -59,14 +59,15 @@ fn summarize_command_execution(
     exit_code: Option<i32>,
     detail: Option<&str>,
 ) -> String {
-    let command = compact_inline(command, 70);
+    let kind = summarize_shell_command_kind(command);
+    let command = compact_inline(command, 56);
     let cwd = compact_path(current_directory, 36);
     match status {
-        CommandExecutionStatus::InProgress => format!("running `{command}` @ {cwd}"),
+        CommandExecutionStatus::InProgress => format!("{kind} `{command}` @ {cwd}"),
         CommandExecutionStatus::Completed => {
-            format!("completed `{command}`{} @ {cwd}", exit_suffix(exit_code))
+            format!("{kind} `{command}`{} @ {cwd}", exit_suffix(exit_code))
         }
-        CommandExecutionStatus::Declined => format!("declined `{command}` @ {cwd}"),
+        CommandExecutionStatus::Declined => format!("{kind} `{command}` @ {cwd}"),
         CommandExecutionStatus::Failed => {
             let reason = detail
                 .map(str::trim)
@@ -74,7 +75,7 @@ fn summarize_command_execution(
                 .map(|value| compact_inline(value, 90))
                 .unwrap_or_else(|| "command failed".to_string());
             format!(
-                "failed `{command}`{} @ {cwd}: {reason}",
+                "{kind} `{command}`{} @ {cwd}: {reason}",
                 exit_suffix(exit_code)
             )
         }
@@ -183,6 +184,37 @@ fn exit_suffix(exit_code: Option<i32>) -> String {
     exit_code
         .map(|code| format!(" (exit {code})"))
         .unwrap_or_default()
+}
+
+fn summarize_shell_command_kind(command: &str) -> &'static str {
+    let normalized = command.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return "command";
+    }
+    if normalized.starts_with("rg ")
+        || normalized.starts_with("grep ")
+        || normalized.starts_with("findstr ")
+        || normalized.starts_with("select-string ")
+        || normalized.starts_with("git grep ")
+    {
+        return "search";
+    }
+    if normalized.starts_with("git ls-files") || normalized.starts_with("fd ") {
+        return "files";
+    }
+    if normalized.starts_with("git log")
+        || normalized.starts_with("git status")
+        || normalized.starts_with("git diff")
+        || normalized.starts_with("git show")
+        || normalized.starts_with("pwd")
+        || normalized.starts_with("ls ")
+        || normalized.starts_with("dir ")
+        || normalized.starts_with("cat ")
+        || normalized.starts_with("type ")
+    {
+        return "inspect";
+    }
+    "command"
 }
 
 fn compact_inline(input: &str, max_chars: usize) -> String {

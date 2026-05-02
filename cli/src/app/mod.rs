@@ -713,7 +713,7 @@ mod tests {
         assert!(!live_cells.iter().any(|cell| cell.body == "approved"));
         assert!(live_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-                && cell.body.contains("completed `pwd`")
+                && cell.body.contains("inspect `pwd`")
                 && cell.body.contains("exit 0")
         }));
         assert!(live_cells.iter().any(|cell| {
@@ -827,7 +827,7 @@ mod tests {
         );
         assert!(rebuilt_cells.iter().any(|cell| {
             cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-                && cell.body.contains("completed `pwd`")
+                && cell.body.contains("inspect `pwd`")
                 && cell.body.contains("exit 0")
                 && cell.body.ends_with("/workspace")
         }));
@@ -1023,7 +1023,7 @@ mod tests {
             rebuilt_cells
                 .iter()
                 .any(|cell| cell.label == "shell_command"
-                    && cell.body.contains("failed `Set-Content out.txt hi`")),
+                    && cell.body.contains("command `Set-Content out.txt hi`")),
             "rebuilt cells: {debug_cells:?}"
         );
         assert!(!rebuilt_cells.iter().any(|cell| cell.label == "request"));
