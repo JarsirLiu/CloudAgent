@@ -10,28 +10,28 @@ pub enum FrontendMode {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserTurnInput {
-    pub session_id: String,
+    pub conversation_id: String,
     pub content: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum SessionStatus {
+pub enum ConversationStatus {
     Idle,
     Busy,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SessionSnapshot {
-    pub session_id: String,
-    pub conversation_status: SessionStatus,
+pub struct ConversationSnapshot {
+    pub conversation_id: String,
+    pub conversation_status: ConversationStatus,
     pub active_turn: Option<TurnId>,
     pub turn_state: Option<TurnState>,
     pub message_count: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SessionSummary {
-    pub session_id: String,
+pub struct ConversationSummary {
+    pub conversation_id: String,
     pub message_count: usize,
     pub updated_at_ms: u64,
 }

@@ -50,6 +50,61 @@ pub(crate) struct RuntimeState {
     conversations: StdMutex<HashMap<String, RuntimeConversationEntry>>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::RuntimeState;
+
+    #[tokio::test]
+    async fn same_conversation_keeps_single_active_turn_slot() {
+        let state = RuntimeState::new("system".to_string());
+        let first = state
+            .start_turn("conv-a".to_string(), "turn-1".to_string())
+            .await;
+        let second = state
+            .start_turn("conv-a".to_string(), "turn-2".to_string())
+            .await;
+
+        let active = state.active_turn("conv-a").await.expect("active turn");
+        assert_eq!(active.turn_id, "turn-1");
+        assert!(!active.is_cancelled());
+        assert_eq!(first.expect("first accepted").turn_id, "turn-1");
+        assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn same_conversation_second_start_is_rejected_when_busy() {
+        let state = RuntimeState::new("system".to_string());
+        state
+            .start_turn("conv-a".to_string(), "turn-1".to_string())
+            .await;
+        let second = state
+            .start_turn("conv-a".to_string(), "turn-2".to_string())
+            .await;
+
+        let active = state.active_turn("conv-a").await.expect("active turn");
+        assert_eq!(active.turn_id, "turn-1");
+        assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn different_conversations_can_run_in_parallel() {
+        let state = RuntimeState::new("system".to_string());
+        state
+            .start_turn("conv-a".to_string(), "turn-a".to_string())
+            .await;
+        state
+            .start_turn("conv-b".to_string(), "turn-b".to_string())
+            .await;
+
+        let active_a = state.active_turn("conv-a").await.expect("active a");
+        let active_b = state.active_turn("conv-b").await.expect("active b");
+        assert_eq!(active_a.turn_id, "turn-a");
+        assert_eq!(active_b.turn_id, "turn-b");
+        assert!(!active_a.is_cancelled());
+        assert!(!active_b.is_cancelled());
+    }
+}
+
 impl RuntimeState {
     pub(crate) fn new(system_prompt: String) -> Self {
         Self {
@@ -124,7 +179,7 @@ impl RuntimeState {
         &self,
         conversation_id: String,
         turn_id: String,
-    ) -> ActiveTurnHandle {
+    ) -> Option<ActiveTurnHandle> {
         let cancellation_token = CancellationToken::new();
         let active_turn = ActiveTurnHandle {
             turn_id: turn_id.clone(),
@@ -133,7 +188,7 @@ impl RuntimeState {
         };
 
         let Ok(mut conversations) = self.conversations.lock() else {
-            return active_turn;
+            return Some(active_turn);
         };
         let entry = conversations
             .entry(conversation_id.clone())
@@ -143,10 +198,13 @@ impl RuntimeState {
                     self.system_prompt.clone(),
                 ))
             });
+        if entry.conversation.active_turn.is_some() {
+            return None;
+        }
         entry.conversation.set_active_turn(turn_id);
         entry.cancellation_token = Some(cancellation_token);
 
-        active_turn
+        Some(active_turn)
     }
 
     pub(crate) async fn finish_turn(&self, conversation_id: &str) {

@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 
 pub(crate) async fn run_turn_with_approval<E, F, Fut>(
     runtime: &AgentRuntime,
-    session_id: &str,
+    conversation_id: &str,
     user_input: &str,
     on_event: &mut E,
     approval: F,
@@ -19,9 +19,9 @@ where
     let mut event_sink = |event: &EventMsg| {
         runtime
             .state
-            .append_conversation_event(session_id, event.clone());
+            .append_conversation_event(conversation_id, event.clone());
         if let Err(err) =
-            runtime.record_rollout_items(session_id, &[RolloutItem::from(event.clone())])
+            runtime.record_rollout_items(conversation_id, &[RolloutItem::from(event.clone())])
         {
             tracing::error!("failed to queue rollout event: {err:#}");
         }
@@ -31,17 +31,17 @@ where
     let turn_id = next_turn_id();
     let Some(active_turn) = runtime
         .state
-        .start_turn(session_id.to_string(), turn_id.clone())
+        .start_turn(conversation_id.to_string(), turn_id.clone())
         .await
     else {
         bail!("conversation is busy; concurrent turns on the same conversation are not allowed");
     };
 
-    let mut history = runtime.load_history(session_id).await?;
+    let mut history = runtime.load_history(conversation_id).await?;
     let user_item = history.push_user_message(user_input);
     runtime.state.save_history(history.clone()).await;
     runtime
-        .persist_rollout_items(session_id, &[RolloutItem::from(user_item)])
+        .persist_rollout_items(conversation_id, &[RolloutItem::from(user_item)])
         .await?;
 
     let mut events = Vec::new();
@@ -50,7 +50,7 @@ where
         &mut event_sink,
         EventMsg::TurnStarted {
             turn_id: turn_id.clone(),
-            conversation_id: session_id.to_string(),
+            conversation_id: conversation_id.to_string(),
             user_input: user_input.to_string(),
         },
     );
@@ -75,7 +75,7 @@ where
             .run(
                 TaskContext {
                     runtime,
-                    session_id,
+                    conversation_id,
                     turn_id: &turn_id,
                     cancellation_token: active_turn.cancellation_token.clone(),
                     on_event: &mut event_sink,
@@ -86,7 +86,7 @@ where
             .await
     };
 
-    runtime.state.finish_turn(session_id).await;
+    runtime.state.finish_turn(conversation_id).await;
 
     match result {
         Ok(outcome) => {
@@ -108,7 +108,7 @@ where
                 );
                 drop(event_sink);
                 runtime.rollout_recorder.flush().await?;
-                let mut interrupted_history = runtime.history_from_rollout(session_id).await?;
+                let mut interrupted_history = runtime.history_from_rollout(conversation_id).await?;
                 interrupted_history.ensure_tool_outputs_present();
                 runtime.save_history(interrupted_history.clone()).await?;
                 runtime.rollout_recorder.flush().await?;
@@ -121,13 +121,13 @@ where
                 };
                 return Ok(outcome);
             }
-            let mut history = runtime.load_history(session_id).await?;
+            let mut history = runtime.load_history(conversation_id).await?;
             let failed_item = history.push_assistant_message(
                 Some(format!("Turn failed: {err:#}")),
                 Vec::<ToolCall>::new(),
             );
             runtime
-                .persist_rollout_items(session_id, &[RolloutItem::from(failed_item)])
+                .persist_rollout_items(conversation_id, &[RolloutItem::from(failed_item)])
                 .await?;
             let error_text = format!("{err:#}");
             let mut events = Vec::new();

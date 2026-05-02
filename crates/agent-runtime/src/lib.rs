@@ -22,7 +22,7 @@ use storage::JsonConversationStore;
 
 pub use agent_core::ResponseItem;
 pub use agent_protocol::{
-    SessionSnapshot, SessionStatus, SessionSummary, EventMsg, RequestId,
+    ConversationSnapshot, ConversationStatus, ConversationSummary, EventMsg, RequestId,
     ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemKind, TurnState,
 };
 
@@ -73,7 +73,7 @@ impl AgentRuntime {
         })
     }
 
-    pub fn default_session_id(&self) -> &str {
+    pub fn default_conversation_id(&self) -> &str {
         &self.config.runtime.default_conversation_id
     }
 
@@ -131,9 +131,9 @@ mod tests {
 }
 
 impl AgentRuntime {
-    pub(crate) async fn is_turn_cancelled(&self, session_id: &str) -> bool {
+    pub(crate) async fn is_turn_cancelled(&self, conversation_id: &str) -> bool {
         self.state
-            .active_turn(session_id)
+            .active_turn(conversation_id)
             .await
             .is_some_and(|turn| turn.is_cancelled())
     }

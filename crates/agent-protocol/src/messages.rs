@@ -1,6 +1,6 @@
-use crate::types::{SessionSnapshot, FrontendMode, NotificationDelivery, NotificationStream};
+use crate::types::{ConversationSnapshot, FrontendMode, NotificationDelivery, NotificationStream};
 use crate::{
-    SessionSummary, ConversationTurn, ModelUsage, RequestId, ServerRequest,
+    ConversationSummary, ConversationTurn, ModelUsage, RequestId, ServerRequest,
     ServerRequestDecision, TranscriptItem, TurnId, TurnItemKind, UserTurnInput,
 };
 use serde::{Deserialize, Serialize};
@@ -10,62 +10,62 @@ use serde::{Deserialize, Serialize};
 pub enum AppClientCommand {
     SubmitTurn(UserTurnInput),
     ResolveServerRequest {
-        session_id: String,
+        conversation_id: String,
         request_id: RequestId,
         decision: ServerRequestDecision,
     },
     InterruptTurn {
-        session_id: String,
+        conversation_id: String,
     },
-    CompactSession {
-        session_id: String,
+    CompactConversation {
+        conversation_id: String,
     },
-    ResetSession {
-        session_id: String,
+    ResetConversation {
+        conversation_id: String,
     },
-    RequestSessionStatus {
-        session_id: String,
+    RequestConversationStatus {
+        conversation_id: String,
     },
-    RequestSessionHistory {
-        session_id: String,
+    RequestConversationHistory {
+        conversation_id: String,
     },
-    ListSessions,
-    CreateSession {
-        session_id: String,
+    ListConversations,
+    CreateConversation {
+        conversation_id: String,
     },
-    SwitchSession {
-        session_id: String,
+    SwitchConversation {
+        conversation_id: String,
     },
-    ArchiveSession {
-        session_id: String,
+    ArchiveConversation {
+        conversation_id: String,
     },
-    SubscribeSession {
-        session_id: String,
+    SubscribeConversation {
+        conversation_id: String,
     },
-    UnsubscribeSession {
-        session_id: String,
+    UnsubscribeConversation {
+        conversation_id: String,
     },
     Exit,
 }
 
 impl AppClientCommand {
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn conversation_id(&self) -> Option<&str> {
         match self {
-            Self::SubmitTurn(input) => Some(&input.session_id),
+            Self::SubmitTurn(input) => Some(&input.conversation_id),
             Self::ResolveServerRequest {
-                session_id, ..
+                conversation_id, ..
             }
-            | Self::InterruptTurn { session_id }
-            | Self::CompactSession { session_id }
-            | Self::ResetSession { session_id }
-            | Self::RequestSessionStatus { session_id }
-            | Self::RequestSessionHistory { session_id }
-            | Self::CreateSession { session_id }
-            | Self::SwitchSession { session_id }
-            | Self::ArchiveSession { session_id }
-            | Self::SubscribeSession { session_id }
-            | Self::UnsubscribeSession { session_id } => Some(session_id),
-            Self::ListSessions | Self::Exit => None,
+            | Self::InterruptTurn { conversation_id }
+            | Self::CompactConversation { conversation_id }
+            | Self::ResetConversation { conversation_id }
+            | Self::RequestConversationStatus { conversation_id }
+            | Self::RequestConversationHistory { conversation_id }
+            | Self::CreateConversation { conversation_id }
+            | Self::SwitchConversation { conversation_id }
+            | Self::ArchiveConversation { conversation_id }
+            | Self::SubscribeConversation { conversation_id }
+            | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
+            Self::ListConversations | Self::Exit => None,
         }
     }
 }
@@ -74,71 +74,71 @@ impl AppClientCommand {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppServerNotification {
     FrontendStateChanged {
-        session_id: String,
+        conversation_id: String,
         mode: FrontendMode,
     },
     TurnStarted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
     },
     ItemStarted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         kind: TurnItemKind,
         title: Option<String>,
     },
     AgentMessageDelta {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         delta: String,
     },
     PlanDelta {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         delta: String,
     },
     ReasoningSummaryTextDelta {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         delta: String,
     },
     ReasoningTextDelta {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         delta: String,
     },
     CommandExecutionOutputDelta {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         delta: String,
     },
     ToolOutputDelta {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         delta: String,
     },
     FileChangeOutputDelta {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         delta: String,
     },
     TokenUsageUpdated {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         last_usage: ModelUsage,
         total_usage: ModelUsage,
         model_context_window: Option<u64>,
     },
     ContextCompacted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         pre_context_tokens_estimate: u64,
         post_context_tokens_estimate: u64,
@@ -147,151 +147,151 @@ pub enum AppServerNotification {
         preserved_tail_count: usize,
     },
     ContextCompactionStarted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         estimated_tokens: u64,
     },
     ItemCompleted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         item: TranscriptItem,
     },
     ServerRequestRequested {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         request: ServerRequest,
     },
     ServerRequestResolved {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         request_id: RequestId,
         request: ServerRequest,
         decision: ServerRequestDecision,
     },
     TurnCompleted {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
     },
     TurnFailed {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         error: String,
     },
     TurnCancelled {
-        session_id: String,
+        conversation_id: String,
         turn_id: TurnId,
         reason: String,
     },
-    SessionStatus {
-        session_id: String,
-        snapshot: SessionSnapshot,
+    ConversationStatus {
+        conversation_id: String,
+        snapshot: ConversationSnapshot,
     },
-    SessionHistory {
-        session_id: String,
+    ConversationHistory {
+        conversation_id: String,
         turns: Vec<ConversationTurn>,
     },
-    SessionList {
-        session_id: String,
-        conversations: Vec<SessionSummary>,
+    ConversationList {
+        conversation_id: String,
+        conversations: Vec<ConversationSummary>,
     },
-    SessionSwitched {
-        session_id: String,
+    ConversationSwitched {
+        conversation_id: String,
     },
-    SessionSubscriptionChanged {
-        session_id: String,
+    ConversationSubscriptionChanged {
+        conversation_id: String,
         subscribed: bool,
     },
     Info {
-        session_id: String,
+        conversation_id: String,
         message: String,
     },
     Error {
-        session_id: String,
+        conversation_id: String,
         message: String,
     },
 }
 
 impl AppServerNotification {
-    pub fn session_id(&self) -> &str {
+    pub fn conversation_id(&self) -> &str {
         match self {
             Self::FrontendStateChanged {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::TurnStarted {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ItemStarted {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::AgentMessageDelta {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::PlanDelta {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ReasoningSummaryTextDelta {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ReasoningTextDelta {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::CommandExecutionOutputDelta {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ToolOutputDelta {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::FileChangeOutputDelta {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::TokenUsageUpdated {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ContextCompacted {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ContextCompactionStarted {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ItemCompleted {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ServerRequestRequested {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::ServerRequestResolved {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::TurnCompleted {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::TurnFailed {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::TurnCancelled {
-                session_id, ..
+                conversation_id, ..
             }
-            | Self::SessionStatus {
-                session_id, ..
+            | Self::ConversationStatus {
+                conversation_id, ..
             }
-            | Self::SessionHistory {
-                session_id, ..
+            | Self::ConversationHistory {
+                conversation_id, ..
             }
-            | Self::SessionList {
-                session_id, ..
+            | Self::ConversationList {
+                conversation_id, ..
             }
-            | Self::SessionSwitched {
-                session_id, ..
+            | Self::ConversationSwitched {
+                conversation_id, ..
             }
-            | Self::SessionSubscriptionChanged {
-                session_id, ..
+            | Self::ConversationSubscriptionChanged {
+                conversation_id, ..
             }
             | Self::Info {
-                session_id, ..
+                conversation_id, ..
             }
             | Self::Error {
-                session_id, ..
-            } => session_id,
+                conversation_id, ..
+            } => conversation_id,
         }
     }
 }
@@ -301,7 +301,7 @@ impl AppServerNotification {
 pub enum AppServerRequest {
     ServerRequest {
         request_id: RequestId,
-        session_id: String,
+        conversation_id: String,
         request: ServerRequest,
     },
 }
@@ -313,11 +313,11 @@ impl AppServerRequest {
         }
     }
 
-    pub fn session_id(&self) -> &str {
+    pub fn conversation_id(&self) -> &str {
         match self {
             Self::ServerRequest {
-                session_id, ..
-            } => session_id,
+                conversation_id, ..
+            } => conversation_id,
         }
     }
 }
@@ -330,10 +330,10 @@ pub enum AppServerMessage {
 }
 
 impl AppServerMessage {
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn conversation_id(&self) -> Option<&str> {
         match self {
-            Self::Notification(notification) => Some(notification.session_id()),
-            Self::Request(request) => Some(request.session_id()),
+            Self::Notification(notification) => Some(notification.conversation_id()),
+            Self::Request(request) => Some(request.conversation_id()),
         }
     }
 }
@@ -360,11 +360,11 @@ pub fn classify_notification(
         | AppServerNotification::ContextCompactionStarted { .. }
         | AppServerNotification::TurnFailed { .. }
         | AppServerNotification::TurnCancelled { .. }
-        | AppServerNotification::SessionStatus { .. }
-        | AppServerNotification::SessionHistory { .. }
-        | AppServerNotification::SessionList { .. }
-        | AppServerNotification::SessionSwitched { .. }
-        | AppServerNotification::SessionSubscriptionChanged { .. }
+        | AppServerNotification::ConversationStatus { .. }
+        | AppServerNotification::ConversationHistory { .. }
+        | AppServerNotification::ConversationList { .. }
+        | AppServerNotification::ConversationSwitched { .. }
+        | AppServerNotification::ConversationSubscriptionChanged { .. }
         | AppServerNotification::FrontendStateChanged { .. } => {
             (NotificationStream::Control, NotificationDelivery::Lossless)
         }

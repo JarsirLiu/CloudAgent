@@ -1,7 +1,10 @@
 mod approval_session;
+mod compaction;
+mod conversations;
 mod model;
 mod orchestrator;
 mod support;
+mod turns;
 
 pub(crate) use approval_session::{approve_tool_for_session, is_tool_approved_for_session};
 pub(crate) use model::OpenAiCompatibleModel;
