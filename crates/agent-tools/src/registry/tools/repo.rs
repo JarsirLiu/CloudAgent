@@ -36,7 +36,7 @@ impl LocalTool for SearchTextLocalTool {
         let args: SearchTextArgs = serde_json::from_value(arguments)?;
         if let Ok(Some(content)) = run_search_text_with_rg(&ctx.workspace_root, &args).await {
             return Ok(ToolInvocationOutput {
-                summary: "found matches with rg backend".to_string(),
+                summary: "found matches".to_string(),
                 content,
                 structured: None,
             });
@@ -46,7 +46,7 @@ impl LocalTool for SearchTextLocalTool {
             format!("{}:{}: {}", m.path, m.line, m.preview)
         }).collect::<Vec<_>>().join("\n\n");
         let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches in {} files.\n{}", output.match_count, output.file_count, lines) };
-        Ok(ToolInvocationOutput { content, summary: format!("found {} matches across {} files (powershell backend)", output.match_count, output.file_count), structured: None })
+        Ok(ToolInvocationOutput { content, summary: format!("found {} matches across {} files", output.match_count, output.file_count), structured: None })
     }
 }
 
@@ -83,9 +83,9 @@ async fn run_search_text_with_rg(
         .map(|s| s.to_string())
         .collect();
     let content = if lines.is_empty() {
-        "No matches found (rg backend)".to_string()
+        "No matches found".to_string()
     } else {
-        format!("Found {} matches (rg backend).\n{}", lines.len(), lines.join("\n"))
+        format!("Found {} matches.\n{}", lines.len(), lines.join("\n"))
     };
     Ok(Some(content))
 }
