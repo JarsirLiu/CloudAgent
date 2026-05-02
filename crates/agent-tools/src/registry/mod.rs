@@ -49,26 +49,14 @@ impl ToolRegistry {
 
         let mut tools: BTreeMap<String, Arc<dyn LocalTool>> = BTreeMap::new();
         register(&mut tools, ShellCommandTool);
-        register_alias(&mut tools, "command/exec", "shell_command");
-        register_alias(&mut tools, "command/git", "shell_command");
         register(&mut tools, SearchTextLocalTool);
-        register_alias(&mut tools, "repo/searchText", "search_text");
         register(&mut tools, FindFilesLocalTool);
-        register_alias(&mut tools, "repo/findFiles", "find_files");
         register(&mut tools, ReadFilesLocalTool { max_read_chars });
-        register_alias(&mut tools, "repo/readFiles", "read_files");
         register(&mut tools, GetMetadataLocalTool);
-        register_alias(&mut tools, "fs/getMetadata", "get_metadata");
         register(&mut tools, ReadDirectoryTool);
-        register_alias(&mut tools, "fs/readDirectory", "read_directory");
         register(&mut tools, ReadFileTool { max_read_chars });
-        register_alias(&mut tools, "fs/readFile", "read_file");
-        register_alias(&mut tools, "repo/readFile", "read_file");
         register(&mut tools, WriteFileTool);
-        register_alias(&mut tools, "fs/writeFile", "write_file");
         register(&mut tools, EditFileLocalTool);
-        register_alias(&mut tools, "apply_patch", "edit_file");
-        register_alias(&mut tools, "fs/editFile", "edit_file");
 
         Self {
             tools,
@@ -83,16 +71,6 @@ impl ToolRegistry {
             .into_iter()
             .map(|descriptor| descriptor.spec.clone())
             .collect()
-    }
-}
-
-fn register_alias(
-    tools: &mut BTreeMap<String, Arc<dyn LocalTool>>,
-    alias: &str,
-    target: &str,
-) {
-    if let Some(tool) = tools.get(target).cloned() {
-        tools.insert(alias.to_string(), tool);
     }
 }
 
