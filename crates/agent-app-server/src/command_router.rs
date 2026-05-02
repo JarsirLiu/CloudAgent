@@ -139,13 +139,22 @@ pub(crate) async fn handle_command(
         }
         AppClientCommand::CompactConversation { conversation_id } => {
             await_tracked_turn_tasks(&state).await;
+            send_notification(
+                event_tx,
+                &state,
+                AppServerNotification::Info {
+                    conversation_id: conversation_id.clone(),
+                    message: "Compacting context...".to_string(),
+                },
+            )
+            .await;
             match runtime.compact_conversation(&conversation_id).await? {
                 agent_runtime::ManualCompactionOutcome::Compacted {
                     pre_context_tokens_estimate,
                     post_context_tokens_estimate,
-                    pre_message_count,
-                    post_message_count,
-                    preserved_tail_count,
+                    pre_message_count: _,
+                    post_message_count: _,
+                    preserved_tail_count: _,
                 } => {
                     let turns = runtime.build_turns_from_rollout(&conversation_id).await?;
                     send_notification(
@@ -163,12 +172,8 @@ pub(crate) async fn handle_command(
                         AppServerNotification::Info {
                             conversation_id,
                             message: format!(
-                                "Context compacted: ~{} -> ~{} tokens, preserved {} recent items ({} -> {} messages)",
-                                pre_context_tokens_estimate,
-                                post_context_tokens_estimate,
-                                preserved_tail_count,
-                                pre_message_count,
-                                post_message_count
+                                "Context compacted: ~{} -> ~{} tokens",
+                                pre_context_tokens_estimate, post_context_tokens_estimate
                             ),
                         },
                     )
