@@ -75,16 +75,18 @@ impl LocalTool for ShellCommandLocalTool {
             .unwrap_or(ctx.default_shell_timeout_ms)
             .max(1_000);
         let started_at = Instant::now();
+        let command_text =
+            translate_search_command(&args.command).unwrap_or_else(|| args.command.clone());
         let mut command = if cfg!(windows) {
             let mut cmd = Command::new(preferred_windows_shell());
             cmd.arg("-NoLogo")
                 .arg("-NoProfile")
                 .arg("-Command")
-                .arg(windows_utf8_command(&args.command));
+                .arg(windows_utf8_command(&command_text));
             cmd
         } else {
             let mut cmd = Command::new("sh");
-            cmd.arg("-lc").arg(&args.command);
+            cmd.arg("-lc").arg(&command_text);
             cmd
         };
         command
@@ -142,7 +144,7 @@ impl LocalTool for ShellCommandLocalTool {
         let content = format!(
             "kind: {}\ncommand: {}\ncurrent_directory: {}\nexit_code: {}\nsuccess: {}\n\nstdout:\n{}\n\nstderr:\n{}",
             command_summary,
-            args.command,
+            command_text,
             current_directory,
             exit_code,
             status.success(),
@@ -212,6 +214,157 @@ fn summarize_command(command: &str) -> &'static str {
         "measure-object" | "where-object" | "sort-object" | "select-object" => "inspect",
         _ => "action",
     }
+}
+
+fn translate_search_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    if !normalized.starts_with("rg") {
+        return None;
+    }
+
+    if command_exists("rg") || command_exists("rg.exe") {
+        return None;
+    }
+
+    translate_rg_command(trimmed)
+}
+
+fn translate_rg_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    if !normalized.starts_with("rg") {
+        return None;
+    }
+
+    if normalized.starts_with("rg --files") || normalized.starts_with("rg.exe --files") {
+        let path_scope = extract_rg_path_scope(trimmed).unwrap_or_else(|| ".".to_string());
+        return Some(if cfg!(windows) {
+            format!(
+                "Get-ChildItem -Recurse -File {} | Select-Object -ExpandProperty FullName",
+                powershell_quote(&path_scope)
+            )
+        } else {
+            format!("find {} -type f -print", shell_quote(&path_scope))
+        });
+    }
+
+    let (pattern, path_scope, case_sensitive) = extract_rg_search_args(trimmed)?;
+    Some(if cfg!(windows) {
+        let mut command = format!(
+            "Get-ChildItem -Recurse -File {} | Select-String -Pattern {}",
+            powershell_quote(&path_scope),
+            powershell_quote(&pattern)
+        );
+        if !case_sensitive {
+            command.push_str(" -CaseSensitive:$false");
+        }
+        command
+    } else {
+        let mut command = String::from("grep -R -n -I");
+        if !case_sensitive {
+            command.push_str(" -i");
+        }
+        command.push_str(" -e ");
+        command.push_str(&shell_quote(&pattern));
+        command.push(' ');
+        command.push_str(&shell_quote(&path_scope));
+        command
+    })
+}
+
+fn extract_rg_search_args(command: &str) -> Option<(String, String, bool)> {
+    let mut rest = command.trim();
+    let program = take_shell_token(&mut rest)?.to_ascii_lowercase();
+    if program != "rg" && program != "rg.exe" {
+        return None;
+    }
+
+    let mut case_sensitive = true;
+    let mut pattern = None;
+    let mut path_scope = ".".to_string();
+    while !rest.trim().is_empty() {
+        let token = take_shell_token(&mut rest)?;
+        match token.as_str() {
+            "-i" | "--ignore-case" => case_sensitive = false,
+            "-n" | "-H" | "--with-filename" | "--no-heading" | "--line-number" | "-S" => {}
+            "--files" => return None,
+            t if t.starts_with('-') => {}
+            t if pattern.is_none() => pattern = Some(t.to_string()),
+            t => path_scope = t.to_string(),
+        }
+    }
+
+    Some((pattern?, path_scope, case_sensitive))
+}
+
+fn extract_rg_path_scope(command: &str) -> Option<String> {
+    let mut rest = command.trim();
+    let program = take_shell_token(&mut rest)?.to_ascii_lowercase();
+    if program != "rg" && program != "rg.exe" {
+        return None;
+    }
+
+    let mut path_scope = ".".to_string();
+    while !rest.trim().is_empty() {
+        let token = take_shell_token(&mut rest)?;
+        if token == "--files" {
+            continue;
+        }
+        if token.starts_with('-') {
+            continue;
+        }
+        path_scope = token;
+        break;
+    }
+
+    Some(path_scope)
+}
+
+fn take_shell_token(input: &mut &str) -> Option<String> {
+    let trimmed = input.trim_start();
+    if trimmed.is_empty() {
+        *input = "";
+        return None;
+    }
+
+    let mut chars = trimmed.chars().peekable();
+    let mut token = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '\0';
+    let mut consumed = 0usize;
+
+    while let Some(ch) = chars.next() {
+        consumed += ch.len_utf8();
+        match ch {
+            '\'' | '"' if !in_quotes => {
+                in_quotes = true;
+                quote_char = ch;
+            }
+            ch if in_quotes && ch == quote_char => {
+                in_quotes = false;
+            }
+            ch if !in_quotes && ch.is_whitespace() => {
+                break;
+            }
+            _ => token.push(ch),
+        }
+    }
+
+    *input = trimmed[consumed..].trim_start();
+    if token.is_empty() { None } else { Some(token) }
+}
+
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let escaped = value.replace('\'', r"'\''");
+    format!("'{}'", escaped)
 }
 
 fn contains_write_operator(command: &str) -> bool {
@@ -325,5 +478,47 @@ mod tests {
         assert_eq!(summarize_command("git ls-files crates"), "list files");
         assert_eq!(summarize_command("git status"), "inspect");
         assert_eq!(summarize_command("Set-Content out.txt hi"), "action");
+    }
+
+    #[test]
+    fn rg_search_commands_fall_back_when_rg_is_missing() {
+        let translated = translate_rg_command(r#"rg -n "context|token" crates/agent-core"#)
+            .expect("search command should translate");
+        if cfg!(windows) {
+            assert!(translated.contains("Get-ChildItem -Recurse -File"));
+            assert!(translated.contains("Select-String -Pattern"));
+            assert!(translated.contains("crates/agent-core"));
+        } else {
+            assert!(translated.starts_with("grep -R -n -I"));
+            assert!(translated.contains("-e"));
+            assert!(translated.contains("context|token"));
+            assert!(translated.contains("crates/agent-core"));
+        }
+    }
+
+    #[test]
+    fn rg_files_search_commands_fall_back_when_rg_is_missing() {
+        let translated =
+            translate_rg_command("rg --files crates").expect("files search should translate");
+        if cfg!(windows) {
+            assert!(translated.contains("Get-ChildItem -Recurse -File"));
+            assert!(translated.contains("-ExpandProperty FullName"));
+        } else {
+            assert_eq!(translated, "find 'crates' -type f -print");
+        }
+    }
+
+    #[test]
+    fn shell_token_parser_handles_quoted_patterns() {
+        let mut input = r#"-n "context|token" crates/agent-core"#;
+        assert_eq!(take_shell_token(&mut input), Some("-n".to_string()));
+        assert_eq!(
+            take_shell_token(&mut input),
+            Some("context|token".to_string())
+        );
+        assert_eq!(
+            take_shell_token(&mut input),
+            Some("crates/agent-core".to_string())
+        );
     }
 }

@@ -21,7 +21,7 @@ impl TextReadOptions {
     ) -> Self {
         Self {
             start_line: start_line.unwrap_or(1).max(1),
-            max_lines: max_lines.unwrap_or(500).clamp(1, 5_000),
+            max_lines: max_lines.unwrap_or(200).clamp(1, 5_000),
             max_chars: max_chars.max(128),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             include_line_numbers: true,
