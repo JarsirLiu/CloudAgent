@@ -586,7 +586,7 @@ fn denied_tool_result(
                 status: WriteFileStatus::Declined,
             })
         }
-        "edit_file" | "apply_patch" => Some(StructuredToolResult::ApplyPatch {
+        "edit_file" | "apply_patch" => Some(StructuredToolResult::EditFile {
             files_changed: 0,
             status: WriteFileStatus::Declined,
         }),

@@ -1,3 +1,4 @@
+use super::common::{load_gitignore_patterns, should_ignore_name};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
 use agent_core::ToolSpec;
@@ -69,9 +70,9 @@ impl LocalTool for FindFilesLocalTool {
         let offset = args.offset.unwrap_or(0);
         let case_sensitive = args.case_sensitive.unwrap_or(false);
         let root = resolve_workspace_path(&ctx.workspace_root, args.path_scope.as_deref())?;
+        let gitignore_patterns = load_gitignore_patterns(&ctx.workspace_root).await;
         let mut stack = vec![root];
         let mut matches = Vec::new();
-        let ignored = [".git",".hg",".svn","node_modules","dist","build","target","target-verify",".next",".nuxt",".turbo",".cache","coverage",".venv","venv","__pycache__"];
         while let Some(dir) = stack.pop() {
             let mut entries = match fs::read_dir(&dir).await { Ok(entries) => entries, Err(_) => continue };
             while let Some(entry) = entries.next_entry().await? {
@@ -79,7 +80,7 @@ impl LocalTool for FindFilesLocalTool {
                 let name = entry.file_name().to_string_lossy().to_string();
                 let metadata = match entry.metadata().await { Ok(metadata) => metadata, Err(_) => continue };
                 if metadata.is_dir() {
-                    if ignored.contains(&name.as_str()) || (name.starts_with('.') && name != ".cargo") { continue; }
+                    if should_ignore_name(&name, &gitignore_patterns) { continue; }
                     stack.push(path); continue;
                 }
                 if metadata.is_file() && file_name_matches(&name, &pattern, case_sensitive) {

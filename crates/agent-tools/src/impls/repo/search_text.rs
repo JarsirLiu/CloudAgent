@@ -1,4 +1,4 @@
-use super::common::{DEFAULT_IGNORED_DIRS, resolve_workspace_path};
+use super::common::{load_gitignore_patterns, resolve_workspace_path, should_ignore_name};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolSpec};
@@ -104,10 +104,10 @@ pub async fn run_search_text(workspace_root: &Path, args: SearchTextArgs) -> Res
         .unwrap_or(DEFAULT_MAX_RESULTS)
         .clamp(1, HARD_MAX_RESULTS);
     let case_sensitive = args.case_sensitive.unwrap_or(true);
-    let ignored: BTreeSet<&str> = DEFAULT_IGNORED_DIRS.iter().copied().collect();
+    let gitignore_patterns = load_gitignore_patterns(workspace_root).await;
 
     let mut files = Vec::new();
-    collect_text_files(&base, &base, &ignored, &mut files).await?;
+    collect_text_files(&base, &base, &gitignore_patterns, &mut files).await?;
 
     let mut results = Vec::new();
     let mut files_with_matches = BTreeSet::new();
@@ -161,7 +161,7 @@ fn line_matches(query: &str, line: &str, case_sensitive: bool) -> bool {
 async fn collect_text_files(
     workspace_root: &Path,
     current: &Path,
-    ignored: &BTreeSet<&str>,
+    gitignore_patterns: &[String],
     out: &mut Vec<PathBuf>,
 ) -> Result<()> {
     let mut stack = vec![current.to_path_buf()];
@@ -176,10 +176,7 @@ async fn collect_text_files(
 
             if metadata.is_dir() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if ignored.contains(name.as_str()) {
-                    continue;
-                }
-                if name.starts_with('.') && name != ".cargo" {
+                if should_ignore_name(&name, gitignore_patterns) {
                     continue;
                 }
                 stack.push(path);

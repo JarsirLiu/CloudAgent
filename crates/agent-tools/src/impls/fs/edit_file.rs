@@ -96,7 +96,7 @@ impl LocalTool for EditFileLocalTool {
 
         Ok(ToolInvocationOutput {
             content: format!("Applied patch. files_changed={files_changed}"),
-            structured: Some(agent_protocol::StructuredToolResult::ApplyPatch {
+            structured: Some(agent_protocol::StructuredToolResult::EditFile {
                 files_changed,
                 status: agent_protocol::WriteFileStatus::Completed,
             }),

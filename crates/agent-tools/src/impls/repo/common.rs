@@ -20,6 +20,29 @@ pub(crate) const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "__pycache__",
 ];
 
+pub(crate) async fn load_gitignore_patterns(workspace_root: &Path) -> Vec<String> {
+    let gitignore_path = workspace_root.join(".gitignore");
+    match tokio::fs::read_to_string(gitignore_path).await {
+        Ok(content) => content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| line.trim_end_matches('/').to_string())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+pub(crate) fn should_ignore_name(name: &str, gitignore_patterns: &[String]) -> bool {
+    if DEFAULT_IGNORED_DIRS.contains(&name) {
+        return true;
+    }
+    if name.starts_with('.') && name != ".cargo" {
+        return true;
+    }
+    gitignore_patterns.iter().any(|p| p == name)
+}
+
 pub(crate) fn resolve_workspace_path(workspace_root: &Path, value: &str) -> Result<PathBuf> {
     let root = workspace_root
         .canonicalize()

@@ -92,7 +92,7 @@ pub enum StructuredToolResult {
         size: u64,
         readonly: bool,
     },
-    ApplyPatch {
+    EditFile {
         files_changed: usize,
         status: WriteFileStatus,
     },

@@ -100,7 +100,7 @@ pub(crate) fn structured_failure_result(
                 status: WriteFileStatus::Failed,
             })
         }
-        "apply_patch" | "edit_file" => Some(StructuredToolResult::ApplyPatch {
+        "apply_patch" | "edit_file" => Some(StructuredToolResult::EditFile {
             files_changed: 0,
             status: WriteFileStatus::Failed,
         }),
