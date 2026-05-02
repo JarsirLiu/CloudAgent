@@ -1,15 +1,16 @@
 mod shared;
 mod tools {
     pub mod command;
-    pub mod edit;
     pub mod fs;
     pub mod repo;
 }
 
 use crate::impls::{
-    code_editing::{ApplyPatchTool, WriteFileTool as WriteFileDescriptorTool},
     command::ShellCommandTool as ShellCommandDescriptorTool,
-    fs::{GetMetadataTool, ReadDirectoryTool as ReadDirectoryDescriptorTool},
+    fs::{
+        ApplyPatchTool, GetMetadataTool, ReadDirectoryTool as ReadDirectoryDescriptorTool,
+        WriteFileTool as WriteFileDescriptorTool,
+    },
     repo::{FindFilesTool, ReadFileTool as ReadFileDescriptorTool, ReadFilesTool, SearchTextTool},
 };
 use crate::selection::{TaskKind, ToolMode, ToolSelector};
@@ -22,8 +23,7 @@ use shared::{LocalTool, register, structured_failure_result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tools::command::ShellCommandTool;
-use tools::edit::WriteFileTool;
-use tools::fs::{GetMetadataLocalTool, ReadDirectoryTool};
+use tools::fs::{GetMetadataLocalTool, ReadDirectoryTool, WriteFileTool};
 use tools::repo::{FindFilesLocalTool, ReadFileTool, ReadFilesLocalTool, SearchTextLocalTool};
 
 #[derive(Clone)]

@@ -7,7 +7,7 @@ pub struct WriteFileTool;
 impl WriteFileTool {
     pub fn descriptor() -> ToolDescriptor {
         ToolDescriptor::new(
-            ToolCategory::CodeEditing,
+            ToolCategory::WorkspaceFileOps,
             ToolRisk::High,
             vec!["edit", "fs", "general"],
             ToolSpec {

@@ -7,9 +7,9 @@ pub struct ApplyPatchTool;
 impl ApplyPatchTool {
     pub fn descriptor() -> ToolDescriptor {
         ToolDescriptor::new(
-            ToolCategory::CodeEditing,
+            ToolCategory::WorkspaceFileOps,
             ToolRisk::Medium,
-            vec!["edit", "general"],
+            vec!["edit", "fs", "general"],
             ToolSpec {
                 name: "apply_patch".to_string(),
                 description: "Apply a focused patch to existing files. Prefer this over whole-file rewrites for code changes.".to_string(),

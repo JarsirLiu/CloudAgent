@@ -3,7 +3,6 @@ use agent_core::ToolSpec;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolCategory {
     RepositoryExploration,
-    CodeEditing,
     CommandExecution,
     WorkspaceFileOps,
     ExternalResources,
