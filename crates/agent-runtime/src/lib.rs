@@ -10,8 +10,8 @@ use agent_tools::ToolRegistry;
 use anyhow::Result;
 use config::AgentConfig;
 use engine::{
-    OpenAiCompatibleModel, approve_tool_for_session, emit_event, is_tool_approved_for_session,
-    is_turn_interrupted_error, model_shell_name, next_turn_id, summarize_arguments,
+    OpenAiCompatibleModel, emit_event, is_turn_interrupted_error, model_shell_name, next_turn_id,
+    summarize_arguments,
 };
 use state::RuntimeState;
 use state::rollout_recorder::RolloutRecorder;
@@ -90,13 +90,23 @@ impl AgentRuntime {
     }
 
     pub(crate) fn is_tool_approved_for_session(&self, call: &ToolCall) -> bool {
-        is_tool_approved_for_session(self, call)
+        self.session_approvals
+            .lock()
+            .is_ok_and(|approvals| approvals.contains(&tool_approval_key(call)))
     }
 
     pub(crate) fn approve_tool_for_session(&self, call: &ToolCall) {
-        approve_tool_for_session(self, call);
+        if let Ok(mut approvals) = self.session_approvals.lock() {
+            approvals.insert(tool_approval_key(call));
+        }
     }
 
+}
+
+fn tool_approval_key(call: &ToolCall) -> String {
+    let arguments =
+        serde_json::to_string(&call.arguments).unwrap_or_else(|_| call.arguments.to_string());
+    format!("{}:{arguments}", call.name)
 }
 
 #[cfg(test)]

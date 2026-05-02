@@ -1,10 +1,19 @@
-use crate::AgentRuntime;
+use crate::{AgentRuntime, MANUAL_COMPACTION_MIN_HISTORY_TOKENS, ManualCompactionOutcome, tasks};
 use agent_core::AgentTurnOutput;
 use agent_protocol::{EventMsg, RequestId, ServerRequest, ServerRequestDecision};
 use anyhow::{Result, bail};
 use tokio_util::sync::CancellationToken;
 
 impl AgentRuntime {
+    pub async fn compact_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<ManualCompactionOutcome> {
+        self.rollout_recorder.flush().await?;
+        tasks::run_manual_compaction(self, conversation_id, MANUAL_COMPACTION_MIN_HISTORY_TOKENS)
+            .await
+    }
+
     pub async fn chat(&self, conversation_id: &str, user_input: &str) -> Result<AgentTurnOutput> {
         let outcome = self
             .chat_with_approval_and_events(
