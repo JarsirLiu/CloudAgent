@@ -29,6 +29,13 @@ pub struct ConversationSnapshot {
     pub message_count: usize,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationSummary {
+    pub conversation_id: String,
+    pub message_count: usize,
+    pub updated_at_ms: u64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NotificationDelivery {
     Lossless,
@@ -41,4 +48,3 @@ pub enum NotificationStream {
     Control,
     Diagnostic,
 }
-

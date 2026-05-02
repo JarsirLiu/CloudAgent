@@ -28,8 +28,8 @@ use tokio_util::sync::CancellationToken;
 
 pub use agent_core::ResponseItem;
 pub use agent_protocol::{
-    ConversationSnapshot, ConversationStatus, EventMsg, RequestId, ServerRequest,
-    ServerRequestDecision, TranscriptItem, TurnItemKind, TurnState,
+    ConversationSnapshot, ConversationStatus, ConversationSummary, EventMsg, RequestId,
+    ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemKind, TurnState,
 };
 
 const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
@@ -133,6 +133,30 @@ impl AgentRuntime {
         self.state.remove_conversation(conversation_id).await;
         self.store.delete_conversation(conversation_id).await?;
         self.store.delete_events(conversation_id).await
+    }
+
+    pub async fn create_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.store.create_conversation(conversation_id).await
+    }
+
+    pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.rollout_recorder.flush().await?;
+        self.state.remove_conversation(conversation_id).await;
+        self.store.archive_conversation(conversation_id).await
+    }
+
+    pub async fn list_conversations(&self) -> Result<Vec<ConversationSummary>> {
+        Ok(self
+            .store
+            .list_conversations()
+            .await?
+            .into_iter()
+            .map(|summary| ConversationSummary {
+                conversation_id: summary.conversation_id,
+                message_count: summary.message_count,
+                updated_at_ms: summary.updated_at_ms,
+            })
+            .collect())
     }
 
     pub async fn compact_conversation(

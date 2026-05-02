@@ -82,7 +82,7 @@ impl ChatComposer {
                         let command = selected.command;
                         self.textarea.clear();
                         self.completion.clear();
-                        return Some(action_for_command(command));
+                        return Some(action_for_command(command, ""));
                     }
                 }
                 _ => {}
@@ -210,7 +210,7 @@ impl ChatComposer {
                 let args = parts.next().unwrap_or_default().trim();
                 if let Some(command) = find_slash_command(name) {
                     if args.is_empty() || command.supports_inline_args() {
-                        return action_for_command(command);
+                        return action_for_command(command, args);
                     }
                 }
                 return ComposerIntent::UnknownCommand(name.to_string());
@@ -240,13 +240,21 @@ fn is_newline_shortcut(modifiers: KeyModifiers) -> bool {
     shift_only || modifiers == KeyModifiers::ALT || modifiers == KeyModifiers::CONTROL
 }
 
-fn action_for_command(command: SlashCommand) -> ComposerIntent {
+fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
     match command {
         SlashCommand::Clear => ComposerIntent::Reset,
         SlashCommand::Compact => ComposerIntent::Compact,
         SlashCommand::Copy => ComposerIntent::Copy,
         SlashCommand::Help => ComposerIntent::Help,
         SlashCommand::Interrupt => ComposerIntent::Interrupt,
+        SlashCommand::Sessions => ComposerIntent::Sessions,
+        SlashCommand::NewConversation => ComposerIntent::NewConversation(args.trim().to_string()),
+        SlashCommand::SwitchConversation => {
+            ComposerIntent::SwitchConversation(args.trim().to_string())
+        }
+        SlashCommand::ArchiveConversation => {
+            ComposerIntent::ArchiveConversation(args.trim().to_string())
+        }
         SlashCommand::Exit => ComposerIntent::Exit,
     }
 }

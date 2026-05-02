@@ -414,16 +414,24 @@ fn slash_intent(line: &str) -> Option<ComposerIntent> {
     if !args.is_empty() && !command.supports_inline_args() {
         return Some(ComposerIntent::UnknownCommand(name.to_string()));
     }
-    Some(intent_for_command(command))
+    Some(intent_for_command(command, args))
 }
 
-fn intent_for_command(command: SlashCommand) -> ComposerIntent {
+fn intent_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
     match command {
         SlashCommand::Clear => ComposerIntent::Reset,
         SlashCommand::Compact => ComposerIntent::Compact,
         SlashCommand::Copy => ComposerIntent::Copy,
         SlashCommand::Help => ComposerIntent::Help,
         SlashCommand::Interrupt => ComposerIntent::Interrupt,
+        SlashCommand::Sessions => ComposerIntent::Sessions,
+        SlashCommand::NewConversation => ComposerIntent::NewConversation(args.trim().to_string()),
+        SlashCommand::SwitchConversation => {
+            ComposerIntent::SwitchConversation(args.trim().to_string())
+        }
+        SlashCommand::ArchiveConversation => {
+            ComposerIntent::ArchiveConversation(args.trim().to_string())
+        }
         SlashCommand::Exit => ComposerIntent::Exit,
     }
 }

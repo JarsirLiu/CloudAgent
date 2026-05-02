@@ -1,6 +1,7 @@
 use agent_core::{ConversationState, PersistedConversation, RolloutItem};
 use agent_protocol::EventMsg;
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
@@ -11,6 +12,19 @@ use tokio::sync::Mutex;
 pub struct JsonConversationStore {
     root: PathBuf,
     io_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredConversationSummary {
+    pub conversation_id: String,
+    pub message_count: usize,
+    pub updated_at_ms: u64,
+    pub archived: bool,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ConversationIndex {
+    conversations: Vec<StoredConversationSummary>,
 }
 
 impl JsonConversationStore {
@@ -45,18 +59,27 @@ impl JsonConversationStore {
 
     pub async fn save_conversation(&self, conversation: &ConversationState) -> Result<()> {
         let _guard = self.io_lock.lock().await;
-        fs::create_dir_all(&self.root)
-            .await
-            .with_context(|| format!("failed to create {}", self.root.display()))?;
+        self.ensure_root_dir().await?;
         let path = self.conversation_path(&conversation.history().id);
         let text = serde_json::to_string_pretty(&conversation.persisted_record())?;
         self.write_text_atomically(&path, &text).await?;
+        self.upsert_index_entry_locked(StoredConversationSummary {
+            conversation_id: conversation.history().id.clone(),
+            message_count: conversation.history().messages.len(),
+            updated_at_ms: now_ms(),
+            archived: false,
+        })
+        .await?;
         Ok(())
     }
 
     pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
+        let _guard = self.io_lock.lock().await;
         self.delete_file_if_exists(&self.conversation_path(conversation_id))
-            .await
+            .await?;
+        self.delete_file_if_exists(&self.rollout_path(conversation_id))
+            .await?;
+        self.remove_index_entry_locked(conversation_id).await
     }
 
     pub async fn load_events(&self, conversation_id: &str) -> Result<Vec<EventMsg>> {
@@ -94,9 +117,7 @@ impl JsonConversationStore {
             return Ok(());
         }
         let _guard = self.io_lock.lock().await;
-        fs::create_dir_all(&self.root)
-            .await
-            .with_context(|| format!("failed to create {}", self.root.display()))?;
+        self.ensure_root_dir().await?;
         let path = self.rollout_path(conversation_id);
         let mut file = OpenOptions::new()
             .create(true)
@@ -116,6 +137,7 @@ impl JsonConversationStore {
         file.flush()
             .await
             .with_context(|| format!("failed to flush {}", path.display()))?;
+        self.touch_index_entry_locked(conversation_id).await?;
         Ok(())
     }
 
@@ -127,6 +149,50 @@ impl JsonConversationStore {
     pub async fn delete_events(&self, conversation_id: &str) -> Result<()> {
         self.delete_file_if_exists(&self.event_path(conversation_id))
             .await
+    }
+
+    pub async fn create_conversation(&self, conversation_id: &str) -> Result<()> {
+        let _guard = self.io_lock.lock().await;
+        self.ensure_root_dir().await?;
+        self.upsert_index_entry_locked(StoredConversationSummary {
+            conversation_id: conversation_id.to_string(),
+            message_count: 0,
+            updated_at_ms: now_ms(),
+            archived: false,
+        })
+        .await
+    }
+
+    pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {
+        let _guard = self.io_lock.lock().await;
+        self.ensure_root_dir().await?;
+        let mut index = self.load_index_locked().await?;
+        if let Some(summary) = index
+            .conversations
+            .iter_mut()
+            .find(|summary| summary.conversation_id == conversation_id)
+        {
+            summary.archived = true;
+            summary.updated_at_ms = now_ms();
+        }
+        self.save_index_locked(&index).await
+    }
+
+    pub async fn list_conversations(&self) -> Result<Vec<StoredConversationSummary>> {
+        let _guard = self.io_lock.lock().await;
+        let mut conversations = self
+            .load_index_locked()
+            .await?
+            .conversations
+            .into_iter()
+            .filter(|summary| !summary.archived)
+            .collect::<Vec<_>>();
+        conversations.sort_by(|a, b| {
+            b.updated_at_ms
+                .cmp(&a.updated_at_ms)
+                .then_with(|| a.conversation_id.cmp(&b.conversation_id))
+        });
+        Ok(conversations)
     }
 
     fn conversation_path(&self, conversation_id: &str) -> PathBuf {
@@ -145,6 +211,10 @@ impl JsonConversationStore {
             "{}.rollout.jsonl",
             sanitize_conversation_id(conversation_id)
         ))
+    }
+
+    fn index_path(&self) -> PathBuf {
+        self.root.join("conversations.index.json")
     }
 
     async fn load_rollout_items_from_path(&self, path: &Path) -> Result<Vec<RolloutItem>> {
@@ -217,6 +287,79 @@ impl JsonConversationStore {
         })?;
         Ok(())
     }
+
+    async fn ensure_root_dir(&self) -> Result<()> {
+        fs::create_dir_all(&self.root)
+            .await
+            .with_context(|| format!("failed to create {}", self.root.display()))
+    }
+
+    async fn load_index_locked(&self) -> Result<ConversationIndex> {
+        let path = self.index_path();
+        match fs::read_to_string(&path).await {
+            Ok(text) => serde_json::from_str(&text)
+                .with_context(|| format!("failed to parse {}", path.display())),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Ok(ConversationIndex::default())
+            }
+            Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    async fn save_index_locked(&self, index: &ConversationIndex) -> Result<()> {
+        let text = serde_json::to_string_pretty(index)?;
+        self.write_text_atomically(&self.index_path(), &text).await
+    }
+
+    async fn upsert_index_entry_locked(&self, summary: StoredConversationSummary) -> Result<()> {
+        let mut index = self.load_index_locked().await?;
+        if let Some(existing) = index
+            .conversations
+            .iter_mut()
+            .find(|existing| existing.conversation_id == summary.conversation_id)
+        {
+            *existing = summary;
+        } else {
+            index.conversations.push(summary);
+        }
+        self.save_index_locked(&index).await
+    }
+
+    async fn touch_index_entry_locked(&self, conversation_id: &str) -> Result<()> {
+        let mut index = self.load_index_locked().await?;
+        if let Some(existing) = index
+            .conversations
+            .iter_mut()
+            .find(|existing| existing.conversation_id == conversation_id)
+        {
+            existing.updated_at_ms = now_ms();
+            existing.archived = false;
+        } else {
+            index.conversations.push(StoredConversationSummary {
+                conversation_id: conversation_id.to_string(),
+                message_count: 0,
+                updated_at_ms: now_ms(),
+                archived: false,
+            });
+        }
+        self.save_index_locked(&index).await
+    }
+
+    async fn remove_index_entry_locked(&self, conversation_id: &str) -> Result<()> {
+        let mut index = self.load_index_locked().await?;
+        index
+            .conversations
+            .retain(|summary| summary.conversation_id != conversation_id);
+        self.save_index_locked(&index).await
+    }
+}
+
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn sanitize_conversation_id(value: &str) -> String {

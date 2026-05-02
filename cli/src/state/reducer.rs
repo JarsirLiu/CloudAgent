@@ -52,6 +52,9 @@ pub(crate) enum TurnDispatch {
 #[derive(Debug, Clone)]
 pub(crate) enum UiInputEvent {
     Command(AppClientCommand),
+    LocalConversationCreate(String),
+    LocalConversationSwitch(String),
+    LocalConversationArchive(String),
     ServerRequestAnswer {
         request_id: RequestId,
         decision: ServerRequestDecisionKind,
@@ -72,6 +75,8 @@ pub(crate) enum ServerAction {
     SetMode(FrontendMode),
     SetStatusNotice(Option<String>),
     SetHistoryLoaded(bool),
+    SetConversationList(Vec<agent_protocol::ConversationSummary>),
+    SwitchConversation(String),
     ClearCurrentTurnUsage,
     SetTokenUsage {
         last_usage: ModelUsage,
@@ -115,6 +120,18 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     )));
                     actions.push(ServerAction::SetHistoryLoaded(true));
                     actions.push(ServerAction::ReplaceHistory(turns.clone()));
+                }
+                AppServerNotification::ConversationList { conversations, .. } => {
+                    actions.push(ServerAction::SetConversationList(conversations.clone()));
+                    actions.push(ServerAction::PushInfoCell(render_conversation_list(
+                        conversations,
+                    )));
+                }
+                AppServerNotification::ConversationSwitched { conversation_id } => {
+                    actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
+                    actions.push(ServerAction::SetStatusNotice(Some(format!(
+                        "Switched to `{conversation_id}`"
+                    ))));
                 }
                 AppServerNotification::Info { message, .. } => {
                     actions.push(ServerAction::SetStatusNotice(Some(message.clone())));
@@ -224,7 +241,11 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
                 actions.push(ServerAction::ShowServerRequestPrompt {
                     request_id: request_id.clone(),
-                    title: format!("tool `{}` wants to run", request.tool_name),
+                    title: format!(
+                        "[{}] tool `{}` wants to run",
+                        message.conversation_id().unwrap_or("conversation"),
+                        request.tool_name
+                    ),
                     detail: format!("reason: {}\nargs: {args_hint}", request.reason),
                     notice: format!("Action required for {}", request.tool_name),
                 });
@@ -233,6 +254,30 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     }
 
     ServerMessageReduce { actions }
+}
+
+fn render_conversation_list(conversations: &[agent_protocol::ConversationSummary]) -> String {
+    if conversations.is_empty() {
+        return "No conversations yet".to_string();
+    }
+    let mut lines = Vec::with_capacity(conversations.len() + 1);
+    lines.push("Conversations".to_string());
+    for conversation in conversations {
+        lines.push(format!(
+            "- {} ({})",
+            conversation.conversation_id,
+            pluralize_messages(conversation.message_count)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn pluralize_messages(count: usize) -> String {
+    if count == 1 {
+        "1 message".to_string()
+    } else {
+        format!("{count} messages")
+    }
 }
 
 fn summarize_args_preview(arguments_preview: &str) -> String {

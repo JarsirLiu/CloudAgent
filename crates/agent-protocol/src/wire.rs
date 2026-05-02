@@ -125,6 +125,16 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "conversation/history" => Ok(AppClientCommand::RequestConversationHistory {
             conversation_id: value_field(params, "conversation_id")?,
         }),
+        "conversation/list" => Ok(AppClientCommand::ListConversations),
+        "conversation/create" => Ok(AppClientCommand::CreateConversation {
+            conversation_id: value_field(params, "conversation_id")?,
+        }),
+        "conversation/switch" => Ok(AppClientCommand::SwitchConversation {
+            conversation_id: value_field(params, "conversation_id")?,
+        }),
+        "conversation/archive" => Ok(AppClientCommand::ArchiveConversation {
+            conversation_id: value_field(params, "conversation_id")?,
+        }),
         "conversation/subscribe" => Ok(AppClientCommand::SubscribeConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
@@ -169,6 +179,19 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         ),
         AppClientCommand::RequestConversationHistory { conversation_id } => (
             "conversation/history",
+            serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::ListConversations => ("conversation/list", Value::Null),
+        AppClientCommand::CreateConversation { conversation_id } => (
+            "conversation/create",
+            serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::SwitchConversation { conversation_id } => (
+            "conversation/switch",
+            serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::ArchiveConversation { conversation_id } => (
+            "conversation/archive",
             serde_json::json!({ "conversation_id": conversation_id }),
         ),
         AppClientCommand::SubscribeConversation { conversation_id } => (
@@ -269,6 +292,14 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "conversation/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::ConversationList { .. } => (
+            "conversation/list",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
+        AppServerNotification::ConversationSwitched { .. } => (
+            "conversation/switched",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ConversationSubscriptionChanged { .. } => (
             "conversation/subscriptionChanged",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -331,6 +362,8 @@ fn parse_server_notification(
         | "turn/cancelled"
         | "conversation/status"
         | "conversation/history"
+        | "conversation/list"
+        | "conversation/switched"
         | "conversation/subscriptionChanged"
         | "app/info"
         | "app/error" => Ok(serde_json::from_value(params)?),

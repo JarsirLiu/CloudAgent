@@ -14,7 +14,7 @@ use crate::ui::chat_surface::ChatSurface;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
 use agent_app_server_client::AppServerEvent;
-use agent_protocol::{AppClientCommand, AppServerMessage, FrontendMode};
+use agent_protocol::{AppClientCommand, AppServerMessage, ConversationSummary, FrontendMode};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -53,6 +53,7 @@ impl ConsoleConnection {
 
 pub(crate) struct TuiApp {
     pub(crate) conversation_id: String,
+    pub(crate) conversation_summaries: Vec<ConversationSummary>,
     pub(crate) connection_label: String,
     pub(crate) console_state: ConsoleState,
     pub(crate) server_request_state: ServerRequestState,
@@ -69,6 +70,7 @@ impl TuiApp {
     fn new(conversation_id: String, connection_label: &str) -> Self {
         Self {
             conversation_id,
+            conversation_summaries: Vec::new(),
             connection_label: connection_label.to_string(),
             console_state: ConsoleState::new(),
             server_request_state: ServerRequestState::default(),
@@ -137,6 +139,18 @@ impl TuiApp {
         self.welcome_animation_pause_ticks = 0;
         self.pending_history_cells.clear();
         self.pending_history_rebuild = false;
+    }
+
+    pub(crate) fn switch_conversation(&mut self, conversation_id: String) {
+        self.conversation_id = conversation_id;
+        self.reset_local_view();
+    }
+
+    pub(crate) fn set_conversation_summaries(
+        &mut self,
+        conversation_summaries: Vec<ConversationSummary>,
+    ) {
+        self.conversation_summaries = conversation_summaries;
     }
 
     pub(crate) fn set_mode(&mut self, mode: FrontendMode) {
@@ -238,6 +252,18 @@ impl TuiApp {
                     conversation_id: self.conversation_id.clone(),
                 },
             )),
+            InputPaneAction::Composer(ComposerIntent::Sessions) => {
+                Some(ParsedInput::Command(AppClientCommand::ListConversations))
+            }
+            InputPaneAction::Composer(ComposerIntent::NewConversation(conversation_id)) => {
+                Some(ParsedInput::LocalConversationCreate(conversation_id))
+            }
+            InputPaneAction::Composer(ComposerIntent::SwitchConversation(conversation_id)) => {
+                Some(ParsedInput::LocalConversationSwitch(conversation_id))
+            }
+            InputPaneAction::Composer(ComposerIntent::ArchiveConversation(conversation_id)) => {
+                Some(ParsedInput::LocalConversationArchive(conversation_id))
+            }
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
             InputPaneAction::Composer(ComposerIntent::Help) => Some(ParsedInput::LocalHelp),
             InputPaneAction::Composer(ComposerIntent::UnknownCommand(command)) => {
@@ -347,7 +373,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
                     UiEvent::Key(key) => {
                         app.pause_welcome_animation_for_input();
                         if let Some(input) = app.handle_key(key) {
-                            if handle_tui_input(&conversation_id, &mut app, &client, input)? {
+                            if handle_tui_input(&mut app, &client, input)? {
                                 break;
                             }
                         }

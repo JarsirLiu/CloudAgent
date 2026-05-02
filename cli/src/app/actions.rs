@@ -12,7 +12,6 @@ use agent_protocol::{
 use anyhow::Result;
 
 pub(crate) fn handle_tui_input(
-    conversation_id: &str,
     app: &mut TuiApp,
     client: &AppServerClient,
     input: ParsedInput,
@@ -55,11 +54,56 @@ pub(crate) fn handle_tui_input(
                 HistoryTone::Warning,
             ));
         }
+        ParsedInput::LocalConversationCreate(new_conversation_id) => {
+            let trimmed = new_conversation_id.trim();
+            if trimmed.is_empty() {
+                app.push_cell(HistoryCell::from_message(
+                    "conversation",
+                    "Usage: /new <conversation-id>",
+                    HistoryTone::Warning,
+                ));
+                return Ok(false);
+            }
+            client.send_command(AppClientCommand::CreateConversation {
+                conversation_id: trimmed.to_string(),
+            })?;
+            client.send_command(AppClientCommand::SwitchConversation {
+                conversation_id: trimmed.to_string(),
+            })?;
+        }
+        ParsedInput::LocalConversationSwitch(target_conversation_id) => {
+            let trimmed = target_conversation_id.trim();
+            if trimmed.is_empty() {
+                app.push_cell(HistoryCell::from_message(
+                    "conversation",
+                    "Usage: /switch <conversation-id>",
+                    HistoryTone::Warning,
+                ));
+                return Ok(false);
+            }
+            client.send_command(AppClientCommand::SwitchConversation {
+                conversation_id: trimmed.to_string(),
+            })?;
+        }
+        ParsedInput::LocalConversationArchive(target_conversation_id) => {
+            let trimmed = target_conversation_id.trim();
+            if trimmed.is_empty() {
+                app.push_cell(HistoryCell::from_message(
+                    "conversation",
+                    "Usage: /archive <conversation-id>",
+                    HistoryTone::Warning,
+                ));
+                return Ok(false);
+            }
+            client.send_command(AppClientCommand::ArchiveConversation {
+                conversation_id: trimmed.to_string(),
+            })?;
+        }
         ParsedInput::Command(command) => {
             if let AppClientCommand::Exit = command {
                 if app.console_state.mode != FrontendMode::Idle {
                     client.send_command(AppClientCommand::InterruptTurn {
-                        conversation_id: conversation_id.to_string(),
+                        conversation_id: app.conversation_id.clone(),
                     })?;
                 }
                 app.run_state.should_exit = true;
@@ -113,7 +157,7 @@ pub(crate) fn handle_tui_input(
             sync_mode_after_server_request_view(app);
             app.run_state.status_notice = Some(format!("Request {}", decision_label(&decision)));
             client.send_command(AppClientCommand::ResolveServerRequest {
-                conversation_id: conversation_id.to_string(),
+                conversation_id: app.conversation_id.clone(),
                 request_id,
                 decision: ServerRequestDecision {
                     decision,
@@ -141,6 +185,12 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         }
         ServerAction::SetStatusNotice(notice) => {
             app.run_state.status_notice = notice;
+        }
+        ServerAction::SetConversationList(conversations) => {
+            app.set_conversation_summaries(conversations);
+        }
+        ServerAction::SwitchConversation(conversation_id) => {
+            app.switch_conversation(conversation_id);
         }
         ServerAction::SetHistoryLoaded(loaded) => {
             app.run_state.history_loaded = loaded;

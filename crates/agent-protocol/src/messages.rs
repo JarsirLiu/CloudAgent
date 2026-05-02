@@ -1,6 +1,9 @@
-use crate::{ConversationTurn, ModelUsage, RequestId, ServerRequest, ServerRequestDecision, TranscriptItem, TurnId, TurnItemKind, UserTurnInput};
-use serde::{Deserialize, Serialize};
 use crate::types::{ConversationSnapshot, FrontendMode, NotificationDelivery, NotificationStream};
+use crate::{
+    ConversationSummary, ConversationTurn, ModelUsage, RequestId, ServerRequest,
+    ServerRequestDecision, TranscriptItem, TurnId, TurnItemKind, UserTurnInput,
+};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -26,6 +29,16 @@ pub enum AppClientCommand {
     RequestConversationHistory {
         conversation_id: String,
     },
+    ListConversations,
+    CreateConversation {
+        conversation_id: String,
+    },
+    SwitchConversation {
+        conversation_id: String,
+    },
+    ArchiveConversation {
+        conversation_id: String,
+    },
     SubscribeConversation {
         conversation_id: String,
     },
@@ -47,9 +60,12 @@ impl AppClientCommand {
             | Self::ResetConversation { conversation_id }
             | Self::RequestConversationStatus { conversation_id }
             | Self::RequestConversationHistory { conversation_id }
+            | Self::CreateConversation { conversation_id }
+            | Self::SwitchConversation { conversation_id }
+            | Self::ArchiveConversation { conversation_id }
             | Self::SubscribeConversation { conversation_id }
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
-            Self::Exit => None,
+            Self::ListConversations | Self::Exit => None,
         }
     }
 }
@@ -174,6 +190,13 @@ pub enum AppServerNotification {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
     },
+    ConversationList {
+        conversation_id: String,
+        conversations: Vec<ConversationSummary>,
+    },
+    ConversationSwitched {
+        conversation_id: String,
+    },
     ConversationSubscriptionChanged {
         conversation_id: String,
         subscribed: bool,
@@ -252,6 +275,12 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::ConversationHistory {
+                conversation_id, ..
+            }
+            | Self::ConversationList {
+                conversation_id, ..
+            }
+            | Self::ConversationSwitched {
                 conversation_id, ..
             }
             | Self::ConversationSubscriptionChanged {
@@ -333,6 +362,8 @@ pub fn classify_notification(
         | AppServerNotification::TurnCancelled { .. }
         | AppServerNotification::ConversationStatus { .. }
         | AppServerNotification::ConversationHistory { .. }
+        | AppServerNotification::ConversationList { .. }
+        | AppServerNotification::ConversationSwitched { .. }
         | AppServerNotification::ConversationSubscriptionChanged { .. }
         | AppServerNotification::FrontendStateChanged { .. } => {
             (NotificationStream::Control, NotificationDelivery::Lossless)
@@ -349,4 +380,3 @@ pub fn classify_notification(
         ),
     }
 }
-
