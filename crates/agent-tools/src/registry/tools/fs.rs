@@ -9,9 +9,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::BTreeSet;
 use tokio::fs;
-use tokio::process::Command;
 
 pub(crate) struct GetMetadataLocalTool;
 pub(crate) struct ReadDirectoryTool;
@@ -133,24 +132,29 @@ impl LocalTool for ApplyPatchLocalTool {
     }
     async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
         let args: ApplyPatchArgs = serde_json::from_value(arguments)?;
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-        let patch_path = ctx.workspace_root.join(format!(".apply_patch_{stamp}.diff"));
-        fs::write(&patch_path, &args.patch).await?;
-
-        let files_changed = count_patch_targets(&args.patch);
-        let output = Command::new("git")
-            .current_dir(&ctx.workspace_root)
-            .arg("apply")
-            .arg("--whitespace=nowarn")
-            .arg("--recount")
-            .arg(&patch_path)
-            .output()
-            .await?;
-        let _ = fs::remove_file(&patch_path).await;
-
-        if !output.status.success() {
-            anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim().to_string());
+        let file_patches = parse_unified_patch(&args.patch)?;
+        if file_patches.is_empty() {
+            anyhow::bail!("patch did not contain any editable file hunks");
         }
+        let mut changed_files = BTreeSet::new();
+        for file_patch in file_patches {
+            if file_patch.path == "/dev/null" {
+                anyhow::bail!("creating new files through edit_file is not supported");
+            }
+            let path = resolve_workspace_path(&ctx.workspace_root, Some(file_patch.path.as_str()))?;
+            let current = fs::read_to_string(&path).await?;
+            let next = apply_hunks(&current, &file_patch.hunks)
+                .map_err(|err| anyhow::anyhow!("failed to apply patch for {}: {err}", file_patch.path))?;
+            if next != current {
+                let Some(parent) = path.parent() else {
+                    anyhow::bail!("cannot determine parent directory for {}", path.display());
+                };
+                fs::create_dir_all(parent).await?;
+                fs::write(&path, next).await?;
+                changed_files.insert(file_patch.path);
+            }
+        }
+        let files_changed = changed_files.len();
 
         Ok(ToolInvocationOutput {
             content: format!("Applied patch. files_changed={files_changed}"),
@@ -162,12 +166,105 @@ impl LocalTool for ApplyPatchLocalTool {
     }
 }
 
-fn count_patch_targets(patch: &str) -> usize {
-    let mut files = std::collections::BTreeSet::new();
+#[derive(Debug)]
+struct FilePatch {
+    path: String,
+    hunks: Vec<Hunk>,
+}
+
+#[derive(Debug)]
+struct Hunk {
+    lines: Vec<String>,
+}
+
+fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
+    let mut file_patches = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut hunks: Vec<Hunk> = Vec::new();
+    let mut current_hunk: Option<Hunk> = None;
+
     for line in patch.lines() {
-        if let Some(path) = line.strip_prefix("+++ b/") {
-            files.insert(path.to_string());
+        if line.starts_with("diff --git ") {
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("+++ ") {
+            if let Some(h) = current_hunk.take() {
+                hunks.push(h);
+            }
+            if let Some(path) = current_path.take() {
+                file_patches.push(FilePatch { path, hunks });
+                hunks = Vec::new();
+            }
+            let normalized = path
+                .trim()
+                .strip_prefix("b/")
+                .unwrap_or(path.trim())
+                .to_string();
+            current_path = Some(normalized);
+            continue;
+        }
+        if line.starts_with("@@") {
+            if current_path.is_none() {
+                anyhow::bail!("hunk found before target file");
+            }
+            if let Some(h) = current_hunk.take() {
+                hunks.push(h);
+            }
+            current_hunk = Some(Hunk { lines: Vec::new() });
+            continue;
+        }
+        if let Some(hunk) = current_hunk.as_mut() {
+            if line.starts_with('\\') {
+                continue;
+            }
+            hunk.lines.push(line.to_string());
         }
     }
-    files.len()
+    if let Some(h) = current_hunk.take() {
+        hunks.push(h);
+    }
+    if let Some(path) = current_path.take() {
+        file_patches.push(FilePatch { path, hunks });
+    }
+    Ok(file_patches)
+}
+
+fn apply_hunks(original: &str, hunks: &[Hunk]) -> anyhow::Result<String> {
+    let mut content = original.to_string();
+    for hunk in hunks {
+        content = apply_single_hunk(&content, hunk)?;
+    }
+    Ok(content)
+}
+
+fn apply_single_hunk(content: &str, hunk: &Hunk) -> anyhow::Result<String> {
+    let mut old_block: Vec<String> = Vec::new();
+    let mut new_block: Vec<String> = Vec::new();
+    for line in &hunk.lines {
+        if let Some(rest) = line.strip_prefix(' ') {
+            old_block.push(rest.to_string());
+            new_block.push(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix('-') {
+            old_block.push(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix('+') {
+            new_block.push(rest.to_string());
+        } else {
+            anyhow::bail!("unsupported hunk line: {line}");
+        }
+    }
+
+    let old_text = old_block.join("\n");
+    let replacement = new_block.join("\n");
+    if old_text.is_empty() {
+        anyhow::bail!("empty deletion context is not supported");
+    }
+    let Some(start) = content.find(&old_text) else {
+        anyhow::bail!("could not find hunk context in target file");
+    };
+    let end = start + old_text.len();
+    let mut next = String::with_capacity(content.len() - old_text.len() + replacement.len());
+    next.push_str(&content[..start]);
+    next.push_str(&replacement);
+    next.push_str(&content[end..]);
+    Ok(next)
 }
