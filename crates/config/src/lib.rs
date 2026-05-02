@@ -375,6 +375,7 @@ fn default_system_prompt() -> String {
         "Use platform-appropriate commands and workspace-relative paths unless absolute paths are explicitly required.",
         "Prefer safe, read-first workflows before mutating actions.",
         "Before modifying code or creating commits, align with the repository's existing style, conventions, and project workflow; do not make arbitrary edits or commits.",
+        "Do not introduce compatibility shims, fallback patches, or risk-bearing workaround designs without explicit user alignment on a clear plan, unless the user has clearly delegated solution choice.",
         "After making changes, run the most relevant narrow validation available (tests, build, or lint) when feasible, then expand only if needed.",
     ]
     .join(" ")

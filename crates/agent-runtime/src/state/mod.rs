@@ -1,3 +1,6 @@
+mod history_io;
+pub(crate) mod rollout_recorder;
+
 use agent_core::{ActiveConversationTurn, ConversationHistory, ConversationState};
 use agent_protocol::{EventMsg, RequestId, ServerRequest, TurnState};
 use std::collections::HashMap;
