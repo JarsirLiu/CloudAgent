@@ -75,20 +75,45 @@ pub(crate) struct SearchTextLocalTool;
 
 #[async_trait]
 impl LocalTool for SearchTextLocalTool {
-    fn spec(&self) -> ToolSpec { SearchTextTool::descriptor().spec }
-    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
+    fn spec(&self) -> ToolSpec {
+        SearchTextTool::descriptor().spec
+    }
+    async fn invoke(
+        &self,
+        arguments: Value,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
         let args: SearchTextArgs = serde_json::from_value(arguments)?;
         let output = run_search_text(&ctx.workspace_root, args).await?;
-        let lines = output.results.iter().map(|m| format!("{}:{}: {}", m.path, m.line, m.preview)).collect::<Vec<_>>().join("\n\n");
-        let content = if lines.is_empty() { "No matches found".to_string() } else { format!("Found {} matches in {} files.\n{}", output.match_count, output.file_count, lines) };
+        let lines = output
+            .results
+            .iter()
+            .map(|m| format!("{}:{}: {}", m.path, m.line, m.preview))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let content = if lines.is_empty() {
+            "No matches found".to_string()
+        } else {
+            format!(
+                "Found {} matches in {} files.\n{}",
+                output.match_count, output.file_count, lines
+            )
+        };
         Ok(ToolInvocationOutput {
             content,
-            structured: Some(agent_protocol::StructuredToolResult::SearchText { match_count: output.match_count, file_count: output.file_count, truncated: output.truncated }),
+            structured: Some(agent_protocol::StructuredToolResult::SearchText {
+                match_count: output.match_count,
+                file_count: output.file_count,
+                truncated: output.truncated,
+            }),
         })
     }
 }
 
-pub async fn run_search_text(workspace_root: &Path, args: SearchTextArgs) -> Result<SearchTextOutput> {
+pub async fn run_search_text(
+    workspace_root: &Path,
+    args: SearchTextArgs,
+) -> Result<SearchTextOutput> {
     let query = args.query.trim();
     if query.is_empty() {
         bail!("`query` must not be empty");
@@ -183,7 +208,9 @@ async fn collect_text_files(
                 continue;
             }
 
-            if metadata.is_file() && is_probably_text_file(&path) && path.starts_with(workspace_root)
+            if metadata.is_file()
+                && is_probably_text_file(&path)
+                && path.starts_with(workspace_root)
             {
                 out.push(path);
             }

@@ -1,7 +1,7 @@
-use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
-use agent_core::ToolSpec;
+use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
+use agent_core::ToolSpec;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -50,7 +50,11 @@ impl LocalTool for ReadDirectoryLocalTool {
     fn spec(&self) -> ToolSpec {
         ReadDirectoryTool::descriptor().spec
     }
-    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
+    async fn invoke(
+        &self,
+        arguments: Value,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
         let args: ReadDirectoryArgs = serde_json::from_value(arguments)?;
         let path = resolve_workspace_path(&ctx.workspace_root, args.path.as_deref())?;
         let mut entries = fs::read_dir(&path).await?;
@@ -64,7 +68,12 @@ impl LocalTool for ReadDirectoryLocalTool {
                 "size": metadata.len(),
             }));
         }
-        items.sort_by(|l, r| l["name"].as_str().unwrap_or_default().cmp(r["name"].as_str().unwrap_or_default()));
+        items.sort_by(|l, r| {
+            l["name"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(r["name"].as_str().unwrap_or_default())
+        });
         Ok(ToolInvocationOutput {
             content: serde_json::to_string_pretty(&items)?,
             structured: Some(agent_protocol::StructuredToolResult::ListDirectory {

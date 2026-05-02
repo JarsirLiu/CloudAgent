@@ -1,7 +1,7 @@
-use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
-use agent_core::ToolSpec;
+use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
+use agent_core::ToolSpec;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -60,9 +60,15 @@ impl LocalTool for ReadFilesLocalTool {
     fn spec(&self) -> ToolSpec {
         ReadFilesTool::descriptor(self.max_read_chars).spec
     }
-    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
+    async fn invoke(
+        &self,
+        arguments: Value,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
         let args: ReadFilesArgs = serde_json::from_value(arguments)?;
-        if args.paths.is_empty() { bail!("`paths` must not be empty"); }
+        if args.paths.is_empty() {
+            bail!("`paths` must not be empty");
+        }
         let max_lines = args.max_lines_per_file.unwrap_or(300).clamp(1, 2_000);
         let mut blocks = Vec::new();
         for path in args.paths {
@@ -70,10 +76,17 @@ impl LocalTool for ReadFilesLocalTool {
             let text = fs::read_to_string(&resolved).await?;
             let mut lines = Vec::new();
             for (idx, line) in text.lines().enumerate() {
-                if idx >= max_lines { lines.push("[truncated]".to_string()); break; }
+                if idx >= max_lines {
+                    lines.push("[truncated]".to_string());
+                    break;
+                }
                 lines.push(line.to_string());
             }
-            let rel = resolved.strip_prefix(&ctx.workspace_root).unwrap_or(&resolved).to_string_lossy().replace('\\', "/");
+            let rel = resolved
+                .strip_prefix(&ctx.workspace_root)
+                .unwrap_or(&resolved)
+                .to_string_lossy()
+                .replace('\\', "/");
             blocks.push(format!("== {} ==\n{}", rel, lines.join("\n")));
         }
         Ok(ToolInvocationOutput {

@@ -1,7 +1,7 @@
-use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
-use agent_core::ToolSpec;
+use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
+use agent_core::ToolSpec;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -19,7 +19,9 @@ impl WriteFileTool {
             vec!["edit", "fs", "general"],
             ToolSpec {
                 name: "write_file".to_string(),
-                description: "Create or replace a file when patch-based editing is not appropriate.".to_string(),
+                description:
+                    "Create or replace a file when patch-based editing is not appropriate."
+                        .to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -54,11 +56,18 @@ impl LocalTool for WriteFileLocalTool {
     fn spec(&self) -> ToolSpec {
         WriteFileTool::descriptor().spec
     }
-    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
+    async fn invoke(
+        &self,
+        arguments: Value,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
         let args: WriteFileArgs = serde_json::from_value(arguments)?;
         let path = resolve_workspace_path(&ctx.workspace_root, Some(args.path.as_str()))?;
         if path.exists() && !args.overwrite.unwrap_or(true) {
-            anyhow::bail!("target file already exists and overwrite=false: {}", path.display());
+            anyhow::bail!(
+                "target file already exists and overwrite=false: {}",
+                path.display()
+            );
         }
         let Some(parent) = path.parent() else {
             anyhow::bail!("cannot determine parent directory for {}", path.display());

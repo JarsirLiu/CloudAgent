@@ -116,7 +116,7 @@ impl AgentConfig {
             runtime: RuntimeConfig {
                 default_conversation_id: "default".to_string(),
                 system_prompt: default_system_prompt(),
-                max_tool_roundtrips: 8,
+                max_tool_roundtrips: 12,
                 conversation_store_dir: workspace_root.join("data").join("conversations"),
                 model_context_window: 128_000,
                 context_compaction_trigger_ratio: 0.85,

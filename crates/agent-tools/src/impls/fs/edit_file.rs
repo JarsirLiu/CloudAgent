@@ -1,7 +1,7 @@
-use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
-use agent_core::ToolSpec;
+use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
+use agent_core::ToolSpec;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -50,7 +50,11 @@ impl LocalTool for EditFileLocalTool {
     fn spec(&self) -> ToolSpec {
         EditFileTool::descriptor().spec
     }
-    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
+    async fn invoke(
+        &self,
+        arguments: Value,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
         let args: EditFileArgs = serde_json::from_value(arguments)?;
         let file_patches = parse_unified_patch(&args.patch)?;
         if file_patches.is_empty() {
@@ -79,11 +83,15 @@ impl LocalTool for EditFileLocalTool {
                 (_, new_path) => {
                     let path = resolve_workspace_path(&ctx.workspace_root, Some(new_path))?;
                     let current = fs::read_to_string(&path).await?;
-                    let next = apply_hunks(&current, &file_patch.hunks)
-                        .map_err(|err| anyhow::anyhow!("failed to apply patch for {}: {err}", new_path))?;
+                    let next = apply_hunks(&current, &file_patch.hunks).map_err(|err| {
+                        anyhow::anyhow!("failed to apply patch for {}: {err}", new_path)
+                    })?;
                     if next != current {
                         let Some(parent) = path.parent() else {
-                            anyhow::bail!("cannot determine parent directory for {}", path.display());
+                            anyhow::bail!(
+                                "cannot determine parent directory for {}",
+                                path.display()
+                            );
                         };
                         fs::create_dir_all(parent).await?;
                         fs::write(&path, next).await?;
@@ -128,18 +136,34 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             continue;
         }
         if let Some(path) = line.strip_prefix("--- ") {
-            current_old_path = Some(path.trim().strip_prefix("a/").unwrap_or(path.trim()).to_string());
+            current_old_path = Some(
+                path.trim()
+                    .strip_prefix("a/")
+                    .unwrap_or(path.trim())
+                    .to_string(),
+            );
             continue;
         }
         if let Some(path) = line.strip_prefix("+++ ") {
             if let Some(h) = current_hunk.take() {
                 hunks.push(h);
             }
-            if let (Some(old_path), Some(new_path)) = (current_old_path.take(), current_new_path.take()) {
-                file_patches.push(FilePatch { old_path, new_path, hunks });
+            if let (Some(old_path), Some(new_path)) =
+                (current_old_path.take(), current_new_path.take())
+            {
+                file_patches.push(FilePatch {
+                    old_path,
+                    new_path,
+                    hunks,
+                });
                 hunks = Vec::new();
             }
-            current_new_path = Some(path.trim().strip_prefix("b/").unwrap_or(path.trim()).to_string());
+            current_new_path = Some(
+                path.trim()
+                    .strip_prefix("b/")
+                    .unwrap_or(path.trim())
+                    .to_string(),
+            );
             continue;
         }
         if line.starts_with("@@") {
@@ -163,7 +187,11 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
         hunks.push(h);
     }
     if let (Some(old_path), Some(new_path)) = (current_old_path.take(), current_new_path.take()) {
-        file_patches.push(FilePatch { old_path, new_path, hunks });
+        file_patches.push(FilePatch {
+            old_path,
+            new_path,
+            hunks,
+        });
     }
     Ok(file_patches)
 }

@@ -1,7 +1,7 @@
-use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
-use agent_core::ToolSpec;
+use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
+use agent_core::ToolSpec;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -19,8 +19,9 @@ impl GetMetadataTool {
             vec!["explore", "verify", "fs", "general"],
             ToolSpec {
                 name: "get_metadata".to_string(),
-                description: "Read path metadata such as existence, type, size, and modification time."
-                    .to_string(),
+                description:
+                    "Read path metadata such as existence, type, size, and modification time."
+                        .to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -50,7 +51,11 @@ impl LocalTool for GetMetadataLocalTool {
     fn spec(&self) -> ToolSpec {
         GetMetadataTool::descriptor().spec
     }
-    async fn invoke(&self, arguments: Value, ctx: &ToolExecutionContext) -> Result<ToolInvocationOutput> {
+    async fn invoke(
+        &self,
+        arguments: Value,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
         let args: GetMetadataArgs = serde_json::from_value(arguments)?;
         let path = resolve_workspace_path(&ctx.workspace_root, Some(args.path.as_str()))?;
         let metadata = fs::metadata(&path).await?;

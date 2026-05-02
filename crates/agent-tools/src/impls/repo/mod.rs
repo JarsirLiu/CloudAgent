@@ -4,14 +4,14 @@ mod read_file;
 mod read_files;
 mod search_text;
 
-pub use find_files::{FindFilesArgs, FindFilesTool};
 pub(crate) use find_files::FindFilesLocalTool;
-pub use read_file::ReadFileTool;
+pub use find_files::{FindFilesArgs, FindFilesTool};
 pub(crate) use read_file::ReadFileLocalTool;
-pub use read_files::{ReadFilesArgs, ReadFilesTool};
+pub use read_file::ReadFileTool;
 pub(crate) use read_files::ReadFilesLocalTool;
-pub use search_text::{SearchTextArgs, SearchTextOutput, SearchTextTool, run_search_text};
+pub use read_files::{ReadFilesArgs, ReadFilesTool};
 pub(crate) use search_text::SearchTextLocalTool;
+pub use search_text::{SearchTextArgs, SearchTextOutput, SearchTextTool, run_search_text};
 
 #[cfg(test)]
 mod tests {
@@ -23,7 +23,9 @@ mod tests {
     #[tokio::test]
     async fn search_text_skips_ignored_dirs() {
         let base = test_workspace("search_text_skips_ignored_dirs");
-        fs::create_dir_all(base.join("src")).await.expect("create src");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
         fs::create_dir_all(base.join("node_modules"))
             .await
             .expect("create node_modules");

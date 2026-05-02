@@ -14,14 +14,16 @@ use agent_core::{ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolS
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 
-use shared::{LocalTool, register, structured_failure_result};
-use std::collections::BTreeMap;
-use std::sync::Arc;
 use crate::impls::command::ShellCommandLocalTool;
 use crate::impls::fs::{
     EditFileLocalTool, GetMetadataLocalTool, ReadDirectoryLocalTool, WriteFileLocalTool,
 };
-use crate::impls::repo::{FindFilesLocalTool, ReadFileLocalTool, ReadFilesLocalTool, SearchTextLocalTool};
+use crate::impls::repo::{
+    FindFilesLocalTool, ReadFileLocalTool, ReadFilesLocalTool, SearchTextLocalTool,
+};
+use shared::{LocalTool, register, structured_failure_result};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ToolRegistry {

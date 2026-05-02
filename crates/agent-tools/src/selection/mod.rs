@@ -31,7 +31,8 @@ impl ToolSelector {
         task_kind: &TaskKind,
         tools: &'a [ToolDescriptor],
     ) -> Vec<&'a ToolDescriptor> {
-        tools.iter()
+        tools
+            .iter()
             .filter(|tool| matches_mode(mode, tool))
             .filter(|tool| matches_task_kind(task_kind, tool))
             .collect()
