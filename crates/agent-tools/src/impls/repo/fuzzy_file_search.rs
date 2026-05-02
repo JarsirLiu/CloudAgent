@@ -1,15 +1,19 @@
-use super::common::{collect_repo_entries, rank_file_match, sort_ranked_paths};
+use super::common::{collect_repo_entries, sort_ranked_paths};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
+use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+use nucleo::{Config, Matcher, Utf32Str};
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
 
 pub struct FuzzyFileSearchTool;
+
+const DEFAULT_DISPLAY_LIMIT: usize = 10;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FuzzyFileSearchArgs {
@@ -32,7 +36,7 @@ impl FuzzyFileSearchTool {
             vec!["explore", "general"],
             ToolSpec {
                 name: "fuzzy_file_search".to_string(),
-                description: "Find the most likely files in a repository quickly. Use this before directory traversal when you need to locate a module, test, config, or implementation file by name, path fragment, or approximate match.".to_string(),
+                description: "Find likely files quickly by name, path fragment, or approximate match. Use this before directory traversal.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -83,6 +87,13 @@ impl LocalTool for FuzzyFileSearchLocalTool {
         };
         let matches = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
             let entries = collect_repo_entries(&workspace_root, &root)?;
+            let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+            let pattern = Pattern::new(
+                &pattern,
+                CaseMatching::Ignore,
+                Normalization::Smart,
+                AtomKind::Fuzzy,
+            );
             let mut ranked = entries
                 .into_iter()
                 .filter_map(|entry| {
@@ -96,8 +107,17 @@ impl LocalTool for FuzzyFileSearchLocalTool {
                     } else {
                         entry.relative_path.to_ascii_lowercase()
                     };
-                    rank_file_match(&candidate_path, &candidate_name, &pattern)
-                        .map(|score| (score, entry.relative_path))
+                    let mut name_buf = Vec::new();
+                    let mut path_buf = Vec::new();
+                    let name_haystack: Utf32Str<'_> = Utf32Str::new(&candidate_name, &mut name_buf);
+                    let path_haystack: Utf32Str<'_> = Utf32Str::new(&candidate_path, &mut path_buf);
+                    let score = pattern
+                        .score(path_haystack, &mut matcher)
+                        .or_else(|| pattern.score(name_haystack, &mut matcher))?;
+                    Some((
+                        usize::try_from(score).unwrap_or(usize::MAX),
+                        entry.relative_path,
+                    ))
                 })
                 .collect::<Vec<_>>();
             sort_ranked_paths(&mut ranked);
@@ -109,10 +129,22 @@ impl LocalTool for FuzzyFileSearchLocalTool {
             .skip(offset)
             .take(max_results)
             .collect::<Vec<_>>();
-        let content = if matches.is_empty() {
+        let displayed = matches
+            .iter()
+            .take(DEFAULT_DISPLAY_LIMIT)
+            .cloned()
+            .collect::<Vec<_>>();
+        let content = if displayed.is_empty() {
             "No files found".to_string()
         } else {
-            matches.join("\n")
+            let mut content = format!("Top {} matches:\n{}", displayed.len(), displayed.join("\n"));
+            if matches.len() > displayed.len() {
+                content.push_str(&format!(
+                    "\n…and {} more",
+                    matches.len().saturating_sub(displayed.len())
+                ));
+            }
+            content
         };
         Ok(ToolInvocationOutput {
             content,

@@ -10,6 +10,7 @@ agent-core = { path = "../agent-core" }
 agent-protocol = { path = "../agent-protocol" }
 async-trait.workspace = true
 ignore.workspace = true
+nucleo.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 shared = { path = "../shared" }

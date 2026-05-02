@@ -10,7 +10,6 @@ pub use fuzzy_file_search::{FuzzyFileSearchArgs, FuzzyFileSearchTool};
 
 #[cfg(test)]
 mod tests {
-    use super::common::rank_file_match;
     use super::*;
     use crate::registry::shared::LocalTool;
     use std::path::PathBuf;
@@ -60,16 +59,8 @@ mod tests {
             .map(ToOwned::to_owned)
             .filter(|line| !line.is_empty())
             .collect::<Vec<_>>();
-        assert_eq!(lines.first().map(String::as_str), Some("src/service.rs"));
-    }
-
-    #[test]
-    fn fuzzy_rank_prefers_name_subsequence_over_distant_path_noise() {
-        let direct = rank_file_match("src/service.rs", "service.rs", "servrs");
-        let noisy = rank_file_match("src/server_controller.rs", "server_controller.rs", "servrs");
-
-        assert!(direct.is_some());
-        assert!(noisy.is_none() || direct > noisy);
+        assert_eq!(lines.get(0).map(String::as_str), Some("Top 2 matches:"));
+        assert_eq!(lines.get(1).map(String::as_str), Some("src/service.rs"));
     }
 
     #[tokio::test]
