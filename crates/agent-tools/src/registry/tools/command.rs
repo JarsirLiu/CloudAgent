@@ -1,4 +1,4 @@
-use crate::impls::command_execution::ShellCommandToolV2;
+use crate::impls::command::ShellCommandToolV2;
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, read_streaming_pipe, resolve_workspace_path};
 use agent_core::{ToolExecutionContext, ToolOutputStream, ToolSpec};
 use agent_protocol::{CommandExecutionStatus, StructuredToolResult};

@@ -1,4 +1,4 @@
-use crate::impls::workspace_file_ops::{GetMetadataTool, ReadDirectoryToolV2};
+use crate::impls::fs::{GetMetadataTool, ReadDirectoryToolV2};
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
 use agent_core::{ToolExecutionContext, ToolSpec};
 use anyhow::Result;

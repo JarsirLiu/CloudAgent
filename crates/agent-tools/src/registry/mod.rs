@@ -1,16 +1,16 @@
 mod shared;
 mod tools {
-    pub mod code_editing;
-    pub mod repository_exploration;
-    pub mod shell_command;
-    pub mod workspace_file_ops;
+    pub mod command;
+    pub mod edit;
+    pub mod fs;
+    pub mod repo;
 }
 
 use crate::impls::{
     code_editing::{ApplyPatchTool, WriteFileToolV2},
-    command_execution::ShellCommandToolV2,
-    repository_exploration::{FindFilesTool, ReadFileToolV2, ReadFilesTool, SearchTextTool},
-    workspace_file_ops::{GetMetadataTool, ReadDirectoryToolV2},
+    command::ShellCommandToolV2,
+    fs::{GetMetadataTool, ReadDirectoryToolV2},
+    repo::{FindFilesTool, ReadFileToolV2, ReadFilesTool, SearchTextTool},
 };
 use crate::selection::{TaskKind, ToolMode, ToolSelector};
 use crate::spec::ToolDescriptor;
@@ -21,12 +21,10 @@ use async_trait::async_trait;
 use shared::{LocalTool, register, structured_failure_result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tools::code_editing::WriteFileTool;
-use tools::repository_exploration::{
-    FindFilesLocalTool, ReadFileTool, ReadFilesLocalTool, SearchTextLocalTool,
-};
-use tools::shell_command::ShellCommandTool;
-use tools::workspace_file_ops::{GetMetadataLocalTool, ReadDirectoryTool};
+use tools::command::ShellCommandTool;
+use tools::edit::WriteFileTool;
+use tools::fs::{GetMetadataLocalTool, ReadDirectoryTool};
+use tools::repo::{FindFilesLocalTool, ReadFileTool, ReadFilesLocalTool, SearchTextLocalTool};
 
 #[derive(Clone)]
 pub struct ToolRegistry {
