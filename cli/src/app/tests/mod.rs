@@ -32,7 +32,7 @@
 
     #[test]
     fn mode_changes_do_not_clear_active_approval_view() {
-        let mut app = TuiApp::new("default".to_string(), "test");
+        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
         app.input_pane.set_server_request(
             crate::ui::widgets::input_pane::ServerRequestInlineState {
                 request_id: agent_protocol::RequestId::String("req-1".to_string()),
@@ -52,7 +52,7 @@
 
     #[test]
     fn assistant_delta_requires_item_started_before_streaming() {
-        let mut app = TuiApp::new("default".to_string(), "test");
+        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
 
         app.handle_assistant_item_delta("assistant:1", "partial");
         assert!(app.transcript_state.active_cell.is_none());
@@ -67,7 +67,7 @@
 
     #[test]
     fn tool_delta_requires_item_started_before_streaming() {
-        let mut app = TuiApp::new("default".to_string(), "test");
+        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
 
         app.handle_control_item_delta("tool:1", "half");
         assert!(app.transcript_state.active_cell.is_none());
@@ -96,7 +96,7 @@
 
     #[test]
     fn ctrl_c_exits_when_idle() {
-        let mut app = TuiApp::new("default".to_string(), "test");
+        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
 
         let input = app
             .handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
@@ -111,7 +111,7 @@
 
     #[test]
     fn reasoning_and_control_cells_use_distinct_tones() {
-        let mut app = TuiApp::new("default".to_string(), "test");
+        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
 
         app.handle_reasoning_item_started("reasoning:1", "reasoning");
         app.handle_reasoning_item_delta("reasoning:1", "thinking");
@@ -137,7 +137,7 @@
 
     #[test]
     fn snapshot_history_replaces_transcript_without_event_replay() {
-        let mut app = TuiApp::new("default".to_string(), "test");
+        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
 
         execute_server_action(
             &mut app,
@@ -204,7 +204,7 @@
 
     #[test]
     fn turn_dispatch_completed_flushes_active_assistant_cell() {
-        let mut app = TuiApp::new("default".to_string(), "test");
+        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
         app.handle_assistant_item_started("turn-1", "assistant:flush");
         app.handle_assistant_item_delta("assistant:flush", "hello");
         app.apply_turn_dispatch(TurnDispatch::Completed);
@@ -268,7 +268,7 @@
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut app = TuiApp::new("default".to_string(), "in-process");
+        let mut app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
 
         handle_tui_input(
             &mut app,
@@ -369,7 +369,7 @@
                     status_idle = matches!(snapshot.conversation_status, ConversationStatus::Idle)
                         && snapshot.active_turn.is_none();
                 }
-                other => app.handle_client_event(other),
+                other => event_router::handle_client_event(&mut app, other),
             }
         }
         client.shutdown().await.expect("shutdown client");
@@ -412,7 +412,7 @@
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut restarted_app = TuiApp::new("default".to_string(), "in-process");
+        let mut restarted_app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
         restarted_client
             .send_command(AppClientCommand::RequestConversationHistory {
                 conversation_id: "default".to_string(),
@@ -431,7 +431,7 @@
                 )) => restarted_history_loaded = true,
                 _ => {}
             }
-            restarted_event_router::handle_client_event(&mut app, event);
+            event_router::handle_client_event(&mut restarted_app, event);
         }
         restarted_client
             .shutdown()
@@ -498,7 +498,7 @@
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut app = TuiApp::new("default".to_string(), "in-process");
+        let mut app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
 
         handle_tui_input(
             &mut app,
@@ -576,7 +576,7 @@
                 AppServerEvent::Message(AppServerMessage::Notification(
                     AppServerNotification::ConversationHistory { turns, .. },
                 )) => break flatten_turns(turns),
-                other => app.handle_client_event(other),
+                other => event_router::handle_client_event(&mut app, other),
             }
         };
         client.shutdown().await.expect("shutdown client");
@@ -594,7 +594,7 @@
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut restarted_app = TuiApp::new("default".to_string(), "in-process");
+        let mut restarted_app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
         restarted_client
             .send_command(AppClientCommand::RequestConversationHistory {
                 conversation_id: "default".to_string(),
@@ -613,7 +613,7 @@
                 )) => restarted_history_loaded = true,
                 _ => {}
             }
-            restarted_event_router::handle_client_event(&mut app, event);
+            event_router::handle_client_event(&mut restarted_app, event);
         }
         restarted_client
             .shutdown()
@@ -722,7 +722,7 @@
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut app = TuiApp::new("default".to_string(), "in-process");
+        let mut app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
 
         for content in ["第一轮看看目录", "第二轮再看一次目录"] {
             client
@@ -778,7 +778,7 @@
                 AppServerEvent::Message(AppServerMessage::Notification(
                     AppServerNotification::ConversationHistory { turns, .. },
                 )) => break flatten_turns(turns),
-                other => app.handle_client_event(other),
+                other => event_router::handle_client_event(&mut app, other),
             }
         };
         client.shutdown().await.expect("shutdown client");
@@ -1075,6 +1075,17 @@
                 context_compaction_preserved_user_turns: 3,
                 context_compaction_preserved_tail_tokens: 12_000,
                 context_compaction_summary_source_tokens: 24_000,
+                memory: Default::default(),
+                enable_skill_bucket: false,
+                enable_mcp_bucket: false,
+                post_compact_token_budget: 50_000,
+                post_compact_memory_floor_tokens: 6_000,
+                post_compact_skills_token_budget: 25_000,
+                post_compact_mcp_token_budget: 8_000,
+                post_compact_max_tokens_per_memory: 6_000,
+                post_compact_max_tokens_per_skill: 5_000,
+                post_compact_max_tokens_per_mcp: 3_000,
+                context_budget_safety_buffer_tokens: 8_000,
             },
             tools: ToolConfig {
                 default_shell_timeout_ms: 5_000,
