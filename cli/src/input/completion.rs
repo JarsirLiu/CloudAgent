@@ -115,10 +115,19 @@ impl CompletionState {
 
 impl From<SlashCommandSpec> for CommandSuggestion {
     fn from(spec: SlashCommandSpec) -> Self {
+        let description = if spec.command == SlashCommand::Filter {
+            if read_global_filter_enabled() {
+                "set pre-LLM input filter (current: on)"
+            } else {
+                "set pre-LLM input filter (current: off)"
+            }
+        } else {
+            spec.description
+        };
         Self {
             command: Some(spec.command),
             name: spec.name,
-            description: spec.description,
+            description,
             argument_hint: spec.argument_hint,
             insertion: spec.name,
         }
