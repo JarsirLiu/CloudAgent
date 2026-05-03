@@ -10,7 +10,7 @@ fi
 
 case "$cmd" in
   start)
-    exec "$SELF_DIR/cli" "$@"
+    CLOUDAGENT_RELEASE_MODE=1 exec "$SELF_DIR/cli" "$@"
     ;;
   version|--version|-v)
     exec "$SELF_DIR/cli" --version

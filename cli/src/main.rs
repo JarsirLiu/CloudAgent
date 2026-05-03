@@ -15,7 +15,11 @@ async fn main() -> Result<()> {
 
     ensure_user_config_exists()?;
     let workspace_root = std::env::current_dir()?;
-    let config = AgentConfig::load(workspace_root)?;
+    let config = if std::env::var("CLOUDAGENT_RELEASE_MODE").ok().as_deref() == Some("1") {
+        AgentConfig::load_user_only(workspace_root)?
+    } else {
+        AgentConfig::load(workspace_root)?
+    };
     let runtime = match AgentRuntime::from_config(config) {
         Ok(runtime) => Arc::new(runtime),
         Err(err) => {

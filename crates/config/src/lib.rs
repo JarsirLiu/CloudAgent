@@ -478,6 +478,23 @@ impl AgentConfig {
             self.runtime.context_budget_safety_buffer_tokens = parsed.max(512);
         }
     }
+
+    pub fn load_user_only(workspace_root: impl Into<PathBuf>) -> Result<Self> {
+        let workspace_root = workspace_root.into();
+        let mut config = Self::defaults(workspace_root.clone());
+        if let Some(home) = user_home_dir() {
+            let config_path = home.join(".cloudagent").join("config.toml");
+            if config_path.exists() {
+                let text = std::fs::read_to_string(&config_path)
+                    .with_context(|| format!("failed to read {}", config_path.display()))?;
+                let partial: PartialAgentConfig = toml::from_str(&text)
+                    .with_context(|| format!("failed to parse {}", config_path.display()))?;
+                config.apply_partial(partial);
+            }
+        }
+        config.apply_env_overrides();
+        Ok(config)
+    }
 }
 
 fn config_search_paths(workspace_root: &Path) -> Vec<PathBuf> {
