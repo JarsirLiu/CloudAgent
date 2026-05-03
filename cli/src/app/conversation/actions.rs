@@ -2,7 +2,7 @@ use crate::app::TuiApp;
 use crate::app::conversation::facade as conversation_facade;
 use crate::app::effects::copy_text_to_clipboard;
 use crate::app::commands::filter_toggle::apply_filter_toggle;
-use crate::app::commands::permissions_mode::{apply_permission_mode, load_permission_mode};
+use crate::app::commands::permissions_mode::apply_permission_mode;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::runtime::projection::apply_runtime_projection_update;
 use crate::input::slash_command::slash_command_help_text;
@@ -308,8 +308,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::SwitchConversation(conversation_id) => {
             app.input_pane.clear_session_picker();
             app.switch_conversation(conversation_id);
-            app.run_state.permission_mode =
-                load_permission_mode(&app.workspace_root, &app.conversation_id);
             app.session_picker_requested = false;
         }
         ServerAction::SetHistoryLoaded(loaded) => {

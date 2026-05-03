@@ -43,22 +43,10 @@ impl ContextFacade {
     pub fn apply_pre_llm_filter(
         &self,
         messages: Vec<ResponseItem>,
-        workspace_root: &Path,
+        _workspace_root: &Path,
     ) -> Vec<ResponseItem> {
-        let enabled = Self::read_pre_llm_filter_enabled(workspace_root);
         self.input_filter
-            .filter_for_model(messages, FilterPolicy { enabled })
-    }
-
-    pub fn read_pre_llm_filter_enabled(workspace_root: &Path) -> bool {
-        let path = workspace_root.join("data").join("ui-settings.json");
-        let Ok(text) = std::fs::read_to_string(path) else {
-            return false;
-        };
-        serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| v.get("pre_llm_filter_enabled").and_then(|b| b.as_bool()))
-            .unwrap_or(false)
+            .filter_for_model(messages, FilterPolicy { enabled: false })
     }
 
     pub fn plan_manual_compaction(

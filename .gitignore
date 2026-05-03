@@ -7,12 +7,14 @@ data/cache/*
 data/logs/*
 data/sessions/*
 data/conversations/*
+data/ui-settings.json
 !data/**/.gitkeep
 cli/data/state/*
 cli/data/cache/*
 cli/data/logs/*
 cli/data/sessions/*
 cli/data/conversations/*
+cli/data/ui-settings.json
 !cli/data/**/.gitkeep
 
 # Local config and secrets
@@ -29,3 +31,4 @@ Thumbs.db
 .vscode/
 
 configs/config.toml
+*.runtime.json

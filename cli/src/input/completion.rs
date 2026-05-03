@@ -1,5 +1,4 @@
 use crate::input::slash_command::{SlashCommand, SlashCommandSpec};
-use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandSuggestion {
@@ -115,19 +114,10 @@ impl CompletionState {
 
 impl From<SlashCommandSpec> for CommandSuggestion {
     fn from(spec: SlashCommandSpec) -> Self {
-        let description = if spec.command == SlashCommand::Filter {
-            if read_global_filter_enabled() {
-                "set pre-LLM input filter (current: on)"
-            } else {
-                "set pre-LLM input filter (current: off)"
-            }
-        } else {
-            spec.description
-        };
         Self {
             command: Some(spec.command),
             name: spec.name,
-            description,
+            description: spec.description,
             argument_hint: spec.argument_hint,
             insertion: spec.name,
         }
@@ -135,18 +125,10 @@ impl From<SlashCommandSpec> for CommandSuggestion {
 }
 
 fn filter_value_suggestions(prefix: &str) -> Vec<CommandSuggestion> {
-    let enabled = read_global_filter_enabled();
-    let values: [(&str, &str); 2] = if enabled {
-        [
-            ("on", "enable pre-LLM input filtering (current)"),
-            ("off", "disable pre-LLM input filtering"),
-        ]
-    } else {
-        [
-            ("off", "disable pre-LLM input filtering (current)"),
-            ("on", "enable pre-LLM input filtering"),
-        ]
-    };
+    let values: [(&str, &str); 2] = [
+        ("on", "enable pre-LLM input filtering"),
+        ("off", "disable pre-LLM input filtering"),
+    ];
     values
         .into_iter()
         .filter(|(value, _)| prefix.is_empty() || value.starts_with(prefix))
@@ -158,13 +140,6 @@ fn filter_value_suggestions(prefix: &str) -> Vec<CommandSuggestion> {
             insertion: value,
         })
         .collect()
-}
-
-fn read_global_filter_enabled() -> bool {
-    let Ok(text) = fs::read_to_string("data/ui-settings.json") else {
-        return false;
-    };
-    text.contains("\"pre_llm_filter_enabled\": true")
 }
 
 fn matches_command(command: SlashCommandSpec, prefix: &str) -> bool {
