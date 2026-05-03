@@ -21,6 +21,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use storage::JsonConversationStore;
+use uuid::Uuid;
 
 pub use agent_core::ResponseItem;
 pub use agent_protocol::{
@@ -37,6 +38,7 @@ pub fn crate_name() -> &'static str {
 
 pub struct AgentRuntime {
     config: AgentConfig,
+    default_conversation_id: String,
     context: AgentContext,
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
@@ -63,9 +65,11 @@ impl AgentRuntime {
         let memory = LongTermMemoryFacade::new(config.runtime.memory.clone())?;
 
         let system_prompt = config.runtime.system_prompt.clone();
+        let default_conversation_id = Uuid::now_v7().to_string();
 
         Ok(Self {
             config,
+            default_conversation_id,
             context,
             policy,
             model,
@@ -79,7 +83,7 @@ impl AgentRuntime {
     }
 
     pub fn default_conversation_id(&self) -> &str {
-        &self.config.runtime.default_conversation_id
+        &self.default_conversation_id
     }
 
     pub fn llm_model_name(&self) -> &str {

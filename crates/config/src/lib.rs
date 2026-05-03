@@ -22,7 +22,6 @@ pub struct LlmConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeConfig {
-    pub default_conversation_id: String,
     pub system_prompt: String,
     pub max_tool_roundtrips: usize,
     pub conversation_store_dir: PathBuf,
@@ -69,8 +68,6 @@ struct PartialLlmConfig {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct PartialRuntimeConfig {
-    #[serde(alias = "default_session_id")]
-    default_conversation_id: Option<String>,
     system_prompt: Option<String>,
     max_tool_roundtrips: Option<usize>,
     #[serde(alias = "session_store_dir")]
@@ -146,7 +143,6 @@ impl AgentConfig {
     fn defaults(workspace_root: PathBuf) -> Self {
         Self {
             runtime: RuntimeConfig {
-                default_conversation_id: "default".to_string(),
                 system_prompt: default_system_prompt(),
                 max_tool_roundtrips: 12,
                 conversation_store_dir: workspace_root.join("data").join("conversations"),
@@ -200,9 +196,6 @@ impl AgentConfig {
         }
 
         if let Some(runtime) = partial.runtime {
-            if let Some(value) = runtime.default_conversation_id {
-                self.runtime.default_conversation_id = value;
-            }
             if let Some(value) = runtime.system_prompt {
                 self.runtime.system_prompt = value;
             }
@@ -348,9 +341,6 @@ impl AgentConfig {
         }
         if let Ok(value) = env::var("CLOUDAGENT_SYSTEM_PROMPT") {
             self.runtime.system_prompt = value;
-        }
-        if let Ok(value) = env::var("CLOUDAGENT_DEFAULT_CONVERSATION_ID") {
-            self.runtime.default_conversation_id = value;
         }
         if let Ok(value) = env::var("CLOUDAGENT_MAX_TOOL_ROUNDTRIPS")
             && let Ok(parsed) = value.parse::<usize>()
