@@ -147,17 +147,6 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "How to work here",
-            Style::default()
-                .fg(Color::LightRed)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            "Use slash commands and approve tool actions directly in the console.",
-            Style::default().fg(Color::Gray),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
             "Try asking:",
             Style::default()
                 .fg(Color::LightRed)
