@@ -58,6 +58,7 @@ pub(crate) enum UiInputEvent {
     LocalConversationTitle(String),
     LocalConversationArchive(String),
     LocalFilterToggle(String),
+    LocalPermissionMode(String),
     ServerRequestAnswer {
         request_id: RequestId,
         decision: ServerRequestDecisionKind,

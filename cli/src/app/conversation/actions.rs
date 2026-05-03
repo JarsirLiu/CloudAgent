@@ -55,26 +55,26 @@ pub(crate) fn handle_tui_input(
             ));
         }
         ParsedInput::LocalInputError(message) => {
-            if let Some(mode) = message.strip_prefix("__permissions__:") {
-                if mode.trim().is_empty() {
-                    let current = app.run_state.permission_mode.clone();
-                    app.input_pane.set_permissions_picker(&current);
-                    return Ok(false);
-                }
-                if let Err(err) = apply_permission_mode(app, mode.trim()) {
-                    app.push_cell(HistoryCell::from_message(
-                        "conversation",
-                        err,
-                        HistoryTone::Warning,
-                    ));
-                }
-                return Ok(false);
-            }
             app.push_cell(HistoryCell::from_message(
                 "conversation",
                 message,
                 HistoryTone::Warning,
             ));
+        }
+        ParsedInput::LocalPermissionMode(mode) => {
+            if mode.trim().is_empty() {
+                let current = app.run_state.permission_mode.clone();
+                app.input_pane.set_permissions_picker(&current);
+                return Ok(false);
+            }
+            if let Err(err) = apply_permission_mode(app, mode.trim()) {
+                app.push_cell(HistoryCell::from_message(
+                    "conversation",
+                    err,
+                    HistoryTone::Warning,
+                ));
+            }
+            return Ok(false);
         }
         ParsedInput::LocalConversationCreate(new_conversation_id) => {
             app.input_pane.clear_session_picker();

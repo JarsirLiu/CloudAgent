@@ -72,7 +72,7 @@ impl TuiApp {
                 Some(ParsedInput::LocalFilterToggle(args))
             }
             InputPaneAction::Composer(ComposerIntent::Permissions(mode)) => {
-                Some(ParsedInput::LocalInputError(format!("__permissions__:{mode}")))
+                Some(ParsedInput::LocalPermissionMode(mode))
             }
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
             InputPaneAction::Composer(ComposerIntent::Help) => Some(ParsedInput::LocalHelp),
