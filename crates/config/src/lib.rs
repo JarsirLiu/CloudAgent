@@ -134,7 +134,7 @@ impl AgentConfig {
         }
         if self.llm.api_key.trim().is_empty() {
             bail!(
-                "missing LLM api key; set CLOUDAGENT_LLM_API_KEY or configs/agent.toml -> llm.api_key"
+                "missing LLM api key; set CLOUDAGENT_LLM_API_KEY or config.toml -> llm.api_key"
             );
         }
         Ok(())
@@ -146,7 +146,7 @@ impl AgentConfig {
                 system_prompt: default_system_prompt(),
                 max_tool_roundtrips: None,
                 conversation_store_dir: workspace_root.join("data").join("conversations"),
-                model_context_window: 128_000,
+                model_context_window: 200_000,
                 context_compaction_trigger_ratio: 0.90,
                 context_compaction_target_tokens: 36_000,
                 context_compaction_request_overhead_tokens: 28_000,
@@ -483,10 +483,10 @@ impl AgentConfig {
 fn config_search_paths(workspace_root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(home) = user_home_dir() {
-        paths.push(home.join(".cloudagent").join("agent.toml"));
+        paths.push(home.join(".cloudagent").join("config.toml"));
     }
-    paths.push(workspace_root.join(".cloudagent").join("agent.toml"));
-    paths.push(workspace_root.join("configs").join("agent.toml"));
+    paths.push(workspace_root.join(".cloudagent").join("config.toml"));
+    paths.push(workspace_root.join("configs").join("config.toml"));
     paths
 }
 

@@ -886,7 +886,7 @@ mod ui_state;
                 system_prompt: "You are a test agent.".to_string(),
                 max_tool_roundtrips: Some(4),
                 conversation_store_dir,
-                model_context_window: 128_000,
+                model_context_window: 200_000,
                 context_compaction_trigger_ratio: 0.90,
                 context_compaction_target_tokens: 36_000,
                 context_compaction_request_overhead_tokens: 28_000,
