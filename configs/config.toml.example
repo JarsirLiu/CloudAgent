@@ -1,0 +1,5 @@
+[llm]
+base_url = "https://api.openai.com/v1"
+api_key = "replace-with-your-api-key"
+model = "gpt-4.1-mini"
+temperature = 0.2

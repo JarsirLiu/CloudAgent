@@ -74,7 +74,7 @@ CloudAgent reads config from default paths in this order:
 Recommended (global default):
 ```bash
 mkdir -p ~/.cloudagent
-cp configs/agent.toml.example ~/.cloudagent/config.toml
+cp configs/config.toml.example ~/.cloudagent/config.toml
 # edit ~/.cloudagent/config.toml and set llm.api_key
 # (only [llm] is required; other settings use defaults)
 ```
@@ -165,7 +165,7 @@ CloudAgent 默认按以下顺序读取配置：
 推荐方式（全局默认）：
 ```bash
 mkdir -p ~/.cloudagent
-cp configs/agent.toml.example ~/.cloudagent/config.toml
+cp configs/config.toml.example ~/.cloudagent/config.toml
 # 编辑 ~/.cloudagent/config.toml，设置 llm.api_key
 # （只需要 [llm]，其它配置使用默认值）
 ```
@@ -196,3 +196,4 @@ cargo run -p cli
 | `/permissions` | 设置会话权限模式 |
 | `/clear` | 清空当前会话 |
 | `/exit` | 退出 CloudAgent |
+

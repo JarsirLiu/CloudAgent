@@ -504,6 +504,8 @@ fn config_search_paths(workspace_root: &Path) -> Vec<PathBuf> {
     }
     paths.push(workspace_root.join(".cloudagent").join("config.toml"));
     paths.push(workspace_root.join("configs").join("config.toml"));
+    // Backward compatibility with old project-local filename.
+    paths.push(workspace_root.join("configs").join("agent.toml"));
     paths
 }
 
