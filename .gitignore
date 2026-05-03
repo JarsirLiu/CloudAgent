@@ -27,3 +27,5 @@ configs/agent.toml
 Thumbs.db
 .idea/
 .vscode/
+
+configs/config.toml
