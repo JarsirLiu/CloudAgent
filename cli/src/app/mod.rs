@@ -1,20 +1,21 @@
 pub mod actions;
+mod app_lifecycle;
 mod conversation_facade;
 mod event_router;
 pub mod effects;
-mod runtime_updates;
 mod filter_toggle;
 mod items;
 mod parse;
+mod runtime_loop;
+mod runtime_updates;
 
-use crate::app::actions::handle_tui_input;
 use crate::app::filter_toggle::load_filter_enabled;
 use crate::app::parse::{ParsedInput, parse_line};
 use crate::input::intent::ComposerIntent;
 use crate::state::reducer::TurnDispatch;
 use crate::state::runtime_projection::RuntimeProjection;
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
-use crate::terminal::{Frame, ScrollbackSurface, TerminalGuard, UiEvent, spawn_tui_event_loop};
+use crate::terminal::Frame;
 use crate::transport::client::create_client;
 use crate::ui::chat_surface::ChatSurface;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
@@ -295,39 +296,6 @@ impl TuiApp {
         ChatSurface::render(self, frame);
     }
 
-    fn needs_animation_frame(&self) -> bool {
-        self.transcript_state.transcript.is_empty()
-            && self.run_state.history_loaded
-            && self.input_pane.composer_is_empty()
-            && self.welcome_animation_pause_ticks == 0
-    }
-
-    fn advance_animation_frame(&mut self) {
-        if self.transcript_state.transcript.is_empty()
-            && self.run_state.history_loaded
-            && self.input_pane.composer_is_empty()
-            && self.welcome_animation_pause_ticks == 0
-        {
-            self.welcome_animation_frame = self.welcome_animation_frame.wrapping_add(1);
-        }
-    }
-
-    fn pause_welcome_animation_for_input(&mut self) {
-        self.welcome_animation_pause_ticks = 8;
-    }
-
-    fn handle_animation_tick(&mut self) -> bool {
-        self.run_state.clear_expired_notices();
-        if self.welcome_animation_pause_ticks > 0 {
-            self.welcome_animation_pause_ticks -= 1;
-            return false;
-        }
-        if self.needs_animation_frame() {
-            self.advance_animation_frame();
-            return true;
-        }
-        false
-    }
 }
 
 pub async fn run_console(config: ConsoleConfig) -> Result<()> {
@@ -349,60 +317,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     client.send_command(AppClientCommand::RequestConversationHistory {
         conversation_id: conversation_id.clone(),
     })?;
-    let mut terminal = TerminalGuard::new()?;
-    let mut surface = ScrollbackSurface::new();
-    let mut events = spawn_tui_event_loop();
-    let mut needs_redraw = true;
-
-    loop {
-        if needs_redraw {
-            if app.take_pending_history_rebuild() {
-                surface.replace_all(&mut terminal, app.history_cells())?;
-                app.clear_pending_history_cells();
-            } else {
-                surface.reflow_if_width_changed(&mut terminal, app.history_cells())?;
-            }
-            let pending_history_lines =
-                surface.pending_lines(&terminal, app.drain_pending_history_cells())?;
-            let height = ChatSurface::desired_height(&app, terminal.terminal.size()?.width).max(1);
-            terminal.draw_with_history(height, pending_history_lines, |frame| app.render(frame))?;
-        }
-        let redraw_after_event = tokio::select! {
-            Some(event) = client.next_event() => {
-                event_router::handle_client_event(&mut app, event);
-                true
-            }
-            Some(event) = events.recv() => {
-                match event {
-                    UiEvent::Key(key) => {
-                        app.pause_welcome_animation_for_input();
-                        if let Some(input) = app.handle_key(key) {
-                            if handle_tui_input(&mut app, &client, input)? {
-                                break;
-                            }
-                        }
-                        true
-                    }
-                    UiEvent::Paste(text) => {
-                        app.pause_welcome_animation_for_input();
-                        let _ = app.input_pane.handle_paste(&text);
-                        true
-                    }
-                    UiEvent::Resize => true,
-                    UiEvent::Tick => {
-                        app.handle_animation_tick()
-                    }
-                }
-            }
-            else => break,
-        };
-        needs_redraw = redraw_after_event;
-
-        if app.run_state.should_exit {
-            break;
-        }
-    }
-
+    runtime_loop::run_tui_event_loop(&mut app, &mut client).await?;
     client.shutdown().await
 }
 
