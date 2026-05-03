@@ -19,6 +19,7 @@ impl AgentRuntime {
             .chat_with_approval_and_events(
                 conversation_id,
                 user_input,
+                "safe",
                 |_event| {},
                 |_request| async move {
                     Ok(ServerRequestDecision::decline(Some(
@@ -35,13 +36,20 @@ impl AgentRuntime {
         &self,
         conversation_id: &str,
         user_input: &str,
+        permission_mode: &str,
         approval: F,
     ) -> Result<AgentTurnOutput>
     where
         F: Fn(ServerRequest) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
-        self.chat_with_approval_and_events(conversation_id, user_input, |_event| {}, approval)
+        self.chat_with_approval_and_events(
+            conversation_id,
+            user_input,
+            permission_mode,
+            |_event| {},
+            approval,
+        )
             .await
     }
 
@@ -49,6 +57,7 @@ impl AgentRuntime {
         &self,
         conversation_id: &str,
         user_input: &str,
+        permission_mode: &str,
         mut on_event: E,
         approval: F,
     ) -> Result<AgentTurnOutput>
@@ -62,6 +71,7 @@ impl AgentRuntime {
             self,
             conversation_id,
             user_input,
+            permission_mode,
             &mut on_event,
             approval,
         )

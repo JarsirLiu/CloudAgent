@@ -28,9 +28,10 @@ pub(crate) fn approval_requirement_for_tool(
     spec: &ToolSpec,
     call: &ToolCall,
     workspace_root: &Path,
+    permission_mode: &str,
 ) -> ApprovalRequirement {
     match call.name.as_str() {
-        "shell_command" => shell_command_requirement(call, workspace_root),
+        "shell_command" => shell_command_requirement(call, workspace_root, permission_mode),
         _ if spec.requires_approval => ApprovalRequirement::required(
             spec.approval_reason
                 .clone()
@@ -47,31 +48,70 @@ struct ShellCommandArgs {
     workdir: Option<String>,
 }
 
-fn shell_command_requirement(call: &ToolCall, _workspace_root: &Path) -> ApprovalRequirement {
+fn shell_command_requirement(
+    call: &ToolCall,
+    _workspace_root: &Path,
+    permission_mode: &str,
+) -> ApprovalRequirement {
     let Ok(args) = serde_json::from_value::<ShellCommandArgs>(call.arguments.clone()) else {
         return ApprovalRequirement::required(
             "Shell commands require approval when their arguments cannot be classified safely.",
         );
     };
 
-    if workdir_mentions_parent_escape(args.workdir.as_deref()) {
-        return ApprovalRequirement::required(
-            "Shell commands that target directories outside the current workspace require approval.",
-        );
-    }
-
     let command = args.command.trim();
     if command.is_empty() {
         return ApprovalRequirement::required("Empty shell commands require approval.");
     }
 
-    if is_safe_readonly_command(command) {
-        return ApprovalRequirement::not_required();
-    }
+    let normalized = normalize_command(command);
+    let readonly = is_safe_readonly_command(command);
+    let workdir_escape = workdir_mentions_parent_escape(args.workdir.as_deref());
+    let dangerous = is_dangerous_command(&normalized);
+    let network = contains_network_indicator(&normalized);
+    let mutating = contains_write_operator(&normalized) || !readonly;
 
-    ApprovalRequirement::required(
-        "Shell commands that may modify files, access the network, or perform non-read-only actions require approval.",
-    )
+    match permission_mode {
+        "danger" => {
+            if dangerous {
+                ApprovalRequirement::required(
+                    "Dangerous shell commands (e.g. rm -rf / recursive delete) require approval even in danger mode.",
+                )
+            } else {
+                ApprovalRequirement::not_required()
+            }
+        }
+        "balanced" => {
+            if dangerous {
+                return ApprovalRequirement::required(
+                    "Dangerous shell commands require approval in balanced mode.",
+                );
+            }
+            if workdir_escape {
+                return ApprovalRequirement::required(
+                    "Balanced mode only allows read/write inside the workspace.",
+                );
+            }
+            if network {
+                return ApprovalRequirement::required(
+                    "Network shell commands require approval in balanced mode.",
+                );
+            }
+            if mutating || readonly {
+                return ApprovalRequirement::not_required();
+            }
+            ApprovalRequirement::required("Unclassified shell commands require approval.")
+        }
+        _ => {
+            if readonly && !workdir_escape {
+                ApprovalRequirement::not_required()
+            } else {
+                ApprovalRequirement::required(
+                    "Safe mode is read-only. Mutating, out-of-workspace, network, or unclassified shell commands require approval.",
+                )
+            }
+        }
+    }
 }
 
 fn workdir_mentions_parent_escape(workdir: Option<&str>) -> bool {
@@ -215,6 +255,18 @@ fn contains_network_indicator(command: &str) -> bool {
     network_markers
         .iter()
         .any(|marker| command.contains(marker))
+}
+
+fn is_dangerous_command(command: &str) -> bool {
+    let markers = [
+        "rm -rf",
+        "rm -fr",
+        "remove-item -recurse",
+        "del /s",
+        "rmdir /s",
+        "format ",
+    ];
+    markers.iter().any(|m| command.contains(m))
 }
 
 fn is_safe_git_command(command: &str) -> bool {

@@ -1,7 +1,7 @@
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
     FrontendMode, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind, TranscriptItem,
-    TurnItemKind, UserTurnInput,
+    TurnItemKind,
 };
 use crate::state::NoticeLevel;
 
@@ -299,27 +299,6 @@ fn summarize_args_preview(arguments_preview: &str) -> String {
     }
     out.push_str("… (truncated)");
     out
-}
-
-pub(crate) fn apply_ui_event(
-    line: &str,
-    conversation_id: &str,
-    _mode: FrontendMode,
-) -> UiInputEvent {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return UiInputEvent::Command(AppClientCommand::SubmitTurn(UserTurnInput {
-            conversation_id: conversation_id.to_string(),
-            content: String::new(),
-        }));
-    }
-
-    match trimmed {
-        _ => UiInputEvent::Command(AppClientCommand::SubmitTurn(UserTurnInput {
-            conversation_id: conversation_id.to_string(),
-            content: trimmed.to_string(),
-        })),
-    }
 }
 
 pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Option<ItemDispatch> {

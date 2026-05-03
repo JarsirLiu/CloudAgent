@@ -24,6 +24,7 @@ pub(crate) struct ToolBatchRunner<'a> {
     runtime: &'a AgentRuntime,
     conversation_id: &'a str,
     turn_id: &'a str,
+    permission_mode: &'a str,
     cancellation_token: CancellationToken,
     tool_specs: &'a [ToolSpec],
 }
@@ -33,6 +34,7 @@ impl<'a> ToolBatchRunner<'a> {
         runtime: &'a AgentRuntime,
         conversation_id: &'a str,
         turn_id: &'a str,
+        permission_mode: &'a str,
         cancellation_token: CancellationToken,
         tool_specs: &'a [ToolSpec],
     ) -> Self {
@@ -40,6 +42,7 @@ impl<'a> ToolBatchRunner<'a> {
             runtime,
             conversation_id,
             turn_id,
+            permission_mode,
             cancellation_token,
             tool_specs,
         }
@@ -111,7 +114,12 @@ impl<'a> ToolBatchRunner<'a> {
             }
 
             let approval_requirement =
-                approval_requirement_for_tool(spec, &call, &self.runtime.context.workspace_root);
+                approval_requirement_for_tool(
+                    spec,
+                    &call,
+                    &self.runtime.context.workspace_root,
+                    self.permission_mode,
+                );
             if approval_requirement.requires_approval
                 && !self.runtime.is_tool_approved_for_session(&call)
             {
@@ -500,6 +508,7 @@ fn transcript_item_from_tool_result(
         },
     }
 }
+
 
 fn request_reason(approval_reason: Option<&str>, tool_name: &str) -> String {
     approval_reason

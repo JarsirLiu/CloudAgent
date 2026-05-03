@@ -8,15 +8,15 @@ pub(crate) const DEFAULT_PERMISSION_MODE: &str = "safe";
 pub(crate) const PERMISSION_MODE_SPECS: [PermissionModeSpec; 3] = [
     PermissionModeSpec {
         mode: "safe",
-        label: "read any dir; write only workspace; risky commands require approval",
+        label: "read-only mode; writes and risky commands require approval",
     },
     PermissionModeSpec {
         mode: "balanced",
-        label: "read any dir; write only workspace; fewer command approvals",
+        label: "read/write only inside workspace; risky commands require approval",
     },
     PermissionModeSpec {
         mode: "danger",
-        label: "read/write any dir and run commands without approval",
+        label: "read/write any dir; dangerous commands (e.g. rm -rf) still require approval",
     },
 ];
 

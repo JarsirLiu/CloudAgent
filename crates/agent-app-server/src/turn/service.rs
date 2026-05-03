@@ -19,6 +19,7 @@ pub(crate) async fn submit_turn(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
     content: String,
+    permission_mode: String,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) {
@@ -44,6 +45,7 @@ pub(crate) async fn submit_turn(
         runtime,
         conversation_id.clone(),
         content,
+        permission_mode,
         TurnSpawnDependencies {
             event_tx: event_tx.clone(),
             state: state.clone(),
@@ -187,7 +189,13 @@ fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
         .max(1)
 }
 
-fn spawn_turn(runtime: Arc<AgentRuntime>, conversation_id: String, user_input: String, deps: TurnSpawnDependencies) -> JoinHandle<()> {
+fn spawn_turn(
+    runtime: Arc<AgentRuntime>,
+    conversation_id: String,
+    user_input: String,
+    permission_mode: String,
+    deps: TurnSpawnDependencies,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let finish_events = deps.event_tx.clone();
         let state_for_finish = deps.state.clone();
@@ -206,6 +214,7 @@ fn spawn_turn(runtime: Arc<AgentRuntime>, conversation_id: String, user_input: S
             .chat_with_approval_and_events(
                 &conversation_id,
                 &user_input,
+                &permission_mode,
                 move |event| {
                     let event = event.clone();
                     let active_turn_id = active_turn_id_for_events.clone();

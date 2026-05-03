@@ -12,6 +12,7 @@ pub(crate) async fn run_turn_with_approval<E, F, Fut>(
     runtime: &AgentRuntime,
     conversation_id: &str,
     user_input: &str,
+    permission_mode: &str,
     on_event: &mut E,
     approval: F,
 ) -> Result<TurnOutcome>
@@ -85,6 +86,7 @@ where
                     runtime,
                     conversation_id,
                     turn_id: &turn_id,
+                    permission_mode,
                     cancellation_token: active_turn.cancellation_token.clone(),
                     on_event: &mut event_sink,
                 },

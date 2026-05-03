@@ -1,4 +1,4 @@
-use crate::app::commands::parse::{ParsedInput, parse_line};
+use crate::app::commands::parse::ParsedInput;
 use crate::app::TuiApp;
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::history_cell::HistoryTone;
@@ -32,11 +32,15 @@ impl TuiApp {
             return None;
         }
         match self.input_pane.handle_key(key)? {
-            InputPaneAction::Composer(ComposerIntent::Submit(text)) => Some(parse_line(
-                &text,
-                &self.conversation_id,
-                self.console_state.mode,
-            )),
+            InputPaneAction::Composer(ComposerIntent::Submit(text)) => {
+                Some(ParsedInput::Command(AppClientCommand::SubmitTurn(
+                    agent_protocol::UserTurnInput {
+                        conversation_id: self.conversation_id.clone(),
+                        content: text,
+                        permission_mode: self.run_state.permission_mode.clone(),
+                    },
+                )))
+            }
             InputPaneAction::Composer(ComposerIntent::Interrupt) => {
                 if self.console_state.mode == FrontendMode::Idle {
                     self.run_state.should_exit = true;

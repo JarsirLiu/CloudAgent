@@ -111,7 +111,7 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         command: SlashCommand::Permissions,
         name: "permissions",
         aliases: &[],
-        description: "set session permissions: safe(read-any/write-workspace), balanced(fewer approvals), danger(full access)",
+        description: "set session permissions: safe(read-only), balanced(workspace rw), danger(full access; dangerous commands still require approval)",
         argument_hint: None,
         supports_inline_args: true,
     },

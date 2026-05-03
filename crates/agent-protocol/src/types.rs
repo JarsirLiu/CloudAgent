@@ -12,6 +12,12 @@ pub enum FrontendMode {
 pub struct UserTurnInput {
     pub conversation_id: String,
     pub content: String,
+    #[serde(default = "default_permission_mode")]
+    pub permission_mode: String,
+}
+
+fn default_permission_mode() -> String {
+    "safe".to_string()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

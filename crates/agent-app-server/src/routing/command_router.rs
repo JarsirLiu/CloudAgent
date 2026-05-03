@@ -190,6 +190,7 @@ pub(crate) async fn handle_command(
                 &state,
                 input.conversation_id,
                 input.content,
+                input.permission_mode,
                 auto_approve,
                 auto_approve_reason,
             )
