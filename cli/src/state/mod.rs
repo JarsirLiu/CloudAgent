@@ -1,11 +1,9 @@
-pub mod live_state;
 pub mod reducer;
 pub mod runtime_projection;
 pub mod selectors;
 pub mod status_view_model;
 
 use crate::ui::widgets::history_cell::{HistoryCell, Transcript};
-use live_state::RunLiveState;
 use agent_protocol::{ConversationTurn, FrontendMode, ModelUsage, RequestId};
 use std::time::{Duration, Instant};
 
@@ -67,7 +65,6 @@ pub struct RunState {
     pub expand_tool_details: bool,
     pub pre_llm_filter_enabled: bool,
     pub permission_mode: String,
-    pub(crate) live_state: RunLiveState,
 }
 
 impl RunState {
@@ -87,7 +84,6 @@ impl RunState {
             expand_tool_details: false,
             pre_llm_filter_enabled: false,
             permission_mode: "safe".to_string(),
-            live_state: RunLiveState::default(),
         }
     }
 }
