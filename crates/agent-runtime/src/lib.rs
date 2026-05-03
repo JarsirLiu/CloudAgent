@@ -1,4 +1,5 @@
 mod engine;
+mod audit;
 mod observability;
 mod state;
 mod tasks;
@@ -21,6 +22,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use storage::JsonConversationStore;
+use crate::audit::RuntimeAudit;
+use crate::observability::verify_audit_chain;
 
 pub use agent_core::ResponseItem;
 pub use agent_protocol::{
@@ -79,6 +82,9 @@ impl AgentRuntime {
 
     pub async fn run_startup_retention_cleanup(&self) {
         let _ = self.store.prune_archived_conversations_if_needed().await;
+        if let Err(err) = verify_audit_chain(&self.context.workspace_root) {
+            tracing::warn!("audit chain verify failed on startup: {err:#}");
+        }
     }
 
     pub fn llm_model_name(&self) -> &str {
@@ -108,7 +114,9 @@ impl AgentRuntime {
             approvals.insert(tool_approval_key(call));
         }
     }
-
+    pub(crate) fn audit(&self) -> RuntimeAudit<'_> {
+        RuntimeAudit::new(self)
+    }
 }
 
 fn tool_approval_key(call: &ToolCall) -> String {

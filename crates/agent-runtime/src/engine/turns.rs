@@ -57,6 +57,7 @@ impl AgentRuntime {
         F: Fn(ServerRequest) -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
     {
+        self.audit().turn_started(conversation_id, user_input);
         let outcome = super::run_turn_with_approval(
             self,
             conversation_id,
@@ -65,6 +66,13 @@ impl AgentRuntime {
             approval,
         )
         .await?;
+        self.audit().turn_completed(
+            conversation_id,
+            &outcome.turn_id,
+            &format!("{:?}", outcome.state),
+            outcome.events.len(),
+            outcome.model_name.as_deref(),
+        );
         Ok(self.outcome_to_output(outcome))
     }
 

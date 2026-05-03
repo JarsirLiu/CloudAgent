@@ -123,15 +123,18 @@ where
                 interrupted_history.ensure_tool_outputs_present();
                 runtime.save_history(interrupted_history.clone()).await?;
                 runtime.rollout_recorder.flush().await?;
-                let outcome = TurnOutcome {
-                    turn_id: turn_id.clone(),
-                    events,
-                    history: interrupted_history,
-                    model_name: None,
-                    state: TurnState::Cancelled,
-                };
-                return Ok(outcome);
-            }
+            let outcome = TurnOutcome {
+                turn_id: turn_id.clone(),
+                events,
+                history: interrupted_history,
+                model_name: None,
+                state: TurnState::Cancelled,
+            };
+            runtime
+                .audit()
+                .turn_cancelled(conversation_id, &turn_id, "interrupted by client");
+            return Ok(outcome);
+        }
             let mut history = runtime.load_history(conversation_id).await?;
             let failed_item = history.push_assistant_message(
                 Some(format!("Turn failed: {err:#}")),
@@ -160,6 +163,9 @@ where
                 model_name: None,
                 state: TurnState::Failed,
             };
+            runtime
+                .audit()
+                .turn_failed(conversation_id, &turn_id, &error_text);
             Ok(outcome)
         }
     }

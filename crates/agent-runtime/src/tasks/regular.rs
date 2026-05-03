@@ -311,6 +311,12 @@ where
                 tool_count: tool_specs.len(),
             },
         );
+        runtime.audit().model_request_started(
+            conversation_id,
+            turn_id,
+            model_request.messages.len(),
+            tool_specs.len(),
+        );
 
         let mut streaming_assistant_item_id: Option<String> = None;
         let response = runtime
@@ -389,6 +395,13 @@ where
                 has_content: response.content.is_some(),
                 tool_call_count: tool_calls.len(),
             },
+        );
+        runtime.audit().model_response_received(
+            conversation_id,
+            turn_id,
+            response.model_name.as_deref(),
+            response.content.is_some(),
+            tool_calls.len(),
         );
         if let Some(usage) = response.usage.clone() {
             turn_total_usage.add_assign(&usage);

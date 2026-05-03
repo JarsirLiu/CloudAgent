@@ -88,6 +88,12 @@ impl<'a> ToolBatchRunner<'a> {
                     title: Some(tool_item_title(&call)),
                 },
             );
+            self.runtime.audit().tool_started(
+                self.conversation_id,
+                self.turn_id,
+                &call,
+                summarize_arguments(&call.arguments),
+            );
 
             let request_key = tool_request_key(&call);
             if denied_requests_at_batch_start.contains(&request_key) {
@@ -188,6 +194,13 @@ impl<'a> ToolBatchRunner<'a> {
                     item: transcript_item_from_tool_result(&tool_item_id, &call.name, &result),
                 },
             );
+            self.runtime.audit().tool_completed(
+                self.conversation_id,
+                self.turn_id,
+                &call,
+                result.is_error,
+                result.content.chars().take(400).collect::<String>(),
+            );
             self.record_tool_result(context_manager, result).await?;
         }
 
@@ -239,6 +252,13 @@ impl<'a> ToolBatchRunner<'a> {
                 request: request.clone(),
             },
         );
+        self.runtime.audit().approval_requested(
+            self.conversation_id,
+            self.turn_id,
+            call,
+            request_reason(approval_reason, &call.name),
+            summarize_arguments(&call.arguments),
+        );
         let decision = self
             .runtime
             .await_approval(&self.cancellation_token, approval(request.clone()))
@@ -256,6 +276,9 @@ impl<'a> ToolBatchRunner<'a> {
                 decision: decision.clone(),
             },
         );
+        self.runtime
+            .audit()
+            .approval_decided(self.conversation_id, self.turn_id, call, &decision);
         if decision.is_approved() {
             if matches!(
                 decision.decision,
@@ -476,6 +499,12 @@ fn transcript_item_from_tool_result(
             structured: result.structured.clone(),
         },
     }
+}
+
+fn request_reason(approval_reason: Option<&str>, tool_name: &str) -> String {
+    approval_reason
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("Tool `{tool_name}` requires approval."))
 }
 
 fn denied_transcript_item(
