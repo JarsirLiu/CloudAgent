@@ -2,7 +2,7 @@
 set -eu
 
 PREFIX="$HOME/.local/bin"
-BINARIES="cli agentd gatewayd"
+BINARIES="cli agentd gatewayd cloudagent"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
@@ -30,6 +30,7 @@ CANDIDATES="\
 $ROOT_DIR/cli\
  $ROOT_DIR/agentd\
  $ROOT_DIR/gatewayd\
+ $ROOT_DIR/scripts/cloudagent\
  $ROOT_DIR/target/release/cli\
  $ROOT_DIR/target/release/agentd\
  $ROOT_DIR/target/release/gatewayd"
@@ -45,7 +46,7 @@ for bin in $CANDIDATES; do
 done
 
 if [ "$installed" -ne 1 ]; then
-  echo "no binaries found. expected one of: cli, agentd, gatewayd" >&2
+  echo "no binaries found. expected cli/agentd/gatewayd or scripts/cloudagent" >&2
   echo "tip: build first with: cargo build --release -p cli -p agentd -p gatewayd" >&2
   exit 1
 fi
@@ -59,7 +60,11 @@ case ":$PATH:" in
         printf "\n%s\n" "$add_path_line" >> "$rc"
         echo "updated PATH in $rc"
       fi
-    done
+done
+
+if [ ! -f "$PREFIX/cloudagent" ]; then
+  echo "warning: cloudagent launcher missing; install may be incomplete" >&2
+fi
     echo "open a new terminal or run: export PATH=\"$HOME/.local/bin:$PATH\""
     ;;
 esac
@@ -67,3 +72,4 @@ esac
 warn_conflicts
 
 echo "done. active install prefix: $PREFIX"
+echo "try: cloudagent start"

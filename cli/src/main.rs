@@ -1,8 +1,11 @@
 use agent_runtime::AgentRuntime;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use cli::{ConsoleConfig, ConsoleConnection, run_console};
 use config::AgentConfig;
 use std::ffi::OsString;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -10,9 +13,23 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     cli::terminal::install_panic_hook();
 
+    ensure_user_config_exists()?;
     let workspace_root = std::env::current_dir()?;
     let config = AgentConfig::load(workspace_root)?;
-    let runtime = Arc::new(AgentRuntime::from_config(config)?);
+    let runtime = match AgentRuntime::from_config(config) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(err) => {
+            if err.to_string().contains("missing LLM api key") {
+                let path = default_user_config_path()?;
+                try_open_config_in_editor(&path);
+                bail!(
+                    "missing LLM api key. please edit {} and set llm.api_key",
+                    path.display()
+                );
+            }
+            return Err(err);
+        }
+    };
     runtime.persist_config_snapshot().await;
     runtime.run_startup_retention_cleanup().await;
     let conversation_id = runtime.ensure_active_conversation().await?;
@@ -55,6 +72,41 @@ async fn main() -> Result<()> {
         connection,
     })
     .await
+}
+
+fn ensure_user_config_exists() -> Result<()> {
+    let path = default_user_config_path()?;
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let template = r#"[llm]
+base_url = "https://api.openai.com/v1"
+api_key = "replace-with-your-api-key"
+model = "gpt-4.1-mini"
+temperature = 0.2
+"#;
+    fs::write(&path, template)?;
+    eprintln!("created default config: {}", path.display());
+    Ok(())
+}
+
+fn try_open_config_in_editor(path: &PathBuf) {
+    if let Ok(editor) = std::env::var("EDITOR") {
+        let _ = Command::new(editor).arg(path).status();
+    } else {
+        eprintln!("hint: set EDITOR (e.g. export EDITOR=vim) to auto-open config.");
+    }
+}
+
+fn default_user_config_path() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .ok_or_else(|| anyhow::anyhow!("cannot resolve HOME/USERPROFILE"))?;
+    Ok(home.join(".cloudagent").join("config.toml"))
 }
 
 fn exe_name(base: &str) -> String {

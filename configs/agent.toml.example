@@ -3,19 +3,3 @@ base_url = "https://api.openai.com/v1"
 api_key = "replace-with-your-api-key"
 model = "gpt-4.1-mini"
 temperature = 0.2
-
-[runtime]
-session_store_dir = "data/sessions"
-system_prompt = "You are cloudagent."
-model_context_window = 128000
-
-[runtime.memory]
-enabled = true
-mode = "basic" # off | basic | evolve
-root_dir = "data/state/memory"
-max_inject_chars = 6000
-min_turns_to_persist = 8
-
-[tools]
-default_shell_timeout_ms = 120000
-max_read_chars = 20000

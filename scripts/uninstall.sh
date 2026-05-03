@@ -2,7 +2,7 @@
 set -eu
 
 PREFIX="$HOME/.local/bin"
-BINARIES="cli agentd gatewayd"
+BINARIES="cli agentd gatewayd cloudagent"
 
 for name in $BINARIES; do
   target="$PREFIX/$name"

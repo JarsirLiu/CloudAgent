@@ -45,6 +45,12 @@ for b in cli agentd gatewayd; do
   fi
 done
 
+launcher=$(find "$WORK" -type f -name "cloudagent" | head -n 1 || true)
+if [ -n "$launcher" ]; then
+  install -m 755 "$launcher" "$PREFIX/cloudagent"
+  echo "upgraded: $PREFIX/cloudagent"
+fi
+
 if [ "$found" -ne 1 ]; then
   echo "upgrade failed: no cli/agentd/gatewayd binaries in release asset" >&2
   exit 1

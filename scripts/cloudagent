@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+set -eu
+
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+cmd="${1:-start}"
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+
+case "$cmd" in
+  start)
+    exec "$SELF_DIR/cli" "$@"
+    ;;
+  version|--version|-v)
+    exec "$SELF_DIR/cli" --version
+    ;;
+  help|--help|-h)
+    cat <<'EOF'
+cloudagent commands:
+  cloudagent start [args...]     Start CLI (default)
+  cloudagent version             Show version
+EOF
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    echo "run 'cloudagent help' for available commands" >&2
+    exit 1
+    ;;
+esac

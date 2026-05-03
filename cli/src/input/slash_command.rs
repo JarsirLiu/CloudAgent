@@ -45,7 +45,7 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         command: SlashCommand::Interrupt,
         name: "interrupt",
-        aliases: &["stop"],
+        aliases: &[],
         description: "interrupt the running turn",
         argument_hint: None,
         supports_inline_args: false,
@@ -93,7 +93,7 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         command: SlashCommand::DeleteConversation,
         name: "delete",
-        aliases: &["del", "rm"],
+        aliases: &[],
         description: "hard delete a conversation",
         argument_hint: Some("<id>"),
         supports_inline_args: true,
@@ -109,7 +109,7 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         command: SlashCommand::Permissions,
         name: "permissions",
-        aliases: &["perm"],
+        aliases: &[],
         description: "set session permissions: safe(read-any/write-workspace), balanced(fewer approvals), danger(full access)",
         argument_hint: None,
         supports_inline_args: true,
@@ -125,7 +125,7 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         command: SlashCommand::Exit,
         name: "exit",
-        aliases: &["quit"],
+        aliases: &[],
         description: "exit CloudAgent",
         argument_hint: None,
         supports_inline_args: false,
