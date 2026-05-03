@@ -19,6 +19,14 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     };
 
     let mut parts = Vec::new();
+    parts.push(format!(
+        "filter {}",
+        if app.run_state.pre_llm_filter_enabled {
+            "on"
+        } else {
+            "off"
+        }
+    ));
     if let Some(usage) = &app.run_state.last_turn_usage {
         parts.push(format!(
             "in {} · out {} · cached {} · total {}",
@@ -59,4 +67,3 @@ fn compact_number(value: u64) -> String {
 fn format_tokens(value: u64) -> String {
     format!("{} tokens", compact_number(value))
 }
-

@@ -51,7 +51,7 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
             ));
             Ok(())
         }
-        _ => Err("Usage: /filter <on|off>"),
+        _ => Err("Invalid filter option. Use /filter and choose on/off."),
     }
 }
 
