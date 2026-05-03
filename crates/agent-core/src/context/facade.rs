@@ -1,4 +1,5 @@
 use crate::context::{
+    BudgetedFragments, MemoryBudgetSource, build_memory_budgeted_fragments,
     CompactionSummary, ContextCompactionConfig, ContextCompactionPlan, ContextCompactionResult,
     ContextInputFilterService, ContextManager, FilterPolicy, apply_history_compaction,
     build_compaction_summary_request, plan_manual_history_compaction,
@@ -137,6 +138,30 @@ impl ContextFacade {
         )
     }
 
+    pub fn build_memory_budgeted_fragments(
+        &self,
+        history: &[ResponseItem],
+        environment_fragment: ResponseItem,
+        tool_specs: &[ToolSpec],
+        workspace_root: &Path,
+        model_context_window: u64,
+        trigger_ratio: f32,
+        configured_overhead_tokens: usize,
+        source: MemoryBudgetSource,
+    ) -> BudgetedFragments {
+        build_memory_budgeted_fragments(
+            self,
+            history,
+            environment_fragment,
+            tool_specs,
+            workspace_root,
+            model_context_window,
+            trigger_ratio,
+            configured_overhead_tokens,
+            source,
+        )
+    }
+
     pub async fn prepare_model_request<F, Fut>(
         &self,
         context_manager: &mut ContextManager,
@@ -146,6 +171,8 @@ impl ContextFacade {
         temperature: f32,
         compaction_config: ContextCompactionConfig,
         estimated_total_tokens: usize,
+        memory_floor_tokens: usize,
+        safety_buffer_tokens: usize,
         summarize_compaction: F,
     ) -> Result<PreparedModelRequest>
     where
@@ -157,6 +184,8 @@ impl ContextFacade {
                 as usize;
         let available_history_tokens = trigger_tokens
             .saturating_sub(compaction_config.request_overhead_tokens)
+            .saturating_sub(memory_floor_tokens)
+            .saturating_sub(safety_buffer_tokens)
             .max(1);
         let compaction_requested = estimated_total_tokens > available_history_tokens;
 

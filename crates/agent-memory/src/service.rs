@@ -35,4 +35,16 @@ impl MemoryService {
         }
         self.repo.append_l2_fact(&format!("- {}", normalized))
     }
+
+    pub fn persist_sop_hint(&self, summary: &str) -> Result<()> {
+        let hint = summary.lines().next().unwrap_or("").trim();
+        if hint.is_empty() {
+            return Ok(());
+        }
+        self.repo.append_l3_sop("Reusable flow", hint)
+    }
+
+    pub fn archive_session_line(&self, line: &str) -> Result<()> {
+        self.repo.append_l4_archive(line)
+    }
 }

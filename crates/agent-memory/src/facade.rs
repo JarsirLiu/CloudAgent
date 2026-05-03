@@ -34,6 +34,9 @@ impl LongTermMemoryFacade {
         });
         if let Some(summary) = summary {
             self.service.persist_summary_fact(&summary)?;
+            self.service.persist_sop_hint(&summary)?;
+            self.service
+                .archive_session_line(&format!("turn={} summary={summary}", history.turn_count))?;
         }
         Ok(())
     }

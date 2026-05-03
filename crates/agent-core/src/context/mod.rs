@@ -1,4 +1,5 @@
 mod compaction;
+mod budget;
 mod environment;
 mod facade;
 mod fragments;
@@ -11,6 +12,7 @@ pub use compaction::{
     apply_history_compaction, build_compaction_summary_request, plan_history_compaction,
     plan_manual_history_compaction,
 };
+pub use budget::{BucketAudit, BudgetedFragments, MemoryBudgetSource, build_memory_budgeted_fragments};
 pub use environment::EnvironmentContext;
 pub use facade::ContextFacade;
 pub use fragments::ContextFragment;

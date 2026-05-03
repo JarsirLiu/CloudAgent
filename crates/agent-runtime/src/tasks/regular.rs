@@ -1,10 +1,12 @@
 use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::tools::ToolBatchRunner;
 use crate::{AgentRuntime, emit_event};
+use crate::observability::{ContextBudgetLogEntry, append_context_budget_log};
 use agent_core::{
     ContextCompactionConfig, ContextFragment, ContextManager, ContextFacade, ConversationHistory,
     ModelUsage, RolloutItem,
 };
+use agent_core::context::MemoryBudgetSource;
 use agent_protocol::{
     EventMsg, ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemDeltaKind,
     TurnItemKind, TurnState,
@@ -76,6 +78,12 @@ where
         .specs_for_context("explore", "repository_analysis");
     let mut denied_requests = HashSet::new();
     let environment_context = runtime.environment_context();
+    let raw_memory_fragment = runtime
+        .memory
+        .build_load_plan()
+        .ok()
+        .and_then(|p| p.inject_prefix)
+        .filter(|s| !s.trim().is_empty());
     let mut turn_total_usage = ModelUsage::default();
     let context_facade = ContextFacade::new();
     let mut last_sdk_context_tokens: Option<usize> = None;
@@ -143,15 +151,63 @@ where
             )
         };
 
+        let budgeted = context_facade.build_memory_budgeted_fragments(
+            &context_manager.history().messages,
+            environment_context.render(),
+            &tool_specs,
+            &runtime.config.workspace_root,
+            runtime.config.runtime.model_context_window,
+            runtime.config.runtime.context_compaction_trigger_ratio,
+            runtime
+                .config
+                .runtime
+                .context_compaction_request_overhead_tokens,
+            MemoryBudgetSource {
+                memory: raw_memory_fragment.clone(),
+                skills: None,
+                mcp: None,
+                enable_skills_bucket: runtime.config.runtime.enable_skill_bucket,
+                enable_mcp_bucket: runtime.config.runtime.enable_mcp_bucket,
+                post_compact_budget_tokens: runtime.config.runtime.post_compact_token_budget,
+                post_compact_memory_floor_tokens: runtime
+                    .config
+                    .runtime
+                    .post_compact_memory_floor_tokens,
+                post_compact_skills_budget_tokens: runtime
+                    .config
+                    .runtime
+                    .post_compact_skills_token_budget,
+                post_compact_mcp_budget_tokens: runtime.config.runtime.post_compact_mcp_token_budget,
+                post_compact_max_tokens_per_memory: runtime
+                    .config
+                    .runtime
+                    .post_compact_max_tokens_per_memory,
+                post_compact_max_tokens_per_skill: runtime
+                    .config
+                    .runtime
+                    .post_compact_max_tokens_per_skill,
+                post_compact_max_tokens_per_mcp: runtime
+                    .config
+                    .runtime
+                    .post_compact_max_tokens_per_mcp,
+                safety_buffer_tokens: runtime
+                    .config
+                    .runtime
+                    .context_budget_safety_buffer_tokens,
+            },
+        );
+
         let prepared = context_facade
             .prepare_model_request(
                 &mut context_manager,
                 &runtime.config.workspace_root,
-                vec![environment_context.render()],
+                budgeted.fragments,
                 tool_specs.clone(),
                 runtime.config.llm.temperature,
                 compaction_config,
                 estimated_total_tokens,
+                runtime.config.runtime.post_compact_memory_floor_tokens,
+                runtime.config.runtime.context_budget_safety_buffer_tokens,
                 |summary_request| async {
                     let response = runtime
                         .complete_model_request(&cancellation_token, summary_request)
@@ -160,6 +216,44 @@ where
                 },
             )
             .await?;
+        let history_tokens_now = context_facade.estimate_history_tokens_for_compaction(
+            &context_manager.history().messages,
+            &runtime.config.workspace_root,
+        );
+        let trigger_tokens = ((runtime.config.runtime.model_context_window as f32)
+            * runtime.config.runtime.context_compaction_trigger_ratio)
+            as usize;
+        let overhead_now = compaction_config.request_overhead_tokens;
+        let available_history_tokens = trigger_tokens
+            .saturating_sub(overhead_now)
+            .saturating_sub(runtime.config.runtime.post_compact_memory_floor_tokens)
+            .saturating_sub(runtime.config.runtime.context_budget_safety_buffer_tokens)
+            .max(1);
+        let compaction_triggered_now = estimated_total_tokens > available_history_tokens;
+        let _ = append_context_budget_log(
+            &runtime.config.workspace_root,
+            &ContextBudgetLogEntry {
+                conversation_id: conversation_id.to_string(),
+                turn_id: turn_id.to_string(),
+                model_context_window: runtime.config.runtime.model_context_window,
+                trigger_ratio: runtime.config.runtime.context_compaction_trigger_ratio,
+                trigger_tokens,
+                estimated_total_tokens,
+                sdk_total_tokens: last_sdk_context_tokens,
+                history_tokens: history_tokens_now,
+                overhead_tokens: overhead_now,
+                memory_floor_tokens: runtime.config.runtime.post_compact_memory_floor_tokens,
+                safety_buffer_tokens: runtime.config.runtime.context_budget_safety_buffer_tokens,
+                compaction_triggered: compaction_triggered_now,
+                hard_cap_triggered: budgeted.audit.hard_cap_triggered,
+                memory_before: budgeted.audit.memory_before,
+                memory_after: budgeted.audit.memory_after,
+                skills_before: budgeted.audit.skills_before,
+                skills_after: budgeted.audit.skills_after,
+                mcp_before: budgeted.audit.mcp_before,
+                mcp_after: budgeted.audit.mcp_after,
+            },
+        );
         if prepared.compaction_requested {
             emit_event(
                 &mut events,

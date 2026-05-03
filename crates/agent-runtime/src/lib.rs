@@ -1,4 +1,5 @@
 mod engine;
+mod observability;
 mod state;
 mod tasks;
 mod tools;

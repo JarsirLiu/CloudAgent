@@ -34,6 +34,16 @@ pub struct RuntimeConfig {
     pub context_compaction_preserved_tail_tokens: usize,
     pub context_compaction_summary_source_tokens: usize,
     pub memory: MemoryConfig,
+    pub enable_skill_bucket: bool,
+    pub enable_mcp_bucket: bool,
+    pub post_compact_token_budget: usize,
+    pub post_compact_memory_floor_tokens: usize,
+    pub post_compact_skills_token_budget: usize,
+    pub post_compact_mcp_token_budget: usize,
+    pub post_compact_max_tokens_per_memory: usize,
+    pub post_compact_max_tokens_per_skill: usize,
+    pub post_compact_max_tokens_per_mcp: usize,
+    pub context_budget_safety_buffer_tokens: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -73,6 +83,16 @@ struct PartialRuntimeConfig {
     context_compaction_preserved_tail_tokens: Option<usize>,
     context_compaction_summary_source_tokens: Option<usize>,
     memory: Option<PartialMemoryConfig>,
+    enable_skill_bucket: Option<bool>,
+    enable_mcp_bucket: Option<bool>,
+    post_compact_token_budget: Option<usize>,
+    post_compact_memory_floor_tokens: Option<usize>,
+    post_compact_skills_token_budget: Option<usize>,
+    post_compact_mcp_token_budget: Option<usize>,
+    post_compact_max_tokens_per_memory: Option<usize>,
+    post_compact_max_tokens_per_skill: Option<usize>,
+    post_compact_max_tokens_per_mcp: Option<usize>,
+    context_budget_safety_buffer_tokens: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -138,6 +158,16 @@ impl AgentConfig {
                 context_compaction_preserved_tail_tokens: 12_000,
                 context_compaction_summary_source_tokens: 24_000,
                 memory: MemoryConfig::default(),
+                enable_skill_bucket: false,
+                enable_mcp_bucket: false,
+                post_compact_token_budget: 50_000,
+                post_compact_memory_floor_tokens: 6_000,
+                post_compact_skills_token_budget: 25_000,
+                post_compact_mcp_token_budget: 8_000,
+                post_compact_max_tokens_per_memory: 6_000,
+                post_compact_max_tokens_per_skill: 5_000,
+                post_compact_max_tokens_per_mcp: 3_000,
+                context_budget_safety_buffer_tokens: 8_000,
             },
             llm: LlmConfig {
                 base_url: "https://api.openai.com/v1".to_string(),
@@ -219,6 +249,36 @@ impl AgentConfig {
                 if let Some(value) = memory.min_turns_to_persist {
                     self.runtime.memory.min_turns_to_persist = value.max(1);
                 }
+            }
+            if let Some(value) = runtime.enable_skill_bucket {
+                self.runtime.enable_skill_bucket = value;
+            }
+            if let Some(value) = runtime.enable_mcp_bucket {
+                self.runtime.enable_mcp_bucket = value;
+            }
+            if let Some(value) = runtime.post_compact_token_budget {
+                self.runtime.post_compact_token_budget = value.max(1_024);
+            }
+            if let Some(value) = runtime.post_compact_memory_floor_tokens {
+                self.runtime.post_compact_memory_floor_tokens = value.max(512);
+            }
+            if let Some(value) = runtime.post_compact_skills_token_budget {
+                self.runtime.post_compact_skills_token_budget = value.max(512);
+            }
+            if let Some(value) = runtime.post_compact_mcp_token_budget {
+                self.runtime.post_compact_mcp_token_budget = value.max(512);
+            }
+            if let Some(value) = runtime.post_compact_max_tokens_per_memory {
+                self.runtime.post_compact_max_tokens_per_memory = value.max(512);
+            }
+            if let Some(value) = runtime.post_compact_max_tokens_per_skill {
+                self.runtime.post_compact_max_tokens_per_skill = value.max(512);
+            }
+            if let Some(value) = runtime.post_compact_max_tokens_per_mcp {
+                self.runtime.post_compact_max_tokens_per_mcp = value.max(512);
+            }
+            if let Some(value) = runtime.context_budget_safety_buffer_tokens {
+                self.runtime.context_budget_safety_buffer_tokens = value.max(512);
             }
             let trigger_tokens = ((self.runtime.model_context_window as f32)
                 * self.runtime.context_compaction_trigger_ratio)
@@ -391,6 +451,41 @@ impl AgentConfig {
         }
         if let Ok(value) = env::var("CLOUDAGENT_MEMORY_MODE") {
             self.runtime.memory.mode = parse_memory_mode(&value);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_ENABLE_SKILL_BUCKET")
+            && let Ok(parsed) = value.parse::<bool>()
+        {
+            self.runtime.enable_skill_bucket = parsed;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_ENABLE_MCP_BUCKET")
+            && let Ok(parsed) = value.parse::<bool>()
+        {
+            self.runtime.enable_mcp_bucket = parsed;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_POST_COMPACT_TOKEN_BUDGET")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.post_compact_token_budget = parsed.max(1_024);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_POST_COMPACT_MEMORY_FLOOR_TOKENS")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.post_compact_memory_floor_tokens = parsed.max(512);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_POST_COMPACT_SKILLS_TOKEN_BUDGET")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.post_compact_skills_token_budget = parsed.max(512);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_POST_COMPACT_MCP_TOKEN_BUDGET")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.post_compact_mcp_token_budget = parsed.max(512);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_CONTEXT_BUDGET_SAFETY_BUFFER_TOKENS")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.context_budget_safety_buffer_tokens = parsed.max(512);
         }
     }
 }

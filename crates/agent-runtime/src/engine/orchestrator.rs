@@ -46,18 +46,7 @@ where
     };
 
     let mut history = runtime.load_history(conversation_id).await?;
-    let memory_prefix = runtime
-        .memory
-        .build_load_plan()
-        .ok()
-        .and_then(|p| p.inject_prefix)
-        .unwrap_or_default();
-    let merged_input = if memory_prefix.is_empty() {
-        user_input.to_string()
-    } else {
-        format!("{memory_prefix}\n{user_input}")
-    };
-    let user_item = history.push_user_message(&merged_input);
+    let user_item = history.push_user_message(user_input);
     runtime.state.save_history(history.clone()).await;
     runtime
         .persist_rollout_items(conversation_id, &[RolloutItem::from(user_item)])
