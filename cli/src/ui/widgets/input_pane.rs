@@ -97,7 +97,11 @@ impl InputPane {
         status_text: &str,
         status_meta: &str,
     ) -> InputPaneRenderResult {
-        if self.view_stack.last().is_some() {
+        if self
+            .view_stack
+            .last()
+            .is_some_and(|view| view.requires_action())
+        {
             let (widget, lines_before_composer, _) =
                 self.render_request_view(mode, status_text, status_meta, area.width);
             frame.render_widget(widget, area);
@@ -109,7 +113,11 @@ impl InputPane {
         let inner_width = area.width.saturating_sub(2) as usize;
         let composer = self.composer.render(mode, inner_width);
         let border_style = border_style(mode);
-        let completion_lines = composer.completion_lines.clone();
+        let completion_lines = if let Some(view) = self.view_stack.last() {
+            view.render_lines(area.width.saturating_sub(2))
+        } else {
+            composer.completion_lines.clone()
+        };
 
         let status = status_line(mode, status_text, status_meta, inner_width);
 
@@ -206,7 +214,11 @@ impl InputPane {
         status_meta: &str,
         area_width: u16,
     ) -> (Vec<Line<'static>>, u16) {
-        if self.view_stack.last().is_some() {
+        if self
+            .view_stack
+            .last()
+            .is_some_and(|view| view.requires_action())
+        {
             let (widget, lines_before, _) =
                 self.render_request_view(mode, status_text, status_meta, area_width);
             let text = format!("{widget:?}");
@@ -226,17 +238,24 @@ impl InputPane {
 
     pub fn desired_height(&self, mode: FrontendMode, area_width: u16) -> u16 {
         let inner_width = area_width.saturating_sub(2) as usize;
-        if let Some(view) = self.view_stack.last() {
+        if let Some(view) = self.view_stack.last()
+            && view.requires_action()
+        {
             return (4 + view.desired_height(area_width.saturating_sub(2))).max(7);
-        };
+        }
 
         let composer = self.composer.render(mode, inner_width);
-        if composer.completion_lines.is_empty() {
+        let popup_height = if let Some(view) = self.view_stack.last() {
+            view.desired_height(area_width.saturating_sub(2))
+        } else {
+            composer.completion_lines.len() as u16
+        };
+        if popup_height == 0 {
             // Border + status + spacer + input + hint.
             (5 + composer.lines.len() as u16).max(6)
         } else {
             // Small input surface with status plus an independent command panel below it.
-            (5 + composer.cursor_row).saturating_add(composer.completion_lines.len() as u16 + 1)
+            (5 + composer.cursor_row).saturating_add(popup_height + 1)
         }
     }
 
