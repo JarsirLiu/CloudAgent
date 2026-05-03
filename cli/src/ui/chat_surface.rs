@@ -32,6 +32,7 @@ impl ChatSurface {
             app.console_state.mode,
             &status.text,
             &status.meta,
+            &status.hint_meta,
         );
 
         if let Some((x, y)) = bottom.cursor_position {

@@ -5,6 +5,7 @@ use crate::ui::widgets::runtime_status_panel::status_meta_from_projection;
 pub(crate) struct StatusViewModel {
     pub(crate) text: String,
     pub(crate) meta: String,
+    pub(crate) hint_meta: String,
 }
 
 pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
@@ -19,15 +20,15 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     };
 
     let mut parts = Vec::new();
-    parts.push(format!(
-        "filter {}",
+    let hint_meta = format!(
+        "filter {} · perm {}",
         if app.run_state.pre_llm_filter_enabled {
             "on"
         } else {
             "off"
-        }
-    ));
-    parts.push(format!("perm {}", app.run_state.permission_mode));
+        },
+        app.run_state.permission_mode
+    );
     if let Some(usage) = &app.run_state.last_turn_usage {
         parts.push(format!(
             "in {} · out {} · cached {} · total {}",
@@ -52,6 +53,7 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     StatusViewModel {
         text,
         meta: parts.join(" · "),
+        hint_meta,
     }
 }
 

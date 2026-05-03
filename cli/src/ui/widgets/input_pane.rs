@@ -97,6 +97,7 @@ impl InputPane {
         mode: FrontendMode,
         status_text: &str,
         status_meta: &str,
+        hint_meta: &str,
     ) -> InputPaneRenderResult {
         if self
             .view_stack
@@ -127,7 +128,7 @@ impl InputPane {
             lines.push(status);
             lines.push(Line::raw(""));
             lines.extend(composer.lines);
-            lines.push(hint_line(mode, inner_width));
+            lines.push(hint_line(mode, inner_width, hint_meta));
 
             let widget = input_block(lines, border_style);
             frame.render_widget(widget, area);

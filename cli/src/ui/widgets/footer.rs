@@ -68,13 +68,18 @@ pub fn status_line(
     Line::from(spans)
 }
 
-pub fn hint_line(mode: FrontendMode, width: usize) -> Line<'static> {
-    let hint = match mode {
+pub fn hint_line(mode: FrontendMode, width: usize, meta: &str) -> Line<'static> {
+    let base = match mode {
         FrontendMode::Idle => "  Enter submit  .  Ctrl+C exit  .  / commands",
         FrontendMode::Running => "  Ctrl+C interrupt the current turn",
         FrontendMode::WaitingForServerRequest => "  Enter submit  .  y approve  .  n deny",
     };
-    let hint = truncate_single_line(hint, width.saturating_sub(1));
+    let hint = if mode == FrontendMode::Idle && !meta.trim().is_empty() {
+        format!("{base}  .  {meta}")
+    } else {
+        base.to_string()
+    };
+    let hint = truncate_single_line(&hint, width.saturating_sub(1));
     Line::from(Span::styled(
         hint,
         Style::default().fg(Color::Rgb(62, 62, 78)),
