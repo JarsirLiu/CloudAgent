@@ -275,7 +275,7 @@ pub(crate) async fn maybe_spawn_auto_title_job(
             .suggest_conversation_title(&first_user_message)
             .await
             .ok()
-            .filter(|t| !t.trim().is_empty())
+            .and_then(|t| normalize_title_candidate(&t))
             .unwrap_or_else(|| derive_title(&first_user_message));
         if !candidate.is_empty() {
             let still_untitled = runtime
@@ -303,7 +303,47 @@ pub(crate) async fn maybe_spawn_auto_title_job(
 
 fn derive_title(input: &str) -> String {
     let single = input.split_whitespace().collect::<Vec<_>>().join(" ");
-    single.chars().take(28).collect::<String>().trim().to_string()
+    truncate_with_ellipsis(single.trim(), 40)
+}
+
+fn normalize_title_candidate(raw: &str) -> Option<String> {
+    let cleaned = raw
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let mut collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Reject obviously rambling paragraphs; fallback will use user message snippet.
+    if collapsed.chars().count() > 72 {
+        return None;
+    }
+    collapsed = truncate_with_ellipsis(&collapsed, 40);
+    if collapsed.is_empty() {
+        None
+    } else {
+        Some(collapsed)
+    }
+}
+
+fn truncate_with_ellipsis(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    let mut out = String::new();
+    for (idx, ch) in input.chars().enumerate() {
+        if idx >= max_chars.saturating_sub(1) {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 pub(crate) async fn subscribe_conversation(
