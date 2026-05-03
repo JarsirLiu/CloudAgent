@@ -13,6 +13,7 @@ async fn main() -> Result<()> {
     let config = AgentConfig::load(workspace_root)?;
     let runtime = Arc::new(AgentRuntime::from_config(config)?);
     runtime.persist_config_snapshot().await;
+    runtime.run_startup_retention_cleanup().await;
 
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {

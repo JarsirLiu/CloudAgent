@@ -77,6 +77,10 @@ impl AgentRuntime {
         })
     }
 
+    pub async fn run_startup_retention_cleanup(&self) {
+        let _ = self.store.prune_archived_conversations_if_needed().await;
+    }
+
     pub fn llm_model_name(&self) -> &str {
         &self.config.llm.model
     }

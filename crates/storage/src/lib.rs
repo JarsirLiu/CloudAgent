@@ -236,8 +236,16 @@ impl JsonConversationStore {
             None,
             now,
         );
-        self.prune_archived_conversations_if_needed_locked().await?;
+        self.prune_archived_conversations_to_limit_locked(Self::MAX_SESSION_BYTES)
+            .await?;
         Ok(())
+    }
+
+    pub async fn prune_archived_conversations_if_needed(&self) -> Result<()> {
+        let _guard = self.io_lock.lock().await;
+        self.ensure_root_dir().await?;
+        self.prune_archived_conversations_to_limit_locked(Self::MAX_SESSION_BYTES)
+            .await
     }
 
     pub async fn list_conversations(&self) -> Result<Vec<StoredConversationSummary>> {
@@ -490,9 +498,9 @@ impl JsonConversationStore {
         Ok(total)
     }
 
-    async fn prune_archived_conversations_if_needed_locked(&self) -> Result<()> {
+    async fn prune_archived_conversations_to_limit_locked(&self, max_bytes: u64) -> Result<()> {
         let mut total = self.total_session_bytes_locked().await?;
-        if total <= Self::MAX_SESSION_BYTES {
+        if total <= max_bytes {
             return Ok(());
         }
         let mut index = self.load_index_locked().await?;
@@ -504,7 +512,7 @@ impl JsonConversationStore {
             .collect::<Vec<_>>();
         archived.sort_by(|a, b| a.updated_at_ms.cmp(&b.updated_at_ms));
         for summary in archived {
-            if total <= Self::MAX_SESSION_BYTES {
+            if total <= max_bytes {
                 break;
             }
             let rollout = self.rollout_path(&summary.conversation_id);
@@ -633,6 +641,62 @@ mod tests {
 
         assert_eq!(loaded.history().messages.len(), 2);
         assert_eq!(loaded.pending_requests.len(), 1);
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn pruning_removes_oldest_archived_conversations_first() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cloudagent-storage-prune-{unique}"));
+        let store = JsonConversationStore::new(&root);
+        store.ensure_root_dir().await.expect("create root");
+
+        let now = now_ms();
+        let entries = [
+            ("archived-old", true, now.saturating_sub(3_000)),
+            ("archived-new", true, now.saturating_sub(1_000)),
+            ("active", false, now),
+        ];
+        for (conversation_id, archived, updated_at_ms) in entries {
+            tokio::fs::write(
+                store.rollout_path(conversation_id),
+                "x".repeat(64 * 1024),
+            )
+            .await
+            .expect("write rollout");
+            tokio::fs::write(
+                store.conversation_path(conversation_id),
+                "{}",
+            )
+            .await
+            .expect("write conversation");
+            store
+                .upsert_index_entry_locked(StoredConversationSummary {
+                    conversation_id: conversation_id.to_string(),
+                    title: None,
+                    message_count: 1,
+                    updated_at_ms,
+                    archived,
+                })
+                .await
+                .expect("upsert index");
+        }
+
+        store
+            .prune_archived_conversations_to_limit_locked(32 * 1024)
+            .await
+            .expect("prune");
+
+        assert!(!store.rollout_path("archived-old").exists());
+        assert!(!store.conversation_path("archived-old").exists());
+        assert!(!store.rollout_path("archived-new").exists());
+        assert!(!store.conversation_path("archived-new").exists());
+        assert!(store.rollout_path("active").exists());
+        assert!(store.conversation_path("active").exists());
 
         let _ = fs::remove_dir_all(root).await;
     }

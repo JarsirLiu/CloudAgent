@@ -14,6 +14,7 @@ async fn main() -> Result<()> {
     let config = AgentConfig::load(workspace_root)?;
     let runtime = Arc::new(AgentRuntime::from_config(config)?);
     runtime.persist_config_snapshot().await;
+    runtime.run_startup_retention_cleanup().await;
     let conversation_id = runtime.ensure_active_conversation().await?;
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
