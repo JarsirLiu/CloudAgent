@@ -5,6 +5,7 @@ pub mod footer;
 pub mod filter_picker;
 pub mod history_cell;
 pub mod input_pane;
+pub mod permissions_picker;
 pub mod runtime_status_panel;
 pub mod session_picker;
 pub mod server_request_overlay;

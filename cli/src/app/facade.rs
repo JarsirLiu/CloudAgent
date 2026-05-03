@@ -1,5 +1,6 @@
 use crate::app::core::types::{ConsoleConfig, TuiApp};
 use crate::app::commands::filter_toggle::load_filter_enabled;
+use crate::app::commands::permissions_mode::load_permission_mode;
 use crate::app::runtime::r#loop as runtime_loop;
 use crate::transport::client::create_client;
 use agent_protocol::AppClientCommand;
@@ -22,6 +23,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         config.workspace_root.clone(),
     );
     app.run_state.pre_llm_filter_enabled = load_filter_enabled(&app.workspace_root);
+    app.run_state.permission_mode = load_permission_mode(&app.workspace_root, &conversation_id);
     client.send_command(AppClientCommand::RequestConversationHistory {
         conversation_id: conversation_id.clone(),
     })?;

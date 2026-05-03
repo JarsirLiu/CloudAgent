@@ -63,6 +63,7 @@ pub struct RunState {
     pub should_exit: bool,
     pub expand_tool_details: bool,
     pub pre_llm_filter_enabled: bool,
+    pub permission_mode: String,
 }
 
 impl RunState {
@@ -80,6 +81,7 @@ impl RunState {
             should_exit: false,
             expand_tool_details: false,
             pre_llm_filter_enabled: false,
+            permission_mode: "safe".to_string(),
         }
     }
 }

@@ -27,6 +27,7 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
             "off"
         }
     ));
+    parts.push(format!("perm {}", app.run_state.permission_mode));
     if let Some(usage) = &app.run_state.last_turn_usage {
         parts.push(format!(
             "in {} · out {} · cached {} · total {}",

@@ -3,6 +3,7 @@ use crate::terminal::Frame;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::chat_composer::ChatComposer;
 use crate::ui::widgets::filter_picker::FilterPicker;
+use crate::ui::widgets::permissions_picker::PermissionsPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
@@ -329,6 +330,11 @@ impl InputPane {
     pub fn set_filter_picker(&mut self) {
         self.view_stack.clear();
         self.view_stack.push(Box::new(FilterPicker::new()));
+    }
+
+    pub fn set_permissions_picker(&mut self, current: &str) {
+        self.view_stack.clear();
+        self.view_stack.push(Box::new(PermissionsPicker::new(current)));
     }
 
     pub fn dismiss_server_request(&mut self, request_id: &RequestId) {

@@ -71,6 +71,9 @@ impl TuiApp {
             InputPaneAction::Composer(ComposerIntent::Filter(args)) => {
                 Some(ParsedInput::LocalFilterToggle(args))
             }
+            InputPaneAction::Composer(ComposerIntent::Permissions(mode)) => {
+                Some(ParsedInput::LocalInputError(format!("__permissions__:{mode}")))
+            }
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
             InputPaneAction::Composer(ComposerIntent::Help) => Some(ParsedInput::LocalHelp),
             InputPaneAction::Composer(ComposerIntent::UnknownCommand(command)) => {

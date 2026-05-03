@@ -9,6 +9,7 @@ pub(crate) enum SlashCommand {
     SetTitle,
     ArchiveConversation,
     Filter,
+    Permissions,
     Clear,
     Exit,
 }
@@ -93,6 +94,14 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         name: "filter",
         aliases: &[],
         description: "set pre-LLM input filter (use picker; state shown as filter on/off)",
+        argument_hint: None,
+        supports_inline_args: true,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Permissions,
+        name: "permissions",
+        aliases: &["perm"],
+        description: "set session permission mode (safe/balanced/danger)",
         argument_hint: None,
         supports_inline_args: true,
     },
