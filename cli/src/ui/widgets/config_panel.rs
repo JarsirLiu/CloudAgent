@@ -10,17 +10,43 @@ pub struct ConfigPanel {
     api_key: String,
     base_url: String,
     model: String,
+    replace_on_next_input: bool,
 }
 
 impl ConfigPanel {
     pub fn new(api_key: String, base_url: String, model: String) -> Self {
-        Self { selected: 0, api_key, base_url, model }
+        Self { selected: 0, api_key, base_url, model, replace_on_next_input: true }
+    }
+
+    fn field_mut(&mut self) -> Option<&mut String> {
+        match self.selected {
+            0 => Some(&mut self.api_key),
+            1 => Some(&mut self.base_url),
+            2 => Some(&mut self.model),
+            _ => None,
+        }
+    }
+
+    fn maybe_replace_field(&mut self) {
+        if self.replace_on_next_input && let Some(field) = self.field_mut() {
+            field.clear();
+            self.replace_on_next_input = false;
+        }
+    }
+
+    fn move_selection(&mut self, next: usize) {
+        let clamped = next.min(3);
+        if clamped != self.selected {
+            self.selected = clamped;
+            self.replace_on_next_input = true;
+        }
     }
 }
 
 impl BottomPaneView for ConfigPanel {
     fn handle_paste(&mut self, text: &str) -> BottomPaneViewAction {
         let value = text.replace('\n', "");
+        self.maybe_replace_field();
         match self.selected {
             0 => self.api_key.push_str(&value),
             1 => self.base_url.push_str(&value),
@@ -35,21 +61,42 @@ impl BottomPaneView for ConfigPanel {
             return BottomPaneViewAction::None;
         }
         match key.code {
-            KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-            KeyCode::Down | KeyCode::Tab => self.selected = (self.selected + 1).min(3),
-            KeyCode::BackTab => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Up => self.move_selection(self.selected.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Tab => self.move_selection(self.selected + 1),
+            KeyCode::BackTab => self.move_selection(self.selected.saturating_sub(1)),
             KeyCode::Backspace => match self.selected {
-                0 => { self.api_key.pop(); }
-                1 => { self.base_url.pop(); }
-                2 => { self.model.pop(); }
+                0 => {
+                    if self.replace_on_next_input {
+                        self.api_key.clear();
+                        self.replace_on_next_input = false;
+                    }
+                    self.api_key.pop();
+                }
+                1 => {
+                    if self.replace_on_next_input {
+                        self.base_url.clear();
+                        self.replace_on_next_input = false;
+                    }
+                    self.base_url.pop();
+                }
+                2 => {
+                    if self.replace_on_next_input {
+                        self.model.clear();
+                        self.replace_on_next_input = false;
+                    }
+                    self.model.pop();
+                }
                 _ => {}
             },
-            KeyCode::Char(c) => match self.selected {
-                0 => self.api_key.push(c),
-                1 => self.base_url.push(c),
-                2 => self.model.push(c),
-                _ => {}
-            },
+            KeyCode::Char(c) => {
+                self.maybe_replace_field();
+                match self.selected {
+                    0 => self.api_key.push(c),
+                    1 => self.base_url.push(c),
+                    2 => self.model.push(c),
+                    _ => {}
+                }
+            }
             KeyCode::Enter => {
                 if self.selected == 3 {
                     return BottomPaneViewAction::Composer(ComposerIntent::ConfigSave {
@@ -58,7 +105,7 @@ impl BottomPaneView for ConfigPanel {
                         model: self.model.trim().to_string(),
                     });
                 }
-                self.selected = (self.selected + 1).min(3);
+                self.move_selection(self.selected + 1);
             }
             KeyCode::Esc => return BottomPaneViewAction::Close,
             _ => {}
@@ -76,11 +123,18 @@ impl BottomPaneView for ConfigPanel {
         };
         vec![
             Line::from("  Config Panel"),
-            Line::from("  Type values, Tab/Up/Down switch fields, Enter on Save"),
+            Line::from("  Type values, Tab/Up/Down switch fields, paste directly, Enter on Save"),
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(if self.selected == 0 { "> API Key  : " } else { "  API Key  : " }, row_style(self.selected == 0)),
-                Span::styled(if self.api_key.is_empty() { "(empty)".to_string() } else { "*".repeat(self.api_key.chars().count().min(24)) }, Style::default().fg(Color::Rgb(120, 130, 150))),
+                Span::styled(
+                    if self.api_key.is_empty() {
+                        "(empty)".to_string()
+                    } else {
+                        self.api_key.clone()
+                    },
+                    Style::default().fg(Color::Rgb(210, 215, 225)),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("  "),
