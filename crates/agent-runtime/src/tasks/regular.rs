@@ -80,6 +80,7 @@ where
     let tool_specs = runtime
         .tools
         .specs_for_context("explore", "repository_analysis");
+    let tool_specs = filter_tool_specs_for_permission_profile(tool_specs, permission_profile);
     let mut denied_requests = HashSet::new();
     let environment_context = runtime.environment_context();
     let raw_memory_fragment = runtime
@@ -524,6 +525,37 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
+}
+
+fn filter_tool_specs_for_permission_profile(
+    tool_specs: Vec<agent_core::ToolSpec>,
+    permission_profile: &PermissionProfile,
+) -> Vec<agent_core::ToolSpec> {
+    match permission_profile {
+        PermissionProfile::ReadOnly => tool_specs
+            .into_iter()
+            .filter(|spec| is_readonly_visible_tool(spec))
+            .collect(),
+        PermissionProfile::WorkspaceWrite => tool_specs
+            .into_iter()
+            .filter(|spec| is_workspace_write_visible_tool(spec))
+            .collect(),
+        PermissionProfile::FullAccess => tool_specs,
+    }
+}
+
+fn is_readonly_visible_tool(spec: &agent_core::ToolSpec) -> bool {
+    matches!(
+        spec.name.as_str(),
+        "shell_command" | "fuzzy_file_search" | "fs_read_file" | "fs_stat"
+    )
+}
+
+fn is_workspace_write_visible_tool(spec: &agent_core::ToolSpec) -> bool {
+    matches!(
+        spec.name.as_str(),
+        "shell_command" | "fuzzy_file_search" | "fs_read_file" | "fs_stat" | "apply_patch"
+    )
 }
 
 fn emit_assistant_item(
