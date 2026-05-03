@@ -1,0 +1,30 @@
+use crate::app::core::{ConsoleConfig, TuiApp};
+use crate::app::filter_toggle::load_filter_enabled;
+use crate::app::runtime_loop;
+use crate::transport::client::create_client;
+use agent_protocol::AppClientCommand;
+use anyhow::Result;
+use std::io::{self, IsTerminal as _};
+
+pub async fn run_console(config: ConsoleConfig) -> Result<()> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        anyhow::bail!("cloudagent cli requires an interactive terminal");
+    }
+    run_tui_console(config).await
+}
+
+async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
+    let conversation_id = config.conversation_id.clone();
+    let mut client = create_client(&config, conversation_id.clone()).await?;
+    let mut app = TuiApp::new(
+        conversation_id.clone(),
+        config.connection.label(),
+        config.workspace_root.clone(),
+    );
+    app.run_state.pre_llm_filter_enabled = load_filter_enabled(&app.workspace_root);
+    client.send_command(AppClientCommand::RequestConversationHistory {
+        conversation_id: conversation_id.clone(),
+    })?;
+    runtime_loop::run_tui_event_loop(&mut app, &mut client).await?;
+    client.shutdown().await
+}
