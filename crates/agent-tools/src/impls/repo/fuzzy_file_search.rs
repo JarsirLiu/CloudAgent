@@ -1,5 +1,5 @@
 use super::common::{collect_repo_entries, sort_ranked_paths};
-use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
+use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
@@ -78,7 +78,7 @@ impl LocalTool for FuzzyFileSearchLocalTool {
         let max_results = args.max_results.unwrap_or(200).clamp(1, 2_000);
         let offset = args.offset.unwrap_or(0);
         let case_sensitive = args.case_sensitive.unwrap_or(false);
-        let root = resolve_workspace_path(&ctx.workspace_root, args.path_scope.as_deref())?;
+        let root = resolve_read_path(&ctx.workspace_root, args.path_scope.as_deref())?;
         let workspace_root = ctx.workspace_root.clone();
         let pattern = if case_sensitive {
             pattern

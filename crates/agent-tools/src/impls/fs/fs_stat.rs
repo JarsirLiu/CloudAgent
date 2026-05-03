@@ -1,4 +1,4 @@
-use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
+use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
@@ -57,7 +57,7 @@ impl LocalTool for FsStatLocalTool {
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
         let args: FsStatArgs = serde_json::from_value(arguments)?;
-        let path = resolve_workspace_path(&ctx.workspace_root, Some(args.path.as_str()))?;
+        let path = resolve_read_path(&ctx.workspace_root, Some(args.path.as_str()))?;
         let metadata = fs::metadata(&path).await?;
         let value = json!({
             "path": path.display().to_string(),

@@ -1,6 +1,6 @@
 use agent_core::{ToolCall, ToolSpec};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ApprovalRequirement {
@@ -47,7 +47,7 @@ struct ShellCommandArgs {
     workdir: Option<String>,
 }
 
-fn shell_command_requirement(call: &ToolCall, workspace_root: &Path) -> ApprovalRequirement {
+fn shell_command_requirement(call: &ToolCall, _workspace_root: &Path) -> ApprovalRequirement {
     let Ok(args) = serde_json::from_value::<ShellCommandArgs>(call.arguments.clone()) else {
         return ApprovalRequirement::required(
             "Shell commands require approval when their arguments cannot be classified safely.",
@@ -63,12 +63,6 @@ fn shell_command_requirement(call: &ToolCall, workspace_root: &Path) -> Approval
     let command = args.command.trim();
     if command.is_empty() {
         return ApprovalRequirement::required("Empty shell commands require approval.");
-    }
-
-    if command_references_workspace_escape(command, workspace_root) {
-        return ApprovalRequirement::required(
-            "Shell commands that reference paths outside the current workspace require approval.",
-        );
     }
 
     if is_safe_readonly_command(command) {
@@ -87,40 +81,6 @@ fn workdir_mentions_parent_escape(workdir: Option<&str>) -> bool {
     })
 }
 
-fn command_references_workspace_escape(command: &str, workspace_root: &Path) -> bool {
-    let normalized_root = workspace_root
-        .canonicalize()
-        .unwrap_or_else(|_| workspace_root.to_path_buf());
-    if is_safe_readonly_chain(command) {
-        return chain_mentions_outside_workspace(command, &normalized_root);
-    }
-    command_tokens(command).into_iter().any(|token| {
-        parse_absolute_path_candidate(token)
-            .map(|path| !normalized_path_starts_with(&path, &normalized_root))
-            .unwrap_or(false)
-    })
-}
-
-fn chain_mentions_outside_workspace(command: &str, normalized_root: &Path) -> bool {
-    command
-        .split(|ch| matches!(ch, '&' | ';'))
-        .map(str::trim)
-        .filter(|segment| !segment.is_empty())
-        .any(|segment| {
-            command_tokens(segment).into_iter().any(|token| {
-                parse_absolute_path_candidate(token)
-                    .map(|path| !normalized_path_starts_with(&path, normalized_root))
-                    .unwrap_or(false)
-            })
-        })
-}
-
-fn normalized_path_starts_with(candidate: &Path, root: &Path) -> bool {
-    let canonical_candidate = candidate
-        .canonicalize()
-        .unwrap_or_else(|_| candidate.to_path_buf());
-    canonical_candidate.starts_with(root)
-}
 
 fn is_safe_readonly_command(command: &str) -> bool {
     let normalized = normalize_command(command);
@@ -274,29 +234,6 @@ fn is_safe_git_command(command: &str) -> bool {
         .any(|prefix| command.starts_with(prefix))
 }
 
-fn command_tokens(command: &str) -> Vec<&str> {
-    command
-        .split(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';' | '(' | ')'))
-        .filter(|token| !token.is_empty())
-        .collect()
-}
-
-fn parse_absolute_path_candidate(token: &str) -> Option<PathBuf> {
-    let value = token.trim_matches(|ch| ch == '"' || ch == '\'');
-    if value.len() >= 3 && value.as_bytes()[1] == b':' && is_windows_separator(value.as_bytes()[2])
-    {
-        return Some(PathBuf::from(value));
-    }
-    if value.starts_with("\\\\") {
-        return Some(PathBuf::from(value));
-    }
-    None
-}
-
-fn is_windows_separator(byte: u8) -> bool {
-    byte == b'\\' || byte == b'/'
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,13 +333,13 @@ mod tests {
     }
 
     #[test]
-    fn shell_command_with_absolute_path_outside_workspace_requires_approval() {
+    fn readonly_shell_command_can_read_outside_workspace_without_approval() {
         let requirement = approval_requirement_for_tool(
             &shell_spec(),
             &shell_call("type D:\\other\\notes.txt"),
             Path::new("D:\\learn\\gifti\\cloudagent"),
         );
 
-        assert!(requirement.requires_approval);
+        assert_eq!(requirement, ApprovalRequirement::not_required());
     }
 }

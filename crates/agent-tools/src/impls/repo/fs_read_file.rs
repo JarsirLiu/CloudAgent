@@ -1,5 +1,5 @@
 use crate::impls::repo::text_read::{TextReadOptions, read_text_snippet};
-use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
+use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
@@ -65,7 +65,7 @@ impl LocalTool for FsReadFileLocalTool {
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
         let args: FsReadFileArgs = serde_json::from_value(arguments)?;
-        let path = resolve_workspace_path(&ctx.workspace_root, Some(args.path.as_str()))?;
+        let path = resolve_read_path(&ctx.workspace_root, Some(args.path.as_str()))?;
         let read_result = read_text_snippet(
             &path,
             &TextReadOptions::for_single_file(self.max_read_chars, args.start_line, args.max_lines),

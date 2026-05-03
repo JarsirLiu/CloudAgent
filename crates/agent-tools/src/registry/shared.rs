@@ -149,6 +149,29 @@ pub(crate) fn resolve_workspace_path(
     Ok(candidate)
 }
 
+pub(crate) fn resolve_read_path(workspace_root: &Path, value: Option<&str>) -> Result<PathBuf> {
+    let root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let Some(value) = value else {
+        return Ok(root);
+    };
+    let input = Path::new(value.trim());
+    if input.as_os_str().is_empty() {
+        return Ok(root);
+    }
+    let candidate = if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        root.join(input)
+    };
+    Ok(candidate)
+}
+
+pub(crate) fn resolve_write_path(workspace_root: &Path, value: Option<&str>) -> Result<PathBuf> {
+    resolve_workspace_path(workspace_root, value)
+}
+
 pub(crate) fn structured_failure_result(
     tool_name: &str,
     _arguments: &Value,

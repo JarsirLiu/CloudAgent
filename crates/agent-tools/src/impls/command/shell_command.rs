@@ -1,5 +1,5 @@
 use crate::registry::shared::{
-    LocalTool, ToolInvocationOutput, read_streaming_pipe, resolve_workspace_path,
+    LocalTool, ToolInvocationOutput, read_streaming_pipe, resolve_write_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
 use agent_core::ToolSpec;
@@ -69,7 +69,7 @@ impl LocalTool for ShellCommandLocalTool {
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
         let args: ShellCommandArgs = serde_json::from_value(arguments)?;
-        let workdir = resolve_workspace_path(&ctx.workspace_root, args.workdir.as_deref())?;
+        let workdir = resolve_write_path(&ctx.workspace_root, args.workdir.as_deref())?;
         let timeout_ms = args
             .timeout_ms
             .unwrap_or(ctx.default_shell_timeout_ms)
