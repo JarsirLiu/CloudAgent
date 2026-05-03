@@ -30,35 +30,63 @@ CloudAgent 内置了 [rtk](https://github.com/rtk-ai/rtk) 的 token 压缩思路
 
 它适合的人群很直接：懒到极致、希望拿着手机就能远程指挥多端 Agent 干活的人。
 CloudAgent 不止于本地。
-### 技术栈
-- Agent Runtime: Rust（workspace）+ TypeScript（Web/Frontend）
-- LLM 接入: OpenAI-compatible APIs
-- Memory: 短期上下文压缩 + 缓存策略
-- Infra: MCP（规划中）/ Skills（规划中）/ 远程互连（规划中）
-
-### 当前亮点
-- 对话历史压缩（已完成）
-- 说明：采用类似 RTK 的思路，对上下文进行压缩与结构化裁剪
-- 收益：显著降低 token 消耗，减少冗余上下文噪音
-- 高缓存命中率（已完成）
-- 说明：针对重复任务和相似上下文进行缓存复用
-- 收益：在连续会话中有明显的成本与延迟收益
 
 ### 开发进度（Roadmap）
-- [x] 压缩对话历史，节省大量 token
-- [x] 高缓存命中率优化
-- [ ] 长期记忆（Long-term Memory）
-- [ ] MCP 集成
-- [ ] Skill 机制
-- [ ] Agent 自动唤醒机制
-- 范围：用于服务器/监控场景
-- 能力：触发告警后自动唤醒 Agent
-- 目标：向用户报告状态并执行处置流程
-- [ ] 远程互连机制
-- 示例：隔空投送等跨端/跨设备能力
+已开发：
+- [x] OpenAI 兼容模型
+- [x] 工具系统
+- [x] CLI（开发中）
 
-### 愿景
-从“能对话的 Agent”进化到“可持续值守、可自动响应、可跨端协同”的智能系统。
+未开发：
+- [ ] MCP
+- [ ] Skill
+- [ ] 长期记忆
+- [ ] 自我调度
+- [ ] 多端互连
+- [ ] Web 端
+
+### Release 快速下载
+- GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
+- 一键安装（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh`
+- 一键升级（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh`
+- 一键卸载（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh`
+
+### 发行版使用命令
+```bash
+# 启动 CLI
+cli
+
+# 启动 agent 服务
+agentd
+
+# 更新到最新发行版
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh
+
+# 卸载
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh
+```
+
+### 本地开发启动
+```bash
+# 1) 克隆仓库
+git clone https://github.com/JarsirLiu/CloudAgent.git
+cd CloudAgent
+
+# 2) 启动 CLI（开发模式）
+cargo run -p cli
+
+# 3) 启动 Agent 服务（可选）
+cargo run -p agentd
+```
+
+### CLI 快捷命令表
+| 命令 | 说明 |
+|---|---|
+| `/filter` | 启用/切换上下文压缩过滤，降低长会话 token 消耗 |
+| `/status` | 查看当前会话与运行状态 |
+| `/approvals` | 查看当前待审批请求 |
+| `/memory` | 查看或操作记忆相关状态 |
+| `/help` | 查看可用命令帮助 |
 
 ---
 
@@ -74,34 +102,60 @@ It also provides robust context orchestration, tool execution, and approval mech
 
 Its target users are straightforward: people who are extremely lazy and want to command multiple agents from a phone.
 CloudAgent goes beyond local.
-### Tech Stack
-- Agent Runtime: Rust (workspace) + TypeScript (Web/Frontend)
-- LLM Access: OpenAI-compatible APIs
-- Memory: Context compression + cache strategy
-- Infra: MCP (planned) / Skills (planned) / Remote interconnect (planned)
-
-### Highlights
-- Conversation History Compression (Done)
-- Notes: RTK-style context compression and structural trimming
-- Impact: Significantly reduces token usage and noisy context
-- High Cache Hit Rate (Done)
-- Notes: Reuses cached outputs for repeated tasks and similar contexts
-- Impact: Improves both cost efficiency and latency in ongoing sessions
 
 ### Roadmap
-- [x] Conversation history compression with major token savings
-- [x] High cache-hit optimization
+In progress:
+- [x] OpenAI-compatible model support
+- [x] Tooling system
+- [x] CLI (under active development)
+
+Planned:
+- [ ] MCP
+- [ ] Skill
 - [ ] Long-term memory
-- [ ] MCP integration
-- [ ] Skill mechanism
-- [ ] Agent auto-wakeup mechanism
-- Scope: For server/monitoring scenarios
-- Capability: Auto-wakes the agent on alerts
-- Goal: Reports status and handles issues proactively
-- [ ] Remote interconnect mechanism
-- Example: Cross-device features such as remote drop/transfer workflows
+- [ ] Self-scheduling
+- [ ] Multi-end interconnect
+- [ ] Web console
 
-### Vision
-Evolve from a chat-capable agent into a persistent, self-responsive, cross-device collaborative agent system.
+### Quick Release Download
+- GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
+- One-line install (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh`
+- One-line upgrade (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh`
+- One-line uninstall (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh`
 
+### Release Usage Commands
+```bash
+# start CLI
+cli
 
+# start agent service
+agentd
+
+# upgrade to latest release
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh
+
+# uninstall
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh
+```
+
+### Local Development Startup
+```bash
+# 1) Clone
+git clone https://github.com/JarsirLiu/CloudAgent.git
+cd CloudAgent
+
+# 2) Start CLI (dev mode)
+cargo run -p cli
+
+# 3) Start agent service (optional)
+cargo run -p agentd
+```
+
+### CLI Quick Commands
+| Command | Description |
+|---|---|
+| `/filter` | Enable/toggle context compression to reduce long-session token cost |
+| `/status` | Show current session and runtime status |
+| `/approvals` | Show pending approval requests |
+| `/memory` | Inspect or operate memory-related state |
+| `/help` | Show command help |
