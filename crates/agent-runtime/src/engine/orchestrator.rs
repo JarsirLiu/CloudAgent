@@ -1,7 +1,7 @@
 use crate::tasks::{RegularTurnTask, RuntimeTask, TaskContext, TurnOutcome};
 use crate::{AgentRuntime, emit_event, is_turn_interrupted_error, next_turn_id};
 use agent_core::{RolloutItem, ToolCall};
-use agent_protocol::{EventMsg, ServerRequest, ServerRequestDecision, TurnState};
+use agent_protocol::{ApprovalPolicy, EventMsg, PermissionProfile, ServerRequest, ServerRequestDecision, TurnState};
 use anyhow::{Result, bail};
 
 pub(crate) const CONVERSATION_BUSY_ERROR_CODE: &str = "ERR_CONVERSATION_BUSY";
@@ -12,7 +12,8 @@ pub(crate) async fn run_turn_with_approval<E, F, Fut>(
     runtime: &AgentRuntime,
     conversation_id: &str,
     user_input: &str,
-    permission_mode: &str,
+    permission_profile: &PermissionProfile,
+    approval_policy: &ApprovalPolicy,
     on_event: &mut E,
     approval: F,
 ) -> Result<TurnOutcome>
@@ -86,7 +87,8 @@ where
                     runtime,
                     conversation_id,
                     turn_id: &turn_id,
-                    permission_mode,
+                    permission_profile,
+                    approval_policy,
                     cancellation_token: active_turn.cancellation_token.clone(),
                     on_event: &mut event_sink,
                 },

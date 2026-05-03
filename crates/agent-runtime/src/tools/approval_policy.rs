@@ -1,4 +1,5 @@
 use agent_core::{ToolCall, ToolSpec};
+use agent_protocol::{ApprovalPolicy, PermissionProfile};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -28,10 +29,13 @@ pub(crate) fn approval_requirement_for_tool(
     spec: &ToolSpec,
     call: &ToolCall,
     workspace_root: &Path,
-    permission_mode: &str,
+    permission_profile: &PermissionProfile,
+    approval_policy: &ApprovalPolicy,
 ) -> ApprovalRequirement {
     match call.name.as_str() {
-        "shell_command" => shell_command_requirement(call, workspace_root, permission_mode),
+        "shell_command" => {
+            shell_command_requirement(call, workspace_root, permission_profile, approval_policy)
+        }
         _ if spec.requires_approval => ApprovalRequirement::required(
             spec.approval_reason
                 .clone()
@@ -51,7 +55,8 @@ struct ShellCommandArgs {
 fn shell_command_requirement(
     call: &ToolCall,
     _workspace_root: &Path,
-    permission_mode: &str,
+    permission_profile: &PermissionProfile,
+    approval_policy: &ApprovalPolicy,
 ) -> ApprovalRequirement {
     let Ok(args) = serde_json::from_value::<ShellCommandArgs>(call.arguments.clone()) else {
         return ApprovalRequirement::required(
@@ -69,45 +74,50 @@ fn shell_command_requirement(
     let workdir_escape = workdir_mentions_parent_escape(args.workdir.as_deref());
     let dangerous = is_dangerous_command(&normalized);
     let network = contains_network_indicator(&normalized);
-    let mutating = contains_write_operator(&normalized) || !readonly;
+    if dangerous {
+        return ApprovalRequirement::required(
+            "Dangerous shell commands (e.g. rm -rf / recursive delete) require approval.",
+        );
+    }
 
-    match permission_mode {
-        "danger" => {
-            if dangerous {
-                ApprovalRequirement::required(
-                    "Dangerous shell commands (e.g. rm -rf / recursive delete) require approval even in danger mode.",
-                )
-            } else {
-                ApprovalRequirement::not_required()
+    match permission_profile {
+        PermissionProfile::FullAccess => match approval_policy {
+            ApprovalPolicy::Never => ApprovalRequirement::not_required(),
+            ApprovalPolicy::OnRequest => {
+                if readonly {
+                    ApprovalRequirement::not_required()
+                } else {
+                    ApprovalRequirement::required(
+                        "Mutating or network shell commands require approval under the current approval policy.",
+                    )
+                }
             }
-        }
-        "balanced" => {
-            if dangerous {
-                return ApprovalRequirement::required(
-                    "Dangerous shell commands require approval in balanced mode.",
-                );
-            }
+        },
+        PermissionProfile::WorkspaceWrite => {
             if workdir_escape {
                 return ApprovalRequirement::required(
-                    "Balanced mode only allows read/write inside the workspace.",
+                    "This command needs permissions outside the workspace.",
                 );
             }
-            if network {
-                return ApprovalRequirement::required(
-                    "Network shell commands require approval in balanced mode.",
-                );
+            match approval_policy {
+                ApprovalPolicy::Never => ApprovalRequirement::not_required(),
+                ApprovalPolicy::OnRequest => {
+                    if network {
+                        ApprovalRequirement::required(
+                            "Network shell commands require approval under the current approval policy.",
+                        )
+                    } else {
+                        ApprovalRequirement::not_required()
+                    }
+                }
             }
-            if mutating || readonly {
-                return ApprovalRequirement::not_required();
-            }
-            ApprovalRequirement::required("Unclassified shell commands require approval.")
         }
-        _ => {
+        PermissionProfile::ReadOnly => {
             if readonly && !workdir_escape {
                 ApprovalRequirement::not_required()
             } else {
                 ApprovalRequirement::required(
-                    "Safe mode is read-only. Mutating, out-of-workspace, network, or unclassified shell commands require approval.",
+                    "Read-only permissions do not allow this shell command without explicit approval.",
                 )
             }
         }
@@ -329,6 +339,8 @@ mod tests {
             &shell_spec(),
             &shell_call("git log --oneline -10"),
             Path::new("D:\\learn\\gifti\\cloudagent"),
+            &PermissionProfile::ReadOnly,
+            &ApprovalPolicy::OnRequest,
         );
 
         assert_eq!(requirement, ApprovalRequirement::not_required());
@@ -340,6 +352,8 @@ mod tests {
             &shell_spec(),
             &shell_call("cd D:\\learn\\gifti\\cloudagent && Get-ChildItem -Recurse -Filter *.rs"),
             Path::new("D:\\learn\\gifti\\cloudagent"),
+            &PermissionProfile::ReadOnly,
+            &ApprovalPolicy::OnRequest,
         );
 
         assert_eq!(requirement, ApprovalRequirement::not_required());
@@ -356,6 +370,8 @@ mod tests {
                 &shell_spec(),
                 &shell_call(command),
                 Path::new("D:\\learn\\gifti\\cloudagent"),
+                &PermissionProfile::ReadOnly,
+                &ApprovalPolicy::OnRequest,
             );
 
             assert_eq!(requirement, ApprovalRequirement::not_required());
@@ -368,6 +384,8 @@ mod tests {
             &shell_spec(),
             &shell_call("echo hi > out.txt"),
             Path::new("D:\\learn\\gifti\\cloudagent"),
+            &PermissionProfile::ReadOnly,
+            &ApprovalPolicy::OnRequest,
         );
 
         assert!(requirement.requires_approval);
@@ -379,6 +397,8 @@ mod tests {
             &shell_spec(),
             &shell_call_with_workdir("git status", "..\\.."),
             Path::new("D:\\learn\\gifti\\cloudagent"),
+            &PermissionProfile::WorkspaceWrite,
+            &ApprovalPolicy::OnRequest,
         );
 
         assert!(requirement.requires_approval);
@@ -390,6 +410,8 @@ mod tests {
             &shell_spec(),
             &shell_call("type D:\\other\\notes.txt"),
             Path::new("D:\\learn\\gifti\\cloudagent"),
+            &PermissionProfile::ReadOnly,
+            &ApprovalPolicy::OnRequest,
         );
 
         assert_eq!(requirement, ApprovalRequirement::not_required());

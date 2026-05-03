@@ -183,8 +183,9 @@ where
 mod tests {
     use super::*;
     use agent_protocol::{
-        AppClientCommand, AppServerMessage, AppServerNotification, JsonRpcMessage, ServerRequest,
-        ToolApprovalRequest, UserTurnInput,
+        AppClientCommand, AppServerMessage, AppServerNotification, ApprovalPolicy,
+        JsonRpcMessage, PermissionProfile, ServerRequest, ToolApprovalRequest, TurnPolicy,
+        UserTurnInput,
     };
     use tokio::io::duplex;
 
@@ -198,6 +199,10 @@ mod tests {
             .send(AppClientCommand::SubmitTurn(UserTurnInput {
                 conversation_id: "default".to_string(),
                 content: "hello".to_string(),
+                turn_policy: TurnPolicy {
+                    permission_profile: PermissionProfile::ReadOnly,
+                    approval_policy: ApprovalPolicy::OnRequest,
+                },
             }))
             .expect("queue command");
         drop(command_tx);

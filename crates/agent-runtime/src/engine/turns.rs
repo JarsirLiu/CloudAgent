@@ -1,6 +1,6 @@
 use crate::{AgentRuntime, MANUAL_COMPACTION_MIN_HISTORY_TOKENS, ManualCompactionOutcome, tasks};
 use agent_core::AgentTurnOutput;
-use agent_protocol::{EventMsg, RequestId, ServerRequest, ServerRequestDecision};
+use agent_protocol::{ApprovalPolicy, EventMsg, PermissionProfile, RequestId, ServerRequest, ServerRequestDecision};
 use anyhow::{Result, bail};
 use tokio_util::sync::CancellationToken;
 
@@ -19,7 +19,8 @@ impl AgentRuntime {
             .chat_with_approval_and_events(
                 conversation_id,
                 user_input,
-                "safe",
+                &PermissionProfile::ReadOnly,
+                &ApprovalPolicy::OnRequest,
                 |_event| {},
                 |_request| async move {
                     Ok(ServerRequestDecision::decline(Some(
@@ -36,7 +37,8 @@ impl AgentRuntime {
         &self,
         conversation_id: &str,
         user_input: &str,
-        permission_mode: &str,
+        permission_profile: &PermissionProfile,
+        approval_policy: &ApprovalPolicy,
         approval: F,
     ) -> Result<AgentTurnOutput>
     where
@@ -46,7 +48,8 @@ impl AgentRuntime {
         self.chat_with_approval_and_events(
             conversation_id,
             user_input,
-            permission_mode,
+            permission_profile,
+            approval_policy,
             |_event| {},
             approval,
         )
@@ -57,7 +60,8 @@ impl AgentRuntime {
         &self,
         conversation_id: &str,
         user_input: &str,
-        permission_mode: &str,
+        permission_profile: &PermissionProfile,
+        approval_policy: &ApprovalPolicy,
         mut on_event: E,
         approval: F,
     ) -> Result<AgentTurnOutput>
@@ -71,7 +75,8 @@ impl AgentRuntime {
             self,
             conversation_id,
             user_input,
-            permission_mode,
+            permission_profile,
+            approval_policy,
             &mut on_event,
             approval,
         )

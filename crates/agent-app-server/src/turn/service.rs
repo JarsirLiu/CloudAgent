@@ -4,7 +4,8 @@ use crate::server_request::service as server_request_service;
 use crate::session::listener::start_conversation_listener;
 use crate::session::service as session_service;
 use agent_protocol::{
-    AppServerMessage, AppServerNotification, AppServerRequest, ServerRequest, ServerRequestDecision,
+    AppServerMessage, AppServerNotification, AppServerRequest, ApprovalPolicy, PermissionProfile,
+    ServerRequest, ServerRequestDecision,
 };
 use agent_runtime::AgentRuntime;
 use anyhow::{Result, anyhow};
@@ -19,7 +20,8 @@ pub(crate) async fn submit_turn(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
     content: String,
-    permission_mode: String,
+    permission_profile: PermissionProfile,
+    approval_policy: ApprovalPolicy,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) {
@@ -45,7 +47,8 @@ pub(crate) async fn submit_turn(
         runtime,
         conversation_id.clone(),
         content,
-        permission_mode,
+        permission_profile,
+        approval_policy,
         TurnSpawnDependencies {
             event_tx: event_tx.clone(),
             state: state.clone(),
@@ -193,7 +196,8 @@ fn spawn_turn(
     runtime: Arc<AgentRuntime>,
     conversation_id: String,
     user_input: String,
-    permission_mode: String,
+    permission_profile: PermissionProfile,
+    approval_policy: ApprovalPolicy,
     deps: TurnSpawnDependencies,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -214,7 +218,8 @@ fn spawn_turn(
             .chat_with_approval_and_events(
                 &conversation_id,
                 &user_input,
-                &permission_mode,
+                &permission_profile,
+                &approval_policy,
                 move |event| {
                     let event = event.clone();
                     let active_turn_id = active_turn_id_for_events.clone();

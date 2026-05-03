@@ -8,7 +8,7 @@ use agent_core::{
 };
 use agent_core::context::MemoryBudgetSource;
 use agent_protocol::{
-    EventMsg, ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemDeltaKind,
+    ApprovalPolicy, EventMsg, PermissionProfile, ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemDeltaKind,
     TurnItemKind, TurnState,
 };
 use anyhow::Result;
@@ -46,7 +46,8 @@ where
             ctx.runtime,
             ctx.conversation_id,
             ctx.turn_id,
-            ctx.permission_mode,
+            ctx.permission_profile,
+            ctx.approval_policy,
             ctx.cancellation_token,
             history,
             ctx.on_event,
@@ -60,7 +61,8 @@ pub(crate) async fn execute_regular_turn<E, F, Fut>(
     runtime: &AgentRuntime,
     conversation_id: &str,
     turn_id: &str,
-    permission_mode: &str,
+    permission_profile: &PermissionProfile,
+    approval_policy: &ApprovalPolicy,
     cancellation_token: CancellationToken,
     history: ConversationHistory,
     on_event: &mut E,
@@ -464,7 +466,8 @@ where
             runtime,
             conversation_id,
             turn_id,
-            permission_mode,
+            permission_profile,
+            approval_policy,
             cancellation_token.clone(),
             &tool_specs,
         )

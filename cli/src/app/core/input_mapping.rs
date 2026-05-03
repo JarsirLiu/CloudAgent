@@ -1,4 +1,5 @@
 use crate::app::commands::parse::ParsedInput;
+use crate::app::commands::permission_profile::turn_policy_for_mode;
 use crate::app::TuiApp;
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::history_cell::HistoryTone;
@@ -37,7 +38,7 @@ impl TuiApp {
                     agent_protocol::UserTurnInput {
                         conversation_id: self.conversation_id.clone(),
                         content: text,
-                        permission_mode: self.run_state.permission_mode.clone(),
+                        turn_policy: turn_policy_for_mode(&self.run_state.permission_mode),
                     },
                 )))
             }

@@ -95,6 +95,10 @@ mod ui_state;
                 agent_protocol::UserTurnInput {
                     conversation_id: "default".to_string(),
                     content: "可以看到当前在哪个目录下吗".to_string(),
+                    turn_policy: agent_protocol::TurnPolicy {
+                        permission_profile: agent_protocol::PermissionProfile::ReadOnly,
+                        approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
+                    },
                 },
             )),
         )
@@ -325,6 +329,10 @@ mod ui_state;
                 agent_protocol::UserTurnInput {
                     conversation_id: "default".to_string(),
                     content: "帮我看看当前目录".to_string(),
+                    turn_policy: agent_protocol::TurnPolicy {
+                        permission_profile: agent_protocol::PermissionProfile::ReadOnly,
+                        approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
+                    },
                 },
             )),
         )
@@ -548,6 +556,10 @@ mod ui_state;
                     agent_protocol::UserTurnInput {
                         conversation_id: "default".to_string(),
                         content: content.to_string(),
+                        turn_policy: agent_protocol::TurnPolicy {
+                            permission_profile: agent_protocol::PermissionProfile::ReadOnly,
+                            approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
+                        },
                     },
                 ))
                 .expect("submit turn");
@@ -710,6 +722,10 @@ mod ui_state;
                 agent_protocol::UserTurnInput {
                     conversation_id: "default".to_string(),
                     content: "run two commands".to_string(),
+                    turn_policy: agent_protocol::TurnPolicy {
+                        permission_profile: agent_protocol::PermissionProfile::ReadOnly,
+                        approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
+                    },
                 },
             ))
             .expect("submit turn");
@@ -820,6 +836,10 @@ mod ui_state;
                 agent_protocol::UserTurnInput {
                     conversation_id: "default".to_string(),
                     content: "check disk".to_string(),
+                    turn_policy: agent_protocol::TurnPolicy {
+                        permission_profile: agent_protocol::PermissionProfile::ReadOnly,
+                        approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
+                    },
                 },
             ))
             .expect("submit turn");

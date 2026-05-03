@@ -246,13 +246,13 @@ mod tests {
             .iter()
             .map(|item| item.name)
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["copy", "compact"]);
+        assert_eq!(names, vec!["copy", "compact", "config"]);
     }
 
     #[test]
     fn filters_by_alias() {
         let mut state = CompletionState::default();
-        state.sync_from_input("/sto", 4);
+        state.sync_from_input("/int", 4);
         let names = state
             .suggestions()
             .iter()

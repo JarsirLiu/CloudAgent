@@ -760,6 +760,10 @@ mod tests {
             command: AppClientCommand::SubmitTurn(UserTurnInput {
                 conversation_id: "default".to_string(),
                 content: "hello".to_string(),
+                turn_policy: TurnPolicy {
+                    permission_profile: PermissionProfile::ReadOnly,
+                    approval_policy: ApprovalPolicy::OnRequest,
+                },
             }),
         };
 
@@ -771,6 +775,10 @@ mod tests {
             AppClientCommand::SubmitTurn(input) => {
                 assert_eq!(input.conversation_id, "default");
                 assert_eq!(input.content, "hello");
+                assert!(matches!(
+                    input.turn_policy.permission_profile,
+                    PermissionProfile::ReadOnly
+                ));
             }
             other => panic!("unexpected command: {other:?}"),
         }

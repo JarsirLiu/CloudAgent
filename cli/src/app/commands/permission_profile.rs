@@ -1,3 +1,5 @@
+use agent_protocol::{ApprovalPolicy, PermissionProfile, TurnPolicy};
+
 pub(crate) struct PermissionModeSpec {
     pub(crate) mode: &'static str,
     pub(crate) label: &'static str,
@@ -30,4 +32,21 @@ pub(crate) fn permission_mode_label(mode: &str) -> &'static str {
         .find(|spec| spec.mode == mode)
         .map(|spec| spec.label)
         .unwrap_or("unknown mode")
+}
+
+pub(crate) fn turn_policy_for_mode(mode: &str) -> TurnPolicy {
+    match mode {
+        "balanced" => TurnPolicy {
+            permission_profile: PermissionProfile::WorkspaceWrite,
+            approval_policy: ApprovalPolicy::OnRequest,
+        },
+        "danger" => TurnPolicy {
+            permission_profile: PermissionProfile::FullAccess,
+            approval_policy: ApprovalPolicy::Never,
+        },
+        _ => TurnPolicy {
+            permission_profile: PermissionProfile::ReadOnly,
+            approval_policy: ApprovalPolicy::OnRequest,
+        },
+    }
 }

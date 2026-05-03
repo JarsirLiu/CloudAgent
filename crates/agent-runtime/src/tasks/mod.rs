@@ -6,7 +6,7 @@ use agent_core::{
     ConversationHistory, RolloutItem, apply_history_compaction, build_compaction_summary_request,
     plan_manual_history_compaction,
 };
-use agent_protocol::{EventMsg, ServerRequest, ServerRequestDecision};
+use agent_protocol::{ApprovalPolicy, EventMsg, PermissionProfile, ServerRequest, ServerRequestDecision};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
@@ -24,7 +24,8 @@ pub(crate) struct TaskContext<'a, E> {
     pub(crate) runtime: &'a AgentRuntime,
     pub(crate) conversation_id: &'a str,
     pub(crate) turn_id: &'a str,
-    pub(crate) permission_mode: &'a str,
+    pub(crate) permission_profile: &'a PermissionProfile,
+    pub(crate) approval_policy: &'a ApprovalPolicy,
     pub(crate) cancellation_token: CancellationToken,
     pub(crate) on_event: &'a mut E,
 }
