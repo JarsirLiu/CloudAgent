@@ -1,4 +1,4 @@
-use crate::app::parse::{ParsedInput, parse_line};
+use crate::app::commands::parse::{ParsedInput, parse_line};
 use crate::app::TuiApp;
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::history_cell::HistoryTone;

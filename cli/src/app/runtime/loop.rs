@@ -1,7 +1,7 @@
 use crate::app::TuiApp;
-use crate::app::actions::handle_tui_input;
-use crate::app::app_lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
-use crate::app::event_router;
+use crate::app::conversation::actions::handle_tui_input;
+use crate::app::conversation::event_router;
+use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
 use crate::terminal::{ScrollbackSurface, TerminalGuard, UiEvent, spawn_tui_event_loop};
 use crate::ui::chat_surface::ChatSurface;
 use agent_app_server_client::AppServerClient;

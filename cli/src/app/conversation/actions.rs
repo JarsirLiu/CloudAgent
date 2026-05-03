@@ -1,9 +1,9 @@
 use crate::app::TuiApp;
-use crate::app::conversation_facade;
+use crate::app::conversation::facade as conversation_facade;
 use crate::app::effects::copy_text_to_clipboard;
-use crate::app::filter_toggle::apply_filter_toggle;
-use crate::app::parse::ParsedInput;
-use crate::app::runtime_updates::apply_runtime_projection_update;
+use crate::app::commands::filter_toggle::apply_filter_toggle;
+use crate::app::commands::parse::ParsedInput;
+use crate::app::runtime::projection::apply_runtime_projection_update;
 use crate::input::slash_command::slash_command_help_text;
 use crate::state::reducer::ServerAction;
 use crate::state::NoticeLevel;

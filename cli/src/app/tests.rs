@@ -1,6 +1,7 @@
     use super::TuiApp;
-    use crate::app::actions::{execute_server_action, handle_tui_input};
-    use crate::app::parse::ParsedInput;
+    use crate::app::commands::parse::ParsedInput;
+    use crate::app::conversation::actions::{execute_server_action, handle_tui_input};
+    use crate::app::conversation::event_router;
     use crate::state::reducer::{ServerAction, TurnDispatch};
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
     use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};

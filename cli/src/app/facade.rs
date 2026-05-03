@@ -1,6 +1,6 @@
 use crate::app::core::types::{ConsoleConfig, TuiApp};
-use crate::app::filter_toggle::load_filter_enabled;
-use crate::app::runtime_loop;
+use crate::app::commands::filter_toggle::load_filter_enabled;
+use crate::app::runtime::r#loop as runtime_loop;
 use crate::transport::client::create_client;
 use agent_protocol::AppClientCommand;
 use anyhow::Result;
