@@ -6,14 +6,14 @@ use ratatui::text::{Line, Span};
 
 pub struct FilterPicker {
     selected: usize,
-    options: [&'static str; 4],
+    options: [&'static str; 2],
 }
 
 impl FilterPicker {
     pub fn new() -> Self {
         Self {
             selected: 0,
-            options: ["on", "off", "toggle", "status"],
+            options: ["on", "off"],
         }
     }
 }

@@ -34,6 +34,23 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
             ));
             Ok(())
         }
+        "status" => {
+            let state = if app.run_state.pre_llm_filter_enabled {
+                "on"
+            } else {
+                "off"
+            };
+            app.run_state.set_system_notice(
+                format!("Pre-LLM input filter: {state}"),
+                Some(std::time::Duration::from_secs(4)),
+            );
+            app.push_cell(HistoryCell::from_message(
+                "context",
+                format!("Pre-LLM input filter is currently `{state}`."),
+                HistoryTone::Control,
+            ));
+            Ok(())
+        }
         _ => Err("Usage: /filter <on|off>"),
     }
 }
