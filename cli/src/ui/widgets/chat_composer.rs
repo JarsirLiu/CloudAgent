@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::time::{Duration, Instant};
 
 use crate::ui::widgets::textarea::{TextArea, display_width, is_altgr};
 
@@ -19,6 +20,61 @@ pub struct ComposerRender {
 pub struct ChatComposer {
     textarea: TextArea,
     completion: CompletionState,
+    paste_burst: PasteBurst,
+}
+
+#[derive(Debug, Default, Clone)]
+struct PasteBurst {
+    last_plain_key_at: Option<Instant>,
+    consecutive_plain_keys: u16,
+    in_paste_burst: bool,
+}
+
+impl PasteBurst {
+    #[cfg(windows)]
+    const CHAR_INTERVAL: Duration = Duration::from_millis(30);
+    #[cfg(not(windows))]
+    const CHAR_INTERVAL: Duration = Duration::from_millis(12);
+
+    #[cfg(windows)]
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(70);
+    #[cfg(not(windows))]
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(30);
+
+    const MIN_BURST_KEYS: u16 = 3;
+
+    fn on_plain_key(&mut self, now: Instant) {
+        match self.last_plain_key_at {
+            Some(prev) if now.duration_since(prev) <= Self::CHAR_INTERVAL => {
+                self.consecutive_plain_keys = self.consecutive_plain_keys.saturating_add(1);
+            }
+            _ => {
+                self.consecutive_plain_keys = 1;
+                self.in_paste_burst = false;
+            }
+        }
+        self.last_plain_key_at = Some(now);
+        if self.consecutive_plain_keys >= Self::MIN_BURST_KEYS {
+            self.in_paste_burst = true;
+        }
+    }
+
+    fn refresh_timeout(&mut self, now: Instant) {
+        if self.in_paste_burst
+            && let Some(prev) = self.last_plain_key_at
+            && now.duration_since(prev) > Self::IDLE_TIMEOUT
+        {
+            self.in_paste_burst = false;
+            self.consecutive_plain_keys = 0;
+            self.last_plain_key_at = None;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.in_paste_burst = false;
+        self.consecutive_plain_keys = 0;
+        self.last_plain_key_at = None;
+    }
 }
 
 impl ChatComposer {
@@ -26,11 +82,28 @@ impl ChatComposer {
         Self {
             textarea: TextArea::new(),
             completion: CompletionState::default(),
+            paste_burst: PasteBurst::default(),
         }
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ComposerIntent> {
         if !matches!(key.kind, KeyEventKind::Press) {
+            return None;
+        }
+        let now = Instant::now();
+        self.paste_burst.refresh_timeout(now);
+        let is_plain_char = matches!(key.code, KeyCode::Char(_))
+            && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT);
+        let is_plain_enter = key.code == KeyCode::Enter && key.modifiers.is_empty();
+        if is_plain_char || is_plain_enter {
+            self.paste_burst.on_plain_key(now);
+        } else {
+            self.paste_burst.reset();
+        }
+
+        if is_plain_enter && self.paste_burst.in_paste_burst {
+            self.textarea.insert_str("\n");
+            self.sync_completion();
             return None;
         }
 
@@ -103,6 +176,7 @@ impl ChatComposer {
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> ComposerIntent {
+        self.paste_burst.reset();
         self.textarea.insert_str(text);
         self.sync_completion();
         ComposerIntent::None
@@ -401,5 +475,29 @@ mod tests {
 
         assert_eq!(action, None);
         assert_eq!(composer.textarea.text(), "first\nsecond");
+    }
+
+    #[test]
+    fn rapid_key_stream_treats_enter_as_newline_not_submit() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "abc");
+
+        let action = composer.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(action, None);
+        assert_eq!(composer.textarea.text(), "abc\n");
+    }
+
+    #[test]
+    fn paste_burst_times_out_then_enter_submits_again() {
+        let mut burst = PasteBurst::default();
+        let now = Instant::now();
+        burst.on_plain_key(now);
+        burst.on_plain_key(now + Duration::from_millis(1));
+        burst.on_plain_key(now + Duration::from_millis(2));
+        assert!(burst.in_paste_burst);
+
+        burst.refresh_timeout(now + Duration::from_millis(200));
+        assert!(!burst.in_paste_burst);
     }
 }
