@@ -4,7 +4,7 @@ use crate::{AgentRuntime, emit_event};
 use crate::observability::{ContextBudgetLogEntry, append_context_budget_log};
 use agent_core::{
     ContextCompactionConfig, ContextFragment, ContextManager, ContextFacade, ConversationHistory,
-    ModelUsage, RolloutItem,
+    FilterPolicy, ModelUsage, RolloutItem,
 };
 use agent_core::context::MemoryBudgetSource;
 use agent_protocol::{
@@ -91,6 +91,9 @@ where
         .filter(|s| !s.trim().is_empty());
     let mut turn_total_usage = ModelUsage::default();
     let context_facade = ContextFacade::new();
+    let filter_policy = FilterPolicy {
+        enabled: runtime.config.cli.pre_llm_filter_enabled,
+    };
     let mut last_sdk_context_tokens: Option<usize> = None;
     let mut history_len_at_last_sdk_usage: Option<usize> = None;
 
@@ -153,18 +156,26 @@ where
                 .min(context_manager.history().messages.len());
             let local_delta_tokens = context_facade.estimate_history_tokens_for_compaction(
                 &context_manager.history().messages[delta_start..],
+                filter_policy,
                 &runtime.config.workspace_root,
             );
             sdk_tokens.saturating_add(local_delta_tokens)
         } else {
             context_facade.estimate_history_tokens_for_compaction(
                 &context_manager.history().messages,
+                filter_policy,
                 &runtime.config.workspace_root,
             )
         };
+        let compaction_estimated_total_tokens =
+            context_facade.estimate_history_tokens_for_canonical_compaction(
+                &context_manager.history().messages,
+                &runtime.config.workspace_root,
+            );
 
         let budgeted = context_facade.build_memory_budgeted_fragments(
             &context_manager.history().messages,
+            filter_policy,
             environment_context.render(),
             &tool_specs,
             &runtime.config.workspace_root,
@@ -213,11 +224,12 @@ where
             .prepare_model_request(
                 &mut context_manager,
                 &runtime.config.workspace_root,
+                filter_policy,
                 budgeted.fragments,
                 tool_specs.clone(),
                 runtime.config.llm.temperature,
                 compaction_config,
-                estimated_total_tokens,
+                estimated_total_tokens.max(compaction_estimated_total_tokens),
                 runtime.config.runtime.post_compact_memory_floor_tokens,
                 runtime.config.runtime.context_budget_safety_buffer_tokens,
                 |summary_request| async {
@@ -230,6 +242,7 @@ where
             .await?;
         let history_tokens_now = context_facade.estimate_history_tokens_for_compaction(
             &context_manager.history().messages,
+            filter_policy,
             &runtime.config.workspace_root,
         );
         let trigger_tokens = ((runtime.config.runtime.model_context_window as f32)
@@ -251,6 +264,7 @@ where
                 trigger_ratio: runtime.config.runtime.context_compaction_trigger_ratio,
                 trigger_tokens,
                 estimated_total_tokens,
+                filter_enabled: runtime.config.cli.pre_llm_filter_enabled,
                 sdk_total_tokens: last_sdk_context_tokens,
                 history_tokens: history_tokens_now,
                 overhead_tokens: overhead_now,
@@ -266,7 +280,11 @@ where
                 mcp_after: budgeted.audit.mcp_after,
             },
         );
-        if prepared.compaction_requested {
+        let persistent_compaction = prepared
+            .compaction
+            .as_ref()
+            .filter(|compaction| !compaction.ephemeral);
+        if persistent_compaction.is_some() {
             emit_event(
                 &mut events,
                 on_event,
@@ -276,7 +294,7 @@ where
                 },
             );
         }
-        if let Some(compacted) = &prepared.compaction {
+        if let Some(compacted) = persistent_compaction {
             runtime
                 .persist_rollout_items(
                     conversation_id,

@@ -56,7 +56,10 @@ pub(crate) async fn run_manual_compaction(
     let context_facade = ContextFacade::new();
     let tool_specs = runtime.tools.specs();
     let environment_context = runtime.environment_context();
-    let estimated_history_tokens = context_facade.estimate_history_tokens(&history.messages);
+    let estimated_history_tokens = context_facade.estimate_history_tokens_for_canonical_compaction(
+        &history.messages,
+        &runtime.config.workspace_root,
+    );
     if estimated_history_tokens < minimum_history_tokens {
         return Ok(crate::ManualCompactionOutcome::Skipped {
             estimated_history_tokens,
@@ -90,7 +93,18 @@ pub(crate) async fn run_manual_compaction(
             .context_compaction_summary_source_tokens,
     };
 
-    let Some(compaction_plan) = plan_manual_history_compaction(
+    let filtered_messages =
+        context_facade.filtered_messages_for_canonical_compaction(&history.messages);
+    let Some(filtered_plan) = plan_manual_history_compaction(
+        &filtered_messages,
+        compaction_config,
+        minimum_history_tokens,
+    ) else {
+        return Ok(crate::ManualCompactionOutcome::Skipped {
+            estimated_history_tokens,
+        });
+    };
+    let Some(raw_plan) = plan_manual_history_compaction(
         &history.messages,
         compaction_config,
         minimum_history_tokens,
@@ -101,7 +115,7 @@ pub(crate) async fn run_manual_compaction(
     };
 
     let summary_request = build_compaction_summary_request(
-        &compaction_plan,
+        &filtered_plan,
         compaction_config,
         runtime.config.llm.temperature,
     );
@@ -110,11 +124,11 @@ pub(crate) async fn run_manual_compaction(
         .content
         .map(|text| CompactionSummary::from_model_output(&text).ensure_defaults())
         .filter(|summary| !summary.current_task.is_empty())
-        .unwrap_or_else(|| CompactionSummary::fallback_from_plan(&compaction_plan));
+        .unwrap_or_else(|| CompactionSummary::fallback_from_plan(&filtered_plan));
 
     let pre_message_count = history.messages.len();
     let pre_context_tokens_estimate = context_facade.estimate_history_tokens(&history.messages) as u64;
-    let compacted = apply_history_compaction(&mut history.messages, &compaction_plan, summary);
+    let compacted = apply_history_compaction(&mut history.messages, &raw_plan, summary);
     let post_message_count = compacted.replacement_history.len();
     let post_context_tokens_estimate =
         context_facade.estimate_history_tokens(&compacted.replacement_history) as u64;

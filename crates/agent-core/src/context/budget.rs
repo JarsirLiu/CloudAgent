@@ -1,4 +1,4 @@
-use crate::context::facade::ContextFacade;
+use crate::context::{FilterPolicy, facade::ContextFacade};
 use crate::conversation::ResponseItem;
 use crate::tool::ToolSpec;
 use std::path::Path;
@@ -40,6 +40,7 @@ pub struct BudgetedFragments {
 pub fn build_memory_budgeted_fragments(
     facade: &ContextFacade,
     history: &[ResponseItem],
+    filter_policy: FilterPolicy,
     environment_fragment: ResponseItem,
     tool_specs: &[ToolSpec],
     workspace_root: &Path,
@@ -55,7 +56,8 @@ pub fn build_memory_budgeted_fragments(
         mcp_before: estimate_text_tokens(source.mcp.as_deref().unwrap_or("")),
         ..BucketAudit::default()
     };
-    let history_tokens = facade.estimate_history_tokens_for_compaction(history, workspace_root);
+    let history_tokens =
+        facade.estimate_history_tokens_for_compaction(history, filter_policy, workspace_root);
     let overhead_tokens = facade.estimate_request_overhead_tokens(
         history,
         &environment_fragment,

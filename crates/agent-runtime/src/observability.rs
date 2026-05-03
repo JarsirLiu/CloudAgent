@@ -17,6 +17,7 @@ pub(crate) struct ContextBudgetLogEntry {
     pub trigger_ratio: f32,
     pub trigger_tokens: usize,
     pub estimated_total_tokens: usize,
+    pub filter_enabled: bool,
     pub sdk_total_tokens: Option<usize>,
     pub history_tokens: usize,
     pub overhead_tokens: usize,

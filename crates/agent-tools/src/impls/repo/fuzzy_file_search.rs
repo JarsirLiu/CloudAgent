@@ -153,6 +153,11 @@ impl LocalTool for FuzzyFileSearchLocalTool {
         Ok(ToolInvocationOutput {
             content,
             structured: Some(agent_protocol::StructuredToolResult::FindFiles {
+                pattern: args.pattern,
+                path_scope: args.path_scope,
+                case_sensitive,
+                offset,
+                max_results,
                 file_count: matches.len(),
             }),
         })

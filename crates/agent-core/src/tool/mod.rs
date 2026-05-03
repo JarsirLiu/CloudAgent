@@ -79,6 +79,11 @@ pub enum StructuredToolResult {
         truncated: bool,
     },
     FindFiles {
+        pattern: String,
+        path_scope: Option<String>,
+        case_sensitive: bool,
+        offset: usize,
+        max_results: usize,
         file_count: usize,
     },
     ReadFiles {
