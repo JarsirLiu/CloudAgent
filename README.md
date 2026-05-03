@@ -94,7 +94,7 @@ cargo run -p cli
 |---|---|
 | `/help` | Show local command help |
 | `/copy` | Copy the latest assistant reply |
-| `/interrupt` | Interrupt the running turn |
+| `/interrupt` | Interrupt the running turn (shortcut: `Ctrl+C`) |
 | `/compact` | Compact older context into a summary |
 | `/session <id>` | List sessions or switch to a session |
 | `/new [session-id]` | Create and switch to a new session. Session ID is optional; press Enter after `/new` to open picker and use Up/Down to select |
@@ -185,7 +185,7 @@ cargo run -p cli
 |---|---|
 | `/help` | 显示本地命令帮助 |
 | `/copy` | 复制最新一条 assistant 回复 |
-| `/interrupt` | 中断当前运行中的 turn |
+| `/interrupt` | 中断当前运行中的 turn（快捷键：`Ctrl+C`） |
 | `/compact` | 将旧上下文压缩为摘要 |
 | `/session <id>` | 查看会话列表或切换到指定会话 |
 | `/new [session-id]` | 新建并切换到会话。`session-id` 可省略；输入 `/new` 回车后可进入选择器，并可用上下方向键选择 |
