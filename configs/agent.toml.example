@@ -5,7 +5,6 @@ model = "gpt-4.1-mini"
 temperature = 0.2
 
 [runtime]
-max_tool_roundtrips = 8
 session_store_dir = "data/sessions"
 system_prompt = "You are cloudagent."
 model_context_window = 128000

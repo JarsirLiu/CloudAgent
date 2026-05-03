@@ -23,7 +23,7 @@ pub struct LlmConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub system_prompt: String,
-    pub max_tool_roundtrips: usize,
+    pub max_tool_roundtrips: Option<usize>,
     pub conversation_store_dir: PathBuf,
     pub model_context_window: u64,
     pub context_compaction_trigger_ratio: f32,
@@ -69,7 +69,7 @@ struct PartialLlmConfig {
 #[derive(Clone, Debug, Default, Deserialize)]
 struct PartialRuntimeConfig {
     system_prompt: Option<String>,
-    max_tool_roundtrips: Option<usize>,
+    max_tool_roundtrips: Option<Option<usize>>,
     #[serde(alias = "session_store_dir")]
     conversation_store_dir: Option<PathBuf>,
     model_context_window: Option<u64>,
@@ -144,7 +144,7 @@ impl AgentConfig {
         Self {
             runtime: RuntimeConfig {
                 system_prompt: default_system_prompt(),
-                max_tool_roundtrips: 12,
+                max_tool_roundtrips: None,
                 conversation_store_dir: workspace_root.join("data").join("conversations"),
                 model_context_window: 128_000,
                 context_compaction_trigger_ratio: 0.90,
@@ -200,7 +200,7 @@ impl AgentConfig {
                 self.runtime.system_prompt = value;
             }
             if let Some(value) = runtime.max_tool_roundtrips {
-                self.runtime.max_tool_roundtrips = value.max(1);
+                self.runtime.max_tool_roundtrips = value.map(|v| v.max(1));
             }
             if let Some(value) = runtime.conversation_store_dir {
                 self.runtime.conversation_store_dir = absolutize_path(&self.workspace_root, value);
@@ -345,7 +345,7 @@ impl AgentConfig {
         if let Ok(value) = env::var("CLOUDAGENT_MAX_TOOL_ROUNDTRIPS")
             && let Ok(parsed) = value.parse::<usize>()
         {
-            self.runtime.max_tool_roundtrips = parsed.max(1);
+            self.runtime.max_tool_roundtrips = Some(parsed.max(1));
         }
         if let Ok(value) = env::var("CLOUDAGENT_CONVERSATION_STORE_DIR") {
             self.runtime.conversation_store_dir =

@@ -1066,7 +1066,7 @@
             },
             runtime: RuntimeConfig {
                 system_prompt: "You are a test agent.".to_string(),
-                max_tool_roundtrips: 4,
+                max_tool_roundtrips: Some(4),
                 conversation_store_dir,
                 model_context_window: 128_000,
                 context_compaction_trigger_ratio: 0.90,

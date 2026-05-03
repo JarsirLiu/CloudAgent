@@ -89,7 +89,14 @@ where
     let mut last_sdk_context_tokens: Option<usize> = None;
     let mut history_len_at_last_sdk_usage: Option<usize> = None;
 
-    for _ in 0..runtime.policy.max_tool_roundtrips {
+    let mut roundtrip_count = 0usize;
+    loop {
+        if let Some(limit) = runtime.policy.max_tool_roundtrips
+            && roundtrip_count >= limit
+        {
+            break;
+        }
+        roundtrip_count += 1;
         if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
             emit_event(
                 &mut events,
