@@ -101,7 +101,9 @@ impl ChatComposer {
             self.paste_burst.reset();
         }
 
-        if is_plain_enter && self.paste_burst.in_paste_burst {
+        let current_text = self.textarea.text();
+        let is_trimmed_slash_command = current_text.trim_start().starts_with('/');
+        if is_plain_enter && self.paste_burst.in_paste_burst && !is_trimmed_slash_command {
             self.textarea.insert_str("\n");
             self.sync_completion();
             return None;

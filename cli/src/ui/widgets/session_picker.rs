@@ -68,8 +68,11 @@ impl BottomPaneView for SessionPicker {
     fn render_lines(&self, area_width: u16) -> Vec<Line<'static>> {
         let mut lines = vec![Line::from(match self.mode {
             SessionPickerMode::Switch => "  Session Picker",
-            SessionPickerMode::Delete => "  Delete Session",
+            SessionPickerMode::Delete => "  Delete Session  permanently remove data",
         })];
+        if matches!(self.mode, SessionPickerMode::Delete) {
+            lines.push(Line::from("  Enter to delete, Esc to cancel"));
+        }
         let id_col = 24usize;
         let max_width = area_width as usize;
         for (idx, s) in self.sessions.iter().enumerate() {
