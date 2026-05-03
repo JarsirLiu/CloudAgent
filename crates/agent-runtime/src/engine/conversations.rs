@@ -125,11 +125,7 @@ impl AgentRuntime {
         &self,
         conversation_id: &str,
     ) -> Result<ConversationHistory> {
-        Ok(self
-            .conversation_snapshot(conversation_id)
-            .await?
-            .history()
-            .clone())
+        self.history_from_rollout(conversation_id).await
     }
 
     pub async fn conversation_transcript_snapshot(
@@ -164,16 +160,8 @@ impl AgentRuntime {
         if let Some(conversation) = self.state.conversation(conversation_id).await {
             return Ok(conversation);
         }
-        if let Some(mut conversation) = self.store.load_conversation(conversation_id).await? {
-            conversation
-                .context_mut()
-                .ensure_system_prompt(self.config.runtime.system_prompt.clone());
-            return Ok(conversation);
-        }
-        Ok(ConversationState::new(ConversationHistory::new(
-            conversation_id.to_string(),
-            self.config.runtime.system_prompt.clone(),
-        )))
+        let history = self.history_from_rollout(conversation_id).await?;
+        Ok(ConversationState::new(history))
     }
 
     pub async fn conversation_status(&self, conversation_id: &str) -> Result<ConversationSnapshot> {

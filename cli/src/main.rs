@@ -1,5 +1,6 @@
 use agent_runtime::AgentRuntime;
 use anyhow::{Result, bail};
+use cli::app::cli_settings::load_cli_settings;
 use cli::{ConsoleConfig, ConsoleConnection, run_console};
 use config::AgentConfig;
 use std::ffi::OsString;
@@ -20,6 +21,11 @@ async fn main() -> Result<()> {
     } else {
         AgentConfig::load(workspace_root)?
     };
+    let mut config = config;
+    if let Ok(Some(settings)) = load_cli_settings(&config.runtime.conversation_store_dir) {
+        config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
+        config.cli.permission_mode = settings.permission_mode;
+    }
     let runtime = match AgentRuntime::from_config(config) {
         Ok(runtime) => Arc::new(runtime),
         Err(err) => {
@@ -34,7 +40,6 @@ async fn main() -> Result<()> {
             return Err(err);
         }
     };
-    runtime.persist_config_snapshot().await;
     runtime.run_startup_retention_cleanup().await;
     let conversation_id = runtime.ensure_active_conversation().await?;
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -65,12 +70,17 @@ async fn main() -> Result<()> {
             ],
         }
     } else {
-        ConsoleConnection::InProcess { runtime }
+        ConsoleConnection::InProcess {
+            runtime: runtime.clone(),
+        }
     };
 
     run_console(ConsoleConfig {
         conversation_id: conversation_id.clone(),
         workspace_root: std::env::current_dir()?,
+        conversation_store_dir: runtime.conversation_store_dir().to_path_buf(),
+        initial_filter_enabled: runtime.cli_pre_llm_filter_enabled(),
+        initial_permission_mode: runtime.cli_permission_mode().to_string(),
         auto_approve: false,
         auto_approve_reason: None,
         connection,

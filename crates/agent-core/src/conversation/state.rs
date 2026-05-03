@@ -101,28 +101,4 @@ impl ConversationState {
         &self.pending_requests
     }
 
-    pub fn persisted_record(&self) -> PersistedConversation {
-        PersistedConversation {
-            context: self.context.clone(),
-            pending_requests: self.pending_requests.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PersistedConversation {
-    pub context: ContextManager,
-    #[serde(default)]
-    pub pending_requests: Vec<PendingConversationRequest>,
-}
-
-impl PersistedConversation {
-    pub fn into_state(self) -> ConversationState {
-        ConversationState {
-            context: self.context,
-            active_turn: None,
-            event_log: Vec::new(),
-            pending_requests: self.pending_requests,
-        }
-    }
 }

@@ -19,6 +19,9 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         conversation_id.clone(),
         config.connection.label(),
         config.workspace_root.clone(),
+        config.conversation_store_dir.clone(),
+        config.initial_filter_enabled,
+        config.initial_permission_mode.clone(),
     );
     client.send_command(AppClientCommand::RequestConversationHistory {
         conversation_id: conversation_id.clone(),

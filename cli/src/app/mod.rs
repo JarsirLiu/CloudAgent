@@ -1,3 +1,4 @@
+pub mod cli_settings;
 pub(crate) mod commands;
 mod conversation;
 mod core;

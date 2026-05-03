@@ -10,6 +10,7 @@ pub struct AgentConfig {
     pub llm: LlmConfig,
     pub runtime: RuntimeConfig,
     pub tools: ToolConfig,
+    pub cli: CliConfig,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -51,11 +52,18 @@ pub struct ToolConfig {
     pub max_read_chars: usize,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CliConfig {
+    pub pre_llm_filter_enabled: bool,
+    pub permission_mode: String,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 struct PartialAgentConfig {
     llm: Option<PartialLlmConfig>,
     runtime: Option<PartialRuntimeConfig>,
     tools: Option<PartialToolConfig>,
+    cli: Option<PartialCliConfig>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -105,6 +113,12 @@ struct PartialMemoryConfig {
 struct PartialToolConfig {
     default_shell_timeout_ms: Option<u64>,
     max_read_chars: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct PartialCliConfig {
+    pre_llm_filter_enabled: Option<bool>,
+    permission_mode: Option<String>,
 }
 
 impl AgentConfig {
@@ -174,6 +188,10 @@ impl AgentConfig {
             tools: ToolConfig {
                 default_shell_timeout_ms: 120_000,
                 max_read_chars: 20_000,
+            },
+            cli: CliConfig {
+                pre_llm_filter_enabled: false,
+                permission_mode: "safe".to_string(),
             },
             workspace_root,
         }
@@ -320,6 +338,18 @@ impl AgentConfig {
             }
             if let Some(value) = tools.max_read_chars {
                 self.tools.max_read_chars = value.max(1_024);
+            }
+        }
+
+        if let Some(cli) = partial.cli {
+            if let Some(value) = cli.pre_llm_filter_enabled {
+                self.cli.pre_llm_filter_enabled = value;
+            }
+            if let Some(value) = cli.permission_mode {
+                let value = value.trim().to_ascii_lowercase();
+                if matches!(value.as_str(), "safe" | "balanced" | "danger") {
+                    self.cli.permission_mode = value;
+                }
             }
         }
     }

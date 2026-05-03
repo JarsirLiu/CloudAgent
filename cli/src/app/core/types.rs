@@ -13,6 +13,9 @@ use std::sync::Arc;
 pub struct ConsoleConfig {
     pub conversation_id: String,
     pub workspace_root: PathBuf,
+    pub conversation_store_dir: PathBuf,
+    pub initial_filter_enabled: bool,
+    pub initial_permission_mode: String,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
     pub connection: ConsoleConnection,
@@ -50,4 +53,5 @@ pub(crate) struct TuiApp {
     pub(crate) session_picker_requested: bool,
     pub(crate) delete_picker_requested: bool,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) conversation_store_dir: PathBuf,
 }

@@ -1,4 +1,5 @@
 use crate::app::TuiApp;
+use crate::app::cli_settings::{PersistedCliSettings, save_cli_settings};
 use crate::app::conversation::facade as conversation_facade;
 use crate::app::effects::copy_text_to_clipboard;
 use crate::app::commands::filter_toggle::apply_filter_toggle;
@@ -73,6 +74,12 @@ pub(crate) fn handle_tui_input(
                 app.push_cell(HistoryCell::from_message(
                     "conversation",
                     err,
+                    HistoryTone::Warning,
+                ));
+            } else if let Err(err) = persist_cli_settings(app) {
+                app.push_cell(HistoryCell::from_message(
+                    "config",
+                    format!("failed to persist permission mode: {err}"),
                     HistoryTone::Warning,
                 ));
             }
@@ -197,6 +204,12 @@ pub(crate) fn handle_tui_input(
                     HistoryTone::Warning,
                 ));
                 return Ok(false);
+            } else if let Err(err) = persist_cli_settings(app) {
+                app.push_cell(HistoryCell::from_message(
+                    "config",
+                    format!("failed to persist filter setting: {err}"),
+                    HistoryTone::Warning,
+                ));
             }
         }
         ParsedInput::Command(command) => {
@@ -391,6 +404,16 @@ fn sync_mode_after_server_request_view(app: &mut TuiApp) {
         app.server_request_state.active_request_id = None;
         app.server_request_state.action_required = false;
     }
+}
+
+fn persist_cli_settings(app: &TuiApp) -> Result<()> {
+    save_cli_settings(
+        &app.conversation_store_dir,
+        &PersistedCliSettings::new(
+            app.run_state.pre_llm_filter_enabled,
+            app.run_state.permission_mode.clone(),
+        ),
+    )
 }
 
 fn save_user_llm_config(api_key: &str, base_url: &str, model: &str) -> Result<()> {

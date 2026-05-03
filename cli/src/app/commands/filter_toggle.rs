@@ -12,7 +12,7 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
             );
             app.push_cell(HistoryCell::from_message(
                 "context",
-                "Pre-LLM input filter enabled for this local session.",
+                "Pre-LLM input filter enabled for this project.",
                 HistoryTone::Control,
             ));
             Ok(())
@@ -25,7 +25,7 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
             );
             app.push_cell(HistoryCell::from_message(
                 "context",
-                "Pre-LLM input filter disabled for this local session.",
+                "Pre-LLM input filter disabled for this project.",
                 HistoryTone::Control,
             ));
             Ok(())

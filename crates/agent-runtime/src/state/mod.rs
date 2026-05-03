@@ -129,23 +129,6 @@ impl RuntimeState {
             .map(|entry| entry.conversation.history().clone())
     }
 
-    pub(crate) async fn save_conversation(&self, conversation: ConversationState) {
-        let Ok(mut conversations) = self.conversations.lock() else {
-            return;
-        };
-        let conversation_id = conversation.history().id.clone();
-        let cancellation_token = conversations
-            .get(&conversation_id)
-            .and_then(|entry| entry.cancellation_token.clone());
-        conversations.insert(
-            conversation_id,
-            RuntimeConversationEntry {
-                conversation,
-                cancellation_token,
-            },
-        );
-    }
-
     pub(crate) async fn save_history(&self, history: ConversationHistory) {
         let Ok(mut conversations) = self.conversations.lock() else {
             return;

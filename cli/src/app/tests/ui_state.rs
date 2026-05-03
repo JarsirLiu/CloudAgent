@@ -2,7 +2,14 @@ use super::*;
 
     #[test]
     fn mode_changes_do_not_clear_active_approval_view() {
-        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("."),
+            PathBuf::from("."),
+            false,
+            "safe".to_string(),
+        );
         app.input_pane.set_server_request(
             crate::ui::widgets::input_pane::ServerRequestInlineState {
                 request_id: agent_protocol::RequestId::String("req-1".to_string()),
@@ -22,7 +29,14 @@ use super::*;
 
     #[test]
     fn assistant_delta_requires_item_started_before_streaming() {
-        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("."),
+            PathBuf::from("."),
+            false,
+            "safe".to_string(),
+        );
 
         app.handle_assistant_item_delta("assistant:1", "partial");
         assert!(app.transcript_state.active_cell.is_none());
@@ -37,7 +51,14 @@ use super::*;
 
     #[test]
     fn tool_delta_requires_item_started_before_streaming() {
-        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("."),
+            PathBuf::from("."),
+            false,
+            "safe".to_string(),
+        );
 
         app.handle_control_item_delta("tool:1", "half");
         assert!(app.transcript_state.active_cell.is_none());
@@ -66,7 +87,14 @@ use super::*;
 
     #[test]
     fn ctrl_c_exits_when_idle() {
-        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("."),
+            PathBuf::from("."),
+            false,
+            "safe".to_string(),
+        );
 
         let input = app
             .handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
@@ -81,7 +109,14 @@ use super::*;
 
     #[test]
     fn reasoning_and_control_cells_use_distinct_tones() {
-        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("."),
+            PathBuf::from("."),
+            false,
+            "safe".to_string(),
+        );
 
         app.handle_reasoning_item_started("reasoning:1", "reasoning");
         app.handle_reasoning_item_delta("reasoning:1", "thinking");
@@ -107,7 +142,14 @@ use super::*;
 
     #[test]
     fn repeated_control_cells_coalesce_and_pending_queue_stays_consistent() {
-        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("."),
+            PathBuf::from("."),
+            false,
+            "safe".to_string(),
+        );
 
         let first = HistoryCell::from_message("context", "workspace ready", HistoryTone::Control);
         let second = HistoryCell::from_message("context", "workspace ready", HistoryTone::Control);
@@ -129,7 +171,14 @@ use super::*;
 
     #[test]
     fn snapshot_history_replaces_transcript_without_event_replay() {
-        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("."),
+            PathBuf::from("."),
+            false,
+            "safe".to_string(),
+        );
 
         execute_server_action(
             &mut app,
@@ -196,7 +245,14 @@ use super::*;
 
     #[test]
     fn turn_dispatch_completed_flushes_active_assistant_cell() {
-        let mut app = TuiApp::new("default".to_string(), "test", PathBuf::from("."));
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("."),
+            PathBuf::from("."),
+            false,
+            "safe".to_string(),
+        );
         app.handle_assistant_item_started("turn-1", "assistant:flush");
         app.handle_assistant_item_delta("assistant:flush", "hello");
         app.apply_turn_dispatch(TurnDispatch::Completed);

@@ -91,6 +91,18 @@ impl AgentRuntime {
         &self.config.llm.model
     }
 
+    pub fn conversation_store_dir(&self) -> &std::path::Path {
+        &self.config.runtime.conversation_store_dir
+    }
+
+    pub fn cli_pre_llm_filter_enabled(&self) -> bool {
+        self.config.cli.pre_llm_filter_enabled
+    }
+
+    pub fn cli_permission_mode(&self) -> &str {
+        &self.config.cli.permission_mode
+    }
+
     pub(crate) fn environment_context(&self) -> EnvironmentContext {
         let now = chrono::Local::now();
         EnvironmentContext::new(
@@ -157,12 +169,6 @@ mod tests {
 }
 
 impl AgentRuntime {
-    pub async fn persist_config_snapshot(&self) {
-        if let Ok(snapshot) = serde_json::to_string(&self.config) {
-            let _ = self.store.save_project_settings_snapshot(&snapshot).await;
-        }
-    }
-
     pub(crate) async fn is_turn_cancelled(&self, conversation_id: &str) -> bool {
         self.state
             .active_turn(conversation_id)

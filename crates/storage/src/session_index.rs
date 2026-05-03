@@ -106,6 +106,18 @@ ON CONFLICT(project_root) DO UPDATE SET config_json=excluded.config_json, update
     Ok(())
 }
 
+pub fn get_project_settings(db_path: &Path, project_root: &str) -> Result<Option<String>> {
+    let conn = open(db_path)?;
+    let mut stmt =
+        conn.prepare("SELECT config_json FROM project_settings WHERE project_root=?1")?;
+    let mut rows = stmt.query(params![project_root])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(row.get(0)?))
+    } else {
+        Ok(None)
+    }
+}
+
 pub fn db_path(root: &Path) -> std::path::PathBuf {
     root.join("session_index.db")
 }
@@ -185,11 +197,47 @@ pub fn list_sessions(db_path: &Path, project_root: &str) -> Result<Vec<SessionIn
     Ok(out)
 }
 
+pub fn list_archived_sessions(db_path: &Path, project_root: &str) -> Result<Vec<SessionIndexRow>> {
+    let conn = open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT conversation_id, title, message_count, updated_at_ms, archived FROM sessions WHERE project_root=?1 AND archived=1 ORDER BY updated_at_ms ASC",
+    )?;
+    let mut rows = stmt.query(params![project_root])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(SessionIndexRow {
+            conversation_id: row.get(0)?,
+            title: row.get(1)?,
+            message_count: row.get::<_, i64>(2)? as usize,
+            updated_at_ms: row.get::<_, i64>(3)? as u64,
+            archived: row.get::<_, i64>(4)? != 0,
+        });
+    }
+    Ok(out)
+}
+
 pub fn set_title(db_path: &Path, conversation_id: &str, title: &str) -> Result<()> {
     let conn = open(db_path)?;
     conn.execute(
         "UPDATE sessions SET title=?2 WHERE conversation_id=?1",
         params![conversation_id, title],
+    )?;
+    Ok(())
+}
+
+pub fn delete_session(db_path: &Path, conversation_id: &str) -> Result<()> {
+    let conn = open(db_path)?;
+    conn.execute(
+        "DELETE FROM sessions WHERE conversation_id=?1",
+        params![conversation_id],
+    )?;
+    conn.execute(
+        "DELETE FROM project_active_session WHERE conversation_id=?1",
+        params![conversation_id],
+    )?;
+    conn.execute(
+        "DELETE FROM session_events WHERE conversation_id=?1",
+        params![conversation_id],
     )?;
     Ok(())
 }

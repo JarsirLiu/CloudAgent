@@ -1,21 +1,18 @@
 use crate::AgentRuntime;
-use agent_core::{
-    ConversationHistory, ConversationState, RolloutItem, conversation_history_from_rollout_items,
-};
+use agent_core::{ConversationHistory, RolloutItem, conversation_history_from_rollout_items};
 use anyhow::Result;
 
 impl AgentRuntime {
     pub(crate) async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory> {
-        if let Some(history) = self.state.history(conversation_id).await {
+        if let Some(history) = self.state.history(conversation_id).await
+            && !is_placeholder_history(&history)
+        {
             return Ok(history);
         }
 
         self.rollout_recorder.flush().await?;
         let rollout_items = self.store.load_rollout_items(conversation_id).await?;
-        if rollout_items
-            .iter()
-            .any(|item| matches!(item, RolloutItem::ResponseItem { .. }))
-        {
+        if !rollout_items.is_empty() {
             let history = conversation_history_from_rollout_items(
                 conversation_id.to_string(),
                 self.config.runtime.system_prompt.clone(),
@@ -25,20 +22,11 @@ impl AgentRuntime {
             return Ok(history);
         }
 
-        let mut conversation =
-            if let Some(conversation) = self.store.load_conversation(conversation_id).await? {
-                conversation
-            } else {
-                ConversationState::new(ConversationHistory::new(
-                    conversation_id.to_string(),
-                    self.config.runtime.system_prompt.clone(),
-                ))
-            };
-        conversation
-            .context_mut()
-            .ensure_system_prompt(self.config.runtime.system_prompt.clone());
-        let history = conversation.history().clone();
-        self.state.save_conversation(conversation).await;
+        let history = ConversationHistory::new(
+            conversation_id.to_string(),
+            self.config.runtime.system_prompt.clone(),
+        );
+        self.save_history(history.clone()).await?;
         Ok(history)
     }
 
@@ -55,11 +43,7 @@ impl AgentRuntime {
     }
 
     pub(crate) async fn save_history(&self, history: ConversationHistory) -> Result<()> {
-        let conversation_id = history.id.clone();
         self.state.save_history(history).await;
-        if let Some(conversation) = self.state.conversation(&conversation_id).await {
-            self.store.save_conversation(&conversation).await?;
-        }
         Ok(())
     }
 
@@ -78,4 +62,12 @@ impl AgentRuntime {
     ) -> Result<()> {
         self.rollout_recorder.record_items(conversation_id, items)
     }
+}
+
+fn is_placeholder_history(history: &ConversationHistory) -> bool {
+    history.turn_count == 0
+        && matches!(
+            history.messages.as_slice(),
+            [agent_core::ResponseItem::System { .. }]
+        )
 }

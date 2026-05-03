@@ -14,7 +14,7 @@ pub use context::{
 };
 pub use conversation::{
     ActiveConversationTurn, ConversationHistory, ConversationState, ConversationTurn,
-    PendingConversationRequest, PersistedConversation, ResponseItem, TranscriptItem,
+    PendingConversationRequest, ResponseItem, TranscriptItem,
 };
 pub use model::{ChatModel, ModelRequest, ModelResponse, ModelUsage};
 pub use projection::{

@@ -8,7 +8,7 @@
     use agent_protocol::{
         AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus,
         ConversationStatus, ConversationTurn, ServerRequestDecisionKind, StructuredToolResult,
-        TranscriptItem, TurnItemKind,
+        FrontendMode, TranscriptItem, TurnItemKind,
     };
     use agent_runtime::AgentRuntime;
     use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
@@ -86,7 +86,14 @@ mod ui_state;
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "in-process",
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            false,
+            "safe".to_string(),
+        );
 
         handle_tui_input(
             &mut app,
@@ -234,7 +241,14 @@ mod ui_state;
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut restarted_app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
+        let mut restarted_app = TuiApp::new(
+            "default".to_string(),
+            "in-process",
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            false,
+            "safe".to_string(),
+        );
         restarted_client
             .send_command(AppClientCommand::RequestConversationHistory {
                 conversation_id: "default".to_string(),
@@ -320,7 +334,14 @@ mod ui_state;
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "in-process",
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            false,
+            "safe".to_string(),
+        );
 
         handle_tui_input(
             &mut app,
@@ -420,7 +441,14 @@ mod ui_state;
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut restarted_app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
+        let mut restarted_app = TuiApp::new(
+            "default".to_string(),
+            "in-process",
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            false,
+            "safe".to_string(),
+        );
         restarted_client
             .send_command(AppClientCommand::RequestConversationHistory {
                 conversation_id: "default".to_string(),
@@ -548,7 +576,14 @@ mod ui_state;
             auto_approve: false,
             auto_approve_reason: None,
         });
-        let mut app = TuiApp::new("default".to_string(), "in-process", fixture.workspace.clone());
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "in-process",
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            false,
+            "safe".to_string(),
+        );
 
         for content in ["第一轮看看目录", "第二轮再看一次目录"] {
             client
@@ -666,6 +701,176 @@ mod ui_state;
             .expect("fake llm server thread panicked")
             .expect("fake llm server");
         assert_eq!(recorded_requests.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn restarted_turn_uses_rollout_history_in_model_request() {
+        let _guard = cli_e2e_test_lock().await;
+        let fixture = TempFixture::new();
+        let responses = vec![
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{
+                    "delta": {
+                        "content": "first answer"
+                    }
+                }]
+            })]),
+            sse_body(vec![json!({
+                "model": "fake-model",
+                "choices": [{
+                    "delta": {
+                        "content": "second answer"
+                    }
+                }]
+            })]),
+        ];
+        let (base_url, server_thread) = spawn_fake_llm_server(responses);
+        let config = Arc::new(test_config(
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            base_url,
+        ));
+
+        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let mut client = AppServerClient::in_process(InProcessClientConfig {
+            runtime: runtime.clone(),
+            conversation_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "in-process",
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            false,
+            "safe".to_string(),
+        );
+
+        handle_tui_input(
+            &mut app,
+            &client,
+            ParsedInput::Command(AppClientCommand::SubmitTurn(
+                agent_protocol::UserTurnInput {
+                    conversation_id: "default".to_string(),
+                    content: "first question".to_string(),
+                    turn_policy: agent_protocol::TurnPolicy {
+                        permission_profile: agent_protocol::PermissionProfile::ReadOnly,
+                        approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
+                    },
+                },
+            )),
+        )
+        .expect("submit first turn");
+
+        while !matches!(app.console_state.mode, FrontendMode::Idle) {
+            let event = timeout(Duration::from_secs(10), client.next_event())
+                .await
+                .expect("timed out waiting for first turn")
+                .expect("client event");
+            event_router::handle_client_event(&mut app, event);
+        }
+        client.shutdown().await.expect("shutdown first client");
+
+        let runtime_after_restart =
+            Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
+        let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
+            runtime: runtime_after_restart,
+            conversation_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        let mut restarted_app = TuiApp::new(
+            "default".to_string(),
+            "in-process",
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            false,
+            "safe".to_string(),
+        );
+
+        handle_tui_input(
+            &mut restarted_app,
+            &restarted_client,
+            ParsedInput::Command(AppClientCommand::SubmitTurn(
+                agent_protocol::UserTurnInput {
+                    conversation_id: "default".to_string(),
+                    content: "second question".to_string(),
+                    turn_policy: agent_protocol::TurnPolicy {
+                        permission_profile: agent_protocol::PermissionProfile::ReadOnly,
+                        approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
+                    },
+                },
+            )),
+        )
+        .expect("submit second turn");
+
+        while !matches!(restarted_app.console_state.mode, FrontendMode::Idle) {
+            let event = timeout(Duration::from_secs(10), restarted_client.next_event())
+                .await
+                .expect("timed out waiting for restarted turn")
+                .expect("client event after restart");
+            event_router::handle_client_event(&mut restarted_app, event);
+        }
+        restarted_client
+            .shutdown()
+            .await
+            .expect("shutdown restarted client");
+
+        let recorded_requests = server_thread
+            .join()
+            .expect("fake llm server thread panicked")
+            .expect("fake llm server");
+        assert_eq!(recorded_requests.len(), 2);
+        assert!(recorded_requests[1].contains("first question"));
+        assert!(recorded_requests[1].contains("first answer"));
+        assert!(recorded_requests[1].contains("second question"));
+    }
+
+    #[tokio::test]
+    async fn cli_settings_persist_in_sqlite_and_reload() {
+        let _guard = cli_e2e_test_lock().await;
+        let fixture = TempFixture::new();
+        let config = Arc::new(test_config(
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            "http://127.0.0.1:9".to_string(),
+        ));
+        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let client = AppServerClient::in_process(InProcessClientConfig {
+            runtime,
+            conversation_id: "default".to_string(),
+            auto_approve: false,
+            auto_approve_reason: None,
+        });
+        let mut app = TuiApp::new(
+            "default".to_string(),
+            "in-process",
+            fixture.workspace.clone(),
+            fixture.store.clone(),
+            false,
+            "safe".to_string(),
+        );
+
+        handle_tui_input(
+            &mut app,
+            &client,
+            ParsedInput::LocalFilterToggle("on".to_string()),
+        )
+        .expect("toggle filter");
+        handle_tui_input(
+            &mut app,
+            &client,
+            ParsedInput::LocalPermissionMode("danger".to_string()),
+        )
+        .expect("set permission mode");
+
+        let settings = crate::app::cli_settings::load_cli_settings(&fixture.store)
+            .expect("load cli settings")
+            .expect("persisted settings");
+        assert!(settings.pre_llm_filter_enabled);
+        assert_eq!(settings.permission_mode, "danger");
     }
 
     #[tokio::test]
@@ -928,6 +1133,10 @@ mod ui_state;
             tools: ToolConfig {
                 default_shell_timeout_ms: 5_000,
                 max_read_chars: 8_192,
+            },
+            cli: config::CliConfig {
+                pre_llm_filter_enabled: false,
+                permission_mode: "safe".to_string(),
             },
         }
     }

@@ -1,7 +1,6 @@
-use agent_core::{ConversationState, PersistedConversation, RolloutItem};
+use agent_core::{ResponseItem, RolloutItem, conversation_history_from_rollout_items};
 use agent_protocol::EventMsg;
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
@@ -16,18 +15,13 @@ pub struct JsonConversationStore {
     io_lock: Arc<Mutex<()>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct StoredConversationSummary {
     pub conversation_id: String,
     pub title: Option<String>,
     pub message_count: usize,
     pub updated_at_ms: u64,
     pub archived: bool,
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct ConversationIndex {
-    conversations: Vec<StoredConversationSummary>,
 }
 
 impl JsonConversationStore {
@@ -43,57 +37,11 @@ impl JsonConversationStore {
         &self.root
     }
 
-    pub async fn load_conversation(
-        &self,
-        conversation_id: &str,
-    ) -> Result<Option<ConversationState>> {
-        let path = self.conversation_path(conversation_id);
-        match fs::read_to_string(&path).await {
-            Ok(text) => {
-                let conversation = serde_json::from_str::<PersistedConversation>(&text)
-                    .with_context(|| {
-                        format!("failed to parse conversation file {}", path.display())
-                    })?;
-                Ok(Some(conversation.into_state()))
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
-        }
-    }
-
-    pub async fn save_conversation(&self, conversation: &ConversationState) -> Result<()> {
-        let _guard = self.io_lock.lock().await;
-        self.ensure_root_dir().await?;
-        let path = self.conversation_path(&conversation.history().id);
-        let text = serde_json::to_string_pretty(&conversation.persisted_record())?;
-        self.write_text_atomically(&path, &text).await?;
-        self.upsert_index_entry_locked(StoredConversationSummary {
-            conversation_id: conversation.history().id.clone(),
-            title: None,
-            message_count: conversation.history().messages.len(),
-            updated_at_ms: now_ms(),
-            archived: false,
-        })
-        .await?;
-        let _ = session_index::upsert_session(
-            &session_index::db_path(&self.root),
-            &self.root.to_string_lossy(),
-            &conversation.history().id,
-            conversation.history().messages.len(),
-            now_ms(),
-            false,
-            None,
-        );
-        Ok(())
-    }
-
     pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
         let _guard = self.io_lock.lock().await;
-        self.delete_file_if_exists(&self.conversation_path(conversation_id))
-            .await?;
         self.delete_file_if_exists(&self.rollout_path(conversation_id))
             .await?;
-        self.remove_index_entry_locked(conversation_id).await
+        session_index::delete_session(&session_index::db_path(&self.root), conversation_id)
     }
 
     pub async fn load_events(&self, conversation_id: &str) -> Result<Vec<EventMsg>> {
@@ -151,7 +99,7 @@ impl JsonConversationStore {
         file.flush()
             .await
             .with_context(|| format!("failed to flush {}", path.display()))?;
-        self.touch_index_entry_locked(conversation_id).await?;
+        self.refresh_session_summary_locked(conversation_id, false).await?;
         Ok(())
     }
 
@@ -168,14 +116,6 @@ impl JsonConversationStore {
     pub async fn create_conversation(&self, conversation_id: &str) -> Result<()> {
         let _guard = self.io_lock.lock().await;
         self.ensure_root_dir().await?;
-        self.upsert_index_entry_locked(StoredConversationSummary {
-            conversation_id: conversation_id.to_string(),
-            title: None,
-            message_count: 0,
-            updated_at_ms: now_ms(),
-            archived: false,
-        })
-        .await?;
         let now = now_ms();
         let _ = session_index::upsert_session(
             &session_index::db_path(&self.root),
@@ -204,26 +144,9 @@ impl JsonConversationStore {
     pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {
         let _guard = self.io_lock.lock().await;
         self.ensure_root_dir().await?;
-        let mut index = self.load_index_locked().await?;
-        if let Some(summary) = index
-            .conversations
-            .iter_mut()
-            .find(|summary| summary.conversation_id == conversation_id)
-        {
-            summary.archived = true;
-            summary.updated_at_ms = now_ms();
-        }
-        self.save_index_locked(&index).await?;
+        self.refresh_session_summary_locked(conversation_id, true)
+            .await?;
         let now = now_ms();
-        let _ = session_index::upsert_session(
-            &session_index::db_path(&self.root),
-            &self.root.to_string_lossy(),
-            conversation_id,
-            0,
-            now,
-            true,
-            None,
-        );
         let _ = session_index::append_event(
             &session_index::db_path(&self.root),
             &self.root.to_string_lossy(),
@@ -249,34 +172,19 @@ impl JsonConversationStore {
     }
 
     pub async fn list_conversations(&self) -> Result<Vec<StoredConversationSummary>> {
-        if let Ok(index_rows) =
-            session_index::list_sessions(&session_index::db_path(&self.root), &self.root.to_string_lossy())
-        {
-            return Ok(index_rows
-                .into_iter()
-                .map(|row| StoredConversationSummary {
-                    conversation_id: row.conversation_id,
-                    title: row.title,
-                    message_count: row.message_count,
-                    updated_at_ms: row.updated_at_ms,
-                    archived: row.archived,
-                })
-                .collect());
-        }
-        let _guard = self.io_lock.lock().await;
-        let mut conversations = self
-            .load_index_locked()
-            .await?
-            .conversations
-            .into_iter()
-            .filter(|summary| !summary.archived)
-            .collect::<Vec<_>>();
-        conversations.sort_by(|a, b| {
-            b.updated_at_ms
-                .cmp(&a.updated_at_ms)
-                .then_with(|| a.conversation_id.cmp(&b.conversation_id))
-        });
-        Ok(conversations)
+        Ok(session_index::list_sessions(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+        )?
+        .into_iter()
+        .map(|row| StoredConversationSummary {
+            conversation_id: row.conversation_id,
+            title: row.title,
+            message_count: row.message_count,
+            updated_at_ms: row.updated_at_ms,
+            archived: row.archived,
+        })
+        .collect())
     }
 
     pub async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {
@@ -322,11 +230,11 @@ impl JsonConversationStore {
         )
     }
 
-    fn conversation_path(&self, conversation_id: &str) -> PathBuf {
-        self.root.join(format!(
-            "{}.conversation.json",
-            sanitize_conversation_id(conversation_id)
-        ))
+    pub async fn load_project_settings_snapshot(&self) -> Result<Option<String>> {
+        session_index::get_project_settings(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+        )
     }
 
     fn event_path(&self, conversation_id: &str) -> PathBuf {
@@ -338,10 +246,6 @@ impl JsonConversationStore {
             "{}.rollout.jsonl",
             sanitize_conversation_id(conversation_id)
         ))
-    }
-
-    fn index_path(&self) -> PathBuf {
-        self.root.join("conversations.index.json")
     }
 
     async fn load_rollout_items_from_path(&self, path: &Path) -> Result<Vec<RolloutItem>> {
@@ -391,94 +295,10 @@ impl JsonConversationStore {
         }
     }
 
-    async fn write_text_atomically(&self, path: &Path, text: &str) -> Result<()> {
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| anyhow::anyhow!("invalid file name for {}", path.display()))?;
-        let temp_path = path.with_file_name(format!("{file_name}.tmp"));
-        fs::write(&temp_path, text)
-            .await
-            .with_context(|| format!("failed to write {}", temp_path.display()))?;
-        if fs::try_exists(path).await.unwrap_or(false) {
-            fs::remove_file(path)
-                .await
-                .with_context(|| format!("failed to replace {}", path.display()))?;
-        }
-        fs::rename(&temp_path, path).await.with_context(|| {
-            format!(
-                "failed to rename {} to {}",
-                temp_path.display(),
-                path.display()
-            )
-        })?;
-        Ok(())
-    }
-
     async fn ensure_root_dir(&self) -> Result<()> {
         fs::create_dir_all(&self.root)
             .await
             .with_context(|| format!("failed to create {}", self.root.display()))
-    }
-
-    async fn load_index_locked(&self) -> Result<ConversationIndex> {
-        let path = self.index_path();
-        match fs::read_to_string(&path).await {
-            Ok(text) => serde_json::from_str(&text)
-                .with_context(|| format!("failed to parse {}", path.display())),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                Ok(ConversationIndex::default())
-            }
-            Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
-        }
-    }
-
-    async fn save_index_locked(&self, index: &ConversationIndex) -> Result<()> {
-        let text = serde_json::to_string_pretty(index)?;
-        self.write_text_atomically(&self.index_path(), &text).await
-    }
-
-    async fn upsert_index_entry_locked(&self, summary: StoredConversationSummary) -> Result<()> {
-        let mut index = self.load_index_locked().await?;
-        if let Some(existing) = index
-            .conversations
-            .iter_mut()
-            .find(|existing| existing.conversation_id == summary.conversation_id)
-        {
-            *existing = summary;
-        } else {
-            index.conversations.push(summary);
-        }
-        self.save_index_locked(&index).await
-    }
-
-    async fn touch_index_entry_locked(&self, conversation_id: &str) -> Result<()> {
-        let mut index = self.load_index_locked().await?;
-        if let Some(existing) = index
-            .conversations
-            .iter_mut()
-            .find(|existing| existing.conversation_id == conversation_id)
-        {
-            existing.updated_at_ms = now_ms();
-            existing.archived = false;
-        } else {
-            index.conversations.push(StoredConversationSummary {
-                conversation_id: conversation_id.to_string(),
-                title: None,
-                message_count: 0,
-                updated_at_ms: now_ms(),
-                archived: false,
-            });
-        }
-        self.save_index_locked(&index).await
-    }
-
-    async fn remove_index_entry_locked(&self, conversation_id: &str) -> Result<()> {
-        let mut index = self.load_index_locked().await?;
-        index
-            .conversations
-            .retain(|summary| summary.conversation_id != conversation_id);
-        self.save_index_locked(&index).await
     }
 
     async fn total_session_bytes_locked(&self) -> Result<u64> {
@@ -489,7 +309,7 @@ impl JsonConversationStore {
             let is_session_file = path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.ends_with(".rollout.jsonl") || n.ends_with(".conversation.json"))
+                .map(|n| n.ends_with(".rollout.jsonl"))
                 .unwrap_or(false);
             if is_session_file {
                 total = total.saturating_add(entry.metadata().await?.len());
@@ -503,37 +323,77 @@ impl JsonConversationStore {
         if total <= max_bytes {
             return Ok(());
         }
-        let mut index = self.load_index_locked().await?;
-        let mut archived = index
-            .conversations
-            .iter()
-            .filter(|s| s.archived)
-            .cloned()
-            .collect::<Vec<_>>();
-        archived.sort_by(|a, b| a.updated_at_ms.cmp(&b.updated_at_ms));
+        let archived = session_index::list_archived_sessions(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+        )?;
         for summary in archived {
             if total <= max_bytes {
                 break;
             }
             let rollout = self.rollout_path(&summary.conversation_id);
-            let convo = self.conversation_path(&summary.conversation_id);
             let mut reclaimed = 0u64;
             if let Ok(meta) = fs::metadata(&rollout).await {
                 reclaimed = reclaimed.saturating_add(meta.len());
             }
-            if let Ok(meta) = fs::metadata(&convo).await {
-                reclaimed = reclaimed.saturating_add(meta.len());
-            }
             self.delete_file_if_exists(&rollout).await?;
-            self.delete_file_if_exists(&convo).await?;
-            index
-                .conversations
-                .retain(|c| c.conversation_id != summary.conversation_id);
+            session_index::delete_session(
+                &session_index::db_path(&self.root),
+                &summary.conversation_id,
+            )?;
             total = total.saturating_sub(reclaimed);
         }
-        self.save_index_locked(&index).await?;
         Ok(())
     }
+
+    async fn refresh_session_summary_locked(
+        &self,
+        conversation_id: &str,
+        archived: bool,
+    ) -> Result<()> {
+        let rollout_items = self.load_rollout_items_from_path(&self.rollout_path(conversation_id)).await?;
+        let history = conversation_history_from_rollout_items(
+            conversation_id.to_string(),
+            String::new(),
+            &rollout_items,
+        );
+        let message_count = history
+            .messages
+            .iter()
+            .filter(|message| match message {
+                ResponseItem::User { content } => !content.trim().is_empty(),
+                ResponseItem::Assistant { content, .. } => content
+                    .as_deref()
+                    .is_some_and(|content| !content.trim().is_empty()),
+                ResponseItem::System { .. } | ResponseItem::Tool { .. } => false,
+            })
+            .count();
+        session_index::upsert_session(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            conversation_id,
+            message_count,
+            now_ms(),
+            archived,
+            None,
+        )
+    }
+}
+
+pub fn save_project_settings_snapshot_sync(root: &Path, config_json: &str) -> Result<()> {
+    session_index::upsert_project_settings(
+        &session_index::db_path(root),
+        &root.to_string_lossy(),
+        config_json,
+        now_ms(),
+    )
+}
+
+pub fn load_project_settings_snapshot_sync(root: &Path) -> Result<Option<String>> {
+    session_index::get_project_settings(
+        &session_index::db_path(root),
+        &root.to_string_lossy(),
+    )
 }
 
 fn now_ms() -> u64 {
@@ -557,8 +417,6 @@ fn sanitize_conversation_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::ConversationHistory;
-    use agent_protocol::{RequestId, ServerRequest, ToolApprovalRequest};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[tokio::test]
@@ -605,47 +463,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn conversation_roundtrips_pending_requests() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("cloudagent-conversation-test-{unique}"));
-        let store = JsonConversationStore::new(&root);
-
-        let mut conversation =
-            ConversationState::new(ConversationHistory::new("default", "system"));
-        conversation.context_mut().record_user_message("hello");
-        conversation.set_pending_request(
-            RequestId::Integer(1),
-            ServerRequest::ToolApproval {
-                request: ToolApprovalRequest {
-                    turn_id: "turn-1".to_string(),
-                    tool_call_id: "call-1".to_string(),
-                    tool_name: "shell_command".to_string(),
-                    reason: "need pwd".to_string(),
-                    arguments_preview: "{\"command\":\"pwd\"}".to_string(),
-                },
-            },
-        );
-
-        store
-            .save_conversation(&conversation)
-            .await
-            .expect("save conversation");
-        let loaded = store
-            .load_conversation("default")
-            .await
-            .expect("load conversation")
-            .expect("conversation exists");
-
-        assert_eq!(loaded.history().messages.len(), 2);
-        assert_eq!(loaded.pending_requests.len(), 1);
-
-        let _ = fs::remove_dir_all(root).await;
-    }
-
-    #[tokio::test]
     async fn pruning_removes_oldest_archived_conversations_first() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -668,22 +485,16 @@ mod tests {
             )
             .await
             .expect("write rollout");
-            tokio::fs::write(
-                store.conversation_path(conversation_id),
-                "{}",
+            session_index::upsert_session(
+                &session_index::db_path(&root),
+                &root.to_string_lossy(),
+                conversation_id,
+                1,
+                updated_at_ms,
+                archived,
+                None,
             )
-            .await
-            .expect("write conversation");
-            store
-                .upsert_index_entry_locked(StoredConversationSummary {
-                    conversation_id: conversation_id.to_string(),
-                    title: None,
-                    message_count: 1,
-                    updated_at_ms,
-                    archived,
-                })
-                .await
-                .expect("upsert index");
+            .expect("upsert session");
         }
 
         store
@@ -692,11 +503,8 @@ mod tests {
             .expect("prune");
 
         assert!(!store.rollout_path("archived-old").exists());
-        assert!(!store.conversation_path("archived-old").exists());
         assert!(!store.rollout_path("archived-new").exists());
-        assert!(!store.conversation_path("archived-new").exists());
         assert!(store.rollout_path("active").exists());
-        assert!(store.conversation_path("active").exists());
 
         let _ = fs::remove_dir_all(root).await;
     }
