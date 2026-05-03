@@ -1,7 +1,8 @@
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 
 pub struct FilterPicker {
     selected: usize,
@@ -42,10 +43,22 @@ impl BottomPaneView for FilterPicker {
     }
 
     fn render_lines(&self, _area_width: u16) -> Vec<Line<'static>> {
-        let mut lines = vec![Line::from("  Filter Picker (Enter apply, Esc close)")];
+        let mut lines = vec![Line::from("  Filter Picker")];
         for (idx, option) in self.options.iter().enumerate() {
-            let marker = if idx == self.selected { ">" } else { " " };
-            lines.push(Line::from(format!("  {marker} {option}")));
+            let selected = idx == self.selected;
+            let marker = if selected { "> " } else { "  " };
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Rgb(190, 220, 255))
+                    .bg(Color::Rgb(26, 34, 50))
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Rgb(135, 145, 175))
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{marker}{option}"), style),
+            ]));
         }
         lines
     }
