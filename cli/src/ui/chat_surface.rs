@@ -118,8 +118,7 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
     frame.render_widget(left_block, cols[0]);
     frame.render_widget(right_block, cols[1]);
 
-    let recent = recent_activity_lines(app);
-    let mut tips = vec![
+    let tips = vec![
         Line::from(Span::styled(
             "Tips for getting started",
             Style::default()
@@ -127,37 +126,51 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            "Run /init when you want a local AGENTS guide.",
+            "Use /permissions to set this session's safety mode.",
             Style::default().fg(Color::Gray),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "Recent activity",
+            "About this project",
             Style::default()
                 .fg(Color::LightRed)
                 .add_modifier(Modifier::BOLD),
         )),
+        Line::from(Span::styled(
+            "CloudAgent is a terminal coding and ops assistant for your workspace.",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "How to work here",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "Use slash commands and approve tool actions directly in the console.",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Try asking:",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "scan this repo and summarize the architecture",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(Span::styled(
+            "run tests and explain failures with fix suggestions",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(Span::styled(
+            "add a new slash command and wire it end-to-end",
+            Style::default().fg(Color::Gray),
+        )),
     ];
-    tips.extend(recent);
-    tips.push(Line::from(""));
-    tips.push(Line::from(Span::styled(
-        "Try asking:",
-        Style::default()
-            .fg(Color::LightRed)
-            .add_modifier(Modifier::BOLD),
-    )));
-    tips.push(Line::from(Span::styled(
-        "check disk pressure",
-        Style::default().fg(Color::Gray),
-    )));
-    tips.push(Line::from(Span::styled(
-        "inspect this repo and explain it",
-        Style::default().fg(Color::Gray),
-    )));
-    tips.push(Line::from(Span::styled(
-        "write a safe nginx restart script",
-        Style::default().fg(Color::Gray),
-    )));
 
     frame.render_widget(
         WelcomeScreen::new(
@@ -213,26 +226,6 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
         inner,
     );
-}
-
-fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
-    if app.transcript_state.transcript.is_empty() {
-        return vec![Line::from(Span::styled(
-            "No recent activity",
-            Style::default().fg(Color::Gray),
-        ))];
-    }
-
-    vec![
-        Line::from(Span::styled(
-            "Conversation has recent history",
-            Style::default().fg(Color::Gray),
-        )),
-        Line::from(Span::styled(
-            "Use F2 to inspect transcript history",
-            Style::default().fg(Color::DarkGray),
-        )),
-    ]
 }
 
 fn centered_column(area: Rect, max_width: u16) -> Rect {
