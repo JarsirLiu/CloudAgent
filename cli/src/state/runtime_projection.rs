@@ -44,15 +44,4 @@ impl RuntimeProjection {
         self.active_tool_title = None;
         self.phase = Some(RuntimePhase::Idle);
     }
-
-    pub(crate) fn status_text(&self, fallback: &str) -> String {
-        match (&self.phase, &self.active_tool_title) {
-            (Some(RuntimePhase::ToolRunning), Some(title)) => format!("Running {title}"),
-            (Some(RuntimePhase::ToolRunning), None) => "Running tool".to_string(),
-            (Some(RuntimePhase::ModelStreaming), _) => "Model responding".to_string(),
-            (Some(RuntimePhase::WaitingApproval), _) => "Action required".to_string(),
-            (Some(RuntimePhase::Idle), _) | (None, _) => fallback.to_string(),
-        }
-    }
 }
-

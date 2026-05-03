@@ -58,6 +58,10 @@ fn bottom_pane_height(app: &TuiApp, width: u16) -> u16 {
 fn live_area_height(app: &TuiApp, width: u16) -> Option<u16> {
     if should_show_welcome(app) {
         Some(WELCOME_HEIGHT)
+    } else if has_live_status(app) {
+        let status_lines = 1u16;
+        let active_height = active_cell_height(app, width).unwrap_or(0);
+        Some(active_height.saturating_add(status_lines).saturating_add(ACTIVE_TOP_INSET))
     } else {
         active_cell_height(app, width).map(|height| height.saturating_add(ACTIVE_TOP_INSET))
     }
@@ -189,7 +193,9 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
 }
 
 fn should_show_welcome(app: &TuiApp) -> bool {
-    app.transcript_state.transcript.is_empty() && app.run_state.history_loaded
+    app.transcript_state.transcript.is_empty()
+        && app.run_state.history_loaded
+        && !has_live_status(app)
 }
 
 fn active_cell_height(app: &TuiApp, width: u16) -> Option<u16> {
@@ -202,12 +208,6 @@ fn active_cell_height(app: &TuiApp, width: u16) -> Option<u16> {
 }
 
 fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
-    let Some(active) = app.transcript_state.active_cell.as_ref() else {
-        return;
-    };
-    if active.body.trim().is_empty() {
-        return;
-    }
     let live_area = Rect {
         y: area.y.saturating_add(ACTIVE_TOP_INSET),
         height: area.height.saturating_sub(ACTIVE_TOP_INSET),
@@ -218,9 +218,17 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
         vertical: 0,
     });
     let render_width = inner.width.max(40) as usize;
-    let mut lines = active.to_lines_with_mode(render_width);
+    let mut lines = Vec::new();
     if let Some(line) = render_live_status_line(app) {
-        lines.insert(0, line);
+        lines.push(line);
+    }
+    if let Some(active) = app.transcript_state.active_cell.as_ref()
+        && !active.body.trim().is_empty()
+    {
+        lines.extend(active.to_lines_with_mode(render_width));
+    }
+    if lines.is_empty() {
+        return;
     }
     let max_lines = inner.height as usize;
     if lines.len() > max_lines {
@@ -230,6 +238,10 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
         inner,
     );
+}
+
+fn has_live_status(app: &TuiApp) -> bool {
+    render_live_status_line(app).is_some()
 }
 
 fn centered_column(area: Rect, max_width: u16) -> Rect {

@@ -1,5 +1,4 @@
 use crate::app::TuiApp;
-use crate::state::live_state::LivePhase;
 use crate::state::selectors::status_text_from_mode;
 use crate::ui::widgets::runtime_status_panel::status_meta_from_projection;
 
@@ -11,13 +10,10 @@ pub(crate) struct StatusViewModel {
 
 pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     let fallback = status_text_from_mode(app.console_state.mode);
-    let runtime_text = app.runtime_projection.status_text(fallback);
-    let text = if runtime_text != fallback {
-        runtime_text
-    } else if let Some(notice) = app.run_state.current_system_notice() {
+    let text = if let Some(notice) = app.run_state.current_system_notice() {
         notice.to_string()
     } else {
-        runtime_text
+        fallback.to_string()
     };
 
     let mut parts = Vec::new();
@@ -50,13 +46,6 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     if let Some(runtime_meta) = status_meta_from_projection(&app.runtime_projection) {
         parts.push(runtime_meta);
     }
-    match &app.run_state.live_state.phase {
-        LivePhase::Idle => {}
-        LivePhase::AssistantResponding => parts.push("assistant responding".to_string()),
-        LivePhase::Reasoning => parts.push("reasoning".to_string()),
-        LivePhase::ToolRunning { title, .. } => parts.push(format!("running {title}")),
-    }
-
     StatusViewModel {
         text,
         meta: parts.join(" · "),
