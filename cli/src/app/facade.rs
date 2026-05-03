@@ -1,4 +1,4 @@
-use crate::app::core::{ConsoleConfig, TuiApp};
+use crate::app::core::types::{ConsoleConfig, TuiApp};
 use crate::app::filter_toggle::load_filter_enabled;
 use crate::app::runtime_loop;
 use crate::transport::client::create_client;
