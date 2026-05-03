@@ -15,6 +15,8 @@ use agent_protocol::{
     UserTurnInput,
 };
 use anyhow::Result;
+use config::AgentConfig;
+use std::fs;
 
 pub(crate) fn handle_tui_input(
     app: &mut TuiApp,
@@ -74,6 +76,38 @@ pub(crate) fn handle_tui_input(
                     HistoryTone::Warning,
                 ));
             }
+            return Ok(false);
+        }
+        ParsedInput::LocalConfig {
+            api_key,
+            base_url,
+            model,
+        } => {
+            if api_key.is_empty() && base_url.is_empty() && model.is_empty() {
+                let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
+                app.input_pane.set_config_panel(
+                    cfg.llm.api_key,
+                    cfg.llm.base_url,
+                    cfg.llm.model,
+                );
+                return Ok(false);
+            }
+            if base_url.trim().is_empty() || model.trim().is_empty() {
+                app.push_cell(HistoryCell::from_message(
+                    "config",
+                    "Base URL and Model cannot be empty.",
+                    HistoryTone::Warning,
+                ));
+                return Ok(false);
+            }
+            save_user_llm_config(&api_key, &base_url, &model)?;
+            app.run_state
+                .set_system_notice_level("Config updated in ~/.cloudagent/config.toml", NoticeLevel::Info);
+            app.push_cell(HistoryCell::from_message(
+                "config",
+                "Saved API Key / Base URL / Model.",
+                HistoryTone::Control,
+            ));
             return Ok(false);
         }
         ParsedInput::LocalConversationCreate(new_conversation_id) => {
@@ -359,4 +393,21 @@ fn sync_mode_after_server_request_view(app: &mut TuiApp) {
         app.server_request_state.active_request_id = None;
         app.server_request_state.action_required = false;
     }
+}
+
+fn save_user_llm_config(api_key: &str, base_url: &str, model: &str) -> Result<()> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .ok_or_else(|| anyhow::anyhow!("Cannot find user home directory"))?;
+    let config_dir = std::path::PathBuf::from(home).join(".cloudagent");
+    fs::create_dir_all(&config_dir)?;
+    let path = config_dir.join("config.toml");
+    let body = format!(
+        "[llm]\napi_key = \"{}\"\nbase_url = \"{}\"\nmodel = \"{}\"\n",
+        api_key.replace('"', "\\\""),
+        base_url.replace('"', "\\\""),
+        model.replace('"', "\\\"")
+    );
+    fs::write(path, body)?;
+    Ok(())
 }

@@ -483,6 +483,12 @@ impl AgentConfig {
         let workspace_root = workspace_root.into();
         let mut config = Self::defaults(workspace_root.clone());
         if let Some(home) = user_home_dir() {
+            config.runtime.conversation_store_dir = home
+                .join(".cloudagent")
+                .join("data")
+                .join("conversations");
+        }
+        if let Some(home) = user_home_dir() {
             let config_path = home.join(".cloudagent").join("config.toml");
             if config_path.exists() {
                 let text = std::fs::read_to_string(&config_path)
@@ -504,8 +510,6 @@ fn config_search_paths(workspace_root: &Path) -> Vec<PathBuf> {
     }
     paths.push(workspace_root.join(".cloudagent").join("config.toml"));
     paths.push(workspace_root.join("configs").join("config.toml"));
-    // Backward compatibility with old project-local filename.
-    paths.push(workspace_root.join("configs").join("agent.toml"));
     paths
 }
 

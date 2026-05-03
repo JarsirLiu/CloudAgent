@@ -2,6 +2,7 @@ use crate::input::intent::ComposerIntent;
 use crate::terminal::Frame;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::chat_composer::ChatComposer;
+use crate::ui::widgets::config_panel::ConfigPanel;
 use crate::ui::widgets::filter_picker::FilterPicker;
 use crate::ui::widgets::permissions_picker::PermissionsPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
@@ -84,10 +85,14 @@ impl InputPane {
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> Option<InputPaneAction> {
-        if self.view_stack.is_empty() {
-            return Some(InputPaneAction::Composer(self.composer.handle_paste(text)));
+        if let Some(view) = self.view_stack.last_mut() {
+            let action = view.handle_paste(text);
+            return match action {
+                BottomPaneViewAction::Composer(intent) => Some(InputPaneAction::Composer(intent)),
+                _ => None,
+            };
         }
-        None
+        Some(InputPaneAction::Composer(self.composer.handle_paste(text)))
     }
 
     pub(crate) fn render(
@@ -337,6 +342,12 @@ impl InputPane {
     pub fn set_permissions_picker(&mut self, current: &str) {
         self.view_stack.clear();
         self.view_stack.push(Box::new(PermissionsPicker::new(current)));
+    }
+
+    pub fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {
+        self.view_stack.clear();
+        self.view_stack
+            .push(Box::new(ConfigPanel::new(api_key, base_url, model)));
     }
 
     pub fn dismiss_server_request(&mut self, request_id: &RequestId) {

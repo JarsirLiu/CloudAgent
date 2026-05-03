@@ -60,6 +60,11 @@ pub(crate) enum UiInputEvent {
     LocalConversationDelete(String),
     LocalFilterToggle(String),
     LocalPermissionMode(String),
+    LocalConfig {
+        api_key: String,
+        base_url: String,
+        model: String,
+    },
     ServerRequestAnswer {
         request_id: RequestId,
         decision: ServerRequestDecisionKind,

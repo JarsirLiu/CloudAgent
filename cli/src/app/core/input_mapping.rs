@@ -78,6 +78,20 @@ impl TuiApp {
             InputPaneAction::Composer(ComposerIntent::Permissions(mode)) => {
                 Some(ParsedInput::LocalPermissionMode(mode))
             }
+            InputPaneAction::Composer(ComposerIntent::Config) => Some(ParsedInput::LocalConfig {
+                api_key: String::new(),
+                base_url: String::new(),
+                model: String::new(),
+            }),
+            InputPaneAction::Composer(ComposerIntent::ConfigSave {
+                api_key,
+                base_url,
+                model,
+            }) => Some(ParsedInput::LocalConfig {
+                api_key,
+                base_url,
+                model,
+            }),
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
             InputPaneAction::Composer(ComposerIntent::Help) => Some(ParsedInput::LocalHelp),
             InputPaneAction::Composer(ComposerIntent::UnknownCommand(command)) => {

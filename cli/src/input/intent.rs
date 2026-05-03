@@ -11,6 +11,12 @@ pub(crate) enum ComposerIntent {
     DeleteConversation(String),
     Filter(String),
     Permissions(String),
+    Config,
+    ConfigSave {
+        api_key: String,
+        base_url: String,
+        model: String,
+    },
     Exit,
     Reset,
     Copy,

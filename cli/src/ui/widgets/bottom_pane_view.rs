@@ -28,6 +28,10 @@ pub(crate) trait BottomPaneView {
         BottomPaneViewAction::None
     }
 
+    fn handle_paste(&mut self, _text: &str) -> BottomPaneViewAction {
+        BottomPaneViewAction::None
+    }
+
     fn render_lines(&self, area_width: u16) -> Vec<Line<'static>>;
 
     fn desired_height(&self, area_width: u16) -> u16 {

@@ -11,6 +11,7 @@ pub(crate) enum SlashCommand {
     DeleteConversation,
     Filter,
     Permissions,
+    Config,
     Clear,
     Exit,
 }
@@ -113,6 +114,14 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         description: "set session permissions: safe(read-any/write-workspace), balanced(fewer approvals), danger(full access)",
         argument_hint: None,
         supports_inline_args: true,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Config,
+        name: "config",
+        aliases: &[],
+        description: "open api config panel (api key / base url / model)",
+        argument_hint: None,
+        supports_inline_args: false,
     },
     SlashCommandSpec {
         command: SlashCommand::Clear,
