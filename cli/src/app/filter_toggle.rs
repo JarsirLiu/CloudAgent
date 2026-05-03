@@ -9,7 +9,10 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
         "on" => {
             app.run_state.pre_llm_filter_enabled = true;
             let _ = save_filter_enabled(&app.workspace_root, true);
-            app.run_state.status_notice = Some("Pre-LLM input filter: enabled".to_string());
+            app.run_state.set_system_notice(
+                "Pre-LLM input filter: enabled",
+                Some(std::time::Duration::from_secs(4)),
+            );
             app.push_cell(HistoryCell::from_message(
                 "context",
                 "Pre-LLM input filter enabled for this local session.",
@@ -20,7 +23,10 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
         "off" => {
             app.run_state.pre_llm_filter_enabled = false;
             let _ = save_filter_enabled(&app.workspace_root, false);
-            app.run_state.status_notice = Some("Pre-LLM input filter: disabled".to_string());
+            app.run_state.set_system_notice(
+                "Pre-LLM input filter: disabled",
+                Some(std::time::Duration::from_secs(4)),
+            );
             app.push_cell(HistoryCell::from_message(
                 "context",
                 "Pre-LLM input filter disabled for this local session.",

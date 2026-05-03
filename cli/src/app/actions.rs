@@ -1,14 +1,17 @@
 use crate::app::TuiApp;
+use crate::app::conversation_facade;
 use crate::app::effects::copy_text_to_clipboard;
 use crate::app::filter_toggle::apply_filter_toggle;
 use crate::app::parse::ParsedInput;
+use crate::app::runtime_updates::apply_runtime_projection_update;
 use crate::input::slash_command::slash_command_help_text;
-use crate::state::reducer::{ItemDispatch, ServerAction};
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone, render_history_entry};
+use crate::state::reducer::ServerAction;
+use crate::state::NoticeLevel;
+use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
     AppClientCommand, FrontendMode, ServerRequestDecision, ServerRequestDecisionKind,
-    TranscriptItem, UserTurnInput,
+    UserTurnInput,
 };
 use anyhow::Result;
 
@@ -29,8 +32,10 @@ pub(crate) fn handle_tui_input(
             };
             match copy_text_to_clipboard(text) {
                 Ok(()) => {
-                    app.run_state.status_notice =
-                        Some("Copied latest assistant output".to_string());
+                    app.run_state.set_system_notice_level(
+                        "Copied latest assistant output",
+                        NoticeLevel::Info,
+                    );
                 }
                 Err(err) => {
                     app.push_cell(HistoryCell::from_message(
@@ -165,7 +170,8 @@ pub(crate) fn handle_tui_input(
             }
             if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
                 app.console_state.mode = FrontendMode::Running;
-                app.run_state.status_notice = Some("Submitting turn".to_string());
+                app.run_state
+                    .set_system_notice_level("Submitting turn", NoticeLevel::Info);
                 app.run_state.last_turn_usage = None;
                 app.run_state.total_turn_usage = None;
                 app.run_state.model_context_window = None;
@@ -184,7 +190,10 @@ pub(crate) fn handle_tui_input(
             reason,
         } => {
             sync_mode_after_server_request_view(app);
-            app.run_state.status_notice = Some(format!("Request {}", decision_label(&decision)));
+            app.run_state.set_system_notice_level(
+                format!("Request {}", decision_label(&decision)),
+                NoticeLevel::Info,
+            );
             client.send_command(AppClientCommand::ResolveServerRequest {
                 conversation_id: app.conversation_id.clone(),
                 request_id,
@@ -208,13 +217,15 @@ fn decision_label(decision: &ServerRequestDecisionKind) -> &'static str {
 }
 
 pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
+    apply_runtime_projection_update(app, &action);
     match action {
         ServerAction::SetMode(mode) => {
             app.set_mode(mode);
         }
-        ServerAction::SetStatusNotice(notice) => {
-            app.run_state.status_notice = notice;
+        ServerAction::SetSystemNotice { text, level } => {
+            app.run_state.set_system_notice_level(text, level);
         }
+        ServerAction::ClearSystemNotice => app.run_state.clear_system_notice(),
         ServerAction::SetConversationList(conversations) => {
             app.set_conversation_summaries(conversations.clone());
             if app.session_picker_requested {
@@ -257,11 +268,10 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.server_request_state.action_required = false;
         }
         ServerAction::ClearLastToolName => {
-            app.run_state.current_tool_activity = None;
         }
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
-            rebuild_transcript_from_history(app);
+            conversation_facade::rebuild_transcript_from_history(app);
         }
         ServerAction::PushErrorCell(message) => {
             app.input_pane.clear_views();
@@ -278,57 +288,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 HistoryTone::Control,
             ));
         }
-        ServerAction::ItemDispatch(dispatch) => match dispatch {
-            ItemDispatch::AssistantStarted { turn_id, item_id } => {
-                app.handle_assistant_item_started(&turn_id, &item_id);
-            }
-            ItemDispatch::ReasoningStarted { item_id, title } => {
-                app.handle_reasoning_item_started(&item_id, &title);
-            }
-            ItemDispatch::ControlStarted {
-                item_id,
-                kind,
-                title,
-            } => {
-                app.handle_control_item_started(&item_id, kind, &title);
-            }
-            ItemDispatch::AssistantDelta { item_id, delta } => {
-                app.handle_assistant_item_delta(&item_id, &delta);
-            }
-            ItemDispatch::ReasoningDelta { item_id, delta } => {
-                app.handle_reasoning_item_delta(&item_id, &delta);
-            }
-            ItemDispatch::ControlDelta { item_id, delta } => {
-                app.handle_control_item_delta(&item_id, &delta);
-            }
-            ItemDispatch::AssistantCompleted { item } => {
-                if let TranscriptItem::AgentMessage { id, text } = item {
-                    app.handle_assistant_item_completed(&id, &text);
-                }
-            }
-            ItemDispatch::ReasoningCompleted { item } => match item {
-                TranscriptItem::Reasoning { id, text, .. } => {
-                    app.handle_reasoning_item_completed(&id, "reasoning", &text);
-                }
-                TranscriptItem::UserMessage { .. }
-                | TranscriptItem::SystemMessage { .. }
-                | TranscriptItem::AgentMessage { .. }
-                | TranscriptItem::CommandExecution { .. }
-                | TranscriptItem::FileChange { .. }
-                | TranscriptItem::ToolResult { .. } => {}
-            },
-            ItemDispatch::ControlCompleted { item } => match item {
-                TranscriptItem::CommandExecution { ref id, .. }
-                | TranscriptItem::FileChange { ref id, .. }
-                | TranscriptItem::ToolResult { ref id, .. } => {
-                    app.handle_control_item_completed(id, render_history_entry(&item));
-                }
-                TranscriptItem::UserMessage { .. }
-                | TranscriptItem::SystemMessage { .. }
-                | TranscriptItem::AgentMessage { .. }
-                | TranscriptItem::Reasoning { .. } => {}
-            },
-        },
+        ServerAction::ItemDispatch(dispatch) => conversation_facade::apply_item_dispatch(app, dispatch),
         ServerAction::TurnDispatch(dispatch) => app.apply_turn_dispatch(dispatch),
         ServerAction::ShowServerRequestPrompt {
             request_id,
@@ -344,7 +304,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 },
             );
             sync_mode_after_server_request_view(app);
-            app.run_state.status_notice = Some(notice);
+            app.run_state
+                .set_system_notice_level(notice, NoticeLevel::Warn);
         }
     }
 }
@@ -359,32 +320,4 @@ fn sync_mode_after_server_request_view(app: &mut TuiApp) {
         app.server_request_state.active_request_id = None;
         app.server_request_state.action_required = false;
     }
-}
-
-fn rebuild_transcript_from_history(app: &mut TuiApp) {
-    app.transcript_state = crate::state::TranscriptState::default();
-    app.input_pane.clear_views();
-
-    let history_snapshot = app.run_state.history_snapshot.clone().unwrap_or_default();
-    if !history_snapshot.is_empty() {
-        let cells = history_snapshot
-            .iter()
-            .flat_map(|turn| turn.items.iter())
-            .map(render_history_entry)
-            .filter(|cell| !cell.is_empty())
-            .collect::<Vec<_>>();
-        app.replace_history_cells(cells);
-        app.transcript_state.last_copyable_output = history_snapshot
-            .iter()
-            .rev()
-            .flat_map(|turn| turn.items.iter().rev())
-            .find_map(|entry| {
-                if let agent_protocol::TranscriptItem::AgentMessage { text, .. } = entry {
-                    (!text.trim().is_empty()).then(|| text.clone())
-                } else {
-                    None
-                }
-            });
-    }
-    app.run_state.history_loaded = app.run_state.history_snapshot.is_some();
 }

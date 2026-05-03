@@ -1,5 +1,5 @@
 use crate::app::TuiApp;
-use crate::state::selectors::status_text_from_mode;
+use crate::state::status_view_model::build_status_view_model;
 use crate::terminal::Frame;
 use crate::ui::widgets::welcome::WelcomeScreen;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
@@ -24,13 +24,14 @@ impl ChatSurface {
 
         let (live_area, bottom_area) = split_live_and_bottom(content, live_height, bottom_height);
         render_live_area(app, frame, live_area);
+        let status = build_status_view_model(app);
 
         let bottom = app.input_pane.render(
             frame,
             bottom_area,
             app.console_state.mode,
-            &current_status_text(app),
-            &status_meta_text(app),
+            &status.text,
+            &status.meta,
         );
 
         if let Some((x, y)) = bottom.cursor_position {
@@ -160,7 +161,7 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
     frame.render_widget(
         WelcomeScreen::new(
             app.run_state.history_loaded,
-            current_status_text(app),
+            build_status_view_model(app).text,
             app.welcome_animation_frame,
         )
         .render(left_inner),
@@ -231,52 +232,6 @@ fn recent_activity_lines(app: &TuiApp) -> Vec<Line<'static>> {
             Style::default().fg(Color::DarkGray),
         )),
     ]
-}
-
-fn status_meta_text(app: &TuiApp) -> String {
-    let mut parts = Vec::new();
-    if let Some(usage) = &app.run_state.last_turn_usage {
-        parts.push(format!(
-            "in {} · out {} · cached {} · total {}",
-            format_tokens(usage.input_tokens),
-            format_tokens(usage.output_tokens),
-            format_tokens(usage.cached_input_tokens),
-            format_tokens(usage.total_tokens)
-        ));
-    }
-    if let (Some(last), Some(window)) = (
-        &app.run_state.last_turn_usage,
-        app.run_state.model_context_window,
-    ) && window > 0
-    {
-        let percent = last.total_tokens.saturating_mul(100) / window;
-        parts.push(format!("context {percent}%"));
-    }
-    if let Some(activity) = &app.run_state.current_tool_activity {
-        parts.push(activity.clone());
-    }
-    parts.join(" · ")
-}
-
-fn compact_number(value: u64) -> String {
-    if value >= 1_000_000 {
-        format!("{:.1}m", value as f64 / 1_000_000.0)
-    } else if value >= 1_000 {
-        format!("{:.1}k", value as f64 / 1_000.0)
-    } else {
-        value.to_string()
-    }
-}
-
-fn format_tokens(value: u64) -> String {
-    format!("{} tokens", compact_number(value))
-}
-
-fn current_status_text(app: &TuiApp) -> String {
-    if let Some(notice) = &app.run_state.status_notice {
-        return notice.clone();
-    }
-    status_text_from_mode(app.console_state.mode).to_string()
 }
 
 fn centered_column(area: Rect, max_width: u16) -> Rect {

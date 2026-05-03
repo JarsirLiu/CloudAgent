@@ -1,25 +1,25 @@
 pub mod actions;
+mod conversation_facade;
+mod event_router;
 pub mod effects;
+mod runtime_updates;
 mod filter_toggle;
 mod items;
 mod parse;
 
-use crate::app::actions::{execute_server_action, handle_tui_input};
+use crate::app::actions::handle_tui_input;
 use crate::app::filter_toggle::load_filter_enabled;
 use crate::app::parse::{ParsedInput, parse_line};
 use crate::input::intent::ComposerIntent;
-use crate::state::reducer::{TurnDispatch, apply_server_message};
+use crate::state::reducer::TurnDispatch;
+use crate::state::runtime_projection::RuntimeProjection;
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
 use crate::terminal::{Frame, ScrollbackSurface, TerminalGuard, UiEvent, spawn_tui_event_loop};
 use crate::transport::client::create_client;
 use crate::ui::chat_surface::ChatSurface;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::widgets::input_pane::{InputPane, InputPaneAction};
-use agent_app_server_client::AppServerEvent;
-use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest,
-    ConversationSummary, FrontendMode,
-};
+use agent_protocol::{AppClientCommand, ConversationSummary, FrontendMode};
 use agent_runtime::AgentRuntime;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -66,6 +66,7 @@ pub(crate) struct TuiApp {
     pub(crate) server_request_state: ServerRequestState,
     pub(crate) transcript_state: TranscriptState,
     pub(crate) run_state: RunState,
+    pub(crate) runtime_projection: RuntimeProjection,
     pub(crate) input_pane: InputPane,
     pub(crate) welcome_animation_frame: u64,
     welcome_animation_pause_ticks: u8,
@@ -85,6 +86,7 @@ impl TuiApp {
             server_request_state: ServerRequestState::default(),
             transcript_state: TranscriptState::default(),
             run_state: RunState::new(connection_label),
+            runtime_projection: RuntimeProjection::new(),
             input_pane: InputPane::new(),
             welcome_animation_frame: 0,
             welcome_animation_pause_ticks: 0,
@@ -144,6 +146,7 @@ impl TuiApp {
         self.server_request_state = ServerRequestState::default();
         self.transcript_state = TranscriptState::default();
         self.run_state = RunState::new(&self.connection_label);
+        self.runtime_projection = RuntimeProjection::new();
         self.run_state.history_loaded = true;
         self.input_pane.clear_views();
         self.welcome_animation_frame = 0;
@@ -166,50 +169,6 @@ impl TuiApp {
 
     pub(crate) fn set_mode(&mut self, mode: FrontendMode) {
         self.console_state.mode = mode;
-    }
-
-    fn handle_server_message(&mut self, message: &AppServerMessage) {
-        if !self.should_apply_server_message(message) {
-            return;
-        }
-        let reduced = apply_server_message(message);
-        for action in reduced.actions {
-            execute_server_action(self, action);
-        }
-    }
-
-    fn should_apply_server_message(&self, message: &AppServerMessage) -> bool {
-        match message {
-            AppServerMessage::Notification(AppServerNotification::ConversationList { .. })
-            | AppServerMessage::Notification(AppServerNotification::ConversationSwitched { .. }) => {
-                true
-            }
-            AppServerMessage::Notification(notification) => {
-                notification.conversation_id() == self.conversation_id
-            }
-            AppServerMessage::Request(AppServerRequest::ServerRequest {
-                conversation_id, ..
-            }) => conversation_id == &self.conversation_id,
-        }
-    }
-
-    fn handle_client_event(&mut self, event: AppServerEvent) {
-        match event {
-            AppServerEvent::Message(message) => self.handle_server_message(&message),
-            AppServerEvent::Lagged { skipped } => {
-                self.run_state.status_notice = Some(format!(
-                    "UI skipped {skipped} non-critical events while catching up"
-                ));
-            }
-            AppServerEvent::Disconnected { message } => {
-                self.push_cell(HistoryCell::from_message(
-                    "conversation",
-                    message,
-                    HistoryTone::Error,
-                ));
-                self.run_state.should_exit = true;
-            }
-        }
     }
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
@@ -253,11 +212,14 @@ impl TuiApp {
             {
                 cell.expanded = self.run_state.expand_tool_details;
             }
-            self.run_state.status_notice = Some(if self.run_state.expand_tool_details {
-                "Tool details expanded".to_string()
-            } else {
-                "Tool details collapsed".to_string()
-            });
+            self.run_state.set_system_notice(
+                if self.run_state.expand_tool_details {
+                    "Tool details expanded"
+                } else {
+                    "Tool details collapsed"
+                },
+                Some(std::time::Duration::from_secs(4)),
+            );
             return None;
         }
         match self.input_pane.handle_key(key)? {
@@ -355,6 +317,7 @@ impl TuiApp {
     }
 
     fn handle_animation_tick(&mut self) -> bool {
+        self.run_state.clear_expired_notices();
         if self.welcome_animation_pause_ticks > 0 {
             self.welcome_animation_pause_ticks -= 1;
             return false;
@@ -406,7 +369,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         }
         let redraw_after_event = tokio::select! {
             Some(event) = client.next_event() => {
-                app.handle_client_event(event);
+                event_router::handle_client_event(&mut app, event);
                 true
             }
             Some(event) = events.recv() => {
@@ -749,7 +712,7 @@ mod tests {
             ) {
                 saw_turn_completed = true;
             }
-            app.handle_client_event(event);
+            event_router::handle_client_event(&mut app, event);
             if let Some(request_id) = request_id {
                 saw_server_request = true;
                 handle_tui_input(
@@ -877,7 +840,7 @@ mod tests {
                 )) => restarted_history_loaded = true,
                 _ => {}
             }
-            restarted_app.handle_client_event(event);
+            restarted_event_router::handle_client_event(&mut app, event);
         }
         restarted_client
             .shutdown()
@@ -996,7 +959,7 @@ mod tests {
             ) {
                 saw_turn_cancelled = true;
             }
-            app.handle_client_event(event);
+            event_router::handle_client_event(&mut app, event);
         }
         assert!(
             saw_server_request,
@@ -1059,7 +1022,7 @@ mod tests {
                 )) => restarted_history_loaded = true,
                 _ => {}
             }
-            restarted_app.handle_client_event(event);
+            restarted_event_router::handle_client_event(&mut app, event);
         }
         restarted_client
             .shutdown()
@@ -1206,7 +1169,7 @@ mod tests {
                 ) {
                     saw_idle = true;
                 }
-                app.handle_client_event(event);
+                event_router::handle_client_event(&mut app, event);
             }
         }
 
@@ -1511,7 +1474,6 @@ mod tests {
                 temperature: 0.0,
             },
             runtime: RuntimeConfig {
-                default_conversation_id: "default".to_string(),
                 system_prompt: "You are a test agent.".to_string(),
                 max_tool_roundtrips: 4,
                 conversation_store_dir,
@@ -1643,3 +1605,4 @@ mod tests {
             .await
     }
 }
+

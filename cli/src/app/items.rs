@@ -93,19 +93,20 @@ impl TuiApp {
         &mut self,
         item_id: &str,
         kind: TurnItemKind,
-        title: &str,
+        _title: &str,
     ) {
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
         self.transcript_state.active_item_kind = Some(kind);
-        self.run_state.current_tool_activity = Some(format!("running {}", compact_activity(title)));
     }
 
     pub(crate) fn handle_control_item_completed(&mut self, _item_id: &str, cell: HistoryCell) {
         self.transcript_state.active_item_id = None;
         self.transcript_state.active_item_kind = None;
-        self.run_state.current_tool_activity = None;
-        self.run_state.status_notice = Some(format!("Completed {}", compact_activity(&cell.label)));
+        self.run_state.set_system_notice(
+            format!("Completed {}", compact_activity(&cell.label)),
+            Some(std::time::Duration::from_secs(4)),
+        );
         self.push_cell(cell);
     }
 
