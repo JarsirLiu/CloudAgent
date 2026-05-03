@@ -131,7 +131,7 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            "Use /permissions to set this session's safety mode.",
+            "Use /config to set your OpenAI-compatible API key, base URL, and model.",
             Style::default().fg(Color::Gray),
         )),
         Line::from(""),

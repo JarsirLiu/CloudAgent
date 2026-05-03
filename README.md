@@ -92,6 +92,7 @@ cargo run -p cli
 ### CLI Quick Commands
 | Command | Description |
 |---|---|
+| `/config` | Configure OpenAI-compatible `api_key`, `base_url`, and `model` |
 | `/help` | Show local command help |
 | `/copy` | Copy the latest assistant reply |
 | `/interrupt` | Interrupt the running turn (shortcut: `Ctrl+C`) |
@@ -183,6 +184,7 @@ cargo run -p cli
 ### CLI 快捷命令表
 | 命令 | 说明 |
 |---|---|
+| `/config` | 配置 OpenAI 兼容模型的 `api_key`、`base_url` 和 `model` |
 | `/help` | 显示本地命令帮助 |
 | `/copy` | 复制最新一条 assistant 回复 |
 | `/interrupt` | 中断当前运行中的 turn（快捷键：`Ctrl+C`） |
