@@ -2,6 +2,7 @@ pub mod bottom_pane_view;
 pub mod chat_composer;
 pub mod completion_popup;
 pub mod footer;
+pub mod filter_picker;
 pub mod history_cell;
 pub mod input_pane;
 pub mod runtime_status_panel;

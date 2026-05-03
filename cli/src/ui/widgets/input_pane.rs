@@ -2,6 +2,7 @@ use crate::input::intent::ComposerIntent;
 use crate::terminal::Frame;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::chat_composer::ChatComposer;
+use crate::ui::widgets::filter_picker::FilterPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
@@ -17,7 +18,6 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 pub struct InputPane {
     composer: ChatComposer,
     view_stack: Vec<Box<dyn BottomPaneView>>,
-    session_picker: Option<SessionPicker>,
 }
 
 pub(crate) enum InputPaneAction {
@@ -38,25 +38,12 @@ impl InputPane {
         Self {
             composer: ChatComposer::new(),
             view_stack: Vec::new(),
-            session_picker: None,
         }
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
             return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
-        }
-
-        if let Some(picker) = self.session_picker.as_mut() {
-            if SessionPicker::close_requested(&key) {
-                self.session_picker = None;
-                return Some(InputPaneAction::Composer(ComposerIntent::None));
-            }
-            if let Some(target_id) = picker.handle_key_event(key) {
-                self.session_picker = None;
-                return Some(InputPaneAction::Composer(ComposerIntent::SessionSwitch(target_id)));
-            }
-            return None;
         }
 
         if let Some(view) = self.view_stack.last_mut() {
@@ -110,7 +97,7 @@ impl InputPane {
         status_text: &str,
         status_meta: &str,
     ) -> InputPaneRenderResult {
-        if self.session_picker.is_some() || self.view_stack.last().is_some() {
+        if self.view_stack.last().is_some() {
             let (widget, lines_before_composer, _) =
                 self.render_request_view(mode, status_text, status_meta, area.width);
             frame.render_widget(widget, area);
@@ -184,13 +171,7 @@ impl InputPane {
 
         let mut lines_before_composer = 1u16;
 
-        if let Some(picker) = self.session_picker.as_ref() {
-            lines.push(Line::raw(""));
-            lines_before_composer += 1;
-            let view_lines = picker.render_lines(area_width.saturating_sub(2));
-            lines_before_composer += view_lines.len() as u16;
-            lines.extend(view_lines);
-        } else if let Some(view) = self.view_stack.last() {
+        if let Some(view) = self.view_stack.last() {
             lines.push(Line::raw(""));
             lines_before_composer += 1;
             let view_lines = view.render_lines(area_width.saturating_sub(2));
@@ -225,7 +206,7 @@ impl InputPane {
         status_meta: &str,
         area_width: u16,
     ) -> (Vec<Line<'static>>, u16) {
-        if self.session_picker.is_some() || self.view_stack.last().is_some() {
+        if self.view_stack.last().is_some() {
             let (widget, lines_before, _) =
                 self.render_request_view(mode, status_text, status_meta, area_width);
             let text = format!("{widget:?}");
@@ -245,9 +226,6 @@ impl InputPane {
 
     pub fn desired_height(&self, mode: FrontendMode, area_width: u16) -> u16 {
         let inner_width = area_width.saturating_sub(2) as usize;
-        if let Some(picker) = self.session_picker.as_ref() {
-            return (4 + picker.render_lines(area_width.saturating_sub(2)).len() as u16).max(7);
-        }
         if let Some(view) = self.view_stack.last() {
             return (4 + view.desired_height(area_width.saturating_sub(2))).max(7);
         };
@@ -268,9 +246,6 @@ impl InputPane {
         lines_before: u16,
         mode: FrontendMode,
     ) -> Option<(u16, u16)> {
-        if self.session_picker.is_some() {
-            return None;
-        }
         let inner = Rect {
             x: area.x.saturating_add(1),
             y: area.y.saturating_add(1).saturating_add(lines_before),
@@ -291,7 +266,6 @@ impl InputPane {
 
     pub fn clear_views(&mut self) {
         self.view_stack.clear();
-        self.session_picker = None;
     }
 
     pub fn set_server_request(&mut self, request: ServerRequestInlineState) {
@@ -318,11 +292,24 @@ impl InputPane {
         sessions: Vec<ConversationSummary>,
         active_conversation_id: &str,
     ) {
-        self.session_picker = Some(SessionPicker::new(sessions, active_conversation_id));
+        self.view_stack.clear();
+        self.view_stack
+            .push(Box::new(SessionPicker::new(sessions, active_conversation_id)));
     }
 
     pub fn clear_session_picker(&mut self) {
-        self.session_picker = None;
+        self.view_stack.retain(|view| {
+            !view
+                .render_lines(80)
+                .first()
+                .map(|line| line.to_string().contains("Session Picker"))
+                .unwrap_or(false)
+        });
+    }
+
+    pub fn set_filter_picker(&mut self) {
+        self.view_stack.clear();
+        self.view_stack.push(Box::new(FilterPicker::new()));
     }
 
     pub fn dismiss_server_request(&mut self, request_id: &RequestId) {
@@ -350,7 +337,7 @@ impl InputPane {
     }
 
     pub fn composer_is_empty(&self) -> bool {
-        self.view_stack.is_empty() && self.session_picker.is_none() && self.composer.is_empty()
+        self.view_stack.is_empty() && self.composer.is_empty()
     }
 }
 

@@ -124,6 +124,10 @@ pub(crate) fn handle_tui_input(
             })?;
         }
         ParsedInput::LocalFilterToggle(raw_args) => {
+            if raw_args.trim().is_empty() {
+                app.input_pane.set_filter_picker();
+                return Ok(false);
+            }
             if let Err(usage) = apply_filter_toggle(app, &raw_args) {
                 app.push_cell(HistoryCell::from_message(
                     "conversation",
