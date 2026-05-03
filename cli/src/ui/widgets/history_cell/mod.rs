@@ -1,5 +1,6 @@
 mod markdown;
 mod render;
+mod tool_aggregation;
 
 use agent_protocol::{ConversationTurn, TranscriptItem};
 use ratatui::style::{Color, Modifier, Style};
@@ -26,6 +27,7 @@ pub struct HistoryCell {
     pub body: String,
     pub tone: HistoryTone,
     pub expanded: bool,
+    pub repeat_count: usize,
     cache: std::sync::Arc<std::sync::Mutex<Option<(usize, Vec<Line<'static>>)>>>,
 }
 
@@ -36,6 +38,7 @@ impl HistoryCell {
             body: body.into(),
             tone,
             expanded: false,
+            repeat_count: 1,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -89,7 +92,7 @@ impl HistoryCell {
             HistoryTone::Agent => render_agent(self, width),
             HistoryTone::Reasoning => render_tool_like(self, width, Color::Rgb(170, 140, 255), "≈"),
             HistoryTone::Tool => render_tool_like(self, width, Color::Rgb(80, 200, 120), "◆"),
-            HistoryTone::Control => render_tool_like(self, width, Color::Rgb(120, 170, 255), "▣"),
+            HistoryTone::Control => render_tool_like(self, width, Color::Rgb(120, 170, 255), "•"),
             HistoryTone::Warning => render_tool_like(self, width, Color::Rgb(255, 180, 50), "◆"),
             HistoryTone::Error => render_tool_like(self, width, Color::Rgb(255, 80, 80), "◆"),
             HistoryTone::Meta => render_meta(self, width),
@@ -125,9 +128,14 @@ impl Transcript {
         }
     }
 
-    pub fn push(&mut self, cell: HistoryCell) -> usize {
+    pub fn push(&mut self, cell: HistoryCell) -> (usize, bool) {
+        if let Some(last) = self.cells.last_mut()
+            && tool_aggregation::coalesce_tool_like(last, &cell)
+        {
+            return (self.cells.len().saturating_sub(1), false);
+        }
         self.cells.push(cell);
-        self.cells.len().saturating_sub(1)
+        (self.cells.len().saturating_sub(1), true)
     }
 
     pub fn replace_cells(&mut self, cells: Vec<HistoryCell>) {
@@ -209,30 +217,31 @@ fn render_tool_like(
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let title = pretty_tool_title(&cell.label);
+    let title = if cell.repeat_count > 1 {
+        format!("{title} x{}", cell.repeat_count)
+    } else {
+        title
+    };
     lines.push(Line::from(vec![
         Span::raw("  "),
+        Span::styled(format!("{dot} "), Style::default().fg(accent)),
         Span::styled(
-            format!(" {dot} "),
-            Style::default().fg(accent).bg(Color::Rgb(30, 35, 45)),
-        ),
-        Span::styled(
-            format!(" {} ", title),
+            title,
             Style::default()
-                .fg(Color::Rgb(200, 200, 210))
-                .bg(Color::Rgb(30, 35, 45))
+                .fg(Color::Rgb(210, 215, 225))
                 .add_modifier(Modifier::BOLD),
         ),
     ]));
     let body_width = width.saturating_sub(8).max(8);
     let wrapped = wrap_text(&cell.body, body_width);
-    let max_lines = if cell.expanded { 24usize } else { 3usize };
+    let max_lines = if cell.expanded { 24usize } else { 2usize };
     let mut output_lines = Vec::new();
     if wrapped.len() <= max_lines {
         output_lines.extend(wrapped);
     } else {
         output_lines.extend(wrapped.iter().take(max_lines).cloned());
         output_lines.push(format!(
-            "… +{} lines",
+            "… +{} lines (ctrl+t for transcript)",
             wrapped.len().saturating_sub(max_lines)
         ));
     }
@@ -240,7 +249,8 @@ fn render_tool_like(
         if !line.is_empty() {
             lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled(line, Style::default().fg(Color::Rgb(130, 130, 140))),
+                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                Span::styled(line, Style::default().fg(Color::Rgb(148, 152, 164))),
             ]));
         }
     }

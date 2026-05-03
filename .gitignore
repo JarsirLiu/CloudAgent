@@ -8,6 +8,12 @@ data/logs/*
 data/sessions/*
 data/conversations/*
 !data/**/.gitkeep
+cli/data/state/*
+cli/data/cache/*
+cli/data/logs/*
+cli/data/sessions/*
+cli/data/conversations/*
+!cli/data/**/.gitkeep
 
 # Local config and secrets
 configs/agent.toml

@@ -3,8 +3,14 @@ use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 
 impl TuiApp {
     pub(crate) fn push_cell(&mut self, cell: HistoryCell) {
-        self.transcript_state.transcript.push(cell.clone());
-        self.pending_history_cells.push_back(cell);
+        let (index, inserted) = self.transcript_state.transcript.push(cell.clone());
+        if inserted {
+            self.pending_history_cells.push_back(cell);
+        } else if let Some(last) = self.pending_history_cells.back_mut() {
+            if let Some(coalesced) = self.transcript_state.transcript.cells().get(index) {
+                *last = coalesced.clone();
+            }
+        }
     }
 
     pub(crate) fn replace_history_cells(&mut self, cells: Vec<HistoryCell>) {
