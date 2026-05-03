@@ -1,4 +1,5 @@
 use crate::app::TuiApp;
+use crate::state::live_state::LivePhase;
 use crate::state::selectors::status_text_from_mode;
 use crate::ui::widgets::runtime_status_panel::status_meta_from_projection;
 
@@ -48,6 +49,12 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     }
     if let Some(runtime_meta) = status_meta_from_projection(&app.runtime_projection) {
         parts.push(runtime_meta);
+    }
+    match &app.run_state.live_state.phase {
+        LivePhase::Idle => {}
+        LivePhase::AssistantResponding => parts.push("assistant responding".to_string()),
+        LivePhase::Reasoning => parts.push("reasoning".to_string()),
+        LivePhase::ToolRunning { title, .. } => parts.push(format!("running {title}")),
     }
 
     StatusViewModel {

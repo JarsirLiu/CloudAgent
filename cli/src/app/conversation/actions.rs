@@ -311,7 +311,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             ));
         }
         ServerAction::ItemDispatch(dispatch) => conversation_facade::apply_item_dispatch(app, dispatch),
-        ServerAction::TurnDispatch(dispatch) => app.apply_turn_dispatch(dispatch),
+        ServerAction::TurnDispatch(dispatch) => conversation_facade::apply_turn_dispatch(app, dispatch),
         ServerAction::ShowServerRequestPrompt {
             request_id,
             title,

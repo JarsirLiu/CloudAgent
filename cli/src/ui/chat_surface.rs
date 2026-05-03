@@ -1,6 +1,7 @@
 use crate::app::TuiApp;
 use crate::state::status_view_model::build_status_view_model;
 use crate::terminal::Frame;
+use crate::ui::widgets::live_status_cell::render_live_status_line;
 use crate::ui::widgets::welcome::WelcomeScreen;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -218,6 +219,9 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
     });
     let render_width = inner.width.max(40) as usize;
     let mut lines = active.to_lines_with_mode(render_width);
+    if let Some(line) = render_live_status_line(app) {
+        lines.insert(0, line);
+    }
     let max_lines = inner.height as usize;
     if lines.len() > max_lines {
         lines = lines[lines.len() - max_lines..].to_vec();

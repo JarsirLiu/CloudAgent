@@ -1,4 +1,7 @@
 use crate::app::TuiApp;
+use crate::app::conversation::live_state_controller::{
+    apply_item_dispatch_live_state, apply_turn_dispatch_live_state,
+};
 use crate::ui::widgets::history_cell::render_history_entry;
 use agent_protocol::TranscriptItem;
 use crate::state::reducer::ItemDispatch;
@@ -36,6 +39,7 @@ pub(crate) fn complete_control_item(app: &mut TuiApp, item_id: &str, item: &Tran
 }
 
 pub(crate) fn apply_item_dispatch(app: &mut TuiApp, dispatch: ItemDispatch) {
+    apply_item_dispatch_live_state(app, &dispatch);
     match dispatch {
         ItemDispatch::AssistantStarted { turn_id, item_id } => {
             app.handle_assistant_item_started(&turn_id, &item_id);
@@ -87,4 +91,9 @@ pub(crate) fn apply_item_dispatch(app: &mut TuiApp, dispatch: ItemDispatch) {
             | TranscriptItem::Reasoning { .. } => {}
         },
     }
+}
+
+pub(crate) fn apply_turn_dispatch(app: &mut TuiApp, dispatch: crate::state::reducer::TurnDispatch) {
+    apply_turn_dispatch_live_state(app, &dispatch);
+    app.apply_turn_dispatch(dispatch);
 }
