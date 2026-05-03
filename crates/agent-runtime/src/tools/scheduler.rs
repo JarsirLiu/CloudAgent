@@ -1,10 +1,11 @@
-use crate::tools::approval_policy::approval_requirement_for_tool;
+use crate::tools::parallel::{ParallelToolInvocation, run_parallel_tool_invocations};
 use crate::{AgentRuntime, emit_event, summarize_arguments};
+use agent_tools::registry::ToolBatchExecutionStrategy;
 use agent_core::{ContextManager, RolloutItem};
 use agent_protocol::{
-    ApprovalPolicy, CommandExecutionStatus, EventMsg, PermissionProfile, ServerRequest,
-    ServerRequestDecision, StructuredToolResult, ToolApprovalRequest, ToolCall, ToolResult,
-    ToolSpec, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
+    ApprovalPolicy, EventMsg, PermissionProfile, ServerRequest, ServerRequestDecision,
+    ToolApprovalRequest, ToolCall, ToolResult, ToolSpec, TurnItemDeltaKind, TurnItemKind,
+    TurnState,
 };
 use anyhow::Result;
 use std::collections::HashSet;
@@ -18,6 +19,12 @@ enum ApprovalFlow {
     Approved,
     Denied,
     Cancelled,
+}
+
+struct ReadyToolCall<'a> {
+    call: ToolCall,
+    spec: &'a ToolSpec,
+    tool_item_id: String,
 }
 
 pub(crate) struct ToolBatchRunner<'a> {
@@ -70,6 +77,7 @@ impl<'a> ToolBatchRunner<'a> {
             self.cancellation_token.clone(),
         );
         let denied_requests_at_batch_start = denied_requests.clone();
+        let mut ready_calls = Vec::new();
 
         for call in tool_calls {
             if self.is_cancelled().await {
@@ -91,7 +99,7 @@ impl<'a> ToolBatchRunner<'a> {
                     turn_id: self.turn_id.to_string(),
                     item_id: tool_item_id.clone(),
                     kind: spec.item_kind.clone(),
-                    title: Some(tool_item_title(&call)),
+                    title: Some(self.runtime.tools.tool_item_title(&call)),
                 },
             );
             self.runtime.audit().tool_started(
@@ -101,7 +109,7 @@ impl<'a> ToolBatchRunner<'a> {
                 summarize_arguments(&call.arguments),
             );
 
-            let request_key = tool_request_key(&call);
+            let request_key = self.runtime.tools.tool_request_key(&call);
             if denied_requests_at_batch_start.contains(&request_key) {
                 self.record_denied_tool_result(
                     &call,
@@ -110,14 +118,14 @@ impl<'a> ToolBatchRunner<'a> {
                     context_manager,
                     events,
                     on_event,
-                    &repeated_rejection_message(&call.name),
+                    &self.runtime.tools.repeated_rejection_message(&call.name),
                 )
                 .await?;
                 continue;
             }
 
             let approval_requirement =
-                approval_requirement_for_tool(
+                self.runtime.tools.approval_requirement_for_call(
                     spec,
                     &call,
                     &self.runtime.context.workspace_root,
@@ -150,14 +158,58 @@ impl<'a> ToolBatchRunner<'a> {
                     }
                 }
             }
+            ready_calls.push(ReadyToolCall {
+                call,
+                spec,
+                tool_item_id,
+            });
+        }
 
+        match self.batch_execution_strategy(&ready_calls) {
+            ToolBatchExecutionStrategy::Parallel => {
+            self.run_parallel_ready_calls(
+                ready_calls,
+                &tool_ctx,
+                context_manager,
+                events,
+                on_event,
+            )
+            .await?
+            }
+            ToolBatchExecutionStrategy::Sequential => {
+                self.run_ready_calls_sequentially(
+                ready_calls,
+                &tool_ctx,
+                context_manager,
+                events,
+                on_event,
+            )
+            .await?
+            }
+        }
+
+        Ok(ToolBatchOutcome { cancelled: false })
+    }
+
+    async fn run_ready_calls_sequentially<E>(
+        &self,
+        ready_calls: Vec<ReadyToolCall<'_>>,
+        tool_ctx: &agent_core::ToolExecutionContext,
+        context_manager: &mut ContextManager,
+        events: &mut Vec<EventMsg>,
+        on_event: &mut E,
+    ) -> Result<()>
+    where
+        E: FnMut(&EventMsg) + Send,
+    {
+        for ready in ready_calls {
             let mut tool_streamed_output = false;
             let result = self
                 .runtime
                 .execute_tool_call_streaming(
                     &self.cancellation_token,
-                    call.clone(),
-                    &tool_ctx,
+                    ready.call.clone(),
+                    tool_ctx,
                     |delta| {
                         tool_streamed_output = true;
                         let rendered = match delta.stream {
@@ -171,8 +223,8 @@ impl<'a> ToolBatchRunner<'a> {
                             on_event,
                             EventMsg::ItemDelta {
                                 turn_id: self.turn_id.to_string(),
-                                item_id: tool_item_id.clone(),
-                                kind: spec.delta_kind.clone(),
+                                item_id: ready.tool_item_id.clone(),
+                                kind: ready.spec.delta_kind.clone(),
                                 delta: rendered,
                             },
                         );
@@ -182,41 +234,115 @@ impl<'a> ToolBatchRunner<'a> {
 
             if self.is_cancelled().await {
                 self.emit_cancelled(events, on_event);
-                return Ok(ToolBatchOutcome { cancelled: true });
+                anyhow::bail!(crate::TURN_INTERRUPTED_ERROR);
             }
 
-            if !tool_streamed_output && !result.content.trim().is_empty() {
-                emit_event(
-                    events,
-                    on_event,
-                    EventMsg::ItemDelta {
-                        turn_id: self.turn_id.to_string(),
-                        item_id: tool_item_id.clone(),
-                        kind: spec.delta_kind.clone(),
-                        delta: result.content.clone(),
-                    },
-                );
-            }
+            self.emit_finished_tool(
+                &ready.call,
+                ready.spec.delta_kind.clone(),
+                &ready.tool_item_id,
+                tool_streamed_output,
+                result,
+                context_manager,
+                events,
+                on_event,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn run_parallel_ready_calls<E>(
+        &self,
+        ready_calls: Vec<ReadyToolCall<'_>>,
+        tool_ctx: &agent_core::ToolExecutionContext,
+        context_manager: &mut ContextManager,
+        events: &mut Vec<EventMsg>,
+        on_event: &mut E,
+    ) -> Result<()>
+    where
+        E: FnMut(&EventMsg) + Send,
+    {
+        let invocations = ready_calls
+            .into_iter()
+            .enumerate()
+            .map(|(index, ready)| ParallelToolInvocation {
+                index,
+                call: ready.call,
+                tool_item_id: ready.tool_item_id,
+                delta_kind: ready.spec.delta_kind.clone(),
+            })
+            .collect::<Vec<_>>();
+        let results = run_parallel_tool_invocations(
+            self.runtime,
+            tool_ctx,
+            &self.cancellation_token,
+            invocations,
+        )
+        .await?;
+
+        for finished in results {
+            self.emit_finished_tool(
+                &finished.call,
+                finished.delta_kind,
+                &finished.tool_item_id,
+                false,
+                finished.result,
+                context_manager,
+                events,
+                on_event,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn emit_finished_tool<E>(
+        &self,
+        call: &ToolCall,
+        delta_kind: TurnItemDeltaKind,
+        tool_item_id: &str,
+        tool_streamed_output: bool,
+        result: ToolResult,
+        context_manager: &mut ContextManager,
+        events: &mut Vec<EventMsg>,
+        on_event: &mut E,
+    ) -> Result<()>
+    where
+        E: FnMut(&EventMsg) + Send,
+    {
+        if !tool_streamed_output && !result.content.trim().is_empty() {
             emit_event(
                 events,
                 on_event,
-                EventMsg::ItemCompleted {
+                EventMsg::ItemDelta {
                     turn_id: self.turn_id.to_string(),
-                    item_id: tool_item_id.clone(),
-                    item: transcript_item_from_tool_result(&tool_item_id, &call.name, &result),
+                    item_id: tool_item_id.to_string(),
+                    kind: delta_kind,
+                    delta: result.content.clone(),
                 },
             );
-            self.runtime.audit().tool_completed(
-                self.conversation_id,
-                self.turn_id,
-                &call,
-                result.is_error,
-                result.content.chars().take(400).collect::<String>(),
-            );
-            self.record_tool_result(context_manager, result).await?;
         }
-
-        Ok(ToolBatchOutcome { cancelled: false })
+        emit_event(
+            events,
+            on_event,
+            EventMsg::ItemCompleted {
+                turn_id: self.turn_id.to_string(),
+                item_id: tool_item_id.to_string(),
+                item: self
+                    .runtime
+                    .tools
+                    .transcript_item_from_result(tool_item_id, call, &result),
+            },
+        );
+        self.runtime.audit().tool_completed(
+            self.conversation_id,
+            self.turn_id,
+            call,
+            result.is_error,
+            result.content.chars().take(400).collect::<String>(),
+        );
+        self.record_tool_result(context_manager, result).await
     }
 
     async fn request_approval<E, F, Fut>(
@@ -313,7 +439,7 @@ impl<'a> ToolBatchRunner<'a> {
             .map(str::trim)
             .filter(|reason| !reason.is_empty())
             .map(ToOwned::to_owned)
-            .unwrap_or_else(|| default_rejection_message(&call.name));
+            .unwrap_or_else(|| self.runtime.tools.default_rejection_message(&call.name));
         denied_requests.insert(request_key);
         self.record_denied_tool_result(
             call,
@@ -347,7 +473,11 @@ impl<'a> ToolBatchRunner<'a> {
             name: call.name.clone(),
             content: content.clone(),
             is_error: true,
-            structured: denied_tool_result(call.name.as_str(), &call.arguments, reason.to_string()),
+            structured: self.runtime.tools.denied_structured_result(
+                call.name.as_str(),
+                &call.arguments,
+                reason.to_string(),
+            ),
         };
         emit_event(
             events,
@@ -365,7 +495,10 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
-                item: denied_transcript_item(tool_item_id, &call.name, &call.arguments, reason),
+                item: self
+                    .runtime
+                    .tools
+                    .denied_transcript_item(tool_item_id, call, reason),
             },
         );
         self.record_tool_result(context_manager, result).await
@@ -417,7 +550,8 @@ impl<'a> ToolBatchRunner<'a> {
     where
         E: FnMut(&EventMsg) + Send,
     {
-        let message = format!("Tool `{}` is not registered.", call.name);
+        let result = self.runtime.tools.missing_tool_result(call);
+        let message = result.content.clone();
         emit_event(
             events,
             on_event,
@@ -425,7 +559,7 @@ impl<'a> ToolBatchRunner<'a> {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
                 kind: TurnItemKind::ToolCall,
-                title: Some(call.name.clone()),
+                title: Some(self.runtime.tools.tool_item_title(call)),
             },
         );
         emit_event(
@@ -438,20 +572,16 @@ impl<'a> ToolBatchRunner<'a> {
                 delta: message.clone(),
             },
         );
-        let result = ToolResult {
-            tool_call_id: call.id.clone(),
-            name: call.name.clone(),
-            content: message,
-            is_error: true,
-            structured: None,
-        };
         emit_event(
             events,
             on_event,
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
-                item: transcript_item_from_tool_result(tool_item_id, &call.name, &result),
+                item: self
+                    .runtime
+                    .tools
+                    .transcript_item_from_result(tool_item_id, call, &result),
             },
         );
         self.record_tool_result(context_manager, result).await
@@ -460,56 +590,16 @@ impl<'a> ToolBatchRunner<'a> {
     fn spec_for(&self, call: &ToolCall) -> Option<&ToolSpec> {
         self.tool_specs.iter().find(|spec| spec.name == call.name)
     }
-}
 
-fn transcript_item_from_tool_result(
-    item_id: &str,
-    tool_name: &str,
-    result: &ToolResult,
-) -> TranscriptItem {
-    match &result.structured {
-        Some(StructuredToolResult::CommandExecution {
-            command,
-            current_directory,
-            status,
-            exit_code,
-            stdout,
-            stderr,
-            aggregated_output,
-            duration_ms,
-            ..
-        }) => TranscriptItem::CommandExecution {
-            id: item_id.to_string(),
-            tool_name: tool_name.to_string(),
-            command: command.clone(),
-            current_directory: current_directory.clone(),
-            status: status.clone(),
-            exit_code: *exit_code,
-            stdout: stdout.clone(),
-            stderr: stderr.clone(),
-            aggregated_output: aggregated_output.clone(),
-            duration_ms: *duration_ms,
-            summary: result.content.clone(),
-        },
-        Some(StructuredToolResult::WriteFile {
-            path,
-            bytes_written,
-            status,
-        }) => TranscriptItem::FileChange {
-            id: item_id.to_string(),
-            tool_name: tool_name.to_string(),
-            path: path.clone(),
-            status: status.clone(),
-            bytes_written: *bytes_written,
-            summary: result.content.clone(),
-        },
-        _ => TranscriptItem::ToolResult {
-            id: item_id.to_string(),
-            tool_name: tool_name.to_string(),
-            content: result.content.clone(),
-            summary: result.content.clone(),
-            structured: result.structured.clone(),
-        },
+    fn batch_execution_strategy(
+        &self,
+        ready_calls: &[ReadyToolCall<'_>],
+    ) -> ToolBatchExecutionStrategy {
+        let calls = ready_calls
+            .iter()
+            .map(|ready| ready.call.clone())
+            .collect::<Vec<_>>();
+        self.runtime.tools.batch_execution_strategy(&calls)
     }
 }
 
@@ -520,133 +610,3 @@ fn request_reason(approval_reason: Option<&str>, tool_name: &str) -> String {
         .unwrap_or_else(|| format!("Tool `{tool_name}` requires approval."))
 }
 
-fn denied_transcript_item(
-    item_id: &str,
-    tool_name: &str,
-    arguments: &serde_json::Value,
-    reason: &str,
-) -> TranscriptItem {
-    match denied_tool_result(tool_name, arguments, reason.to_string()) {
-        Some(StructuredToolResult::CommandExecution {
-            command,
-            current_directory,
-            status,
-            exit_code,
-            stdout,
-            stderr,
-            aggregated_output,
-            duration_ms,
-            ..
-        }) => TranscriptItem::CommandExecution {
-            id: item_id.to_string(),
-            tool_name: tool_name.to_string(),
-            command,
-            current_directory,
-            status,
-            exit_code,
-            stdout,
-            stderr,
-            aggregated_output,
-            duration_ms,
-            summary: reason.to_string(),
-        },
-        Some(StructuredToolResult::WriteFile {
-            path,
-            bytes_written,
-            status,
-        }) => TranscriptItem::FileChange {
-            id: item_id.to_string(),
-            tool_name: tool_name.to_string(),
-            path,
-            status,
-            bytes_written,
-            summary: reason.to_string(),
-        },
-        structured => TranscriptItem::ToolResult {
-            id: item_id.to_string(),
-            tool_name: tool_name.to_string(),
-            content: reason.to_string(),
-            summary: reason.to_string(),
-            structured,
-        },
-    }
-}
-
-fn tool_item_title(call: &ToolCall) -> String {
-    if call.name == "shell_command"
-        && let Some(command) = call
-            .arguments
-            .get("command")
-            .and_then(|value| value.as_str())
-        && !command.trim().is_empty()
-    {
-        return command.trim().to_string();
-    }
-    call.name.clone()
-}
-
-fn tool_request_key(call: &ToolCall) -> String {
-    format!("{}:{}", call.name, canonical_json(&call.arguments))
-}
-
-fn canonical_json(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
-}
-
-fn denied_tool_result(
-    tool_name: &str,
-    arguments: &serde_json::Value,
-    reason: String,
-) -> Option<StructuredToolResult> {
-    match tool_name {
-        "shell_command" => {
-            let command = arguments
-                .get("command")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let current_directory = arguments
-                .get("workdir")
-                .and_then(|value| value.as_str())
-                .unwrap_or(".")
-                .to_string();
-            Some(StructuredToolResult::CommandExecution {
-                command,
-                current_directory,
-                status: CommandExecutionStatus::Declined,
-                exit_code: None,
-                success: Some(false),
-                stdout: None,
-                stderr: Some(reason),
-                aggregated_output: None,
-                duration_ms: None,
-            })
-        }
-        "apply_patch" => Some(StructuredToolResult::EditFile {
-            files_changed: 0,
-            status: WriteFileStatus::Declined,
-        }),
-        _ => None,
-    }
-}
-
-fn default_rejection_message(tool_name: &str) -> String {
-    match tool_name {
-        "shell_command" => {
-            "exec command rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
-        }
-        "apply_patch" => {
-            "edit rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
-        }
-        _ => {
-            "tool call rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
-        }
-    }
-}
-
-fn repeated_rejection_message(tool_name: &str) -> String {
-    format!(
-        "{}; same tool request was already denied in this turn",
-        default_rejection_message(tool_name)
-    )
-}

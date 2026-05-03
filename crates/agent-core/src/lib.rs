@@ -26,7 +26,8 @@ pub use projection::{
 };
 pub use rollout::RolloutItem;
 pub use tool::{
-    CommandExecutionStatus, StructuredToolResult, ToolCall, ToolEvent, ToolExecutor,
+    CommandExecutionStatus, SearchWorkspaceMode, SearchWorkspaceOperation,
+    SearchWorkspaceStatus, StructuredToolResult, ToolCall, ToolEvent, ToolExecutor,
     ToolOutputDelta, ToolOutputStream, ToolResult, ToolSpec, WriteFileStatus,
 };
 pub use turn::{

@@ -70,7 +70,7 @@ where
     Ok(collected)
 }
 
-fn decode_utf8_chunk(buffer: &mut Vec<u8>, flush: bool) -> String {
+pub(crate) fn decode_utf8_chunk(buffer: &mut Vec<u8>, flush: bool) -> String {
     if buffer.is_empty() {
         return String::new();
     }
@@ -178,9 +178,13 @@ pub(crate) fn structured_failure_result(
 ) -> Option<StructuredToolResult> {
     match tool_name {
         "apply_patch" => Some(StructuredToolResult::EditFile {
+            changed_paths: Vec::new(),
             files_changed: 0,
             status: WriteFileStatus::Failed,
         }),
-        _ => None,
+        _ => Some(StructuredToolResult::ToolError {
+            tool_name: tool_name.to_string(),
+            message: "tool execution failed".to_string(),
+        }),
     }
 }

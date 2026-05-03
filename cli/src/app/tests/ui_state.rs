@@ -14,7 +14,7 @@ use super::*;
             crate::ui::widgets::input_pane::ServerRequestInlineState {
                 request_id: agent_protocol::RequestId::String("req-1".to_string()),
                 title: "Run command?".to_string(),
-                detail: "shell_command".to_string(),
+                detail: "exec_command".to_string(),
             },
         );
 
@@ -211,12 +211,13 @@ use super::*;
                         },
                         TranscriptItem::ToolResult {
                             id: "call-1".to_string(),
-                            tool_name: "shell_command".to_string(),
+                            tool_name: "exec_command".to_string(),
                             content: "D:\\learn\\gifti\\cloudagent".to_string(),
                             summary: "D:\\learn\\gifti\\cloudagent".to_string(),
                             structured: Some(StructuredToolResult::CommandExecution {
                                 command: "pwd".to_string(),
                                 current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
+                                session_id: None,
                                 status: CommandExecutionStatus::Completed,
                                 exit_code: Some(0),
                                 success: Some(true),
@@ -261,4 +262,5 @@ use super::*;
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].body, "hello");
     }
+
 

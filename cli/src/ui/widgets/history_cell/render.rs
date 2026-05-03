@@ -25,6 +25,7 @@ pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
             HistoryTone::Control,
         ),
         TranscriptItem::CommandExecution {
+            tool_name,
             command,
             current_directory,
             status,
@@ -33,7 +34,7 @@ pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
             summary,
             ..
         } => HistoryCell::from_message(
-            "shell_command",
+            tool_name.clone(),
             summarize_command_execution(
                 command,
                 current_directory,
@@ -43,8 +44,10 @@ pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
             ),
             HistoryTone::Control,
         ),
-        TranscriptItem::FileChange { summary, .. } => {
-            HistoryCell::from_message("file_change", summary.clone(), HistoryTone::Control)
+        TranscriptItem::FileChange {
+            tool_name, summary, ..
+        } => {
+            HistoryCell::from_message(tool_name.clone(), summary.clone(), HistoryTone::Control)
         }
         TranscriptItem::Reasoning { text, .. } => {
             HistoryCell::from_message("reasoning", text.clone(), HistoryTone::Reasoning)
@@ -100,49 +103,69 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
             stderr.as_deref(),
         );
     }
-    if let Some(StructuredToolResult::ListDirectory { path, entry_count }) = structured {
-        return format!("listed {entry_count} entries @ {}", compact_path(path, 48));
-    }
-    if let Some(StructuredToolResult::ReadFile {
+    if let Some(StructuredToolResult::ListDirectory {
         path,
+        shown_count,
+        total_count,
         truncated,
-        char_count,
+        ..
     }) = structured
     {
-        let truncation = if *truncated { " truncated" } else { "" };
         return format!(
-            "read {char_count} chars{truncation} @ {}",
+            "listed {shown_count} of {total_count} entries{} @ {}",
+            if *truncated { " truncated" } else { "" },
             compact_path(path, 48)
         );
     }
-    if let Some(StructuredToolResult::WriteFile {
-        path,
-        bytes_written,
-        status,
-    }) = structured
-    {
-        let verb = match status {
-            WriteFileStatus::InProgress => "writing",
-            WriteFileStatus::Completed => "wrote",
-            WriteFileStatus::Declined => "declined",
-            WriteFileStatus::Failed => "failed",
-        };
-        return format!("{verb} {bytes_written} bytes @ {}", compact_path(path, 48));
-    }
-    if let Some(StructuredToolResult::ReadFiles { file_count }) = structured {
-        return format!("read {file_count} files");
-    }
-    if let Some(StructuredToolResult::FindFiles { file_count }) = structured {
-        return format!("found {file_count} files");
-    }
-    if let Some(StructuredToolResult::SearchText {
-        match_count,
+    if let Some(StructuredToolResult::ReadFiles {
+        paths,
         file_count,
-        truncated,
+        truncated_count,
+        total_chars,
+        ..
     }) = structured
     {
+        let target = paths
+            .first()
+            .map(|path| compact_path(path, 48))
+            .unwrap_or_else(|| "workspace".to_string());
+        if *file_count == 1 {
+            return format!(
+                "read {total_chars} chars{} @ {}",
+                if *truncated_count > 0 { " truncated" } else { "" },
+                target
+            );
+        }
+        return format!(
+            "read {file_count} files ({} truncated, {total_chars} chars)",
+            truncated_count
+        );
+    }
+    if let Some(StructuredToolResult::SearchWorkspace {
+        mode,
+        status,
+        file_count,
+        match_count,
+        truncated,
+        ..
+    }) = structured
+    {
+        let status_suffix = match status {
+            agent_protocol::SearchWorkspaceStatus::Active => "",
+            agent_protocol::SearchWorkspaceStatus::Closed => " closed",
+            agent_protocol::SearchWorkspaceStatus::NotFound => " missing",
+        };
         let truncation = if *truncated { " truncated" } else { "" };
-        return format!("matched {match_count} hits in {file_count} files{truncation}");
+        return match mode {
+            agent_protocol::SearchWorkspaceMode::Files => {
+                format!("found {file_count} files{truncation}{status_suffix}")
+            }
+            agent_protocol::SearchWorkspaceMode::Text => {
+                format!(
+                    "matched {match_count} hits in {file_count} files{truncation}{status_suffix}"
+                )
+            }
+        };
     }
     if let Some(StructuredToolResult::GetMetadata {
         path,
@@ -159,6 +182,7 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
         return format!("metadata missing {}", compact_path(path, 48));
     }
     if let Some(StructuredToolResult::EditFile {
+        changed_paths,
         files_changed,
         status,
         ..
@@ -170,7 +194,13 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
             WriteFileStatus::Declined => "declined",
             WriteFileStatus::Failed => "failed",
         };
+        if let Some(path) = changed_paths.first() {
+            return format!("{verb} {files_changed} files @ {}", compact_path(path, 48));
+        }
         return format!("{verb} {files_changed} files");
+    }
+    if let Some(StructuredToolResult::ToolError { message, .. }) = structured {
+        return compact_inline(message, 100);
     }
 
     let first = content

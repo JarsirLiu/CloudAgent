@@ -385,7 +385,7 @@ mod tests {
             turn_id: "turn-1".to_string(),
             item_id: "tool:shell".to_string(),
             kind: TurnItemKind::CommandExecution,
-            title: Some("shell_command".to_string()),
+            title: Some("exec_command".to_string()),
         });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
@@ -536,3 +536,4 @@ mod tests {
         )));
     }
 }
+

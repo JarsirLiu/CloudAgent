@@ -12,7 +12,6 @@ async fn main() -> Result<()> {
     let workspace_root = std::env::current_dir()?;
     let config = AgentConfig::load(workspace_root)?;
     let runtime = Arc::new(AgentRuntime::from_config(config)?);
-    runtime.persist_config_snapshot().await;
     runtime.run_startup_retention_cleanup().await;
 
     let args: Vec<String> = std::env::args().collect();
@@ -45,6 +44,9 @@ async fn run_console_mode(runtime: Arc<AgentRuntime>) -> Result<()> {
     run_console(ConsoleConfig {
         conversation_id: conversation_id.clone(),
         workspace_root,
+        conversation_store_dir: runtime.conversation_store_dir().to_path_buf(),
+        initial_filter_enabled: runtime.cli_pre_llm_filter_enabled(),
+        initial_permission_mode: runtime.cli_permission_mode().to_string(),
         auto_approve: true,
         auto_approve_reason: Some("auto-approved in local daemon console".to_string()),
         connection: ConsoleConnection::InProcess { runtime },

@@ -48,9 +48,14 @@ pub struct ToolResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StructuredToolResult {
+    ToolError {
+        tool_name: String,
+        message: String,
+    },
     CommandExecution {
         command: String,
         current_directory: String,
+        session_id: Option<String>,
         status: CommandExecutionStatus,
         exit_code: Option<i32>,
         success: Option<bool>,
@@ -59,35 +64,36 @@ pub enum StructuredToolResult {
         aggregated_output: Option<String>,
         duration_ms: Option<u64>,
     },
-    ListDirectory {
-        path: String,
-        entry_count: usize,
-    },
-    ReadFile {
-        path: String,
-        truncated: bool,
-        char_count: usize,
-    },
-    WriteFile {
-        path: String,
-        bytes_written: usize,
-        status: WriteFileStatus,
-    },
-    SearchText {
-        match_count: usize,
-        file_count: usize,
-        truncated: bool,
-    },
-    FindFiles {
-        pattern: String,
+    SearchWorkspace {
+        session_id: String,
+        operation: SearchWorkspaceOperation,
+        mode: SearchWorkspaceMode,
+        status: SearchWorkspaceStatus,
+        query: String,
         path_scope: Option<String>,
         case_sensitive: bool,
-        offset: usize,
+        context_lines: usize,
         max_results: usize,
+        offset: usize,
         file_count: usize,
+        match_count: usize,
+        truncated: bool,
+    },
+    ListDirectory {
+        path: String,
+        recursive: bool,
+        offset: usize,
+        shown_count: usize,
+        total_count: usize,
+        truncated: bool,
     },
     ReadFiles {
+        paths: Vec<String>,
+        start_line: Option<usize>,
+        max_lines: Option<usize>,
         file_count: usize,
+        truncated_count: usize,
+        total_chars: usize,
     },
     GetMetadata {
         path: String,
@@ -98,9 +104,32 @@ pub enum StructuredToolResult {
         readonly: bool,
     },
     EditFile {
+        changed_paths: Vec<String>,
         files_changed: usize,
         status: WriteFileStatus,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchWorkspaceOperation {
+    Search,
+    Close,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchWorkspaceMode {
+    Files,
+    Text,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchWorkspaceStatus {
+    Active,
+    Closed,
+    NotFound,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]

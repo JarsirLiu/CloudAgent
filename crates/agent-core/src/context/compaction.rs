@@ -739,13 +739,13 @@ mod tests {
                 content: Some(format!("a{i} {}", "w".repeat(80))),
                 tool_calls: vec![ToolCall {
                     id: format!("call-{i}"),
-                    name: "shell_command".to_string(),
+                    name: "exec_command".to_string(),
                     arguments: json!({"command":"echo test"}),
                 }],
             });
             messages.push(ResponseItem::Tool {
                 tool_call_id: format!("call-{i}"),
-                name: "shell_command".to_string(),
+                name: "exec_command".to_string(),
                 content: "ok".to_string(),
                 structured: None,
             });
@@ -769,7 +769,7 @@ mod tests {
             &mut messages,
             &plan,
             CompactionSummary::from_model_output(
-                "Current Task:\n- Test\n\nProgress:\n- Done\n\nKey Decisions:\n- Keep core-owned compaction\n\nImportant Context:\n- Preserve system prompt\n\nTool / Code Facts:\n- shell_command used\n\nNext Steps:\n- Continue",
+                "Current Task:\n- Test\n\nProgress:\n- Done\n\nKey Decisions:\n- Keep core-owned compaction\n\nImportant Context:\n- Preserve system prompt\n\nTool / Code Facts:\n- exec_command used\n\nNext Steps:\n- Continue",
             )
             .ensure_defaults(),
         );
@@ -797,13 +797,13 @@ mod tests {
                 content: Some(format!("calling tool {}", "y".repeat(80))),
                 tool_calls: vec![ToolCall {
                     id: "call-1".to_string(),
-                    name: "shell_command".to_string(),
+                    name: "exec_command".to_string(),
                     arguments: json!({"command":"pwd"}),
                 }],
             },
             ResponseItem::Tool {
                 tool_call_id: "call-1".to_string(),
-                name: "shell_command".to_string(),
+                name: "exec_command".to_string(),
                 content: format!("D:/learn/gifti/cloudagent {}", "z".repeat(80)),
                 structured: None,
             },
@@ -865,3 +865,4 @@ mod tests {
         assert!(estimate_message_tokens(&messages[keep_start..]) <= 120);
     }
 }
+

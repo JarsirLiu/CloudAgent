@@ -1,5 +1,6 @@
 use agent_core::{
-    ChatModel, ModelRequest, ModelResponse, ModelUsage, ResponseItem, ToolCall, ToolSpec,
+    ChatModel, ModelRequest, ModelResponse, ModelUsage, ResponseItem, StructuredToolResult,
+    ToolCall, ToolSpec,
 };
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -49,7 +50,7 @@ impl ChatModel for OpenAiCompatibleModel {
                 .collect::<Result<Vec<_>>>()?,
             tools: request.tools.iter().map(ChatToolSpec::from_spec).collect(),
             tool_choice: "auto".to_string(),
-            parallel_tool_calls: false,
+            parallel_tool_calls: true,
             temperature: request.temperature,
             stream: None,
             stream_options: None,
@@ -116,7 +117,7 @@ impl ChatModel for OpenAiCompatibleModel {
                 .collect::<Result<Vec<_>>>()?,
             tools: request.tools.iter().map(ChatToolSpec::from_spec).collect(),
             tool_choice: "auto".to_string(),
-            parallel_tool_calls: false,
+            parallel_tool_calls: true,
             temperature: request.temperature,
             stream: Some(true),
             stream_options: Some(ChatCompletionStreamOptions {
@@ -301,16 +302,31 @@ impl ChatApiMessage {
                 tool_call_id,
                 name,
                 content,
-                ..
+                structured,
             } => Ok(Self {
                 role: "tool".to_string(),
-                content: Some(content.clone()),
+                content: Some(render_tool_message_content(name, content, structured.as_ref())?),
                 tool_calls: None,
                 tool_call_id: Some(tool_call_id.clone()),
                 name: Some(name.clone()),
             }),
         }
     }
+}
+
+fn render_tool_message_content(
+    tool_name: &str,
+    summary: &str,
+    structured: Option<&StructuredToolResult>,
+) -> Result<String> {
+    if let Some(structured) = structured {
+        return Ok(serde_json::to_string(&serde_json::json!({
+            "tool_name": tool_name,
+            "summary": summary,
+            "structured": structured,
+        }))?);
+    }
+    Ok(summary.to_string())
 }
 #[derive(Serialize)]
 struct ChatToolSpec {

@@ -411,7 +411,7 @@ mod tests {
                     },
                     TranscriptItem::CommandExecution {
                         id: "cmd:1".to_string(),
-                        tool_name: "shell_command".to_string(),
+                        tool_name: "exec_command".to_string(),
                         command: "pwd".to_string(),
                         current_directory: "D:\\work".to_string(),
                         status: agent_protocol::CommandExecutionStatus::Completed,
@@ -481,3 +481,4 @@ mod tests {
         }));
     }
 }
+

@@ -722,7 +722,7 @@ mod tests {
                     request: ToolApprovalRequest {
                         turn_id: "turn-1".to_string(),
                         tool_call_id: "call-1".to_string(),
-                        tool_name: "shell_command".to_string(),
+                        tool_name: "exec_command".to_string(),
                         reason: "mutating tool".to_string(),
                         arguments_preview: "{\"command\":\"echo hi\"}".to_string(),
                     },
@@ -746,7 +746,7 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(request_id, RequestId::Integer(7));
-                assert_eq!(request.tool_name, "shell_command");
+                assert_eq!(request.tool_name, "exec_command");
                 assert_eq!(request.tool_call_id, "call-1");
             }
             other => panic!("unexpected request: {other:?}"),
@@ -840,3 +840,4 @@ mod tests {
         }
     }
 }
+

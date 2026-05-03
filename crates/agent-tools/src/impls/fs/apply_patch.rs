@@ -1,5 +1,5 @@
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
-use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
 use anyhow::Result;
@@ -17,7 +17,9 @@ impl ApplyPatchTool {
         ToolDescriptor::new(
             ToolCategory::WorkspaceFileOps,
             ToolRisk::Medium,
-            vec!["edit", "general"],
+            ToolPermissionTier::WorkspaceWrite,
+            false,
+            vec!["edit", "fs"],
             ToolSpec {
                 name: "apply_patch".to_string(),
                 description: "Apply a focused unified patch to one or more workspace files. Prefer this over whole-file rewrites for code changes.".to_string(),
@@ -113,10 +115,12 @@ impl LocalTool for ApplyPatchLocalTool {
             }
         }
         let files_changed = changed_files.len();
+        let changed_paths = changed_files.into_iter().collect::<Vec<_>>();
 
         Ok(ToolInvocationOutput {
             content: format!("Applied patch. files_changed={files_changed}"),
             structured: Some(agent_protocol::StructuredToolResult::EditFile {
+                changed_paths,
                 files_changed,
                 status: agent_protocol::WriteFileStatus::Completed,
             }),

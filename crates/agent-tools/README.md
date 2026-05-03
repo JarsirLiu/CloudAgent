@@ -1,224 +1,59 @@
 # agent-tools
 
-`agent-tools` is the product-facing tool layer for `cloudagent`.
+`agent-tools` owns the default local tool system for `cloudagent`.
 
-This crate exposes the compact core tool stack for the agent. The design target is a small,
-stable set of strong tools that behave well in large repositories, on Windows, and under repeated
-tool use.
+This crate is where we define:
 
-The product direction is:
+- which built-in tools exist
+- how they are described to the model
+- what capability family each tool belongs to
+- what permission tier a tool requires
+- whether a tool can safely participate in parallel execution
 
-- align tool architecture with Codex
-- absorb concise single-tool ergonomics from Claude Code
-- prefer fewer, stronger tools over a broad catalog
-- keep roundtrips low and outputs predictable
+`agent-tools` should stay opinionated and compact. Its job is not to expose every possible helper.
+Its job is to keep the main tool chain small, strong, and easy to reason about.
 
-## Tool Philosophy
+## Responsibilities
 
-The goal is not more tools. The goal is:
+This crate is responsible for:
 
-- stable behavior
-- high information density per call
-- predictable outputs
-- strong Windows and large-repo behavior
-- low model roundtrip count
+- product-facing tool descriptors
+- shared local implementations for repository exploration, file changes, and command execution
+- tool selection metadata such as mode tags and task tags
+- permission visibility metadata
+- execution strategy metadata such as parallel-safety
 
-That means `cloudagent` should remain a compact core toolset instead of growing many overlapping
-primitives.
+## Non-Responsibilities
 
-## Reference Strategy
+This crate is not responsible for:
 
-Two reference systems matter here, but they influence different layers.
+- turn orchestration
+- approval request lifecycles
+- conversation history management
+- model request assembly
+- UI event rendering
 
-### Codex as the architecture reference
-
-Codex is the primary reference for:
-
-- keeping the exposed tool surface small
-- building around core capabilities instead of many ad hoc tools
-- using shell workflows where they are the highest-fidelity path
-- treating file search and file reading as infrastructure, not one-off helpers
-- consolidating editing around a patch-first workflow
-
-### Claude Code as the single-tool UX reference
-
-Claude Code is the secondary reference for:
-
-- strong tool descriptions
-- strict schemas
-- safe defaults
-- concise model-readable summaries
-- clarifying when a tool should and should not be used
-
-In short:
-
-- architecture and tool catalog shape should lean Codex
-- per-tool ergonomics should learn from Claude Code
-
-## Core Toolset
-
-The default tool stack is intentionally small.
-
-### 1. `shell_command`
-
-Primary purpose:
-
-- build
-- test
-- inspect runtime state
-- run high-fidelity repo search workflows such as `rg`, `git`, and other real shell commands
-
-Long-term expectation:
-
-- this is the preferred path for advanced text search
-- command safety, approval policy, and platform behavior must be robust
-
-### 2. `apply_patch`
-
-Primary purpose:
-
-- make code changes through a single patch-first editing path
-
-Long-term expectation:
-
-- this becomes the primary editing tool
-- other editing entry points should converge into this workflow or disappear
-
-### 3. `fs_read_file`
-
-Primary purpose:
-
-- read known files reliably
-- support targeted inspection after file discovery
-
-Long-term expectation:
-
-- this should be backed by a shared file-reading layer
-- binary detection, truncation, encoding fallback, and path safety should be centralized
-
-### 4. `fuzzy_file_search`
-
-Primary purpose:
-
-- locate candidate files quickly in large repositories
-
-Long-term expectation:
-
-- this should evolve toward a Codex-style fuzzy file search capability
-- file discovery should not depend on repeated directory walking
-
-### 5. `fs_stat`
-
-Primary purpose:
-
-- answer focused metadata questions cheaply
-
-Long-term expectation:
-
-- this remains a narrow helper, not a primary exploration path
-
-## Architectural Layers
-
-The tool system should be understood in three layers.
-
-### 1. Core protocol layer
-
-Owned by `agent-core`.
-
-Examples:
-
-- `ToolSpec`
-- `ToolCall`
-- `ToolResult`
-- `ToolExecutionContext`
-- `ToolExecutor`
-
-This layer defines stable protocol concepts and must remain independent of the default product
-catalog.
-
-### 2. Product tool layer
-
-Owned by `agent-tools`.
-
-Responsibilities:
-
-- define the default local tool catalog
-- describe tools in a model-friendly way
-- group shared file access, search, edit, and command behaviors
-- encode product-level tool strategy
-
-This layer should be opinionated, but it should stay compact.
-
-### 3. Runtime orchestration layer
-
-Owned by `agent-runtime`.
-
-Responsibilities:
-
-- decide which tools are exposed for a turn
-- enforce approvals and guardrails
-- coordinate cancellation and policy
-
-This layer decides availability over time. It should not compensate for a bloated or low-quality
-tool catalog.
+Those concerns belong elsewhere even when they consume tool metadata from this crate.
 
 ## Design Rules
 
-### Prefer infrastructure over ad hoc helpers
+- Keep the default tool surface small.
+- Prefer stronger tools over many overlapping tools.
+- Keep the primary tool chain concentrated in this crate.
+- Put policy hints in tool metadata, not in scattered runtime conditionals.
+- Put shared repository behavior behind reusable helpers.
+- Prefer predictable output and stable schemas over clever but fragile formatting.
 
-File reading, file discovery, and editing should be shared capabilities, not separate piles of
-copy-pasted logic hidden inside many tools.
+## Directory Guide
 
-### Prefer shell for high-fidelity search
+- `src/impls`: concrete built-in tool implementations
+- `src/policy`: shared tool-level defaults and exploration policy
+- `src/registry`: tool registration and dispatch wiring
+- `src/selection`: surface selection and catalog filtering
+- `src/spec`: tool descriptor metadata shared across the crate
 
-When the highest quality answer comes from `rg`, `git`, or another real command, the system should
-lean on `shell_command` rather than forcing a weaker custom replica.
+## Boundary With Other Crates
 
-### Keep the tool surface small
-
-Every exposed tool creates model choice complexity. A weak tool is worse than no tool.
-
-### Make tool descriptions carry strategy
-
-The model should learn key behavior from the tool descriptor itself:
-
-- what the tool is best at
-- what neighboring tools it should replace
-- when not to use it
-
-### Bake defaults into the implementation
-
-The model should not need to remember:
-
-- which directories are junk
-- when to batch reads
-- when to avoid directory-only exploration
-
-Those defaults belong in the implementation and policy layers.
-
-## What Belongs Here
-
-Put code in `agent-tools` if:
-
-- it defines a default local tool that should remain part of the product
-- it implements shared tool-facing behavior for reading, searching, editing, or command execution
-- it improves model-facing tool descriptions and strategy
-
-Put code elsewhere if:
-
-- it is only a stable protocol concept
-- it is runtime policy rather than tool behavior
-- it is a one-off compatibility bridge that should be short-lived
-
-## Immediate Development Rule
-
-Do not add new default tools just to fill gaps in the current compact surface.
-
-Before adding or keeping a tool, answer:
-
-1. Does this belong in the final compact core toolset?
-2. Is it stronger than using one of the existing core capabilities?
-3. Is it infrastructure-backed, or is it another ad hoc wrapper?
-4. Will it reduce roundtrips and improve reliability in large repositories?
-
-If the answer is no, the tool should probably not exist.
+- `agent-core` defines stable protocol types such as `ToolSpec`, `ToolCall`, and `ToolResult`.
+- `agent-tools` builds the concrete local catalog on top of those protocol types.
+- `agent-runtime` asks this crate for a resolved tool surface, then orchestrates turns around it.

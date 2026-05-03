@@ -100,7 +100,7 @@ mod tests {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
                 kind: crate::turn::TurnItemKind::CommandExecution,
-                title: Some("shell_command".to_string()),
+                title: Some("exec_command".to_string()),
             },
             EventMsg::ItemDelta {
                 turn_id: "turn-1".to_string(),
@@ -113,7 +113,7 @@ mod tests {
                 item_id: "tool-1".to_string(),
                 item: TranscriptItem::CommandExecution {
                     id: "tool-1".to_string(),
-                    tool_name: "shell_command".to_string(),
+                    tool_name: "exec_command".to_string(),
                     command: "pwd".to_string(),
                     current_directory: "D:\\work".to_string(),
                     status: CommandExecutionStatus::Completed,
@@ -130,7 +130,7 @@ mod tests {
         let tool_events = tool_events_from_turn_events(&events);
 
         assert_eq!(tool_events.len(), 1);
-        assert_eq!(tool_events[0].name, "shell_command");
+        assert_eq!(tool_events[0].name, "exec_command");
         assert_eq!(tool_events[0].summary, "completed summary");
         assert!(!tool_events[0].is_error);
     }
@@ -165,3 +165,4 @@ mod tests {
         assert!(!tool_events[0].is_error);
     }
 }
+

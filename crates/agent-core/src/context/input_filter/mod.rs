@@ -122,45 +122,61 @@ fn summarize_superseded_tool_result(
 
 fn dedupe_key(tool_name: &str, structured: &StructuredToolResult) -> Option<String> {
     match structured {
-        StructuredToolResult::ReadFile { path, .. } => Some(format!("read_file:{path}")),
-        StructuredToolResult::ListDirectory { path, .. } => Some(format!("list_directory:{path}")),
-        StructuredToolResult::GetMetadata { path, .. } => Some(format!("metadata:{path}")),
-        StructuredToolResult::SearchText {
-            match_count,
-            file_count,
-            truncated,
+        StructuredToolResult::ReadFiles {
+            paths,
+            start_line,
+            max_lines,
+            ..
         } => Some(format!(
-            "search_text:{tool_name}:{file_count}:{match_count}:{truncated}"
+            "read_files:{tool_name}:{:?}:{:?}:{:?}",
+            paths, start_line, max_lines
         )),
-        StructuredToolResult::FindFiles {
-            pattern,
+        StructuredToolResult::ListDirectory {
+            path,
+            recursive,
+            offset,
+            ..
+        } => Some(format!("list_directory:{path}:{recursive}:{offset}")),
+        StructuredToolResult::GetMetadata { path, .. } => Some(format!("metadata:{path}")),
+        StructuredToolResult::SearchWorkspace {
+            operation,
+            mode,
+            query,
             path_scope,
             case_sensitive,
+            context_lines,
             offset,
             max_results,
             ..
         } => Some(format!(
-            "find_files:{tool_name}:{pattern}:{:?}:{case_sensitive}:{offset}:{max_results}",
-            path_scope
+            "search_workspace:{tool_name}:{operation:?}:{mode:?}:{query}:{:?}:{case_sensitive}:{context_lines}:{offset}:{max_results}",
+            path_scope,
         )),
-        StructuredToolResult::ReadFiles { file_count } => {
-            Some(format!("read_files:{tool_name}:{file_count}"))
-        }
         _ => None,
     }
 }
 
 fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult) -> String {
     match structured {
-        StructuredToolResult::ReadFile {
-            path,
-            truncated,
-            char_count,
+        StructuredToolResult::ReadFiles {
+            paths,
+            file_count,
+            truncated_count,
+            total_chars,
+            ..
         } => format!(
-            "[rtk:read_file]\npath: {path}\nstatus: superseded by a newer read of the same file\nchars: {char_count}\ntruncated: {truncated}"
+            "[rtk:read_files]\ntool: {tool_name}\npaths: {}\nstatus: superseded by a newer read\nfiles: {file_count}\ntruncated_files: {truncated_count}\ntotal_chars: {total_chars}",
+            paths.join(", ")
         ),
-        StructuredToolResult::ListDirectory { path, entry_count } => format!(
-            "[rtk:list_directory]\npath: {path}\nstatus: superseded by a newer directory listing\nentries: {entry_count}"
+        StructuredToolResult::ListDirectory {
+            path,
+            recursive,
+            shown_count,
+            total_count,
+            truncated,
+            ..
+        } => format!(
+            "[rtk:list_directory]\npath: {path}\nrecursive: {recursive}\nstatus: superseded by a newer directory listing\nshown: {shown_count}\ntotal: {total_count}\ntruncated: {truncated}"
         ),
         StructuredToolResult::GetMetadata {
             path,
@@ -172,26 +188,23 @@ fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult)
         } => format!(
             "[rtk:get_metadata]\npath: {path}\nstatus: superseded by a newer metadata lookup\nexists: {exists}\nis_file: {is_file}\nis_dir: {is_dir}\nsize: {size}\nreadonly: {readonly}"
         ),
-        StructuredToolResult::SearchText {
+        StructuredToolResult::SearchWorkspace {
+            session_id,
+            operation,
+            mode,
+            status,
+            query,
+            path_scope,
+            case_sensitive,
+            context_lines,
+            offset,
+            max_results,
             match_count,
             file_count,
             truncated,
         } => format!(
-            "[rtk:search_text]\ntool: {tool_name}\nstatus: superseded by newer search results\nfiles: {file_count}\nmatches: {match_count}\ntruncated: {truncated}"
-        ),
-        StructuredToolResult::FindFiles {
-            pattern,
-            path_scope,
-            case_sensitive,
-            offset,
-            max_results,
-            file_count,
-        } => format!(
-            "[rtk:find_files]\ntool: {tool_name}\npattern: {pattern}\npath_scope: {}\ncase_sensitive: {case_sensitive}\noffset: {offset}\nmax_results: {max_results}\nstatus: superseded by newer file search results\nfiles: {file_count}",
+            "[rtk:search_workspace]\ntool: {tool_name}\nsession_id: {session_id}\noperation: {operation:?}\nmode: {mode:?}\nstatus: {status:?}\nquery: {query}\npath_scope: {}\ncase_sensitive: {case_sensitive}\ncontext_lines: {context_lines}\noffset: {offset}\nmax_results: {max_results}\nstatus_detail: superseded by newer search results\nfiles: {file_count}\nmatches: {match_count}\ntruncated: {truncated}",
             path_scope.as_deref().unwrap_or(".")
-        ),
-        StructuredToolResult::ReadFiles { file_count } => format!(
-            "[rtk:read_files]\ntool: {tool_name}\nstatus: superseded by a newer multi-file read\nfiles: {file_count}"
         ),
         _ => "(no significant output)".to_string(),
     }
@@ -280,6 +293,7 @@ mod tests {
         let structured = StructuredToolResult::CommandExecution {
             command: "git diff".to_string(),
             current_directory: "D:\\repo".to_string(),
+            session_id: None,
             status: crate::tool::CommandExecutionStatus::Completed,
             exit_code: Some(0),
             success: Some(true),
@@ -292,7 +306,7 @@ mod tests {
         let out = svc.filter_for_model(
             vec![ResponseItem::Tool {
                 tool_call_id: "1".to_string(),
-                name: "shell_command".to_string(),
+                name: "exec_command".to_string(),
                 content: "raw".to_string(),
                 structured: Some(structured),
             }],
@@ -353,22 +367,28 @@ mod tests {
         let messages = vec![
             ResponseItem::Tool {
                 tool_call_id: "1".to_string(),
-                name: "fs_read_file".to_string(),
+                name: "read_files".to_string(),
                 content: "old file body".to_string(),
-                structured: Some(StructuredToolResult::ReadFile {
-                    path: "src/app.rs".to_string(),
-                    truncated: false,
-                    char_count: 120,
+                structured: Some(StructuredToolResult::ReadFiles {
+                    paths: vec!["src/app.rs".to_string()],
+                    start_line: None,
+                    max_lines: None,
+                    file_count: 1,
+                    truncated_count: 0,
+                    total_chars: 120,
                 }),
             },
             ResponseItem::Tool {
                 tool_call_id: "2".to_string(),
-                name: "fs_read_file".to_string(),
+                name: "read_files".to_string(),
                 content: "new file body".to_string(),
-                structured: Some(StructuredToolResult::ReadFile {
-                    path: "src/app.rs".to_string(),
-                    truncated: false,
-                    char_count: 160,
+                structured: Some(StructuredToolResult::ReadFiles {
+                    paths: vec!["src/app.rs".to_string()],
+                    start_line: None,
+                    max_lines: None,
+                    file_count: 1,
+                    truncated_count: 0,
+                    total_chars: 160,
                 }),
             },
         ];
@@ -376,7 +396,7 @@ mod tests {
         let out = svc.filter_for_model(messages, FilterPolicy { enabled: true });
         match &out[0] {
             ResponseItem::Tool { content, .. } => {
-                assert!(content.starts_with("[rtk:read_file]"));
+                assert!(content.starts_with("[rtk:read_files]"));
                 assert!(content.contains("superseded by a newer read"));
             }
             _ => panic!("expected tool message"),
@@ -393,41 +413,62 @@ mod tests {
         let messages = vec![
             ResponseItem::Tool {
                 tool_call_id: "1".to_string(),
-                name: "fuzzy_file_search".to_string(),
+                name: "search_workspace".to_string(),
                 content: "Top 2 matches:\nsrc/app.rs\nsrc/lib.rs".to_string(),
-                structured: Some(StructuredToolResult::FindFiles {
-                    pattern: "app".to_string(),
+                structured: Some(StructuredToolResult::SearchWorkspace {
+                    session_id: "search:test:1".to_string(),
+                    operation: crate::tool::SearchWorkspaceOperation::Search,
+                    mode: crate::tool::SearchWorkspaceMode::Files,
+                    status: crate::tool::SearchWorkspaceStatus::Active,
+                    query: "app".to_string(),
                     path_scope: Some("src".to_string()),
                     case_sensitive: false,
+                    context_lines: 0,
                     offset: 0,
                     max_results: 20,
                     file_count: 2,
+                    match_count: 0,
+                    truncated: false,
                 }),
             },
             ResponseItem::Tool {
                 tool_call_id: "2".to_string(),
-                name: "fuzzy_file_search".to_string(),
+                name: "search_workspace".to_string(),
                 content: "Top 3 matches:\nsrc/app.rs\nsrc/lib.rs\nsrc/main.rs".to_string(),
-                structured: Some(StructuredToolResult::FindFiles {
-                    pattern: "app".to_string(),
+                structured: Some(StructuredToolResult::SearchWorkspace {
+                    session_id: "search:test:1".to_string(),
+                    operation: crate::tool::SearchWorkspaceOperation::Search,
+                    mode: crate::tool::SearchWorkspaceMode::Files,
+                    status: crate::tool::SearchWorkspaceStatus::Active,
+                    query: "app".to_string(),
                     path_scope: Some("src".to_string()),
                     case_sensitive: false,
+                    context_lines: 0,
                     offset: 0,
                     max_results: 20,
                     file_count: 3,
+                    match_count: 0,
+                    truncated: false,
                 }),
             },
             ResponseItem::Tool {
                 tool_call_id: "3".to_string(),
-                name: "fuzzy_file_search".to_string(),
+                name: "search_workspace".to_string(),
                 content: "Top 1 matches:\nREADME.md".to_string(),
-                structured: Some(StructuredToolResult::FindFiles {
-                    pattern: "readme".to_string(),
+                structured: Some(StructuredToolResult::SearchWorkspace {
+                    session_id: "search:test:2".to_string(),
+                    operation: crate::tool::SearchWorkspaceOperation::Search,
+                    mode: crate::tool::SearchWorkspaceMode::Files,
+                    status: crate::tool::SearchWorkspaceStatus::Active,
+                    query: "readme".to_string(),
                     path_scope: None,
                     case_sensitive: false,
+                    context_lines: 0,
                     offset: 0,
                     max_results: 20,
                     file_count: 1,
+                    match_count: 0,
+                    truncated: false,
                 }),
             },
         ];
@@ -435,9 +476,9 @@ mod tests {
         let out = svc.filter_for_model(messages, FilterPolicy { enabled: true });
         match &out[0] {
             ResponseItem::Tool { content, .. } => {
-                assert!(content.starts_with("[rtk:find_files]"));
-                assert!(content.contains("pattern: app"));
-                assert!(content.contains("superseded by newer file search results"));
+                assert!(content.starts_with("[rtk:search_workspace]"));
+                assert!(content.contains("query: app"));
+                assert!(content.contains("superseded by newer search results"));
             }
             _ => panic!("expected tool message"),
         }

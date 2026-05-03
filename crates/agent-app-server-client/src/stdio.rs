@@ -245,7 +245,7 @@ mod tests {
                     request: ToolApprovalRequest {
                         turn_id: "turn-1".to_string(),
                         tool_call_id: "call-1".to_string(),
-                        tool_name: "shell_command".to_string(),
+                        tool_name: "exec_command".to_string(),
                         reason: "need approval".to_string(),
                         arguments_preview: "{\"command\":\"pwd\"}".to_string(),
                     },
@@ -288,7 +288,7 @@ mod tests {
                 },
             )) => {
                 assert_eq!(request_id, RequestId::Integer(11));
-                assert_eq!(request.tool_name, "shell_command");
+                assert_eq!(request.tool_name, "exec_command");
             }
             other => panic!("unexpected second event: {other:?}"),
         }
@@ -355,3 +355,4 @@ mod tests {
         assert_eq!(messages, vec!["first".to_string(), "second".to_string()]);
     }
 }
+

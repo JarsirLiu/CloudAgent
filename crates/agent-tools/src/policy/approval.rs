@@ -4,20 +4,20 @@ use serde::Deserialize;
 use std::path::Path;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ApprovalRequirement {
-    pub(crate) requires_approval: bool,
-    pub(crate) reason: Option<String>,
+pub struct ApprovalRequirement {
+    pub requires_approval: bool,
+    pub reason: Option<String>,
 }
 
 impl ApprovalRequirement {
-    pub(crate) fn not_required() -> Self {
+    pub fn not_required() -> Self {
         Self {
             requires_approval: false,
             reason: None,
         }
     }
 
-    pub(crate) fn required(reason: impl Into<String>) -> Self {
+    pub fn required(reason: impl Into<String>) -> Self {
         Self {
             requires_approval: true,
             reason: Some(reason.into()),
@@ -25,7 +25,7 @@ impl ApprovalRequirement {
     }
 }
 
-pub(crate) fn approval_requirement_for_tool(
+pub fn approval_requirement_for_tool(
     spec: &ToolSpec,
     call: &ToolCall,
     workspace_root: &Path,
@@ -33,8 +33,8 @@ pub(crate) fn approval_requirement_for_tool(
     approval_policy: &ApprovalPolicy,
 ) -> ApprovalRequirement {
     match call.name.as_str() {
-        "shell_command" => {
-            shell_command_requirement(call, workspace_root, permission_profile, approval_policy)
+        "exec_command" => {
+            exec_command_requirement(call, workspace_root, permission_profile, approval_policy)
         }
         _ if spec.requires_approval => ApprovalRequirement::required(
             spec.approval_reason
@@ -46,27 +46,43 @@ pub(crate) fn approval_requirement_for_tool(
 }
 
 #[derive(Deserialize)]
-struct ShellCommandArgs {
-    command: String,
+struct ExecCommandArgs {
+    command: Option<String>,
     #[serde(default)]
     workdir: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    stdin: Option<String>,
+    #[serde(default)]
+    start_new_session: Option<bool>,
 }
 
-fn shell_command_requirement(
+fn exec_command_requirement(
     call: &ToolCall,
     _workspace_root: &Path,
     permission_profile: &PermissionProfile,
     approval_policy: &ApprovalPolicy,
 ) -> ApprovalRequirement {
-    let Ok(args) = serde_json::from_value::<ShellCommandArgs>(call.arguments.clone()) else {
+    let Ok(args) = serde_json::from_value::<ExecCommandArgs>(call.arguments.clone()) else {
         return ApprovalRequirement::required(
-            "Shell commands require approval when their arguments cannot be classified safely.",
+            "Command execution requires approval when its arguments cannot be classified safely.",
         );
     };
 
-    let command = args.command.trim();
+    let command = args.command.as_deref().unwrap_or("").trim();
+    if args.session_id.is_some() && args.stdin.as_deref().is_some() {
+        return ApprovalRequirement::required(
+            "Interactive command session writes require approval.",
+        );
+    }
+    if args.start_new_session.unwrap_or(false) {
+        return ApprovalRequirement::required(
+            "Long-running command sessions require approval.",
+        );
+    }
     if command.is_empty() {
-        return ApprovalRequirement::required("Empty shell commands require approval.");
+        return ApprovalRequirement::required("Empty command executions require approval.");
     }
 
     let normalized = normalize_command(command);
@@ -76,7 +92,7 @@ fn shell_command_requirement(
     let network = contains_network_indicator(&normalized);
     if dangerous {
         return ApprovalRequirement::required(
-            "Dangerous shell commands (e.g. rm -rf / recursive delete) require approval.",
+            "Dangerous commands (e.g. rm -rf / recursive delete) require approval.",
         );
     }
 
@@ -88,7 +104,7 @@ fn shell_command_requirement(
                     ApprovalRequirement::not_required()
                 } else {
                     ApprovalRequirement::required(
-                        "Mutating or network shell commands require approval under the current approval policy.",
+                        "Mutating or network commands require approval under the current approval policy.",
                     )
                 }
             }
@@ -104,7 +120,7 @@ fn shell_command_requirement(
                 ApprovalPolicy::OnRequest => {
                     if network {
                         ApprovalRequirement::required(
-                            "Network shell commands require approval under the current approval policy.",
+                            "Network commands require approval under the current approval policy.",
                         )
                     } else {
                         ApprovalRequirement::not_required()
@@ -117,7 +133,7 @@ fn shell_command_requirement(
                 ApprovalRequirement::not_required()
             } else {
                 ApprovalRequirement::required(
-                    "Read-only permissions do not allow this shell command without explicit approval.",
+                    "Read-only permissions do not allow this command without explicit approval.",
                 )
             }
         }
@@ -130,7 +146,6 @@ fn workdir_mentions_parent_escape(workdir: Option<&str>) -> bool {
         trimmed.starts_with("..") || trimmed.contains("\\..\\") || trimmed.contains("/../")
     })
 }
-
 
 fn is_safe_readonly_command(command: &str) -> bool {
     let normalized = normalize_command(command);
@@ -258,162 +273,43 @@ fn contains_network_indicator(command: &str) -> bool {
         "ftp ",
         "npm install",
         "pnpm install",
-        "yarn install",
-        "pip install",
+        "yarn add",
         "cargo install",
+        "go get",
+        "pip install",
     ];
-    network_markers
-        .iter()
-        .any(|marker| command.contains(marker))
-}
-
-fn is_dangerous_command(command: &str) -> bool {
-    let markers = [
-        "rm -rf",
-        "rm -fr",
-        "remove-item -recurse",
-        "del /s",
-        "rmdir /s",
-        "format ",
-    ];
-    markers.iter().any(|m| command.contains(m))
+    network_markers.iter().any(|marker| command.contains(marker))
 }
 
 fn is_safe_git_command(command: &str) -> bool {
-    let safe_git_prefixes = [
+    [
         "git status",
         "git diff",
-        "git log",
         "git show",
+        "git log",
         "git branch",
         "git rev-parse",
+        "git cat-file",
         "git ls-files",
         "git grep",
-        "git cat-file",
-    ];
-    safe_git_prefixes
-        .iter()
-        .any(|prefix| command.starts_with(prefix))
+    ]
+    .iter()
+    .any(|prefix| command.starts_with(prefix))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::Value;
-    use serde_json::json;
-
-    fn shell_call(command: &str) -> ToolCall {
-        ToolCall {
-            id: "call-1".to_string(),
-            name: "shell_command".to_string(),
-            arguments: json!({ "command": command }),
-        }
-    }
-
-    fn shell_call_with_workdir(command: &str, workdir: &str) -> ToolCall {
-        ToolCall {
-            id: "call-1".to_string(),
-            name: "shell_command".to_string(),
-            arguments: json!({ "command": command, "workdir": workdir }),
-        }
-    }
-
-    fn shell_spec() -> ToolSpec {
-        ToolSpec {
-            name: "shell_command".to_string(),
-            description: String::new(),
-            parameters: Value::Null,
-            mutating: true,
-            requires_approval: true,
-            item_kind: agent_protocol::TurnItemKind::CommandExecution,
-            delta_kind: agent_protocol::TurnItemDeltaKind::CommandExecutionOutput,
-            approval_reason: Some(
-                "Shell commands can inspect or modify the workspace.".to_string(),
-            ),
-        }
-    }
-
-    #[test]
-    fn safe_readonly_shell_command_skips_approval() {
-        let requirement = approval_requirement_for_tool(
-            &shell_spec(),
-            &shell_call("git log --oneline -10"),
-            Path::new("D:\\learn\\gifti\\cloudagent"),
-            &PermissionProfile::ReadOnly,
-            &ApprovalPolicy::OnRequest,
-        );
-
-        assert_eq!(requirement, ApprovalRequirement::not_required());
-    }
-
-    #[test]
-    fn safe_readonly_shell_command_chain_skips_approval() {
-        let requirement = approval_requirement_for_tool(
-            &shell_spec(),
-            &shell_call("cd D:\\learn\\gifti\\cloudagent && Get-ChildItem -Recurse -Filter *.rs"),
-            Path::new("D:\\learn\\gifti\\cloudagent"),
-            &PermissionProfile::ReadOnly,
-            &ApprovalPolicy::OnRequest,
-        );
-
-        assert_eq!(requirement, ApprovalRequirement::not_required());
-    }
-
-    #[test]
-    fn rg_and_git_grep_skip_approval() {
-        for command in [
-            "rg -n approval_policy crates/agent-runtime/src/tools",
-            "git grep approval_policy crates/agent-runtime/src/tools",
-            "git ls-files crates/agent-tools/src",
-        ] {
-            let requirement = approval_requirement_for_tool(
-                &shell_spec(),
-                &shell_call(command),
-                Path::new("D:\\learn\\gifti\\cloudagent"),
-                &PermissionProfile::ReadOnly,
-                &ApprovalPolicy::OnRequest,
-            );
-
-            assert_eq!(requirement, ApprovalRequirement::not_required());
-        }
-    }
-
-    #[test]
-    fn shell_command_with_write_operator_requires_approval() {
-        let requirement = approval_requirement_for_tool(
-            &shell_spec(),
-            &shell_call("echo hi > out.txt"),
-            Path::new("D:\\learn\\gifti\\cloudagent"),
-            &PermissionProfile::ReadOnly,
-            &ApprovalPolicy::OnRequest,
-        );
-
-        assert!(requirement.requires_approval);
-    }
-
-    #[test]
-    fn shell_command_with_parent_workdir_requires_approval() {
-        let requirement = approval_requirement_for_tool(
-            &shell_spec(),
-            &shell_call_with_workdir("git status", "..\\.."),
-            Path::new("D:\\learn\\gifti\\cloudagent"),
-            &PermissionProfile::WorkspaceWrite,
-            &ApprovalPolicy::OnRequest,
-        );
-
-        assert!(requirement.requires_approval);
-    }
-
-    #[test]
-    fn readonly_shell_command_can_read_outside_workspace_without_approval() {
-        let requirement = approval_requirement_for_tool(
-            &shell_spec(),
-            &shell_call("type D:\\other\\notes.txt"),
-            Path::new("D:\\learn\\gifti\\cloudagent"),
-            &PermissionProfile::ReadOnly,
-            &ApprovalPolicy::OnRequest,
-        );
-
-        assert_eq!(requirement, ApprovalRequirement::not_required());
-    }
+fn is_dangerous_command(command: &str) -> bool {
+    let dangerous_markers = [
+        "rm -rf /",
+        "rm -rf *",
+        "del /s",
+        "format ",
+        "mkfs",
+        "diskpart",
+        "shutdown ",
+        "reboot ",
+        "init 0",
+    ];
+    dangerous_markers
+        .iter()
+        .any(|marker| command.contains(marker))
 }

@@ -183,7 +183,7 @@ mod tests {
                 request: ToolApprovalRequest {
                     turn_id: "turn-1".to_string(),
                     tool_call_id: "call-1".to_string(),
-                    tool_name: "shell_command".to_string(),
+                    tool_name: "exec_command".to_string(),
                     reason: "test".to_string(),
                     arguments_preview: "{}".to_string(),
                 },
@@ -222,7 +222,7 @@ mod tests {
                     request: ToolApprovalRequest {
                         turn_id: "turn-1".to_string(),
                         tool_call_id: "call-1".to_string(),
-                        tool_name: "shell_command".to_string(),
+                        tool_name: "exec_command".to_string(),
                         reason: "test".to_string(),
                         arguments_preview: "{}".to_string(),
                     },
@@ -246,3 +246,4 @@ mod tests {
         );
     }
 }
+

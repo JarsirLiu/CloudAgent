@@ -138,7 +138,7 @@ mod tests {
             content: None,
             tool_calls: vec![ToolCall {
                 id: "call_1".to_string(),
-                name: "shell_command".to_string(),
+                name: "exec_command".to_string(),
                 arguments: json!({"command": "pwd"}),
             }],
         }];
@@ -155,7 +155,7 @@ mod tests {
                     content,
                     ..
                 }
-            ] if tool_call_id == "call_1" && name == "shell_command" && content == "aborted"
+            ] if tool_call_id == "call_1" && name == "exec_command" && content == "aborted"
         ));
     }
 
@@ -166,13 +166,13 @@ mod tests {
                 content: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
-                    name: "shell_command".to_string(),
+                    name: "exec_command".to_string(),
                     arguments: json!({"command": "pwd"}),
                 }],
             },
             ResponseItem::Tool {
                 tool_call_id: "call_1".to_string(),
-                name: "shell_command".to_string(),
+                name: "exec_command".to_string(),
                 content: "ok".to_string(),
                 structured: None,
             },
@@ -183,3 +183,4 @@ mod tests {
         assert_eq!(items.len(), 2);
     }
 }
+

@@ -46,7 +46,7 @@ mod ui_state;
                             "index": 0,
                             "id": "call_1",
                             "function": {
-                                "name": "shell_command",
+                                "name": "exec_command",
                                 "arguments": "{\"command\":\"pwd\"}"
                             }
                         }]
@@ -225,7 +225,7 @@ mod ui_state;
                 tool_name,
                 command,
                 ..
-            } if tool_name == "shell_command" && command == "pwd"
+            } if tool_name == "exec_command" && command == "pwd"
         )));
         assert!(history.iter().any(|entry| matches!(
             entry,
@@ -299,7 +299,7 @@ mod ui_state;
         assert_eq!(recorded_requests.len(), 2);
         assert!(recorded_requests[0].contains("\"stream\":true"));
         assert!(recorded_requests[1].contains("\"role\":\"tool\""));
-        assert!(recorded_requests[1].contains("\"shell_command\""));
+        assert!(recorded_requests[1].contains("\"exec_command\""));
     }
 
     #[tokio::test]
@@ -314,7 +314,7 @@ mod ui_state;
                         "index": 0,
                         "id": "call_interrupt",
                         "function": {
-                            "name": "shell_command",
+                            "name": "exec_command",
                             "arguments": "{\"command\":\"Set-Content out.txt hi\"}"
                         }
                     }]
@@ -494,7 +494,7 @@ mod ui_state;
         assert!(
             rebuilt_cells
                 .iter()
-                .any(|cell| cell.label == "shell_command"
+                .any(|cell| cell.label == "exec_command"
                     && cell.body.contains("command `Set-Content out.txt hi`")),
             "rebuilt cells: {debug_cells:?}"
         );
@@ -520,7 +520,7 @@ mod ui_state;
                             "index": 0,
                             "id": "call_one",
                             "function": {
-                                "name": "shell_command",
+                                "name": "exec_command",
                             "arguments": "{\"command\":\"pwd\"}"
                             }
                         }]
@@ -545,7 +545,7 @@ mod ui_state;
                             "index": 0,
                             "id": "call_two",
                             "function": {
-                                "name": "shell_command",
+                                "name": "exec_command",
                                 "arguments": "{\"command\":\"pwd\"}"
                             }
                         }]
@@ -887,7 +887,7 @@ mod ui_state;
                                 "index": 0,
                             "id": "call_denied",
                             "function": {
-                                "name": "shell_command",
+                                "name": "exec_command",
                                 "arguments": "{\"command\":\"Set-Content out.txt hi\"}"
                             }
                         },
@@ -895,7 +895,7 @@ mod ui_state;
                             "index": 1,
                             "id": "call_allowed",
                             "function": {
-                                "name": "shell_command",
+                                "name": "exec_command",
                                 "arguments": "{\"command\":\"Set-Content other.txt hi\"}"
                             }
                         }
@@ -995,7 +995,7 @@ mod ui_state;
                             "index": 0,
                             "id": "call_denied_once",
                             "function": {
-                                "name": "shell_command",
+                                "name": "exec_command",
                                 "arguments": "{\"command\":\"df -h\"}"
                             }
                         }]
@@ -1010,7 +1010,7 @@ mod ui_state;
                             "index": 0,
                             "id": "call_denied_repeat",
                             "function": {
-                                "name": "shell_command",
+                                "name": "exec_command",
                                 "arguments": "{\"command\":\"df -h\"}"
                             }
                         }]
@@ -1253,3 +1253,5 @@ mod ui_state;
             .lock()
             .await
     }
+
+

@@ -1,0 +1,954 @@
+use crate::registry::shared::{
+    LocalTool, ToolInvocationOutput, decode_utf8_chunk, read_streaming_pipe, resolve_write_path,
+};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
+use agent_core::ToolSpec;
+use agent_core::{ToolExecutionContext, ToolOutputStream};
+use agent_protocol::{CommandExecutionStatus, StructuredToolResult};
+use anyhow::{Result, anyhow, bail};
+use async_trait::async_trait;
+use serde::Deserialize;
+use serde_json::Value;
+use serde_json::json;
+use std::collections::HashMap;
+use std::env;
+use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::Mutex;
+use tokio::time::{Duration, sleep, timeout};
+
+pub struct ExecCommandTool;
+
+impl ExecCommandTool {
+    pub fn descriptor() -> ToolDescriptor {
+        ToolDescriptor::new(
+            ToolCategory::CommandExecution,
+            ToolRisk::High,
+            ToolPermissionTier::ReadOnly,
+            false,
+            vec!["edit", "verify"],
+            ToolSpec {
+                name: "exec_command".to_string(),
+                description: "Run local commands for build, test, git, and runtime verification. Prefer structured repository tools for search and file inspection. Reuse `session_id` for interactive or long-running command sessions.".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" },
+                        "workdir": { "type": "string" },
+                        "timeout_ms": { "type": "integer", "minimum": 1000 },
+                        "start_new_session": { "type": "boolean" },
+                        "session_id": { "type": "string" },
+                        "stdin": { "type": "string" },
+                        "close_stdin": { "type": "boolean" },
+                        "wait_for_exit": { "type": "boolean" }
+                    }
+                }),
+                mutating: true,
+                requires_approval: true,
+                item_kind: agent_protocol::TurnItemKind::CommandExecution,
+                delta_kind: agent_protocol::TurnItemDeltaKind::CommandExecutionOutput,
+                approval_reason: Some("Local command execution can inspect or modify the workspace.".to_string()),
+            },
+        )
+    }
+}
+
+#[derive(Default)]
+struct ExecSessionStore {
+    next_id: AtomicU64,
+    sessions: Mutex<HashMap<String, Arc<ExecSession>>>,
+}
+
+impl ExecSessionStore {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn allocate_id(&self, conversation_id: &str) -> String {
+        let next = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        format!("exec:{}:{next}", conversation_id)
+    }
+
+    async fn insert(&self, id: String, session: Arc<ExecSession>) {
+        self.sessions.lock().await.insert(id, session);
+    }
+
+    async fn get(&self, id: &str) -> Option<Arc<ExecSession>> {
+        self.sessions.lock().await.get(id).cloned()
+    }
+
+    async fn remove(&self, id: &str) -> Option<Arc<ExecSession>> {
+        self.sessions.lock().await.remove(id)
+    }
+}
+
+struct ExecSession {
+    command: String,
+    current_directory: String,
+    child: Mutex<Child>,
+    stdin: Mutex<Option<ChildStdin>>,
+    stdout: Arc<Mutex<String>>,
+    stderr: Arc<Mutex<String>>,
+    stdout_cursor: Mutex<usize>,
+    stderr_cursor: Mutex<usize>,
+}
+
+impl ExecSession {
+    async fn write_stdin(&self, text: &str) -> Result<()> {
+        let mut guard = self.stdin.lock().await;
+        let stdin = guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("stdin is no longer available for this session"))?;
+        stdin.write_all(text.as_bytes()).await?;
+        stdin.flush().await?;
+        Ok(())
+    }
+
+    async fn close_stdin(&self) {
+        let _ = self.stdin.lock().await.take();
+    }
+
+    async fn take_new_stdout(&self) -> String {
+        take_new_buffer(&self.stdout, &self.stdout_cursor).await
+    }
+
+    async fn take_new_stderr(&self) -> String {
+        take_new_buffer(&self.stderr, &self.stderr_cursor).await
+    }
+}
+
+#[derive(Deserialize)]
+struct ExecCommandArgs {
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    workdir: Option<String>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    start_new_session: Option<bool>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    stdin: Option<String>,
+    #[serde(default)]
+    close_stdin: Option<bool>,
+    #[serde(default)]
+    wait_for_exit: Option<bool>,
+}
+
+pub(crate) struct ExecCommandLocalTool {
+    sessions: Arc<ExecSessionStore>,
+}
+
+impl ExecCommandLocalTool {
+    pub(crate) fn new() -> Self {
+        Self {
+            sessions: Arc::new(ExecSessionStore::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl LocalTool for ExecCommandLocalTool {
+    fn spec(&self) -> ToolSpec {
+        ExecCommandTool::descriptor().spec
+    }
+
+    async fn invoke(
+        &self,
+        arguments: Value,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
+        let args: ExecCommandArgs = serde_json::from_value(arguments)?;
+        let timeout_ms = args
+            .timeout_ms
+            .unwrap_or(ctx.default_shell_timeout_ms)
+            .max(1_000);
+
+        if let Some(session_id) = args.session_id.clone() {
+            return self
+                .resume_session(&session_id, args, timeout_ms, ctx)
+                .await;
+        }
+
+        let command = args
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("`command` is required"))?;
+        let workdir = resolve_write_path(&ctx.workspace_root, args.workdir.as_deref())?;
+        if args.start_new_session.unwrap_or(false) {
+            return self
+                .start_session(command, workdir, timeout_ms, args.wait_for_exit.unwrap_or(false), ctx)
+                .await;
+        }
+        if args.stdin.is_some() || args.close_stdin.unwrap_or(false) {
+            bail!("`stdin` and `close_stdin` require a `session_id`");
+        }
+
+        run_one_shot_command(command, workdir, timeout_ms, ctx).await
+    }
+}
+
+impl ExecCommandLocalTool {
+    async fn start_session(
+        &self,
+        command: &str,
+        workdir: std::path::PathBuf,
+        timeout_ms: u64,
+        wait_for_exit: bool,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
+        let started_at = Instant::now();
+        let rendered_command =
+            translate_search_command(command).unwrap_or_else(|| command.to_string());
+        let mut child = build_command_process(&rendered_command, &workdir);
+        let mut child = child.spawn()?;
+        let stdin = child.stdin.take();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture command stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture command stderr"))?;
+
+        let stdout_buffer = Arc::new(Mutex::new(String::new()));
+        let stderr_buffer = Arc::new(Mutex::new(String::new()));
+        let stdout_tx = ctx.output_tx.clone();
+        let stderr_tx = ctx.output_tx.clone();
+        tokio::spawn(pump_exec_reader(
+            stdout,
+            ToolOutputStream::Stdout,
+            stdout_buffer.clone(),
+            stdout_tx,
+        ));
+        tokio::spawn(pump_exec_reader(
+            stderr,
+            ToolOutputStream::Stderr,
+            stderr_buffer.clone(),
+            stderr_tx,
+        ));
+
+        let session = Arc::new(ExecSession {
+            command: command.to_string(),
+            current_directory: workdir.display().to_string(),
+            child: Mutex::new(child),
+            stdin: Mutex::new(stdin),
+            stdout: stdout_buffer,
+            stderr: stderr_buffer,
+            stdout_cursor: Mutex::new(0),
+            stderr_cursor: Mutex::new(0),
+        });
+        let session_id = self.sessions.allocate_id(&ctx.conversation_id);
+        self.sessions.insert(session_id.clone(), session.clone()).await;
+
+        sleep(Duration::from_millis(50)).await;
+        let output = self
+            .build_session_result(
+                &session_id,
+                session,
+                timeout_ms,
+                wait_for_exit,
+                started_at,
+                ctx,
+            )
+            .await?;
+        if !matches!(
+            output.structured,
+            Some(StructuredToolResult::CommandExecution {
+                status: CommandExecutionStatus::InProgress,
+                ..
+            })
+        ) {
+            let _ = self.sessions.remove(&session_id).await;
+        }
+        Ok(output)
+    }
+
+    async fn resume_session(
+        &self,
+        session_id: &str,
+        args: ExecCommandArgs,
+        timeout_ms: u64,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
+        let Some(session) = self.sessions.get(session_id).await else {
+            bail!("exec session `{session_id}` was not found");
+        };
+        if let Some(stdin) = args.stdin.as_deref() {
+            session.write_stdin(stdin).await?;
+        }
+        if args.close_stdin.unwrap_or(false) {
+            session.close_stdin().await;
+        }
+        sleep(Duration::from_millis(50)).await;
+        let output = self
+            .build_session_result(
+                session_id,
+                session.clone(),
+                timeout_ms,
+                args.wait_for_exit.unwrap_or(false),
+                Instant::now(),
+                ctx,
+            )
+            .await?;
+        if !matches!(
+            output.structured,
+            Some(StructuredToolResult::CommandExecution {
+                status: CommandExecutionStatus::InProgress,
+                ..
+            })
+        ) {
+            let _ = self.sessions.remove(session_id).await;
+        }
+        Ok(output)
+    }
+
+    async fn build_session_result(
+        &self,
+        session_id: &str,
+        session: Arc<ExecSession>,
+        timeout_ms: u64,
+        wait_for_exit: bool,
+        started_at: Instant,
+        ctx: &ToolExecutionContext,
+    ) -> Result<ToolInvocationOutput> {
+        let (status, exit_code, success) = wait_for_session(
+            &session.child,
+            timeout_ms,
+            wait_for_exit,
+            &ctx.cancellation_token,
+        )
+        .await?;
+        let stdout = session.take_new_stdout().await;
+        let stderr = session.take_new_stderr().await;
+        let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let content = format_exec_result_content(
+            summarize_command(&session.command),
+            &session.command,
+            &session.current_directory,
+            Some(session_id),
+            status.clone(),
+            exit_code,
+            success,
+            &stdout,
+            &stderr,
+        );
+        Ok(ToolInvocationOutput {
+            content: content.clone(),
+            structured: Some(StructuredToolResult::CommandExecution {
+                command: session.command.clone(),
+                current_directory: session.current_directory.clone(),
+                session_id: Some(session_id.to_string()),
+                status,
+                exit_code,
+                success,
+                stdout: Some(stdout),
+                stderr: Some(stderr),
+                aggregated_output: Some(content),
+                duration_ms: Some(duration_ms),
+            }),
+        })
+    }
+}
+
+async fn run_one_shot_command(
+    command: &str,
+    workdir: std::path::PathBuf,
+    timeout_ms: u64,
+    ctx: &ToolExecutionContext,
+) -> Result<ToolInvocationOutput> {
+    let started_at = Instant::now();
+    let rendered_command =
+        translate_search_command(command).unwrap_or_else(|| command.to_string());
+    let mut child = build_command_process(&rendered_command, &workdir).spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("failed to capture command stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("failed to capture command stderr"))?;
+    let stdout_task = tokio::spawn(read_streaming_pipe(
+        stdout,
+        ToolOutputStream::Stdout,
+        ctx.output_tx.clone(),
+    ));
+    let stderr_task = tokio::spawn(read_streaming_pipe(
+        stderr,
+        ToolOutputStream::Stderr,
+        ctx.output_tx.clone(),
+    ));
+    let status = tokio::select! {
+        _ = ctx.cancellation_token.cancelled() => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            bail!("command aborted by user");
+        }
+        waited = timeout(Duration::from_millis(timeout_ms), child.wait()) => {
+            match waited {
+                Ok(result) => result?,
+                Err(_) => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    bail!("command timed out after {timeout_ms}ms");
+                }
+            }
+        }
+    };
+    let stdout = String::from_utf8_lossy(&stdout_task.await??)
+        .trim()
+        .to_string();
+    let stderr = String::from_utf8_lossy(&stderr_task.await??)
+        .trim()
+        .to_string();
+    let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let exit_code = status.code().unwrap_or(-1);
+    let current_directory = workdir.display().to_string();
+    let content = format_exec_result_content(
+        summarize_command(command),
+        command,
+        &current_directory,
+        None,
+        if status.success() {
+            CommandExecutionStatus::Completed
+        } else {
+            CommandExecutionStatus::Failed
+        },
+        Some(exit_code),
+        Some(status.success()),
+        &stdout,
+        &stderr,
+    );
+    Ok(ToolInvocationOutput {
+        content: content.clone(),
+        structured: Some(StructuredToolResult::CommandExecution {
+            command: command.to_string(),
+            current_directory,
+            session_id: None,
+            status: if status.success() {
+                CommandExecutionStatus::Completed
+            } else {
+                CommandExecutionStatus::Failed
+            },
+            exit_code: Some(exit_code),
+            success: Some(status.success()),
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+            aggregated_output: Some(content),
+            duration_ms: Some(duration_ms),
+        }),
+    })
+}
+
+fn build_command_process(command_text: &str, workdir: &std::path::Path) -> Command {
+    let mut command = if cfg!(windows) {
+        let mut cmd = Command::new(preferred_windows_shell());
+        cmd.arg("-NoLogo")
+            .arg("-NoProfile")
+            .arg("-Command")
+            .arg(windows_utf8_command(command_text));
+        cmd
+    } else {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-lc").arg(command_text);
+        cmd
+    };
+    command
+        .current_dir(workdir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command.kill_on_drop(true);
+    command
+}
+
+fn format_exec_result_content(
+    kind: &str,
+    command: &str,
+    current_directory: &str,
+    _session_id: Option<&str>,
+    status: CommandExecutionStatus,
+    exit_code: Option<i32>,
+    success: Option<bool>,
+    stdout: &str,
+    stderr: &str,
+) -> String {
+    let mut lines = vec![
+        format!("kind: {kind}"),
+        format!("command: {command}"),
+        format!("current_directory: {current_directory}"),
+    ];
+    lines.push(format!("status: {}", render_command_status(&status)));
+    if let Some(exit_code) = exit_code {
+        lines.push(format!("exit_code: {exit_code}"));
+    }
+    if let Some(success) = success {
+        lines.push(format!("success: {success}"));
+    }
+    lines.push(String::new());
+    lines.push("stdout:".to_string());
+    lines.push(if stdout.is_empty() {
+        "(empty)".to_string()
+    } else {
+        stdout.to_string()
+    });
+    lines.push(String::new());
+    lines.push("stderr:".to_string());
+    lines.push(if stderr.is_empty() {
+        "(empty)".to_string()
+    } else {
+        stderr.to_string()
+    });
+    lines.join("\n")
+}
+
+fn render_command_status(status: &CommandExecutionStatus) -> &'static str {
+    match status {
+        CommandExecutionStatus::InProgress => "in_progress",
+        CommandExecutionStatus::Completed => "completed",
+        CommandExecutionStatus::Failed => "failed",
+        CommandExecutionStatus::Declined => "declined",
+    }
+}
+
+async fn wait_for_session(
+    child: &Mutex<Child>,
+    timeout_ms: u64,
+    wait_for_exit: bool,
+    cancellation_token: &tokio_util::sync::CancellationToken,
+) -> Result<(CommandExecutionStatus, Option<i32>, Option<bool>)> {
+    let mut child = child.lock().await;
+    let exited = if wait_for_exit {
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                bail!("command aborted by user");
+            }
+            waited = timeout(Duration::from_millis(timeout_ms), child.wait()) => {
+                match waited {
+                    Ok(result) => Some(result?),
+                    Err(_) => None,
+                }
+            }
+        }
+    } else {
+        child.try_wait()?
+    };
+
+    match exited {
+        Some(status) => Ok((
+            if status.success() {
+                CommandExecutionStatus::Completed
+            } else {
+                CommandExecutionStatus::Failed
+            },
+            Some(status.code().unwrap_or(-1)),
+            Some(status.success()),
+        )),
+        None => Ok((CommandExecutionStatus::InProgress, None, None)),
+    }
+}
+
+async fn pump_exec_reader<R>(
+    mut reader: R,
+    stream: ToolOutputStream,
+    buffer: Arc<Mutex<String>>,
+    output_tx: Option<tokio::sync::mpsc::UnboundedSender<agent_core::ToolOutputDelta>>,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut raw = [0_u8; 8192];
+    let mut pending_utf8 = Vec::new();
+    loop {
+        let read = reader.read(&mut raw).await?;
+        if read == 0 {
+            break;
+        }
+        pending_utf8.extend_from_slice(&raw[..read]);
+        let chunk = decode_utf8_chunk(&mut pending_utf8, false);
+        if !chunk.is_empty() {
+            buffer.lock().await.push_str(&chunk);
+            if let Some(output_tx) = &output_tx {
+                let _ = output_tx.send(agent_core::ToolOutputDelta {
+                    stream: stream.clone(),
+                    chunk,
+                });
+            }
+        }
+    }
+    let tail = decode_utf8_chunk(&mut pending_utf8, true);
+    if !tail.is_empty() {
+        buffer.lock().await.push_str(&tail);
+        if let Some(output_tx) = &output_tx {
+            let _ = output_tx.send(agent_core::ToolOutputDelta {
+                stream,
+                chunk: tail,
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn take_new_buffer(buffer: &Arc<Mutex<String>>, cursor: &Mutex<usize>) -> String {
+    let text = buffer.lock().await.clone();
+    let mut cursor = cursor.lock().await;
+    let start = (*cursor).min(text.len());
+    let out = text[start..].to_string();
+    *cursor = text.len();
+    out.trim().to_string()
+}
+
+fn summarize_command(command: &str) -> &'static str {
+    let normalized = command.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return "unknown";
+    }
+    if contains_write_operator(&normalized) || contains_network_indicator(&normalized) {
+        return "action";
+    }
+
+    let Some(program) = normalized.split_whitespace().next() else {
+        return "unknown";
+    };
+
+    match program {
+        "rg" | "grep" | "findstr" | "select-string" => "search",
+        "git" if normalized.starts_with("git ls-files") => "list files",
+        "git" if normalized.starts_with("git grep") => "search",
+        "git"
+            if normalized.starts_with("git log")
+                || normalized.starts_with("git status")
+                || normalized.starts_with("git diff")
+                || normalized.starts_with("git show")
+                || normalized.starts_with("git branch")
+                || normalized.starts_with("git rev-parse")
+                || normalized.starts_with("git cat-file") =>
+        {
+            "inspect"
+        }
+        "pwd" | "ls" | "dir" | "cat" | "type" | "head" | "tail" | "find" | "tree" => "inspect",
+        "fd" => "find files",
+        "get-childitem" | "get-content" => "inspect",
+        "measure-object" | "where-object" | "sort-object" | "select-object" => "inspect",
+        _ => "action",
+    }
+}
+
+fn translate_search_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    if !normalized.starts_with("rg") {
+        return None;
+    }
+
+    if command_exists("rg") || command_exists("rg.exe") {
+        return None;
+    }
+
+    translate_rg_command(trimmed)
+}
+
+fn translate_rg_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    if !normalized.starts_with("rg") {
+        return None;
+    }
+
+    if normalized.starts_with("rg --files") || normalized.starts_with("rg.exe --files") {
+        let path_scope = extract_rg_path_scope(trimmed).unwrap_or_else(|| ".".to_string());
+        return Some(if cfg!(windows) {
+            format!(
+                "Get-ChildItem -Recurse -File {} | Select-Object -ExpandProperty FullName",
+                powershell_quote(&path_scope)
+            )
+        } else {
+            format!("find {} -type f -print", shell_quote(&path_scope))
+        });
+    }
+
+    let (pattern, path_scope, case_sensitive) = extract_rg_search_args(trimmed)?;
+    Some(if cfg!(windows) {
+        let mut command = format!(
+            "Get-ChildItem -Recurse -File {} | Select-String -Pattern {}",
+            powershell_quote(&path_scope),
+            powershell_quote(&pattern)
+        );
+        if !case_sensitive {
+            command.push_str(" -CaseSensitive:$false");
+        }
+        command
+    } else {
+        let mut command = String::from("grep -R -n -I");
+        if !case_sensitive {
+            command.push_str(" -i");
+        }
+        command.push_str(" -e ");
+        command.push_str(&shell_quote(&pattern));
+        command.push(' ');
+        command.push_str(&shell_quote(&path_scope));
+        command
+    })
+}
+
+fn extract_rg_search_args(command: &str) -> Option<(String, String, bool)> {
+    let mut rest = command.trim();
+    let program = take_shell_token(&mut rest)?.to_ascii_lowercase();
+    if program != "rg" && program != "rg.exe" {
+        return None;
+    }
+
+    let mut case_sensitive = true;
+    let mut pattern = None;
+    let mut path_scope = ".".to_string();
+    while !rest.trim().is_empty() {
+        let token = take_shell_token(&mut rest)?;
+        match token.as_str() {
+            "-i" | "--ignore-case" => case_sensitive = false,
+            "-n" | "-H" | "--with-filename" | "--no-heading" | "--line-number" | "-S" => {}
+            "--files" => return None,
+            t if t.starts_with('-') => {}
+            t if pattern.is_none() => pattern = Some(t.to_string()),
+            t => path_scope = t.to_string(),
+        }
+    }
+
+    Some((pattern?, path_scope, case_sensitive))
+}
+
+fn extract_rg_path_scope(command: &str) -> Option<String> {
+    let mut rest = command.trim();
+    let program = take_shell_token(&mut rest)?.to_ascii_lowercase();
+    if program != "rg" && program != "rg.exe" {
+        return None;
+    }
+
+    let mut path_scope = ".".to_string();
+    while !rest.trim().is_empty() {
+        let token = take_shell_token(&mut rest)?;
+        if token == "--files" {
+            continue;
+        }
+        if token.starts_with('-') {
+            continue;
+        }
+        path_scope = token;
+        break;
+    }
+
+    Some(path_scope)
+}
+
+fn take_shell_token(input: &mut &str) -> Option<String> {
+    let trimmed = input.trim_start();
+    if trimmed.is_empty() {
+        *input = "";
+        return None;
+    }
+
+    let mut chars = trimmed.chars().peekable();
+    let mut token = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '\0';
+    let mut consumed = 0usize;
+
+    while let Some(ch) = chars.next() {
+        consumed += ch.len_utf8();
+        match ch {
+            '\'' | '"' if !in_quotes => {
+                in_quotes = true;
+                quote_char = ch;
+            }
+            ch if in_quotes && ch == quote_char => {
+                in_quotes = false;
+            }
+            ch if !in_quotes && ch.is_whitespace() => {
+                break;
+            }
+            _ => token.push(ch),
+        }
+    }
+
+    *input = trimmed[consumed..].trim_start();
+    if token.is_empty() { None } else { Some(token) }
+}
+
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let escaped = value.replace('\'', r"'\''");
+    format!("'{}'", escaped)
+}
+
+fn contains_write_operator(command: &str) -> bool {
+    let write_markers = [
+        " >",
+        ">>",
+        " out-file",
+        " set-content",
+        " add-content",
+        " tee-object",
+        " remove-item",
+        " move-item",
+        " copy-item",
+        " rename-item",
+        " new-item",
+        " set-item",
+        " rm ",
+        " del ",
+        " mv ",
+        " cp ",
+        " chmod ",
+        " chown ",
+        " mkdir ",
+        " rmdir ",
+        " sed -i",
+    ];
+    write_markers.iter().any(|marker| command.contains(marker))
+}
+
+fn contains_network_indicator(command: &str) -> bool {
+    let network_markers = [
+        "curl ",
+        "wget ",
+        "invoke-webrequest",
+        "invoke-restmethod",
+        "http://",
+        "https://",
+        " ping ",
+        "ssh ",
+        "scp ",
+        "ftp ",
+        "npm install",
+        "pnpm install",
+        "yarn install",
+        "pip install",
+        "cargo install",
+    ];
+    network_markers
+        .iter()
+        .any(|marker| command.contains(marker))
+}
+
+fn preferred_windows_shell() -> String {
+    find_windows_shell().unwrap_or_else(|| "powershell".to_string())
+}
+
+fn find_windows_shell() -> Option<String> {
+    for candidate in ["pwsh.exe", "pwsh", "powershell.exe", "powershell"] {
+        if command_exists(candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+fn command_exists(candidate: &str) -> bool {
+    if candidate.contains('\\') || candidate.contains('/') {
+        return std::path::Path::new(candidate).exists();
+    }
+    let path_value = env::var_os("PATH");
+    let Some(path_value) = path_value else {
+        return false;
+    };
+    env::split_paths(&path_value).any(|dir| {
+        let direct = dir.join(candidate);
+        if direct.exists() {
+            return true;
+        }
+        if direct.extension().is_none() {
+            return dir.join(format!("{candidate}.exe")).exists();
+        }
+        false
+    })
+}
+
+fn windows_utf8_command(command: &str) -> String {
+    format!(
+        concat!(
+            "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); ",
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); ",
+            "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); ",
+            "chcp 65001 > $null; ",
+            "{command}"
+        ),
+        command = command
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_exists_rejects_missing_binary() {
+        assert!(!command_exists("cloudagent-definitely-missing-command"));
+    }
+
+    #[test]
+    fn summarize_command_classifies_common_read_only_commands() {
+        assert_eq!(summarize_command("rg -n TODO src"), "search");
+        assert_eq!(summarize_command("git ls-files crates"), "list files");
+        assert_eq!(summarize_command("git status"), "inspect");
+        assert_eq!(summarize_command("Set-Content out.txt hi"), "action");
+    }
+
+    #[test]
+    fn rg_search_commands_fall_back_when_rg_is_missing() {
+        let translated = translate_rg_command(r#"rg -n "context|token" crates/agent-core"#)
+            .expect("search command should translate");
+        if cfg!(windows) {
+            assert!(translated.contains("Get-ChildItem -Recurse -File"));
+            assert!(translated.contains("Select-String -Pattern"));
+            assert!(translated.contains("crates/agent-core"));
+        } else {
+            assert!(translated.starts_with("grep -R -n -I"));
+            assert!(translated.contains("-e"));
+            assert!(translated.contains("context|token"));
+            assert!(translated.contains("crates/agent-core"));
+        }
+    }
+
+    #[test]
+    fn rg_files_search_commands_fall_back_when_rg_is_missing() {
+        let translated =
+            translate_rg_command("rg --files crates").expect("files search should translate");
+        if cfg!(windows) {
+            assert!(translated.contains("Get-ChildItem -Recurse -File"));
+            assert!(translated.contains("-ExpandProperty FullName"));
+        } else {
+            assert_eq!(translated, "find 'crates' -type f -print");
+        }
+    }
+
+    #[test]
+    fn shell_token_parser_handles_quoted_patterns() {
+        let mut input = r#"-n "context|token" crates/agent-core"#;
+        assert_eq!(take_shell_token(&mut input), Some("-n".to_string()));
+        assert_eq!(
+            take_shell_token(&mut input),
+            Some("context|token".to_string())
+        );
+        assert_eq!(
+            take_shell_token(&mut input),
+            Some("crates/agent-core".to_string())
+        );
+    }
+}

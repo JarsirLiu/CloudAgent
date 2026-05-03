@@ -348,11 +348,12 @@ mod tests {
         let facade = ContextFacade::new();
         let messages = vec![ResponseItem::Tool {
             tool_call_id: "call-1".to_string(),
-            name: "shell_command".to_string(),
+            name: "exec_command".to_string(),
             content: "raw".to_string(),
             structured: Some(StructuredToolResult::CommandExecution {
                 command: "git status".to_string(),
                 current_directory: "D:\\repo".to_string(),
+                session_id: None,
                 status: CommandExecutionStatus::Completed,
                 exit_code: Some(0),
                 success: Some(true),
@@ -389,11 +390,12 @@ mod tests {
         let facade = ContextFacade::new();
         let messages = vec![ResponseItem::Tool {
             tool_call_id: "call-1".to_string(),
-            name: "shell_command".to_string(),
+            name: "exec_command".to_string(),
             content: "raw".to_string(),
             structured: Some(StructuredToolResult::CommandExecution {
                 command: "git status".to_string(),
                 current_directory: "D:\\repo".to_string(),
+                session_id: None,
                 status: CommandExecutionStatus::Completed,
                 exit_code: Some(0),
                 success: Some(true),

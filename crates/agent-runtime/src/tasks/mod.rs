@@ -4,7 +4,7 @@ use crate::AgentRuntime;
 use agent_core::{
     CompactionSummary, ContextCompactionConfig, ContextFacade, ContextFragment,
     ConversationHistory, RolloutItem, apply_history_compaction, build_compaction_summary_request,
-    plan_manual_history_compaction,
+    plan_manual_history_compaction, ToolExecutor,
 };
 use agent_protocol::{ApprovalPolicy, EventMsg, PermissionProfile, ServerRequest, ServerRequestDecision};
 use anyhow::Result;

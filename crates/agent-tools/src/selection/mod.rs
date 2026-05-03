@@ -17,6 +17,41 @@ pub enum ToolMode {
     Full,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolSurface {
+    pub mode: ToolMode,
+    pub task_kind: TaskKind,
+}
+
+impl ToolSurface {
+    pub fn new(mode: ToolMode, task_kind: TaskKind) -> Self {
+        Self { mode, task_kind }
+    }
+
+    pub fn mode_name(&self) -> &'static str {
+        match self.mode {
+            ToolMode::Explore => "explore",
+            ToolMode::Edit => "edit",
+            ToolMode::Verify => "verify",
+            ToolMode::Full => "full",
+        }
+    }
+
+    pub fn task_kind_name(&self) -> &'static str {
+        match self.task_kind {
+            TaskKind::RepositoryAnalysis => "repository_analysis",
+            TaskKind::CodeEdit => "code_edit",
+            TaskKind::Verification => "verification",
+            TaskKind::WorkspaceFileOperation => "workspace_file_operation",
+            TaskKind::General => "general",
+        }
+    }
+
+    pub fn regular_turn() -> Self {
+        Self::new(ToolMode::Full, TaskKind::General)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ToolSelector;
 
@@ -63,5 +98,17 @@ fn matches_task_kind(task_kind: &TaskKind, tool: &ToolDescriptor) -> bool {
             tool.mode_tags.contains(&"fs") || tool.mode_tags.contains(&"general")
         }
         TaskKind::General => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn regular_turn_surface_is_stable() {
+        let surface = ToolSurface::regular_turn();
+        assert_eq!(surface.mode, ToolMode::Full);
+        assert_eq!(surface.task_kind, TaskKind::General);
     }
 }

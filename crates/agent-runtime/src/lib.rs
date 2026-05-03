@@ -6,7 +6,7 @@ mod tasks;
 mod tools;
 
 use agent_core::{
-    AgentContext, ChatModel, EnvironmentContext, ExecutionPolicy, ToolCall, ToolExecutor,
+    AgentContext, ChatModel, EnvironmentContext, ExecutionPolicy, ToolCall,
 };
 use agent_memory::LongTermMemoryFacade;
 use agent_tools::ToolRegistry;
@@ -43,7 +43,7 @@ pub struct AgentRuntime {
     context: AgentContext,
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
-    tools: Arc<dyn ToolExecutor>,
+    tools: Arc<ToolRegistry>,
     state: RuntimeState,
     store: JsonConversationStore,
     rollout_recorder: RolloutRecorder,
@@ -151,13 +151,13 @@ mod tests {
             None,
             vec![ToolCall {
                 id: "call-1".to_string(),
-                name: "shell_command".to_string(),
+                name: "exec_command".to_string(),
                 arguments: json!({"command": "pwd"}),
             }],
         );
         history.push_tool_result(agent_core::ToolResult {
             tool_call_id: "call-1".to_string(),
-            name: "shell_command".to_string(),
+            name: "exec_command".to_string(),
             content: "D:\\work".to_string(),
             is_error: false,
             structured: None,
@@ -190,3 +190,4 @@ pub enum ManualCompactionOutcome {
         estimated_history_tokens: usize,
     },
 }
+

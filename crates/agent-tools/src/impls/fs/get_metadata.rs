@@ -1,5 +1,5 @@
 use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_read_path};
-use crate::spec::{ToolCategory, ToolDescriptor, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
 use anyhow::Result;
@@ -9,16 +9,18 @@ use serde_json::Value;
 use serde_json::json;
 use tokio::fs;
 
-pub struct FsStatTool;
+pub struct GetMetadataTool;
 
-impl FsStatTool {
+impl GetMetadataTool {
     pub fn descriptor() -> ToolDescriptor {
         ToolDescriptor::new(
             ToolCategory::WorkspaceFileOps,
             ToolRisk::Low,
-            vec!["explore", "verify", "general"],
+            ToolPermissionTier::ReadOnly,
+            true,
+            vec!["explore", "verify", "repo", "fs"],
             ToolSpec {
-                name: "fs_stat".to_string(),
+                name: "get_metadata".to_string(),
                 description:
                     "Read focused path metadata such as existence, file type, size, and readonly status."
                         .to_string(),
@@ -40,23 +42,23 @@ impl FsStatTool {
 }
 
 #[derive(Deserialize)]
-struct FsStatArgs {
+struct GetMetadataArgs {
     path: String,
 }
 
-pub(crate) struct FsStatLocalTool;
+pub(crate) struct GetMetadataLocalTool;
 
 #[async_trait]
-impl LocalTool for FsStatLocalTool {
+impl LocalTool for GetMetadataLocalTool {
     fn spec(&self) -> ToolSpec {
-        FsStatTool::descriptor().spec
+        GetMetadataTool::descriptor().spec
     }
     async fn invoke(
         &self,
         arguments: Value,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
-        let args: FsStatArgs = serde_json::from_value(arguments)?;
+        let args: GetMetadataArgs = serde_json::from_value(arguments)?;
         let path = resolve_read_path(&ctx.workspace_root, Some(args.path.as_str()))?;
         let metadata = fs::metadata(&path).await?;
         let value = json!({

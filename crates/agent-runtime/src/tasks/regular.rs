@@ -2,6 +2,7 @@ use super::{RuntimeTask, TaskContext, TaskKind};
 use crate::tools::ToolBatchRunner;
 use crate::{AgentRuntime, emit_event};
 use crate::observability::{ContextBudgetLogEntry, append_context_budget_log};
+use agent_tools::selection::ToolSurface;
 use agent_core::{
     ContextCompactionConfig, ContextFragment, ContextManager, ContextFacade, ConversationHistory,
     FilterPolicy, ModelUsage, RolloutItem,
@@ -77,10 +78,11 @@ where
     let mut events = Vec::new();
     let mut last_model_name = None;
     let mut assistant_item_seq: usize = 0;
-    let tool_specs = runtime
+    let tool_surface = ToolSurface::regular_turn();
+    let resolved_tools = runtime
         .tools
-        .specs_for_context("explore", "repository_analysis");
-    let tool_specs = filter_tool_specs_for_permission_profile(tool_specs, permission_profile);
+        .resolve_surface(&tool_surface, permission_profile);
+    let tool_specs = resolved_tools.specs;
     let mut denied_requests = HashSet::new();
     let environment_context = runtime.environment_context();
     let raw_memory_fragment = runtime
@@ -543,37 +545,6 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
-}
-
-fn filter_tool_specs_for_permission_profile(
-    tool_specs: Vec<agent_core::ToolSpec>,
-    permission_profile: &PermissionProfile,
-) -> Vec<agent_core::ToolSpec> {
-    match permission_profile {
-        PermissionProfile::ReadOnly => tool_specs
-            .into_iter()
-            .filter(|spec| is_readonly_visible_tool(spec))
-            .collect(),
-        PermissionProfile::WorkspaceWrite => tool_specs
-            .into_iter()
-            .filter(|spec| is_workspace_write_visible_tool(spec))
-            .collect(),
-        PermissionProfile::FullAccess => tool_specs,
-    }
-}
-
-fn is_readonly_visible_tool(spec: &agent_core::ToolSpec) -> bool {
-    matches!(
-        spec.name.as_str(),
-        "shell_command" | "fuzzy_file_search" | "fs_read_file" | "fs_stat"
-    )
-}
-
-fn is_workspace_write_visible_tool(spec: &agent_core::ToolSpec) -> bool {
-    matches!(
-        spec.name.as_str(),
-        "shell_command" | "fuzzy_file_search" | "fs_read_file" | "fs_stat" | "apply_patch"
-    )
 }
 
 fn emit_assistant_item(

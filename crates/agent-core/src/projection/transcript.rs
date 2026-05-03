@@ -436,7 +436,7 @@ fn transcript_item_from_item_start(
         }),
         TurnItemKind::CommandExecution => Some(TranscriptItem::CommandExecution {
             id: item_id.to_string(),
-            tool_name: "shell_command".to_string(),
+            tool_name: "exec_command".to_string(),
             command: title,
             current_directory: String::new(),
             status: crate::tool::CommandExecutionStatus::InProgress,
@@ -643,16 +643,16 @@ fn transcript_item_from_tool_response(
             duration_ms: *duration_ms,
             summary: content.to_string(),
         },
-        Some(StructuredToolResult::WriteFile {
-            path,
-            bytes_written,
+        Some(StructuredToolResult::EditFile {
+            changed_paths,
+            files_changed,
             status,
         }) => TranscriptItem::FileChange {
             id: tool_call_id.to_string(),
             tool_name: name.to_string(),
-            path: path.clone(),
+            path: changed_paths.join(", "),
             status: status.clone(),
-            bytes_written: *bytes_written,
+            bytes_written: *files_changed,
             summary: content.to_string(),
         },
         structured => TranscriptItem::ToolResult {
@@ -903,11 +903,12 @@ mod tests {
     fn transcript_builder_keeps_rich_tool_projection() {
         let item = transcript_item_from_response_item(&ResponseItem::Tool {
             tool_call_id: "call-1".to_string(),
-            name: "shell_command".to_string(),
+            name: "exec_command".to_string(),
             content: "D:\\learn\\gifti\\cloudagent".to_string(),
             structured: Some(StructuredToolResult::CommandExecution {
                 command: "pwd".to_string(),
                 current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
+                session_id: None,
                 status: CommandExecutionStatus::Completed,
                 exit_code: Some(0),
                 success: Some(true),
@@ -1107,7 +1108,7 @@ mod tests {
     fn same_tool_summary_keeps_distinct_items_by_id() {
         let command_item = |id: &str| TranscriptItem::CommandExecution {
             id: id.to_string(),
-            tool_name: "shell_command".to_string(),
+            tool_name: "exec_command".to_string(),
             command: "pwd".to_string(),
             current_directory: "D:\\work".to_string(),
             status: CommandExecutionStatus::Completed,

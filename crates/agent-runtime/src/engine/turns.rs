@@ -1,5 +1,5 @@
 use crate::{AgentRuntime, MANUAL_COMPACTION_MIN_HISTORY_TOKENS, ManualCompactionOutcome, tasks};
-use agent_core::AgentTurnOutput;
+use agent_core::{AgentTurnOutput, ToolExecutor};
 use agent_protocol::{ApprovalPolicy, EventMsg, PermissionProfile, RequestId, ServerRequest, ServerRequestDecision};
 use anyhow::{Result, bail};
 use tokio_util::sync::CancellationToken;
