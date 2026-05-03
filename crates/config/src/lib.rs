@@ -111,14 +111,14 @@ impl AgentConfig {
     pub fn load(workspace_root: impl Into<PathBuf>) -> Result<Self> {
         let workspace_root = workspace_root.into();
         let mut config = Self::defaults(workspace_root.clone());
-        let config_path = workspace_root.join("configs").join("agent.toml");
-
-        if config_path.exists() {
-            let text = std::fs::read_to_string(&config_path)
-                .with_context(|| format!("failed to read {}", config_path.display()))?;
-            let partial: PartialAgentConfig = toml::from_str(&text)
-                .with_context(|| format!("failed to parse {}", config_path.display()))?;
-            config.apply_partial(partial);
+        for config_path in config_search_paths(&workspace_root) {
+            if config_path.exists() {
+                let text = std::fs::read_to_string(&config_path)
+                    .with_context(|| format!("failed to read {}", config_path.display()))?;
+                let partial: PartialAgentConfig = toml::from_str(&text)
+                    .with_context(|| format!("failed to parse {}", config_path.display()))?;
+                config.apply_partial(partial);
+            }
         }
 
         config.apply_env_overrides();
@@ -478,6 +478,22 @@ impl AgentConfig {
             self.runtime.context_budget_safety_buffer_tokens = parsed.max(512);
         }
     }
+}
+
+fn config_search_paths(workspace_root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = user_home_dir() {
+        paths.push(home.join(".cloudagent").join("agent.toml"));
+    }
+    paths.push(workspace_root.join(".cloudagent").join("agent.toml"));
+    paths.push(workspace_root.join("configs").join("agent.toml"));
+    paths
+}
+
+fn user_home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("USERPROFILE").map(PathBuf::from))
 }
 
 fn parse_memory_mode(value: &str) -> MemoryMode {

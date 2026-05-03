@@ -13,7 +13,8 @@ async fn main() -> Result<()> {
     let workspace_root = std::env::current_dir()?;
     let config = AgentConfig::load(workspace_root)?;
     let runtime = Arc::new(AgentRuntime::from_config(config)?);
-    let conversation_id = runtime.default_conversation_id().to_string();
+    runtime.persist_config_snapshot().await;
+    let conversation_id = runtime.ensure_active_conversation().await?;
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
     let transport = arg_value(&args, "--transport")

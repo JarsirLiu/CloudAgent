@@ -169,7 +169,7 @@ pub(crate) async fn archive_conversation(
     let transition = session_state::apply_archive_transition(
         state,
         &conversation_id,
-        runtime.default_conversation_id(),
+        &runtime.ensure_active_conversation().await?,
     )
     .await;
     let active_session_id = transition.active_session_id;

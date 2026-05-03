@@ -6,6 +6,7 @@ use agent_core::{
 };
 use agent_protocol::{ConversationSnapshot, ConversationStatus, ConversationSummary, TranscriptItem};
 use anyhow::Result;
+use uuid::Uuid;
 
 fn paginate_turns(
     turns: Vec<ConversationTurn>,
@@ -36,6 +37,18 @@ fn paginate_turns(
 }
 
 impl AgentRuntime {
+    pub async fn ensure_active_conversation(&self) -> Result<String> {
+        if let Some(id) = self.store.load_active_conversation().await?
+            && !id.trim().is_empty()
+        {
+            return Ok(id);
+        }
+        let id = Uuid::now_v7().to_string();
+        self.store.create_conversation(&id).await?;
+        self.store.mark_active_conversation(&id).await?;
+        Ok(id)
+    }
+
     pub async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {
         self.store.mark_active_conversation(conversation_id).await
     }
@@ -52,8 +65,7 @@ impl AgentRuntime {
     }
 
     pub async fn create_conversation(&self, conversation_id: &str) -> Result<()> {
-        let _ = conversation_id;
-        Ok(())
+        self.store.create_conversation(conversation_id).await
     }
 
     pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {

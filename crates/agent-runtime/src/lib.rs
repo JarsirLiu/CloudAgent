@@ -21,7 +21,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use storage::JsonConversationStore;
-use uuid::Uuid;
 
 pub use agent_core::ResponseItem;
 pub use agent_protocol::{
@@ -38,7 +37,6 @@ pub fn crate_name() -> &'static str {
 
 pub struct AgentRuntime {
     config: AgentConfig,
-    default_conversation_id: String,
     context: AgentContext,
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
@@ -65,11 +63,8 @@ impl AgentRuntime {
         let memory = LongTermMemoryFacade::new(config.runtime.memory.clone())?;
 
         let system_prompt = config.runtime.system_prompt.clone();
-        let default_conversation_id = Uuid::now_v7().to_string();
-
         Ok(Self {
             config,
-            default_conversation_id,
             context,
             policy,
             model,
@@ -80,10 +75,6 @@ impl AgentRuntime {
             memory,
             session_approvals: StdMutex::new(HashSet::new()),
         })
-    }
-
-    pub fn default_conversation_id(&self) -> &str {
-        &self.default_conversation_id
     }
 
     pub fn llm_model_name(&self) -> &str {
@@ -154,6 +145,12 @@ mod tests {
 }
 
 impl AgentRuntime {
+    pub async fn persist_config_snapshot(&self) {
+        if let Ok(snapshot) = serde_json::to_string(&self.config) {
+            let _ = self.store.save_project_settings_snapshot(&snapshot).await;
+        }
+    }
+
     pub(crate) async fn is_turn_cancelled(&self, conversation_id: &str) -> bool {
         self.state
             .active_turn(conversation_id)

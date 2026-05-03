@@ -4,7 +4,8 @@ use std::path::Path;
 
 const SCHEMA_V1: i32 = 1;
 const SCHEMA_V2: i32 = 2;
-const LATEST_SCHEMA_VERSION: i32 = SCHEMA_V2;
+const SCHEMA_V3: i32 = 3;
+const LATEST_SCHEMA_VERSION: i32 = SCHEMA_V3;
 
 #[derive(Clone, Debug)]
 pub struct SessionIndexRow {
@@ -67,11 +68,41 @@ CREATE INDEX IF NOT EXISTS idx_events_conversation_time ON session_events(conver
         current_version = SCHEMA_V2;
     }
 
+    if current_version < SCHEMA_V3 {
+        conn.execute_batch(
+            r#"
+CREATE TABLE IF NOT EXISTS project_settings(
+  project_root TEXT PRIMARY KEY,
+  config_json TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+"#,
+        )?;
+        conn.pragma_update(None, "user_version", SCHEMA_V3)?;
+        current_version = SCHEMA_V3;
+    }
+
     if current_version > LATEST_SCHEMA_VERSION {
         anyhow::bail!(
             "unsupported session_index schema version {current_version}, max supported is {LATEST_SCHEMA_VERSION}"
         );
     }
+    Ok(())
+}
+
+pub fn upsert_project_settings(
+    db_path: &Path,
+    project_root: &str,
+    config_json: &str,
+    updated_at_ms: u64,
+) -> Result<()> {
+    let conn = open(db_path)?;
+    conn.execute(
+        r#"INSERT INTO project_settings(project_root, config_json, updated_at_ms)
+VALUES(?1, ?2, ?3)
+ON CONFLICT(project_root) DO UPDATE SET config_json=excluded.config_json, updated_at_ms=excluded.updated_at_ms"#,
+        params![project_root, config_json, updated_at_ms as i64],
+    )?;
     Ok(())
 }
 

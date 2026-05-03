@@ -303,6 +303,15 @@ impl JsonConversationStore {
         session_index::set_title(&session_index::db_path(&self.root), conversation_id, title)
     }
 
+    pub async fn save_project_settings_snapshot(&self, config_json: &str) -> Result<()> {
+        session_index::upsert_project_settings(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            config_json,
+            now_ms(),
+        )
+    }
+
     fn conversation_path(&self, conversation_id: &str) -> PathBuf {
         self.root.join(format!(
             "{}.conversation.json",
