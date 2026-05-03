@@ -12,6 +12,8 @@ pub struct SessionPicker {
     mode: SessionPickerMode,
 }
 
+const MAX_VISIBLE_SESSIONS: usize = 6;
+
 #[derive(Clone, Copy)]
 pub enum SessionPickerMode {
     Switch,
@@ -73,10 +75,15 @@ impl BottomPaneView for SessionPicker {
         if matches!(self.mode, SessionPickerMode::Delete) {
             lines.push(Line::from("  Enter to delete, Esc to cancel"));
         }
+        let (start, end) = self.visible_window(MAX_VISIBLE_SESSIONS);
+        if start > 0 {
+            lines.push(Line::from("  ..."));
+        }
         let id_col = 24usize;
         let max_width = area_width as usize;
-        for (idx, s) in self.sessions.iter().enumerate() {
-            let selected = idx == self.selected;
+        for (idx, s) in self.sessions[start..end].iter().enumerate() {
+            let absolute_idx = start + idx;
+            let selected = absolute_idx == self.selected;
             let marker = if selected { "> " } else { "  " };
             let id = truncate_to_width(&s.conversation_id, id_col);
             let title = truncate_to_width(
@@ -96,7 +103,38 @@ impl BottomPaneView for SessionPicker {
                 "  "
             )), Span::styled(row, style)]));
         }
+        if end < self.sessions.len() {
+            lines.push(Line::from("  ..."));
+        }
         lines
+    }
+
+    fn desired_height(&self, _area_width: u16) -> u16 {
+        let visible = self.sessions.len().min(MAX_VISIBLE_SESSIONS) as u16;
+        let mut height = 1 + visible;
+        if matches!(self.mode, SessionPickerMode::Delete) {
+            height += 1;
+        }
+        if self.sessions.len() > MAX_VISIBLE_SESSIONS {
+            height += 2;
+        }
+        height
+    }
+}
+
+impl SessionPicker {
+    fn visible_window(&self, max_rows: usize) -> (usize, usize) {
+        if self.sessions.is_empty() || max_rows == 0 {
+            return (0, 0);
+        }
+        let visible = self.sessions.len().min(max_rows);
+        let start = if self.selected < visible {
+            0
+        } else {
+            (self.selected + 1).saturating_sub(visible)
+        }
+        .min(self.sessions.len().saturating_sub(visible));
+        (start, start + visible)
     }
 }
 

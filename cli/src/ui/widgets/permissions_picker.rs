@@ -4,6 +4,7 @@ use crate::app::commands::permission_profile::{
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crate::ui::widgets::textarea::display_width;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -11,6 +12,8 @@ pub struct PermissionsPicker {
     selected: usize,
     options: &'static [PermissionModeSpec],
 }
+
+const MAX_VISIBLE_OPTIONS: usize = 5;
 
 impl PermissionsPicker {
     pub fn new(current: &str) -> Self {
@@ -48,13 +51,18 @@ impl BottomPaneView for PermissionsPicker {
         }
     }
 
-    fn render_lines(&self, _area_width: u16) -> Vec<Line<'static>> {
+    fn render_lines(&self, area_width: u16) -> Vec<Line<'static>> {
         let mut lines = vec![
             Line::from("  Permissions Picker (session-scoped)"),
             Line::from("  Choose how broad tool execution can be in this session"),
         ];
-        for (idx, spec) in self.options.iter().enumerate() {
-            let selected = idx == self.selected;
+        let (start, end) = self.visible_window(MAX_VISIBLE_OPTIONS);
+        if start > 0 {
+            lines.push(Line::from("  ..."));
+        }
+        for (idx, spec) in self.options[start..end].iter().enumerate() {
+            let absolute_idx = start + idx;
+            let selected = absolute_idx == self.selected;
             let marker = if selected { "> " } else { "  " };
             let style = if selected {
                 Style::default()
@@ -64,15 +72,68 @@ impl BottomPaneView for PermissionsPicker {
             } else {
                 Style::default().fg(Color::Rgb(135, 145, 175))
             };
+            let mode_col = format!("{marker}{:<9}", spec.mode);
+            let mode_text = pad_to_width(&mode_col, 12);
+            let available = area_width.saturating_sub(16) as usize;
+            let label = truncate_to_width(spec.label, available);
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(format!("{marker}{:<9}", spec.mode), style),
+                Span::styled(mode_text, style),
                 Span::styled(
-                    spec.label.to_string(),
+                    label,
                     Style::default().fg(Color::Rgb(120, 130, 150)),
                 ),
             ]));
         }
+        if end < self.options.len() {
+            lines.push(Line::from("  ..."));
+        }
         lines
     }
+
+    fn desired_height(&self, _area_width: u16) -> u16 {
+        let visible = self.options.len().min(MAX_VISIBLE_OPTIONS) as u16;
+        4 + visible + if self.options.len() > MAX_VISIBLE_OPTIONS { 1 } else { 0 }
+    }
+}
+
+impl PermissionsPicker {
+    fn visible_window(&self, max_rows: usize) -> (usize, usize) {
+        if self.options.is_empty() || max_rows == 0 {
+            return (0, 0);
+        }
+        let visible = self.options.len().min(max_rows);
+        let start = if self.selected < visible {
+            0
+        } else {
+            (self.selected + 1).saturating_sub(visible)
+        }
+        .min(self.options.len().saturating_sub(visible));
+        (start, start + visible)
+    }
+}
+
+fn truncate_to_width(value: &str, width: usize) -> String {
+    if width == 0 || display_width(value) <= width {
+        return value.to_string();
+    }
+    let mut out = String::new();
+    for ch in value.chars() {
+        let next = format!("{out}{ch}");
+        if display_width(&next) + 3 > width {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push_str("...");
+    out
+}
+
+fn pad_to_width(value: &str, width: usize) -> String {
+    let mut out = value.to_string();
+    let current = display_width(&out);
+    if current < width {
+        out.push_str(&" ".repeat(width - current));
+    }
+    out
 }
