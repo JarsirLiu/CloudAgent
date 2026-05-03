@@ -241,7 +241,7 @@ fn render_tool_like(
     } else {
         output_lines.extend(wrapped.iter().take(max_lines).cloned());
         output_lines.push(format!(
-            "… +{} lines (ctrl+t for transcript)",
+            "… +{} lines (ctrl+t to expand)",
             wrapped.len().saturating_sub(max_lines)
         ));
     }
