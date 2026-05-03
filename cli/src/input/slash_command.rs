@@ -92,8 +92,8 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         command: SlashCommand::Filter,
         name: "filter",
         aliases: &[],
-        description: "toggle pre-LLM input filtering: /filter on|off",
-        argument_hint: Some("<on|off>"),
+        description: "set pre-LLM input filter (use picker; state shown as filter on/off)",
+        argument_hint: None,
         supports_inline_args: true,
     },
     SlashCommandSpec {
