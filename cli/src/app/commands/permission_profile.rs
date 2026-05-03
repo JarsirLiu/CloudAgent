@@ -14,11 +14,11 @@ pub(crate) const PERMISSION_MODE_SPECS: [PermissionModeSpec; 3] = [
     },
     PermissionModeSpec {
         mode: "balanced",
-        label: "workspace-write; write tools for workspace use; risky commands need approval",
+        label: "workspace-write only; other dirs need approval; risky commands need approval",
     },
     PermissionModeSpec {
         mode: "danger",
-        label: "full-access; all tools visible; dangerous commands still need approval",
+        label: "full-access; other dirs allowed; dangerous commands still need approval",
     },
 ];
 
