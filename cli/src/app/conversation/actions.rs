@@ -139,6 +139,18 @@ pub(crate) fn handle_tui_input(
                 conversation_id: trimmed.to_string(),
             })?;
         }
+        ParsedInput::LocalConversationDelete(target_conversation_id) => {
+            let trimmed = target_conversation_id.trim();
+            if trimmed.is_empty() {
+                app.delete_picker_requested = true;
+                app.session_picker_requested = false;
+                client.send_command(AppClientCommand::ListConversations)?;
+                return Ok(false);
+            }
+            client.send_command(AppClientCommand::DeleteConversation {
+                conversation_id: trimmed.to_string(),
+            })?;
+        }
         ParsedInput::LocalFilterToggle(raw_args) => {
             if raw_args.trim().is_empty() {
                 app.input_pane.set_filter_picker();
@@ -250,8 +262,13 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.set_conversation_summaries(conversations.clone());
             if app.session_picker_requested {
                 app.input_pane
-                    .set_session_picker(conversations, &app.conversation_id);
+                    .set_session_picker(conversations, &app.conversation_id, crate::ui::widgets::session_picker::SessionPickerMode::Switch);
                 app.session_picker_requested = false;
+                app.delete_picker_requested = false;
+            } else if app.delete_picker_requested {
+                app.input_pane
+                    .set_session_picker(conversations, &app.conversation_id, crate::ui::widgets::session_picker::SessionPickerMode::Delete);
+                app.delete_picker_requested = false;
             }
         }
         ServerAction::SwitchConversation(conversation_id) => {

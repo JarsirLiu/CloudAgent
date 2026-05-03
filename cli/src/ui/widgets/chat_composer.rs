@@ -341,6 +341,9 @@ fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
         SlashCommand::ArchiveConversation => {
             ComposerIntent::ArchiveConversation(args.trim().to_string())
         }
+        SlashCommand::DeleteConversation => {
+            ComposerIntent::DeleteConversation(args.trim().to_string())
+        }
         SlashCommand::Filter => ComposerIntent::Filter(args.trim().to_string()),
         SlashCommand::Permissions => ComposerIntent::Permissions(args.trim().to_string()),
         SlashCommand::Exit => ComposerIntent::Exit,

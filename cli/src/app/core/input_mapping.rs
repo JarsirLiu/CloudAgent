@@ -54,6 +54,7 @@ impl TuiApp {
             )),
             InputPaneAction::Composer(ComposerIntent::Session) => {
                 self.session_picker_requested = true;
+                self.delete_picker_requested = false;
                 Some(ParsedInput::Command(AppClientCommand::ListConversations))
             }
             InputPaneAction::Composer(ComposerIntent::NewConversation(conversation_id)) => {
@@ -67,6 +68,9 @@ impl TuiApp {
             }
             InputPaneAction::Composer(ComposerIntent::ArchiveConversation(conversation_id)) => {
                 Some(ParsedInput::LocalConversationArchive(conversation_id))
+            }
+            InputPaneAction::Composer(ComposerIntent::DeleteConversation(conversation_id)) => {
+                Some(ParsedInput::LocalConversationDelete(conversation_id))
             }
             InputPaneAction::Composer(ComposerIntent::Filter(args)) => {
                 Some(ParsedInput::LocalFilterToggle(args))

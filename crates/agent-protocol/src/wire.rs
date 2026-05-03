@@ -179,6 +179,9 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "conversation/archive" => Ok(AppClientCommand::ArchiveConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
+        "conversation/delete" => Ok(AppClientCommand::DeleteConversation {
+            conversation_id: value_field(params, "conversation_id")?,
+        }),
         "conversation/subscribe" => Ok(AppClientCommand::SubscribeConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
@@ -255,6 +258,10 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         ),
         AppClientCommand::ArchiveConversation { conversation_id } => (
             "conversation/archive",
+            serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::DeleteConversation { conversation_id } => (
+            "conversation/delete",
             serde_json::json!({ "conversation_id": conversation_id }),
         ),
         AppClientCommand::SubscribeConversation { conversation_id } => (

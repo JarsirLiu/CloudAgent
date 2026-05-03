@@ -48,6 +48,6 @@ pub(crate) struct TuiApp {
     pub(crate) pending_history_cells: VecDeque<HistoryCell>,
     pub(crate) pending_history_rebuild: bool,
     pub(crate) session_picker_requested: bool,
+    pub(crate) delete_picker_requested: bool,
     pub(crate) workspace_root: PathBuf,
 }
-

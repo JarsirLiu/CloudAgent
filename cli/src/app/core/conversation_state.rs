@@ -22,6 +22,7 @@ impl TuiApp {
             pending_history_cells: std::collections::VecDeque::new(),
             pending_history_rebuild: false,
             session_picker_requested: false,
+            delete_picker_requested: false,
             workspace_root,
         }
     }

@@ -48,6 +48,9 @@ pub enum AppClientCommand {
     ArchiveConversation {
         conversation_id: String,
     },
+    DeleteConversation {
+        conversation_id: String,
+    },
     SubscribeConversation {
         conversation_id: String,
     },
@@ -78,6 +81,7 @@ impl AppClientCommand {
             }
             | Self::SwitchConversation { conversation_id }
             | Self::ArchiveConversation { conversation_id }
+            | Self::DeleteConversation { conversation_id }
             | Self::SubscribeConversation { conversation_id }
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
             Self::ListConversations | Self::Exit => None,

@@ -37,16 +37,20 @@ fn paginate_turns(
 }
 
 impl AgentRuntime {
+    pub async fn create_fresh_conversation(&self) -> Result<String> {
+        let id = Uuid::now_v7().to_string();
+        self.store.create_conversation(&id).await?;
+        self.store.mark_active_conversation(&id).await?;
+        Ok(id)
+    }
+
     pub async fn ensure_active_conversation(&self) -> Result<String> {
         if let Some(id) = self.store.load_active_conversation().await?
             && !id.trim().is_empty()
         {
             return Ok(id);
         }
-        let id = Uuid::now_v7().to_string();
-        self.store.create_conversation(&id).await?;
-        self.store.mark_active_conversation(&id).await?;
-        Ok(id)
+        self.create_fresh_conversation().await
     }
 
     pub async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {

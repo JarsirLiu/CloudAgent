@@ -9,16 +9,23 @@ use ratatui::text::{Line, Span};
 pub struct SessionPicker {
     sessions: Vec<ConversationSummary>,
     selected: usize,
+    mode: SessionPickerMode,
+}
+
+#[derive(Clone, Copy)]
+pub enum SessionPickerMode {
+    Switch,
+    Delete,
 }
 
 impl SessionPicker {
-    pub fn new(mut sessions: Vec<ConversationSummary>, active_id: &str) -> Self {
+    pub fn new(mut sessions: Vec<ConversationSummary>, active_id: &str, mode: SessionPickerMode) -> Self {
         sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
         let selected = sessions
             .iter()
             .position(|s| s.conversation_id == active_id)
             .unwrap_or(0);
-        Self { sessions, selected }
+        Self { sessions, selected, mode }
     }
 }
 
@@ -48,7 +55,10 @@ impl BottomPaneView for SessionPicker {
             }
             KeyCode::Enter => self
                 .select_current()
-                .map(|id| BottomPaneViewAction::Composer(ComposerIntent::SessionSwitch(id)))
+                .map(|id| BottomPaneViewAction::Composer(match self.mode {
+                    SessionPickerMode::Switch => ComposerIntent::SessionSwitch(id),
+                    SessionPickerMode::Delete => ComposerIntent::DeleteConversation(id),
+                }))
                 .unwrap_or(BottomPaneViewAction::None),
             KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Close,
             _ => BottomPaneViewAction::None,
@@ -56,7 +66,10 @@ impl BottomPaneView for SessionPicker {
     }
 
     fn render_lines(&self, area_width: u16) -> Vec<Line<'static>> {
-        let mut lines = vec![Line::from("  Session Picker")];
+        let mut lines = vec![Line::from(match self.mode {
+            SessionPickerMode::Switch => "  Session Picker",
+            SessionPickerMode::Delete => "  Delete Session",
+        })];
         let id_col = 24usize;
         let max_width = area_width as usize;
         for (idx, s) in self.sessions.iter().enumerate() {

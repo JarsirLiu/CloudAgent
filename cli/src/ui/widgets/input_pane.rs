@@ -7,7 +7,7 @@ use crate::ui::widgets::permissions_picker::PermissionsPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
-use crate::ui::widgets::session_picker::SessionPicker;
+use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
 use agent_protocol::{ConversationSummary, FrontendMode, RequestId, ServerRequestDecisionKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
@@ -312,10 +312,11 @@ impl InputPane {
         &mut self,
         sessions: Vec<ConversationSummary>,
         active_conversation_id: &str,
+        mode: SessionPickerMode,
     ) {
         self.view_stack.clear();
         self.view_stack
-            .push(Box::new(SessionPicker::new(sessions, active_conversation_id)));
+            .push(Box::new(SessionPicker::new(sessions, active_conversation_id, mode)));
     }
 
     pub fn clear_session_picker(&mut self) {

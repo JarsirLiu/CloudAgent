@@ -166,10 +166,11 @@ pub(crate) async fn archive_conversation(
     conversation_id: String,
 ) -> Result<()> {
     runtime.archive_conversation(&conversation_id).await?;
+    let next_conversation_id = runtime.create_fresh_conversation().await?;
     let transition = session_state::apply_archive_transition(
         state,
         &conversation_id,
-        &runtime.ensure_active_conversation().await?,
+        &next_conversation_id,
     )
     .await;
     let active_session_id = transition.active_session_id;
@@ -235,6 +236,49 @@ pub(crate) async fn set_conversation_title(
         AppServerNotification::Info {
             conversation_id,
             message: "conversation title updated".to_string(),
+        },
+    )
+    .await;
+    Ok(())
+}
+
+pub(crate) async fn delete_conversation(
+    runtime: &Arc<AgentRuntime>,
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: String,
+) -> Result<()> {
+    let was_active = {
+        let guard = state.lock().await;
+        guard.active_conversation_id() == conversation_id
+    };
+    runtime.reset_conversation(&conversation_id).await?;
+    if was_active {
+        let next_conversation_id = runtime.create_fresh_conversation().await?;
+        session_state::apply_active_conversation(state, next_conversation_id.clone()).await;
+        session_state::persist_active_conversation(runtime, &next_conversation_id).await;
+        publish_switched_conversation_state(runtime, event_tx, state, &next_conversation_id).await?;
+    }
+    let active_session_id = {
+        let guard = state.lock().await;
+        guard.active_conversation_id().to_string()
+    };
+    let conversations = runtime.list_conversations().await?;
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::ConversationList {
+            conversation_id: active_session_id.clone(),
+            conversations,
+        },
+    )
+    .await;
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::Info {
+            conversation_id: active_session_id,
+            message: format!("Deleted conversation `{conversation_id}`"),
         },
     )
     .await;

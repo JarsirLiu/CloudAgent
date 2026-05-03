@@ -275,6 +275,10 @@ pub(crate) async fn handle_command(
             session_service::archive_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
         }
+        AppClientCommand::DeleteConversation { conversation_id } => {
+            session_service::delete_conversation(&runtime, event_tx, &state, conversation_id)
+                .await?;
+        }
         AppClientCommand::ResetConversation { conversation_id } => {
             session_service::reset_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;

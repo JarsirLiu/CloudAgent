@@ -57,6 +57,7 @@ pub(crate) enum UiInputEvent {
     LocalConversationSwitch(String),
     LocalConversationTitle(String),
     LocalConversationArchive(String),
+    LocalConversationDelete(String),
     LocalFilterToggle(String),
     LocalPermissionMode(String),
     ServerRequestAnswer {

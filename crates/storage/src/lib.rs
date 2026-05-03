@@ -31,6 +31,7 @@ struct ConversationIndex {
 }
 
 impl JsonConversationStore {
+    const MAX_SESSION_BYTES: u64 = 2 * 1024 * 1024 * 1024;
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -235,6 +236,7 @@ impl JsonConversationStore {
             None,
             now,
         );
+        self.prune_archived_conversations_if_needed_locked().await?;
         Ok(())
     }
 
@@ -469,6 +471,60 @@ impl JsonConversationStore {
             .conversations
             .retain(|summary| summary.conversation_id != conversation_id);
         self.save_index_locked(&index).await
+    }
+
+    async fn total_session_bytes_locked(&self) -> Result<u64> {
+        let mut total = 0u64;
+        let mut dir = fs::read_dir(&self.root).await?;
+        while let Some(entry) = dir.next_entry().await? {
+            let path = entry.path();
+            let is_session_file = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.ends_with(".rollout.jsonl") || n.ends_with(".conversation.json"))
+                .unwrap_or(false);
+            if is_session_file {
+                total = total.saturating_add(entry.metadata().await?.len());
+            }
+        }
+        Ok(total)
+    }
+
+    async fn prune_archived_conversations_if_needed_locked(&self) -> Result<()> {
+        let mut total = self.total_session_bytes_locked().await?;
+        if total <= Self::MAX_SESSION_BYTES {
+            return Ok(());
+        }
+        let mut index = self.load_index_locked().await?;
+        let mut archived = index
+            .conversations
+            .iter()
+            .filter(|s| s.archived)
+            .cloned()
+            .collect::<Vec<_>>();
+        archived.sort_by(|a, b| a.updated_at_ms.cmp(&b.updated_at_ms));
+        for summary in archived {
+            if total <= Self::MAX_SESSION_BYTES {
+                break;
+            }
+            let rollout = self.rollout_path(&summary.conversation_id);
+            let convo = self.conversation_path(&summary.conversation_id);
+            let mut reclaimed = 0u64;
+            if let Ok(meta) = fs::metadata(&rollout).await {
+                reclaimed = reclaimed.saturating_add(meta.len());
+            }
+            if let Ok(meta) = fs::metadata(&convo).await {
+                reclaimed = reclaimed.saturating_add(meta.len());
+            }
+            self.delete_file_if_exists(&rollout).await?;
+            self.delete_file_if_exists(&convo).await?;
+            index
+                .conversations
+                .retain(|c| c.conversation_id != summary.conversation_id);
+            total = total.saturating_sub(reclaimed);
+        }
+        self.save_index_locked(&index).await?;
+        Ok(())
     }
 }
 
