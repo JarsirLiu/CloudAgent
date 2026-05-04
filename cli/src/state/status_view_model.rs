@@ -1,6 +1,5 @@
 use crate::app::TuiApp;
 use crate::state::selectors::status_text_from_mode;
-use crate::ui::widgets::runtime_status_panel::status_meta_from_projection;
 
 pub(crate) struct StatusViewModel {
     pub(crate) text: String,
@@ -42,9 +41,6 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     {
         let percent = last.total_tokens.saturating_mul(100) / window;
         parts.push(format!("context {percent}%"));
-    }
-    if let Some(runtime_meta) = status_meta_from_projection(&app.runtime_projection) {
-        parts.push(runtime_meta);
     }
     StatusViewModel {
         text,

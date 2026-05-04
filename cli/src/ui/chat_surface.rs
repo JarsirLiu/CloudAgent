@@ -212,13 +212,13 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
     });
     let render_width = inner.width.max(40) as usize;
     let mut lines = Vec::new();
-    if let Some(line) = render_live_status_line(app) {
-        lines.push(line);
-    }
     if let Some(active) = app.transcript_state.active_cell.as_ref()
         && !active.body.trim().is_empty()
     {
         lines.extend(active.to_lines_with_mode(render_width));
+    }
+    if let Some(line) = render_live_status_line(app) {
+        lines.push(line);
     }
     if lines.is_empty() {
         return;

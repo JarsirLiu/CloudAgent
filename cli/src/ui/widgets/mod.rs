@@ -8,7 +8,6 @@ pub mod history_cell;
 pub mod input_pane;
 pub mod live_status_cell;
 pub mod permissions_picker;
-pub mod runtime_status_panel;
 pub mod server_request_overlay;
 pub mod session_picker;
 pub mod text_effects;
