@@ -20,11 +20,13 @@ pub fn spawn_sse_frame_stream(mut response: Response, idle_timeout: Duration) ->
 
     tokio::spawn(async move {
         let mut decoder = SseFrameDecoder::default();
+        let mut saw_frame = false;
 
         loop {
             match timeout(idle_timeout, response.chunk()).await {
                 Ok(Ok(Some(chunk))) => {
                     for frame in decoder.push_chunk(&chunk) {
+                        saw_frame = true;
                         if tx.send(Ok(frame)).await.is_err() {
                             return;
                         }
@@ -41,7 +43,13 @@ pub fn spawn_sse_frame_stream(mut response: Response, idle_timeout: Duration) ->
                     return;
                 }
                 Err(_) => {
-                    let _ = tx.send(Err(HttpStreamError::IdleTimeout)).await;
+                    let _ = tx
+                        .send(Err(if saw_frame {
+                            HttpStreamError::IdleTimeout
+                        } else {
+                            HttpStreamError::FirstFrameTimeout
+                        }))
+                        .await;
                     return;
                 }
             }
@@ -151,6 +159,62 @@ mod tests {
 
         assert_eq!(
             stream.recv().await.expect("timeout error"),
+            Err(HttpStreamError::FirstFrameTimeout)
+        );
+
+        server.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn sse_frame_stream_distinguishes_stall_after_first_frame() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("listener addr");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept client");
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                let read = stream.read(&mut buf).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = "data: hello\n\n";
+            let response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/event-stream\r\n",
+                "Transfer-Encoding: chunked\r\n",
+                "Connection: keep-alive\r\n",
+                "\r\n"
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write headers");
+            stream
+                .write_all(format!("{:X}\r\n", body.len()).as_bytes())
+                .expect("write chunk size");
+            stream.write_all(body.as_bytes()).expect("write body");
+            stream.write_all(b"\r\n").expect("write suffix");
+            stream.flush().expect("flush response");
+            thread::sleep(Duration::from_millis(400));
+        });
+
+        let response = reqwest::get(format!("http://{addr}"))
+            .await
+            .expect("send request");
+        let mut stream = spawn_sse_frame_stream(response, Duration::from_millis(100));
+
+        assert_eq!(
+            stream.recv().await.expect("first frame").expect("ok frame"),
+            "hello"
+        );
+        assert_eq!(
+            stream.recv().await.expect("stall error"),
             Err(HttpStreamError::IdleTimeout)
         );
 

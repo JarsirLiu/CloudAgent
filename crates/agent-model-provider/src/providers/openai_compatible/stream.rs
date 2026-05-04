@@ -6,6 +6,12 @@ use crate::event::{
 use agent_core::ModelUsage;
 use tokio::sync::mpsc;
 
+pub(super) struct ParsedStreamFrame {
+    pub events: Vec<ProviderStreamEvent>,
+    pub completion: Option<ProviderCompletion>,
+    pub done: bool,
+}
+
 pub(super) struct ProviderEventStream {
     rx: mpsc::Receiver<Result<ProviderStreamEvent, ProviderStreamError>>,
 }
@@ -24,13 +30,13 @@ impl ProviderEventStream {
     }
 }
 
-pub(super) fn parse_stream_frame(
-    data: &str,
-) -> Result<Vec<ProviderStreamEvent>, ProviderStreamError> {
+pub(super) fn parse_stream_frame(data: &str) -> Result<ParsedStreamFrame, ProviderStreamError> {
     if data == "[DONE]" {
-        return Ok(vec![ProviderStreamEvent::Completed(
-            ProviderCompletion::default(),
-        )]);
+        return Ok(ParsedStreamFrame {
+            events: Vec::new(),
+            completion: None,
+            done: true,
+        });
     }
 
     let parsed: ChatCompletionStreamChunk =
@@ -75,11 +81,11 @@ pub(super) fn parse_stream_frame(
         }
     }
 
-    if saw_completion {
-        events.push(ProviderStreamEvent::Completed(completion));
-    }
-
-    Ok(events)
+    Ok(ParsedStreamFrame {
+        events,
+        completion: saw_completion.then_some(completion),
+        done: false,
+    })
 }
 
 #[cfg(test)]
@@ -88,10 +94,31 @@ mod tests {
 
     #[test]
     fn done_frame_maps_to_completed_event() {
-        let events = parse_stream_frame("[DONE]").expect("parse done frame");
-        assert_eq!(
-            events,
-            vec![ProviderStreamEvent::Completed(ProviderCompletion::default())]
+        let frame = parse_stream_frame("[DONE]").expect("parse done frame");
+        assert!(frame.events.is_empty());
+        assert!(frame.completion.is_none());
+        assert!(frame.done);
+    }
+
+    #[test]
+    fn finish_reason_is_deferred_until_done() {
+        let frame = parse_stream_frame(
+            r#"{"id":"resp_1","object":"chat.completion.chunk","created":0,"model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+        )
+        .expect("parse finish_reason frame");
+        assert!(
+            frame
+                .events
+                .iter()
+                .all(|event| !matches!(event, ProviderStreamEvent::Completed(_)))
         );
+        assert_eq!(
+            frame.completion,
+            Some(ProviderCompletion {
+                finish_reason: Some("stop".to_string()),
+                end_turn: None,
+            })
+        );
+        assert!(!frame.done);
     }
 }

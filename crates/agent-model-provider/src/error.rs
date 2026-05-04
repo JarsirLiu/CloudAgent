@@ -43,6 +43,7 @@ impl std::error::Error for ProviderRequestError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderStreamError {
+    FirstFrameTimeout,
     IdleTimeout,
     ClosedBeforeCompletion,
     Http {
@@ -65,6 +66,7 @@ pub enum ProviderStreamError {
 impl fmt::Display for ProviderStreamError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::FirstFrameTimeout => f.write_str("provider stream first-frame timeout"),
             Self::IdleTimeout => f.write_str("provider stream idle timeout"),
             Self::ClosedBeforeCompletion => f.write_str("provider stream closed before completion"),
             Self::Http { status, body } => {
@@ -88,6 +90,7 @@ impl std::error::Error for ProviderStreamError {}
 impl From<HttpStreamError> for ProviderStreamError {
     fn from(value: HttpStreamError) -> Self {
         match value {
+            HttpStreamError::FirstFrameTimeout => Self::FirstFrameTimeout,
             HttpStreamError::IdleTimeout => Self::IdleTimeout,
             HttpStreamError::ClosedBeforeCompletion => Self::ClosedBeforeCompletion,
             HttpStreamError::Transport(message) => Self::Transport { message },

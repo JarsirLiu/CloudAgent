@@ -82,7 +82,8 @@ pub async fn run_turn_with_approval<H: TurnHost>(
     host.finish_turn(conversation_id).await;
 
     match result {
-        Ok(outcome) => {
+        Ok(mut outcome) => {
+            ensure_terminal_event(&mut outcome, &turn_id, &mut event_sink);
             drop(event_sink);
             if host.should_persist_memory(&outcome.history) {
                 host.persist_memory_from_history(&outcome.history);
@@ -148,5 +149,71 @@ pub async fn run_turn_with_approval<H: TurnHost>(
             host.audit_turn_failed(conversation_id, &turn_id, &error_text);
             Ok(outcome)
         }
+    }
+}
+
+fn ensure_terminal_event(
+    outcome: &mut TurnOutcome,
+    turn_id: &str,
+    event_sink: &mut impl FnMut(&EventMsg),
+) {
+    let has_terminal = outcome.events.iter().any(|event| {
+        matches!(
+            event,
+            EventMsg::TurnCompleted { .. }
+                | EventMsg::TurnFailed { .. }
+                | EventMsg::TurnCancelled { .. }
+        )
+    });
+    if has_terminal {
+        return;
+    }
+
+    let event = match outcome.state {
+        TurnState::Completed => EventMsg::TurnCompleted {
+            turn_id: turn_id.to_string(),
+        },
+        TurnState::Cancelled => EventMsg::TurnCancelled {
+            turn_id: turn_id.to_string(),
+            reason: "turn cancelled".to_string(),
+        },
+        TurnState::Failed => EventMsg::TurnFailed {
+            turn_id: turn_id.to_string(),
+            error: "turn failed".to_string(),
+        },
+        TurnState::Idle | TurnState::Running | TurnState::WaitingForServerRequest => return,
+    };
+    let mut scratch_events = Vec::new();
+    emit_event(&mut scratch_events, event_sink, event.clone());
+    outcome.events.push(event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ConversationHistory;
+
+    #[test]
+    fn ensure_terminal_event_appends_completed_when_missing() {
+        let mut outcome = TurnOutcome {
+            turn_id: "turn-1".to_string(),
+            events: Vec::new(),
+            history: ConversationHistory::new("conv-1".to_string(), "system".to_string()),
+            model_name: None,
+            state: TurnState::Completed,
+        };
+        let mut delivered = Vec::new();
+        ensure_terminal_event(&mut outcome, "turn-1", &mut |event| {
+            delivered.push(event.clone());
+        });
+
+        assert!(matches!(
+            outcome.events.as_slice(),
+            [EventMsg::TurnCompleted { turn_id }] if turn_id == "turn-1"
+        ));
+        assert!(matches!(
+            delivered.as_slice(),
+            [EventMsg::TurnCompleted { turn_id }] if turn_id == "turn-1"
+        ));
     }
 }

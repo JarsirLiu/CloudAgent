@@ -116,19 +116,25 @@ impl OpenAiCompatibleModel {
         let mut sse_frames = spawn_sse_frame_stream(response, self.runtime.stream_idle_timeout);
         let (tx, rx) = mpsc::channel(256);
         tokio::spawn(async move {
+            let mut pending_completion: Option<ProviderCompletion> = None;
             while let Some(frame) = sse_frames.recv().await {
                 match frame {
                     Ok(data) => match parse_stream_frame(&data) {
-                        Ok(events) => {
-                            for event in events {
-                                let is_completed =
-                                    matches!(event, ProviderStreamEvent::Completed(_));
+                        Ok(frame) => {
+                            for event in frame.events {
                                 if tx.send(Ok(event)).await.is_err() {
                                     return;
                                 }
-                                if is_completed {
-                                    return;
-                                }
+                            }
+                            if let Some(completion) = frame.completion {
+                                pending_completion = Some(completion);
+                            }
+                            if frame.done {
+                                let completion = pending_completion.take().unwrap_or_default();
+                                let _ = tx
+                                    .send(Ok(ProviderStreamEvent::Completed(completion)))
+                                    .await;
+                                return;
                             }
                         }
                         Err(err) => {
@@ -264,7 +270,8 @@ impl ChatModel for OpenAiCompatibleModel {
     fn classify_stream_error(&self, err: &anyhow::Error) -> ModelRetryDecision {
         if let Some(err) = err.downcast_ref::<ProviderStreamError>() {
             match err {
-                ProviderStreamError::IdleTimeout
+                ProviderStreamError::FirstFrameTimeout
+                | ProviderStreamError::IdleTimeout
                 | ProviderStreamError::ClosedBeforeCompletion
                 | ProviderStreamError::Transport { .. } => ModelRetryDecision::retry(None),
                 ProviderStreamError::Http { status, .. } if *status == 429 || *status >= 500 => {
@@ -466,6 +473,92 @@ mod tests {
 
         assert_eq!(response.0.content.as_deref(), Some("hi"));
         assert_eq!(response.1, "hi");
+
+        server.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn streaming_preserves_usage_after_finish_reason_before_done() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("listener addr");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept client");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set read timeout");
+            stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .expect("set write timeout");
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                let read = stream.read(&mut buf).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = concat!(
+                "data: {\"id\":\"resp_1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n",
+                "data: {\"id\":\"resp_1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: {\"id\":\"resp_1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test-model\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":1}}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/event-stream\r\n",
+                "Transfer-Encoding: chunked\r\n",
+                "Connection: close\r\n",
+                "\r\n"
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write headers");
+            stream
+                .write_all(format!("{:X}\r\n", body.len()).as_bytes())
+                .expect("write chunk size");
+            stream.write_all(body.as_bytes()).expect("write chunk body");
+            stream
+                .write_all(b"\r\n0\r\n\r\n")
+                .expect("write terminating chunk");
+            stream.flush().expect("flush response");
+        });
+
+        let model = OpenAiCompatibleModel::new(LlmConfig {
+            base_url: format!("http://{addr}"),
+            api_key: "test-key".to_string(),
+            model: "test-model".to_string(),
+            temperature: 0.0,
+            request_max_retries: 0,
+            stream_max_retries: 0,
+            stream_idle_timeout_ms: 1_000,
+        })
+        .expect("build model");
+
+        let request = ModelRequest {
+            messages: vec![ResponseItem::User {
+                content: "hello".to_string(),
+            }],
+            tools: Vec::new(),
+            temperature: 0.0,
+        };
+
+        let response = model
+            .complete_streaming(request, &mut |_| {})
+            .await
+            .expect("streaming request should succeed");
+
+        assert_eq!(response.content.as_deref(), Some("hi"));
+        let usage = response.usage.expect("usage should be preserved");
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.cached_input_tokens, 2);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.reasoning_output_tokens, 1);
+        assert_eq!(usage.total_tokens, 15);
 
         server.join().expect("server thread");
     }
