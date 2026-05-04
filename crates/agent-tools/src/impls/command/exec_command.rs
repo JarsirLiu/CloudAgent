@@ -2,7 +2,7 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, decode_utf8_chunk, read_streaming_pipe,
     resolve_write_path,
 };
-use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolOutputStream, ToolSpec};
 use agent_protocol::{CommandExecutionStatus, StructuredToolResult};
 use anyhow::{Result, anyhow, bail};
@@ -24,16 +24,25 @@ pub struct ExecCommandTool;
 
 impl ExecCommandTool {
     pub fn descriptor() -> ToolDescriptor {
-        ToolDescriptor::new(
+        ToolDescriptor::new_with_guidance(
             ToolCategory::CommandExecution,
             ToolRisk::High,
             ToolPermissionTier::ReadOnly,
             false,
             vec!["edit", "verify"],
+            ToolUsageGuidance {
+                preferred_for: vec![
+                    "build, test, git, and runtime verification",
+                    "interactive command sessions",
+                ],
+                avoid_for: vec!["workspace file edits", "repository search when structured tools are available"],
+                follow_up_hint: Some("prefer `workdir` over inline `cd`; on Windows use PowerShell syntax"),
+                ..ToolUsageGuidance::default()
+            },
             ToolSpec {
                 name: "exec_command".to_string(),
                 identity: ToolIdentity::built_in("exec_command"),
-                description: "Run local commands for build, test, git, and runtime verification. Prefer structured repository tools for search and file inspection. Reuse `session_id` for interactive or long-running command sessions.".to_string(),
+                description: "Run local commands for build, test, git, and runtime verification. Reuse `session_id` for interactive or long-running command sessions.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -542,8 +551,7 @@ fn looks_like_apply_patch_command(command: &str) -> bool {
 
 fn reject_patch_via_exec_command(command: &str, workdir: &std::path::Path) -> ToolInvocationOutput {
     let current_directory = workdir.display().to_string();
-    let message =
-        "Use the apply_patch tool instead of exec_command for workspace file edits.".to_string();
+    let message = "Use the apply_patch tool instead of exec_command for workspace file edits. `apply_patch` only accepts the CloudAgent patch format (`*** Begin Patch` / `*** Update File:` / `@@`).".to_string();
     let content = format_exec_result_content(
         "edit",
         command,

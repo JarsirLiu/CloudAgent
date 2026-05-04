@@ -2,7 +2,7 @@ use crate::impls::text_codec::{LineEnding, decode_text_file, encode_text_file};
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path,
 };
-use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -13,18 +13,65 @@ use tokio::fs;
 
 pub struct ApplyPatchTool;
 
+const APPLY_PATCH_TOOL_DESCRIPTION: &str = r#"Apply a focused patch to workspace files.
+Use the CloudAgent patch format below and pass the entire patch as the `patch` string.
+
+*** Begin Patch
+[ one or more file sections ]
+*** End Patch
+
+Each file section must start with one of:
+- `*** Add File: <path>`
+- `*** Delete File: <path>`
+- `*** Update File: <path>`
+
+Within an update section, include one or more hunks introduced by `@@`.
+Within a hunk, each line must start with:
+- space for unchanged context
+- `-` for removed lines
+- `+` for added lines
+
+Example:
+*** Begin Patch
+*** Update File: src/app.rs
+@@
+-old
++new
+*** End Patch
+
+Rules:
+- Use relative workspace paths only
+- Include enough unchanged context for each hunk to apply safely
+- Do not pass a standard git diff with `diff --git`, `---`, or `+++`
+"#;
+
 impl ApplyPatchTool {
     pub fn descriptor() -> ToolDescriptor {
-        ToolDescriptor::new(
+        ToolDescriptor::new_with_guidance(
             ToolCategory::WorkspaceFileOps,
             ToolRisk::Medium,
             ToolPermissionTier::WorkspaceWrite,
             false,
             vec!["edit", "fs"],
+            ToolUsageGuidance {
+                preferred_for: vec![
+                    "focused workspace file edits",
+                    "minimal code changes instead of whole-file rewrites",
+                ],
+                avoid_for: vec![
+                    "raw git unified diffs",
+                    "directory discovery",
+                    "build or runtime verification",
+                ],
+                follow_up_hint: Some(
+                    "after editing, inspect the diff and run the narrowest relevant verification",
+                ),
+                ..ToolUsageGuidance::default()
+            },
             ToolSpec {
                 name: "apply_patch".to_string(),
                 identity: ToolIdentity::built_in("apply_patch"),
-                description: "Apply a focused unified patch to one or more workspace files. Prefer this over whole-file rewrites for code changes.".to_string(),
+                description: APPLY_PATCH_TOOL_DESCRIPTION.to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -62,7 +109,7 @@ impl LocalTool for ApplyPatchLocalTool {
         let args: ApplyPatchArgs = invocation.payload.parse_arguments()?;
         let file_patches = parse_unified_patch(&args.patch)?;
         if file_patches.is_empty() {
-            anyhow::bail!("patch did not contain any editable file hunks");
+            anyhow::bail!(invalid_patch_message(&args.patch));
         }
         let mut changed_files = BTreeSet::new();
         for file_patch in file_patches {
@@ -232,31 +279,6 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             current_new_path = Some(path);
             continue;
         }
-        if let Some(path) = line.strip_prefix("--- ") {
-            current_old_path = Some(
-                path.trim()
-                    .strip_prefix("a/")
-                    .unwrap_or(path.trim())
-                    .to_string(),
-            );
-            continue;
-        }
-        if let Some(path) = line.strip_prefix("+++ ") {
-            flush_current(
-                &mut file_patches,
-                &mut current_old_path,
-                &mut current_new_path,
-                &mut hunks,
-                &mut current_hunk,
-            );
-            current_new_path = Some(
-                path.trim()
-                    .strip_prefix("b/")
-                    .unwrap_or(path.trim())
-                    .to_string(),
-            );
-            continue;
-        }
         if line.starts_with("@@") {
             if current_new_path.is_none() {
                 anyhow::bail!("hunk found before target file");
@@ -285,6 +307,19 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
         &mut current_hunk,
     );
     Ok(file_patches)
+}
+
+fn invalid_patch_message(patch: &str) -> String {
+    let trimmed = patch.trim();
+    let likely_unified = trimmed.contains("@@")
+        || trimmed
+            .lines()
+            .any(|line| line.starts_with("--- ") || line.starts_with("+++ "));
+    if likely_unified {
+        "patch did not contain any editable file hunks; `apply_patch` only accepts the CloudAgent patch format (`*** Begin Patch` / `*** Update File:` / `@@`), not raw git unified diffs".to_string()
+    } else {
+        "patch did not contain any editable file hunks; use the CloudAgent patch format (`*** Begin Patch` / `*** Update File:` / `@@`)".to_string()
+    }
 }
 
 fn render_hunks_as_new_file(hunks: &[Hunk]) -> anyhow::Result<String> {
@@ -433,6 +468,34 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn apply_patch_rejects_plain_unified_diff_with_actionable_error() {
+        let base = test_workspace("apply_patch_rejects_plain_unified_diff_with_actionable_error");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "before\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-before\n+after\n"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("plain unified diff should be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("only accepts the CloudAgent patch format")
+        );
     }
 
     #[tokio::test]

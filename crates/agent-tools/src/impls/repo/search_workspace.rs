@@ -3,7 +3,7 @@ use crate::impls::text_codec::decode_text_file;
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
-use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use agent_protocol::SearchWorkspaceHit;
 use anyhow::{Result, anyhow, bail};
@@ -21,12 +21,20 @@ pub struct SearchWorkspaceTool;
 
 impl SearchWorkspaceTool {
     pub fn descriptor() -> ToolDescriptor {
-        ToolDescriptor::new(
+        ToolDescriptor::new_with_guidance(
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
             true,
             vec!["explore", "edit", "verify", "repo"],
+            ToolUsageGuidance {
+                preferred_for: vec![
+                    "first step of bug investigation",
+                    "finding likely files before reading code",
+                ],
+                follow_up_hint: Some("open the strongest hits with `read_files` before editing"),
+                ..ToolUsageGuidance::default()
+            },
             ToolSpec {
                 name: "search_workspace".to_string(),
                 identity: ToolIdentity::built_in("search_workspace"),

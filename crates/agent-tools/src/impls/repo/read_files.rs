@@ -2,7 +2,7 @@ use crate::impls::repo::text_read::{TextReadOptions, read_text_snippet};
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
-use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use agent_protocol::{ReadFileEntry, ReadFileStatus};
 use anyhow::{Result, bail};
@@ -26,17 +26,28 @@ struct ReadFilesArgs {
 
 impl ReadFilesTool {
     pub fn descriptor(max_read_chars: usize) -> ToolDescriptor {
-        ToolDescriptor::new(
+        ToolDescriptor::new_with_guidance(
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
             true,
             vec!["explore", "edit", "verify", "repo", "fs"],
+            ToolUsageGuidance {
+                preferred_for: vec![
+                    "confirming code facts in known files",
+                    "inspecting exact lines before editing",
+                ],
+                avoid_for: vec!["broad repository discovery"],
+                if_truncated_hint: Some(
+                    "rerun with narrower `start_line` / `max_lines` slices before drawing conclusions",
+                ),
+                ..ToolUsageGuidance::default()
+            },
             ToolSpec {
                 name: "read_files".to_string(),
                 identity: ToolIdentity::built_in("read_files"),
                 description: format!(
-                    "Read one or more known files in one structured tool call. Use this after search or file discovery when you need to confirm code facts or compare related files. Total characters per request are capped at about {max_read_chars}."
+                    "Read one or more known files in one structured tool call. Total characters per request are capped at about {max_read_chars}."
                 ),
                 parameters: json!({
                     "type": "object",
@@ -150,6 +161,13 @@ impl LocalTool for ReadFilesLocalTool {
                 }
             };
             rendered.push(format!("==> {} <==\n{}", path.display(), content));
+        }
+
+        if truncated_count > 0 {
+            rendered.push(format!(
+                "[read_files note] {} file(s) were truncated; rerun with narrower `start_line` / `max_lines` slices before making edits.",
+                truncated_count
+            ));
         }
 
         Ok(ToolInvocationOutput {

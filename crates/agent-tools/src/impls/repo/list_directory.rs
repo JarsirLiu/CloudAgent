@@ -2,7 +2,7 @@ use super::common::DEFAULT_IGNORED_DIRS;
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
-use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
+use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -27,16 +27,28 @@ struct ListDirectoryArgs {
 
 impl ListDirectoryTool {
     pub fn descriptor() -> ToolDescriptor {
-        ToolDescriptor::new(
+        ToolDescriptor::new_with_guidance(
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
             true,
             vec!["explore", "repo", "fs"],
+            ToolUsageGuidance {
+                preferred_for: vec!["lightweight path discovery", "small tree inspection"],
+                avoid_for: vec![
+                    "root-cause analysis when target files are not yet known",
+                    "repeated broad repo wandering",
+                ],
+                follow_up_hint: Some(
+                    "switch to `search_workspace` for bug investigation or `read_files` once paths are known",
+                ),
+                ..ToolUsageGuidance::default()
+            },
             ToolSpec {
                 name: "list_directory".to_string(),
                 identity: ToolIdentity::built_in("list_directory"),
-                description: "List workspace directory entries without dropping to the shell. Use this for path discovery and lightweight tree inspection.".to_string(),
+                description: "List workspace directory entries without dropping to the shell."
+                    .to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {

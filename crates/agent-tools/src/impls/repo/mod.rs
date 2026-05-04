@@ -247,6 +247,45 @@ mod tests {
         assert!(output.content.contains("beta"));
     }
 
+    #[tokio::test]
+    async fn read_files_reports_when_output_is_truncated() {
+        let base = test_workspace("read_files_reports_when_output_is_truncated");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(
+            base.join("src/lib.rs"),
+            "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\n",
+        )
+        .await
+        .expect("write file");
+
+        let tool = ReadFilesLocalTool {
+            max_read_chars: 10_000,
+        };
+        let ctx = tool_context(&base);
+        let output = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "path": "src/lib.rs",
+                    "max_lines": 1
+                })),
+                &ctx,
+            )
+            .await
+            .expect("read_files works");
+
+        assert!(output.content.contains("[read_files note]"));
+        assert!(output.content.contains("start_line"));
+        assert!(matches!(
+            output.structured.as_ref(),
+            Some(agent_protocol::StructuredToolResult::ReadFiles {
+                truncated_count,
+                ..
+            }) if *truncated_count > 0
+        ));
+    }
+
     fn test_workspace(name: &str) -> PathBuf {
         let mut path = std::env::temp_dir();
         let stamp = SystemTime::now()
