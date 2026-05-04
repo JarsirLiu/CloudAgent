@@ -201,4 +201,3 @@ fn failure_entry(
         version_token: None,
     }
 }
-

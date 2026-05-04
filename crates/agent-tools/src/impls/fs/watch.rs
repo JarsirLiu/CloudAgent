@@ -137,12 +137,7 @@ impl WatchManager {
         Self { state }
     }
 
-    pub(crate) fn watch(
-        &self,
-        watch_id: &str,
-        path: &Path,
-        recursive: bool,
-    ) -> Result<PathBuf> {
+    pub(crate) fn watch(&self, watch_id: &str, path: &Path, recursive: bool) -> Result<PathBuf> {
         let canonical_path = canonical_watch_target(path)?;
         let mut guard = self
             .state
@@ -416,7 +411,10 @@ impl LocalTool for UnwatchLocalTool {
         let args: UnwatchArgs = invocation.payload.parse_arguments()?;
         let result = self.manager.unwatch(&args.watch_id)?;
         let content = if result.changed_paths.is_empty() {
-            format!("Stopped watch `{}` with no observed path changes.", result.watch_id)
+            format!(
+                "Stopped watch `{}` with no observed path changes.",
+                result.watch_id
+            )
         } else {
             format!(
                 "Stopped watch `{}` after observing {} changed path(s):\n{}",

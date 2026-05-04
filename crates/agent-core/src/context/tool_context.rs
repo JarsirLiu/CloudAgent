@@ -1,5 +1,5 @@
-use crate::tool::{ToolOutputDelta, ToolSpec};
 use crate::PermissionProfile;
+use crate::tool::{ToolOutputDelta, ToolSpec};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

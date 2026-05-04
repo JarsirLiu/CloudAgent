@@ -569,9 +569,7 @@ fn collect_exposed_tools(history: &crate::ConversationHistory) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::collect_exposed_tools;
-    use crate::{
-        ConversationHistory, StructuredToolResult, ToolResult, ToolSearchHit, ToolSource,
-    };
+    use crate::{ConversationHistory, StructuredToolResult, ToolResult, ToolSearchHit, ToolSource};
 
     #[test]
     fn collect_exposed_tools_reads_tool_search_hits_from_history() {
@@ -610,7 +608,10 @@ mod tests {
 
         assert_eq!(
             exposed,
-            vec!["read_file_bytes".to_string(), "write_file_bytes".to_string()]
+            vec![
+                "read_file_bytes".to_string(),
+                "write_file_bytes".to_string()
+            ]
         );
     }
 }

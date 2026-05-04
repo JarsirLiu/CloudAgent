@@ -22,9 +22,8 @@ use crate::turn::{
 use crate::{
     ActiveTurnHandle, AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy,
     ChatModel, ContextManager, ConversationTurn, ExecutionPolicy, PermissionProfile,
-    RegularTurnSettings, ResponseItem, build_turns_from_rollout_items,
-    complete_model_request, complete_model_request_streaming, paginate_turns,
-    visible_message_count,
+    RegularTurnSettings, ResponseItem, build_turns_from_rollout_items, complete_model_request,
+    complete_model_request_streaming, paginate_turns, visible_message_count,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -562,7 +561,8 @@ impl TurnHost for AgentHost {
         &self,
         permission_profile: &PermissionProfile,
     ) -> crate::RegularTurnToolExposure {
-        self.tools.resolve_regular_turn_tool_exposure(permission_profile)
+        self.tools
+            .resolve_regular_turn_tool_exposure(permission_profile)
     }
 
     async fn start_turn(

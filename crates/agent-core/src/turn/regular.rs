@@ -564,7 +564,9 @@ fn collect_discoverable_tools(
 #[cfg(test)]
 mod tests {
     use super::{collect_discoverable_tools, compose_visible_tool_specs};
-    use crate::{ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind};
+    use crate::{
+        ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind,
+    };
     use std::collections::BTreeMap;
 
     fn demo_spec(name: &str) -> ToolSpec {
@@ -614,7 +616,10 @@ mod tests {
     fn discoverable_tools_exclude_already_exposed_deferred_hits() {
         let deferred_tool_map = BTreeMap::from([
             ("read_file_bytes".to_string(), demo_spec("read_file_bytes")),
-            ("write_file_bytes".to_string(), demo_spec("write_file_bytes")),
+            (
+                "write_file_bytes".to_string(),
+                demo_spec("write_file_bytes"),
+            ),
         ]);
 
         let discoverable =

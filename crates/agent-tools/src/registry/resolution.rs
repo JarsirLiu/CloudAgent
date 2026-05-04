@@ -29,21 +29,22 @@ pub(super) fn registered_tools(
             ToolEnvironmentRequirement::RequiresDiscoverableTools => discoverable_tools_present,
         },
     });
-    let mcp = mcp_descriptors.into_iter().map(|descriptor| RegisteredTool {
-        spec: descriptor.spec,
-        min_permission: descriptor.min_permission,
-        default_visibility: descriptor.default_visibility,
-        selection_priority: descriptor.selection_priority,
-        environment_visible: mcp_environment_visible,
-    });
+    let mcp = mcp_descriptors
+        .into_iter()
+        .map(|descriptor| RegisteredTool {
+            spec: descriptor.spec,
+            min_permission: descriptor.min_permission,
+            default_visibility: descriptor.default_visibility,
+            selection_priority: descriptor.selection_priority,
+            environment_visible: mcp_environment_visible,
+        });
 
     built_ins.chain(mcp).collect()
 }
 
-pub(super) fn environment_visible_tools(
-    tools: Vec<RegisteredTool>,
-) -> Vec<RegisteredTool> {
-    tools.into_iter()
+pub(super) fn environment_visible_tools(tools: Vec<RegisteredTool>) -> Vec<RegisteredTool> {
+    tools
+        .into_iter()
         .filter(|tool| tool.environment_visible)
         .collect()
 }
@@ -52,7 +53,8 @@ pub(super) fn permission_allowed_tools(
     tools: impl IntoIterator<Item = RegisteredTool>,
     permission_profile: &PermissionProfile,
 ) -> Vec<RegisteredTool> {
-    tools.into_iter()
+    tools
+        .into_iter()
         .filter(|tool| tool.min_permission.allows(permission_profile))
         .collect()
 }

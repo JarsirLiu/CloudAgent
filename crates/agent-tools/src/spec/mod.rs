@@ -202,5 +202,4 @@ mod tests {
                 .contains("If output is truncated: narrow the line range.")
         );
     }
-
 }

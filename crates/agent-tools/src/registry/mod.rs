@@ -6,9 +6,8 @@ pub(crate) mod shared;
 
 use crate::spec::ToolDescriptor;
 use agent_core::{
-    ApprovalPolicy, ApprovalRequirement, PermissionProfile, RegularTurnToolExposure,
-    ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext, ToolExecutor,
-    ToolResult, ToolSpec,
+    ApprovalPolicy, ApprovalRequirement, PermissionProfile, RegularTurnToolExposure, ToolBackend,
+    ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -80,7 +79,8 @@ impl ToolRegistry {
                     .registered_descriptors()
                     .into_iter()
                     .filter(|descriptor| {
-                        descriptor.default_visibility == crate::spec::ToolDefaultVisibility::Deferred
+                        descriptor.default_visibility
+                            == crate::spec::ToolDefaultVisibility::Deferred
                     })
                     .count()
             } else {
@@ -262,35 +262,54 @@ mod tests {
         let workspace_write =
             registry.resolve_regular_turn_tool_exposure(&PermissionProfile::WorkspaceWrite);
 
-        assert!(read_only.default_tools.iter().all(|spec| spec.name != "edit_file"));
-        assert!(workspace_write
-            .default_tools
-            .iter()
-            .any(|spec| spec.name == "edit_file"));
-        assert!(read_only
-            .default_tools
-            .iter()
-            .any(|spec| spec.name == "exec_command"));
-        assert!(read_only
-            .default_tools
-            .iter()
-            .all(|spec| spec.name != "write_file_bytes"));
-        assert!(workspace_write
-            .default_tools
-            .iter()
-            .all(|spec| spec.name != "write_file_bytes"));
-        assert!(workspace_write
-            .deferred_tools
-            .iter()
-            .any(|spec| spec.name == "write_file_bytes"));
-        assert!(read_only
-            .default_tools
-            .iter()
-            .all(|spec| spec.name != "watch"));
-        assert!(read_only
-            .deferred_tools
-            .iter()
-            .any(|spec| spec.name == "watch"));
+        assert!(
+            read_only
+                .default_tools
+                .iter()
+                .all(|spec| spec.name != "edit_file")
+        );
+        assert!(
+            workspace_write
+                .default_tools
+                .iter()
+                .any(|spec| spec.name == "edit_file")
+        );
+        assert!(
+            read_only
+                .default_tools
+                .iter()
+                .any(|spec| spec.name == "exec_command")
+        );
+        assert!(
+            read_only
+                .default_tools
+                .iter()
+                .all(|spec| spec.name != "write_file_bytes")
+        );
+        assert!(
+            workspace_write
+                .default_tools
+                .iter()
+                .all(|spec| spec.name != "write_file_bytes")
+        );
+        assert!(
+            workspace_write
+                .deferred_tools
+                .iter()
+                .any(|spec| spec.name == "write_file_bytes")
+        );
+        assert!(
+            read_only
+                .default_tools
+                .iter()
+                .all(|spec| spec.name != "watch")
+        );
+        assert!(
+            read_only
+                .deferred_tools
+                .iter()
+                .any(|spec| spec.name == "watch")
+        );
     }
 
     #[test]
@@ -306,7 +325,10 @@ mod tests {
             .take(3)
             .collect::<Vec<_>>();
 
-        assert_eq!(ordered_names, vec!["search_workspace", "read_file", "exec_command"]);
+        assert_eq!(
+            ordered_names,
+            vec!["search_workspace", "read_file", "exec_command"]
+        );
     }
 
     #[test]
@@ -379,14 +401,18 @@ mod tests {
         let registry = ToolRegistry::new(4_096);
         let exposure = registry.resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly);
 
-        assert!(exposure
-            .default_tools
-            .iter()
-            .any(|spec| spec.name == "tool_search"));
-        assert!(exposure
-            .deferred_tools
-            .iter()
-            .any(|spec| spec.name == "read_file_bytes"));
+        assert!(
+            exposure
+                .default_tools
+                .iter()
+                .any(|spec| spec.name == "tool_search")
+        );
+        assert!(
+            exposure
+                .deferred_tools
+                .iter()
+                .any(|spec| spec.name == "read_file_bytes")
+        );
     }
 
     #[test]
@@ -421,18 +447,24 @@ mod tests {
 
         let exposure = registry.resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly);
 
-        assert!(exposure
-            .default_tools
-            .iter()
-            .any(|spec| spec.name == "tool_search"));
-        assert!(exposure
-            .default_tools
-            .iter()
-            .all(|spec| spec.name != "mcp__demo__bytes"));
-        assert!(exposure
-            .deferred_tools
-            .iter()
-            .any(|spec| spec.name == "mcp__demo__bytes"));
+        assert!(
+            exposure
+                .default_tools
+                .iter()
+                .any(|spec| spec.name == "tool_search")
+        );
+        assert!(
+            exposure
+                .default_tools
+                .iter()
+                .all(|spec| spec.name != "mcp__demo__bytes")
+        );
+        assert!(
+            exposure
+                .deferred_tools
+                .iter()
+                .any(|spec| spec.name == "mcp__demo__bytes")
+        );
     }
 
     #[test]

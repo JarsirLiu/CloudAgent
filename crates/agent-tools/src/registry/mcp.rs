@@ -1,4 +1,5 @@
 use super::shared::{LocalToolInvocation, LocalToolPayload, LocalToolSource, ToolInvocationOutput};
+use crate::spec::{ToolDefaultVisibility, ToolPermissionTier};
 use agent_core::ToolSpec;
 use agent_protocol::StructuredToolResult;
 use anyhow::{Result, bail};
@@ -6,7 +7,6 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use crate::spec::{ToolDefaultVisibility, ToolPermissionTier};
 
 #[derive(Clone, Debug)]
 pub struct McpToolDescriptor {
@@ -39,10 +39,7 @@ impl McpToolDescriptor {
         self
     }
 
-    pub fn with_default_visibility(
-        mut self,
-        default_visibility: ToolDefaultVisibility,
-    ) -> Self {
+    pub fn with_default_visibility(mut self, default_visibility: ToolDefaultVisibility) -> Self {
         self.default_visibility = default_visibility;
         self
     }

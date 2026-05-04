@@ -823,4 +823,3 @@ fn render_match(path: &str, line_index: usize, lines: &[&str], context_lines: us
     }
     out.join("\n")
 }
-
