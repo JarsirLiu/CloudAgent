@@ -25,7 +25,6 @@ impl SearchWorkspaceTool {
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
-            true,
             vec!["explore", "edit", "verify", "repo"],
             ToolUsageGuidance {
                 selection_priority: 30,

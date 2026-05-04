@@ -51,7 +51,6 @@ impl ApplyPatchTool {
             ToolCategory::WorkspaceFileOps,
             ToolRisk::Medium,
             ToolPermissionTier::WorkspaceWrite,
-            false,
             vec!["edit", "fs"],
             ToolUsageGuidance {
                 selection_priority: 20,

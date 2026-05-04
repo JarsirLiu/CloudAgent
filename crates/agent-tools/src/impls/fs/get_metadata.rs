@@ -17,7 +17,6 @@ impl GetMetadataTool {
             ToolCategory::WorkspaceFileOps,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
-            true,
             vec!["explore", "verify", "repo", "fs"],
             ToolSpec {
                 name: "get_metadata".to_string(),

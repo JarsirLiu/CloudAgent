@@ -1,5 +1,5 @@
 use super::shared::{LocalToolInvocation, LocalToolPayload, LocalToolSource, ToolInvocationOutput};
-use agent_core::{ToolExecutionPolicy, ToolSource, ToolSpec};
+use agent_core::{ToolSource, ToolSpec};
 use agent_protocol::StructuredToolResult;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -16,20 +16,9 @@ pub struct McpToolDescriptor {
 }
 
 impl McpToolDescriptor {
-    pub fn new(
-        wire_name: String,
-        server: String,
-        tool: String,
-        mut spec: ToolSpec,
-        supports_parallel_calls: bool,
-    ) -> Self {
+    pub fn new(wire_name: String, server: String, tool: String, mut spec: ToolSpec) -> Self {
         spec.identity =
             agent_core::ToolIdentity::mcp(server.clone(), tool.clone(), wire_name.clone());
-        spec.execution_policy = if supports_parallel_calls && !spec.mutating {
-            ToolExecutionPolicy::ParallelSafe
-        } else {
-            ToolExecutionPolicy::Sequential
-        };
         Self {
             wire_name,
             server,

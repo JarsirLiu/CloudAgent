@@ -31,7 +31,6 @@ impl ListDirectoryTool {
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
-            true,
             vec!["explore", "repo", "fs"],
             ToolUsageGuidance {
                 selection_priority: 10,

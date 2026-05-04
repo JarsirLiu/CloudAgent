@@ -1,10 +1,7 @@
 use crate::registry::shared::{
     LocalToolInvocation, LocalToolPayload, LocalToolSource, ToolInvocationOutput,
 };
-use agent_core::{
-    McpCallResult, ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind,
-    TurnItemKind,
-};
+use agent_core::{McpCallResult, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -46,19 +43,8 @@ pub struct McpToolDescriptor {
 }
 
 impl McpToolDescriptor {
-    pub fn new(
-        wire_name: String,
-        server: String,
-        tool: String,
-        mut spec: ToolSpec,
-        supports_parallel_calls: bool,
-    ) -> Self {
+    pub fn new(wire_name: String, server: String, tool: String, mut spec: ToolSpec) -> Self {
         spec.identity = ToolIdentity::mcp(server.clone(), tool.clone(), wire_name.clone());
-        spec.execution_policy = if supports_parallel_calls && !spec.mutating {
-            ToolExecutionPolicy::ParallelSafe
-        } else {
-            ToolExecutionPolicy::Sequential
-        };
         Self {
             wire_name,
             server,
@@ -87,7 +73,6 @@ impl McpDiscoveredTool {
                 delta_kind: self.delta_kind,
                 approval_reason: self.approval_reason,
             },
-            server.supports_parallel_tool_calls,
         )
     }
 }
@@ -236,7 +221,7 @@ impl McpRegistry {
             .manual_descriptors
             .get(wire_name)
             .or_else(|| state.discovered_descriptors.get(wire_name))
-            .is_some_and(|descriptor| descriptor.supports_parallel_calls)
+            .is_some_and(|descriptor| descriptor.spec.execution_policy.supports_parallel())
     }
 
     pub(crate) async fn execute(&self, invocation: LocalToolInvocation) -> Result<ToolInvocationOutput> {

@@ -32,7 +32,6 @@ impl ReadFilesTool {
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
-            true,
             vec!["explore", "edit", "verify", "repo", "fs"],
             ToolUsageGuidance {
                 selection_priority: 25,

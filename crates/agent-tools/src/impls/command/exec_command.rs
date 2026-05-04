@@ -28,7 +28,6 @@ impl ExecCommandTool {
             ToolCategory::CommandExecution,
             ToolRisk::High,
             ToolPermissionTier::ReadOnly,
-            false,
             vec!["edit", "verify"],
             ToolUsageGuidance {
                 selection_priority: 15,

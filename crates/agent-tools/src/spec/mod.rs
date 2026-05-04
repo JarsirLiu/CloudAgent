@@ -1,4 +1,4 @@
-use agent_core::{PermissionProfile, TaskKind, ToolExecutionPolicy, ToolMode, ToolSpec};
+use agent_core::{PermissionProfile, TaskKind, ToolMode, ToolSpec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolCategory {
@@ -62,7 +62,6 @@ impl ToolDescriptor {
         category: ToolCategory,
         risk: ToolRisk,
         min_permission: ToolPermissionTier,
-        supports_parallel_calls: bool,
         mode_tags: Vec<&'static str>,
         spec: ToolSpec,
     ) -> Self {
@@ -70,7 +69,6 @@ impl ToolDescriptor {
             category,
             risk,
             min_permission,
-            supports_parallel_calls,
             mode_tags,
             ToolUsageGuidance::default(),
             spec,
@@ -81,17 +79,11 @@ impl ToolDescriptor {
         category: ToolCategory,
         risk: ToolRisk,
         min_permission: ToolPermissionTier,
-        supports_parallel_calls: bool,
         mode_tags: Vec<&'static str>,
         usage: ToolUsageGuidance,
         mut spec: ToolSpec,
     ) -> Self {
         spec.description = render_tool_description(&spec.description, &usage);
-        spec.execution_policy = if supports_parallel_calls && !spec.mutating {
-            ToolExecutionPolicy::ParallelSafe
-        } else {
-            ToolExecutionPolicy::Sequential
-        };
         Self {
             category,
             risk,
@@ -156,7 +148,6 @@ mod tests {
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
-            true,
             vec!["explore"],
             ToolUsageGuidance {
                 preferred_for: vec!["first-step discovery"],
@@ -213,7 +204,6 @@ mod tests {
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
-            true,
             vec!["explore"],
             ToolUsageGuidance {
                 preferred_task_kinds: vec![TaskKind::RepositoryAnalysis],

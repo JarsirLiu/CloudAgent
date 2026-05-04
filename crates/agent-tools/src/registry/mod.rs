@@ -387,7 +387,6 @@ mod tests {
                 delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
-            true,
         ));
         registry.set_mcp_client(Arc::new(FakeMcpClient));
 

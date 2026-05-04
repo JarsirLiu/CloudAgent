@@ -49,7 +49,6 @@ impl EditFileTool {
             ToolCategory::WorkspaceFileOps,
             ToolRisk::Medium,
             ToolPermissionTier::WorkspaceWrite,
-            false,
             vec!["edit", "fs"],
             ToolUsageGuidance {
                 selection_priority: 30,
