@@ -1,7 +1,7 @@
 # agent-protocol
 
-`agent-protocol` defines the wire-facing contract shared between runtime, clients, and external
-service boundaries.
+`agent-protocol` defines the wire-facing contract shared between `agent-core`,
+`agent-app-server`, clients, and external transport boundaries.
 
 This crate should stay focused on messages and transport-safe types. It is not the place for tool
 catalog policy, runtime orchestration, or storage logic.
@@ -24,4 +24,7 @@ catalog policy, runtime orchestration, or storage logic.
 
 - `agent-core` owns stable domain types.
 - `agent-protocol` adapts and re-exports the parts of that domain that belong on the wire.
-- `agent-core` emits and consumes these protocol types during live execution.
+- `agent-app-server` and `agent-app-server-client` use these types to preserve one stable
+  transport contract above the core host.
+- `agent-core` may emit and consume protocol-facing shapes at integration boundaries, but it should
+  not become the transport layer itself.

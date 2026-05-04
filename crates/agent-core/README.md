@@ -49,7 +49,7 @@ The following belong in `agent-core`:
 - turn lifecycle structures and event types
 - tool contracts such as specs, identities, calls, results, and execution context
 - the concrete core host object that drives turns through injected backends
-- backend traits for conversation storage, rollout recording, memory, model access, and tool execution
+- backend traits and host contracts for conversation storage, rollout recording, memory, model access, and tool execution
 - tool-batch orchestration and approval flow that are part of the agent execution skeleton
 - context preparation, filtering, budgeting, and compaction logic
 - model request and response domain types
