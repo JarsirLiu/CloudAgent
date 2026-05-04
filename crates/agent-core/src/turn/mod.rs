@@ -4,6 +4,7 @@ mod concurrency;
 mod events;
 mod host;
 mod lifecycle;
+mod loop_guard;
 mod orchestrator;
 mod outcome;
 mod output;

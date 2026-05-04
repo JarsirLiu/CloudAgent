@@ -1,3 +1,4 @@
+use super::loop_guard::LoopGuard;
 use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
 use crate::context::{ContextFragment, MemoryBudgetSource};
 use crate::{
@@ -28,6 +29,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
     let mut assistant_item_seq: usize = 0;
     let tool_specs = host.resolve_regular_turn_tools(permission_profile);
     let mut denied_requests = HashSet::new();
+    let mut loop_guard = LoopGuard::new();
     let environment_context = host.environment_context();
     let raw_memory_fragment = host.raw_memory_fragment();
     let mut turn_total_usage = ModelUsage::default();
@@ -392,6 +394,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
         host.save_history(context_manager.history().clone()).await?;
 
         if tool_calls.is_empty() {
+            loop_guard.reset();
             if !had_streaming_assistant_item && response.content.is_none() {
                 emit_assistant_message_item(
                     &mut events,
@@ -424,7 +427,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 permission_profile,
                 approval_policy,
                 cancellation_token.clone(),
-                tool_calls,
+                tool_calls.clone(),
                 &tool_specs,
                 &mut context_manager,
                 &mut events,
@@ -440,6 +443,43 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 history: context_manager.history().clone(),
                 model_name: last_model_name,
                 state: TurnState::Cancelled,
+            });
+        }
+        if let Some(loop_abort) = loop_guard.record_roundtrip(
+            &tool_calls,
+            &tool_specs,
+            &context_manager.history().messages,
+        ) {
+            let message = format!(
+                "Stopped this turn because the model entered a repetitive loop: the same read-only tool calls and results repeated {} times without progress.",
+                loop_abort.repeated_count
+            );
+            emit_assistant_message_item(
+                &mut events,
+                on_event,
+                turn_id,
+                &message,
+                &mut assistant_item_seq,
+            );
+            let failed_item =
+                context_manager.record_assistant_message(Some(message.clone()), Vec::new());
+            host.persist_rollout_items(conversation_id, &[RolloutItem::from(failed_item)])
+                .await?;
+            host.save_history(context_manager.history().clone()).await?;
+            emit_event(
+                &mut events,
+                on_event,
+                EventMsg::TurnFailed {
+                    turn_id: turn_id.to_string(),
+                    error: message,
+                },
+            );
+            return Ok(TurnOutcome {
+                turn_id: turn_id.to_string(),
+                events,
+                history: context_manager.history().clone(),
+                model_name: last_model_name,
+                state: TurnState::Failed,
             });
         }
     }
