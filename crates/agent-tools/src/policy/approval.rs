@@ -13,11 +13,19 @@ pub fn approval_requirement_for_tool(
         "exec_command" => {
             exec_command_requirement(call, workspace_root, permission_profile, approval_policy)
         }
-        _ if spec.requires_approval => ApprovalRequirement::required(
-            spec.approval_reason
-                .clone()
-                .unwrap_or_else(|| format!("Tool `{}` requires approval.", call.name)),
-        ),
+        _ if spec.requires_approval => match permission_profile {
+            PermissionProfile::ReadOnly => ApprovalRequirement::required(
+                spec.approval_reason
+                    .clone()
+                    .unwrap_or_else(|| format!("Tool `{}` requires approval.", call.name)),
+            ),
+            PermissionProfile::WorkspaceWrite | PermissionProfile::FullAccess => {
+                match approval_policy {
+                    ApprovalPolicy::Never => ApprovalRequirement::not_required(),
+                    ApprovalPolicy::OnRequest => ApprovalRequirement::not_required(),
+                }
+            }
+        },
         _ => ApprovalRequirement::not_required(),
     }
 }
