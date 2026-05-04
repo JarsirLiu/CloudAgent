@@ -9,10 +9,10 @@ anyhow.workspace = true
 agent-app-server-client = { path = "../crates/agent-app-server-client" }
 agent-core = { path = "../crates/agent-core" }
 agent-memory = { path = "../crates/agent-memory" }
+agent-model-provider = { path = "../crates/agent-model-provider" }
 agent-protocol = { path = "../crates/agent-protocol" }
 agent-tools = { path = "../crates/agent-tools" }
 config = { path = "../crates/config" }
-infra-http = { path = "../crates/infra-http" }
 infra-store = { path = "../crates/infra-store" }
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures = "0.3"

@@ -3,10 +3,10 @@ use agent_core::{
     RegularTurnSettings,
 };
 use agent_memory::LongTermMemoryFacade;
+use agent_model_provider::OpenAiCompatibleModel;
 use agent_tools::ToolRegistry;
 use anyhow::Result;
 use config::AgentConfig;
-use infra_http::OpenAiCompatibleModel;
 use infra_store::{JsonConversationStore, RolloutRecorder};
 use std::env;
 use std::path::Path;
@@ -30,9 +30,15 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
             .runtime
             .context_compaction_request_overhead_tokens,
         context_compaction_target_tokens: config.runtime.context_compaction_target_tokens,
-        context_compaction_preserved_user_turns: config.runtime.context_compaction_preserved_user_turns,
-        context_compaction_preserved_tail_tokens: config.runtime.context_compaction_preserved_tail_tokens,
-        context_compaction_summary_source_tokens: config.runtime.context_compaction_summary_source_tokens,
+        context_compaction_preserved_user_turns: config
+            .runtime
+            .context_compaction_preserved_user_turns,
+        context_compaction_preserved_tail_tokens: config
+            .runtime
+            .context_compaction_preserved_tail_tokens,
+        context_compaction_summary_source_tokens: config
+            .runtime
+            .context_compaction_summary_source_tokens,
         post_compact_token_budget: config.runtime.post_compact_token_budget,
         post_compact_memory_floor_tokens: config.runtime.post_compact_memory_floor_tokens,
         post_compact_skills_token_budget: config.runtime.post_compact_skills_token_budget,

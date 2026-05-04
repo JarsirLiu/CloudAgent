@@ -8,6 +8,7 @@ members = [
     "crates/agent-core",
     "crates/agent-gateway",
     "crates/agent-memory",
+    "crates/agent-model-provider",
     "crates/agent-protocol",
     "crates/agent-scheduler",
     "crates/agent-tools",

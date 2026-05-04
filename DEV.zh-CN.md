@@ -109,6 +109,17 @@ data/      本地开发运行数据
 - 会话路由
 - 远程用户与本地 agent 执行之间的映射关系
 
+### `agent-model-provider`
+
+负责模型 provider 协议适配。
+
+典型职责：
+
+- `ChatModel` 的具体实现
+- OpenAI-compatible / Responses API / Realtime 等模型协议适配
+- provider 配置映射
+- 模型流式事件到 core 抽象的转换
+
 ### `agent-scheduler`
 
 负责延迟任务与周期任务。
@@ -158,6 +169,7 @@ data/      本地开发运行数据
 ```text
 crates/
 ├─ agent-core/
+├─ agent-model-provider/
 ├─ agent-runtime/
 ├─ agent-tools/
 ├─ agent-memory/

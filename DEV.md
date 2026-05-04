@@ -111,6 +111,17 @@ Typical responsibility:
 - conversation routing
 - conversation mapping between remote clients and local agent execution
 
+### `agent-model-provider`
+
+Owns model provider protocol adapters.
+
+Typical responsibility:
+
+- concrete `ChatModel` implementations
+- OpenAI-compatible / Responses API / Realtime protocol adapters
+- provider configuration mapping
+- translating model streaming events into core abstractions
+
 ### `agent-scheduler`
 
 Owns delayed and recurring execution.
@@ -160,6 +171,7 @@ Current `crates/` layout:
 ```text
 crates/
 ├─ agent-core/
+├─ agent-model-provider/
 ├─ agent-runtime/
 ├─ agent-tools/
 ├─ agent-memory/
