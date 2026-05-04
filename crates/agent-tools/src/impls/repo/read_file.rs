@@ -50,7 +50,6 @@ impl ReadFileTool {
                 if_truncated_hint: Some(
                     "rerun the same file with the returned `next_start_line` or a narrower `start_line` / `max_lines` slice",
                 ),
-                ..ToolUsageGuidance::default()
             },
             ToolSpec {
                 name: "read_file".to_string(),

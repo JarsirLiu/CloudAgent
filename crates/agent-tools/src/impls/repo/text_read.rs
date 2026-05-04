@@ -122,7 +122,7 @@ pub(crate) async fn read_text_snippet(
     let mut rendered = rendered_lines.join("\n");
     if truncated {
         if !rendered.is_empty() {
-            rendered.push_str("\n");
+            rendered.push('\n');
         }
         rendered.push_str("[truncated]");
     }

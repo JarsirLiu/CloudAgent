@@ -110,11 +110,7 @@ impl TuiApp {
         self.push_cell(cell);
     }
 
-    pub(crate) fn handle_control_item_delta(&mut self, item_id: &str, _delta: &str) {
-        if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
-            return;
-        }
-    }
+    pub(crate) fn handle_control_item_delta(&mut self, _item_id: &str, _delta: &str) {}
 
     fn handle_secondary_item_started(
         &mut self,

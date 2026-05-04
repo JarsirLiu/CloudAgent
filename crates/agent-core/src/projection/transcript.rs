@@ -33,14 +33,8 @@ impl ConversationHistoryBuilder {
         match item {
             RolloutItem::EventMsg { event } => self.push_event_msg(event),
             RolloutItem::ResponseItem { item } => self.push_response_item(item),
-            RolloutItem::Compacted {
-                rendered_summary, ..
-            } => {
-                self.upsert_item_in_current_turn(TranscriptItem::SystemMessage {
-                    id: format!("compacted:{}", self.current_rollout_index),
-                    text: rendered_summary.clone(),
-                });
-            }
+            // History compaction shapes model context, not the user-visible transcript.
+            RolloutItem::Compacted { .. } => {}
         }
     }
 
@@ -898,6 +892,43 @@ mod tests {
                 && summary == "[Context Summary]\nold"
                 && user == "latest"
                 && assistant == "current"
+        ));
+    }
+
+    #[test]
+    fn transcript_items_ignore_compaction_rollout_items() {
+        let items = vec![
+            RolloutItem::EventMsg {
+                event: EventMsg::TurnStarted {
+                    turn_id: "turn-1".to_string(),
+                    conversation_id: "default".to_string(),
+                    user_input: "hi".to_string(),
+                },
+            },
+            RolloutItem::from(ResponseItem::User {
+                content: "hi".to_string(),
+            }),
+            RolloutItem::Compacted {
+                summary: crate::context::CompactionSummary::from_model_output(
+                    "Current Task:\n- hidden",
+                )
+                .ensure_defaults(),
+                rendered_summary: "[Context Summary]\nhidden".to_string(),
+                replacement_history: vec![],
+            },
+            RolloutItem::EventMsg {
+                event: EventMsg::TurnCompleted {
+                    turn_id: "turn-1".to_string(),
+                },
+            },
+        ];
+
+        let transcript = transcript_items_from_rollout_items(&items);
+
+        assert_eq!(transcript.len(), 1);
+        assert!(matches!(
+            &transcript[0],
+            TranscriptItem::UserMessage { text, .. } if text == "hi"
         ));
     }
 

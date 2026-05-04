@@ -116,7 +116,7 @@ fn detect_line_ending(text: &str) -> LineEnding {
 }
 
 fn decode_utf16_bytes(bytes: &[u8], little_endian: bool) -> Result<String, TextDecodeFailure> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(TextDecodeFailure::InvalidUtf16);
     }
     let units = bytes

@@ -73,6 +73,7 @@ impl ConversationHistory {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum ResponseItem {
     System {
         content: String,

@@ -293,6 +293,7 @@ ON CONFLICT(conversation_id, grant_key_json) DO UPDATE SET created_at_ms=exclude
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn append_event(
     db_path: &Path,
     project_root: &str,

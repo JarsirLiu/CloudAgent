@@ -39,10 +39,10 @@ pub(crate) async fn run_tui_event_loop(
                 match event {
                     UiEvent::Key(key) => {
                         pause_welcome_animation_for_input(app);
-                        if let Some(input) = app.handle_key(key) {
-                            if handle_tui_input(app, client, input)? {
-                                break;
-                            }
+                        if let Some(input) = app.handle_key(key)
+                            && handle_tui_input(app, client, input)?
+                        {
+                            break;
                         }
                         true
                     }

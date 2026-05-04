@@ -18,6 +18,12 @@ impl FilterPicker {
     }
 }
 
+impl Default for FilterPicker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BottomPaneView for FilterPicker {
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if !matches!(key.kind, KeyEventKind::Press) {

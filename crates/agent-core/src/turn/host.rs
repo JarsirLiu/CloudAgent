@@ -60,6 +60,7 @@ where
 }
 
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait TurnHost: Send + Sync {
     type PermissionProfile: Send + Sync;
     type ApprovalPolicy: Send + Sync;

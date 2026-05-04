@@ -81,6 +81,7 @@ pub(crate) struct ServerMessageReduce {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ServerAction {
     SetMode(FrontendMode),
     SetSystemNotice {
@@ -108,7 +109,6 @@ pub(crate) enum ServerAction {
     ClearLastToolName,
     ReplaceHistory(Vec<ConversationTurn>),
     PushErrorCell(String),
-    PushInfoCell(String),
     ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
@@ -195,7 +195,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                         level: NoticeLevel::Warn,
                     });
                     actions.push(ServerAction::ClearLastToolName);
-                    actions.push(ServerAction::PushInfoCell(summary));
                 }
                 AppServerNotification::ContextCompactionStarted {
                     estimated_tokens, ..
@@ -205,7 +204,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                         text: summary.clone(),
                         level: NoticeLevel::Warn,
                     });
-                    actions.push(ServerAction::PushInfoCell(summary));
                 }
                 AppServerNotification::Error { message, .. } => {
                     actions.push(ServerAction::SetSystemNotice {

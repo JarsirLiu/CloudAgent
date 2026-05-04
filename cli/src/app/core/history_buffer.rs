@@ -6,10 +6,10 @@ impl TuiApp {
         let (index, inserted) = self.transcript_state.transcript.push(cell.clone());
         if inserted {
             self.pending_history_cells.push_back(cell);
-        } else if let Some(last) = self.pending_history_cells.back_mut() {
-            if let Some(coalesced) = self.transcript_state.transcript.cells().get(index) {
-                *last = coalesced.clone();
-            }
+        } else if let Some(last) = self.pending_history_cells.back_mut()
+            && let Some(coalesced) = self.transcript_state.transcript.cells().get(index)
+        {
+            *last = coalesced.clone();
         }
     }
 

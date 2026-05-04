@@ -179,9 +179,7 @@ fn filter_arg_prefix_at_cursor(text: &str, byte_cursor: usize) -> Option<&str> {
         return None;
     }
     let line = &text[..first_line_end];
-    let Some(after_cmd) = line.strip_prefix("/filter") else {
-        return None;
-    };
+    let after_cmd = line.strip_prefix("/filter")?;
     if !after_cmd.is_empty() && !after_cmd.starts_with(char::is_whitespace) {
         return None;
     }

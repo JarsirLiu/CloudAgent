@@ -247,6 +247,7 @@ impl ToolRegistry {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use agent_core::{ToolExecutionContext, TurnItemDeltaKind, TurnItemKind};

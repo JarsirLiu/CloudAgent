@@ -84,7 +84,6 @@ pub async fn run_turn_with_approval<H: TurnHost>(
     match result {
         Ok(mut outcome) => {
             ensure_terminal_event(&mut outcome, &turn_id, &mut event_sink);
-            drop(event_sink);
             if host.should_persist_memory(&outcome.history) {
                 host.persist_memory_from_history(&outcome.history);
             }
@@ -103,7 +102,6 @@ pub async fn run_turn_with_approval<H: TurnHost>(
                         reason: "interrupted by client".to_string(),
                     },
                 );
-                drop(event_sink);
                 host.flush_rollout().await?;
                 let mut interrupted_history = host.history_from_rollout(conversation_id).await?;
                 interrupted_history.ensure_tool_outputs_present();
@@ -136,7 +134,6 @@ pub async fn run_turn_with_approval<H: TurnHost>(
                     error: error_text.clone(),
                 },
             );
-            drop(event_sink);
             host.save_history(history.clone()).await?;
             host.flush_rollout().await?;
             let outcome = TurnOutcome {

@@ -189,9 +189,9 @@ fn apply_rollout_item_to_state(
                         is_partial_view,
                     },
                 );
-            } else if !restored
+            } else if restored
                 .get(&path_key)
-                .is_some_and(|snapshot| snapshot.version_token.is_some())
+                .is_none_or(|snapshot| snapshot.version_token.is_none())
             {
                 restored.insert(
                     path_key,

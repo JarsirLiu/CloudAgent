@@ -37,6 +37,7 @@ pub struct BudgetedFragments {
     pub audit: BucketAudit,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_memory_budgeted_fragments(
     facade: &ContextFacade,
     history: &[ResponseItem],

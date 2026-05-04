@@ -1,4 +1,6 @@
 use super::*;
+use crate::state::NoticeLevel;
+use crate::state::reducer::apply_server_message;
 
 #[test]
 fn mode_changes_do_not_clear_active_approval_view() {
@@ -241,6 +243,61 @@ fn snapshot_history_replaces_transcript_without_event_replay() {
     assert!(bodies.contains(&"old answer"));
     assert!(bodies.contains(&"where am i"));
     assert!(bodies.contains(&"current directory is D:\\learn\\gifti\\cloudagent"));
+}
+
+#[test]
+fn compaction_notifications_do_not_append_history_cells() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    execute_server_action(
+        &mut app,
+        ServerAction::SetSystemNotice {
+            text: "existing".to_string(),
+            level: NoticeLevel::Info,
+        },
+    );
+
+    let reduce = apply_server_message(&AppServerMessage::Notification(
+        AppServerNotification::ContextCompactionStarted {
+            conversation_id: "default".to_string(),
+            turn_id: "manual_compaction".to_string(),
+            estimated_tokens: 123,
+        },
+    ));
+    for action in reduce.actions {
+        execute_server_action(&mut app, action);
+    }
+
+    let reduce = apply_server_message(&AppServerMessage::Notification(
+        AppServerNotification::ContextCompacted {
+            conversation_id: "default".to_string(),
+            turn_id: "manual_compaction".to_string(),
+            pre_context_tokens_estimate: 123,
+            post_context_tokens_estimate: 45,
+            pre_message_count: 10,
+            post_message_count: 4,
+            preserved_tail_count: 2,
+        },
+    ));
+    for action in reduce.actions {
+        execute_server_action(&mut app, action);
+    }
+
+    assert!(app.transcript_state.transcript.cells().is_empty());
+    assert_eq!(
+        app.run_state
+            .system_notice
+            .as_ref()
+            .map(|notice| notice.text.as_str()),
+        Some("Context compacted: ~123 -> ~45 tokens")
+    );
 }
 
 #[test]

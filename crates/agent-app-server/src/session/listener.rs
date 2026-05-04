@@ -16,6 +16,7 @@ pub(crate) struct ConversationListenerHandle {
     command_tx: mpsc::UnboundedSender<ConversationListenerCommand>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ConversationListenerCommand {
     ProjectEvent(EventMsg),
     ActiveTurnSnapshot {

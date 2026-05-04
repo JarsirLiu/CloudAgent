@@ -498,6 +498,7 @@ fn build_command_process(command_text: &str, workdir: &std::path::Path) -> Comma
     command
 }
 
+#[allow(clippy::too_many_arguments)]
 fn format_exec_result_content(
     kind: &str,
     command: &str,
@@ -830,7 +831,7 @@ fn take_shell_token(input: &mut &str) -> Option<String> {
     let mut quote_char = '\0';
     let mut consumed = 0usize;
 
-    while let Some(ch) = chars.next() {
+    for ch in chars.by_ref() {
         consumed += ch.len_utf8();
         match ch {
             '\'' | '"' if !in_quotes => {

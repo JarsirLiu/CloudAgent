@@ -407,10 +407,10 @@ impl AgentConfig {
             if let Some(value) = cli.pre_llm_filter_enabled {
                 self.cli.pre_llm_filter_enabled = value;
             }
-            if let Some(value) = cli.permission_mode {
-                if let Some(canonical) = normalize_permission_mode(&value) {
-                    self.cli.permission_mode = canonical.to_string();
-                }
+            if let Some(value) = cli.permission_mode
+                && let Some(canonical) = normalize_permission_mode(&value)
+            {
+                self.cli.permission_mode = canonical.to_string();
             }
         }
     }

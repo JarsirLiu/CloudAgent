@@ -148,6 +148,7 @@ impl ContextFacade {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn build_memory_budgeted_fragments(
         &self,
         history: &[ResponseItem],
@@ -174,6 +175,7 @@ impl ContextFacade {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn prepare_model_request<F, Fut>(
         &self,
         context_manager: &mut ContextManager,

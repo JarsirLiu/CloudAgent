@@ -234,10 +234,7 @@ impl WatchState {
 
     fn add_watch_ref(&mut self, path: &Path, recursive: bool) -> Result<()> {
         let next_mode = {
-            let entry = self
-                .watched_paths
-                .entry(path.to_path_buf())
-                .or_insert_with(WatchRefCounts::default);
+            let entry = self.watched_paths.entry(path.to_path_buf()).or_default();
             let previous_mode = entry.mode();
             if recursive {
                 entry.recursive += 1;

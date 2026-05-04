@@ -298,9 +298,8 @@ impl ConversationNotificationProjector {
         let dangling = self
             .active_items
             .iter()
-            .filter_map(|(item_id, active_turn_id)| {
-                (active_turn_id == turn_id).then(|| item_id.as_str())
-            })
+            .filter(|(_, active_turn_id)| *active_turn_id == turn_id)
+            .map(|(item_id, _)| item_id.as_str())
             .collect::<Vec<_>>();
         (!dangling.is_empty()).then(|| {
             self.lifecycle_error(format!(

@@ -11,6 +11,7 @@ use anyhow::Result;
 use std::collections::{BTreeMap, HashSet};
 use tokio_util::sync::CancellationToken;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_regular_turn<H: TurnHost>(
     host: &H,
     conversation_id: &str,
@@ -538,13 +539,12 @@ fn compose_visible_tool_specs(
 ) -> Vec<crate::ToolSpec> {
     let mut tools = default_tools.to_vec();
     for tool_name in exposed_tool_names {
-        if let Some(spec) = deferred_tool_map.get(tool_name) {
-            if !tools
+        if let Some(spec) = deferred_tool_map.get(tool_name)
+            && !tools
                 .iter()
                 .any(|existing| existing.identity.wire_name == spec.identity.wire_name)
-            {
-                tools.push(spec.clone());
-            }
+        {
+            tools.push(spec.clone());
         }
     }
     tools

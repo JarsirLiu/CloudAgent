@@ -287,10 +287,10 @@ impl ChatComposer {
                 let mut parts = command_text.splitn(2, char::is_whitespace);
                 let name = parts.next().unwrap_or_default();
                 let args = parts.next().unwrap_or_default().trim();
-                if let Some(command) = find_slash_command(name) {
-                    if args.is_empty() || command.supports_inline_args() {
-                        return action_for_command(command, args);
-                    }
+                if let Some(command) = find_slash_command(name)
+                    && (args.is_empty() || command.supports_inline_args())
+                {
+                    return action_for_command(command, args);
                 }
                 return ComposerIntent::UnknownCommand(name.to_string());
             }
@@ -314,6 +314,12 @@ impl ChatComposer {
                 .set_text(format!("/filter {} ", selected.insertion));
         }
         self.completion.clear();
+    }
+}
+
+impl Default for ChatComposer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -14,6 +14,7 @@ use std::sync::Mutex as StdMutex;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit_turn(
     runtime: Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
@@ -120,16 +121,6 @@ pub(crate) async fn compact_conversation(
             post_message_count: _,
             preserved_tail_count: _,
         } => {
-            let turns = runtime.build_turns_from_rollout(&conversation_id).await?;
-            send_notification(
-                event_tx,
-                state,
-                AppServerNotification::ConversationHistory {
-                    conversation_id: conversation_id.clone(),
-                    turns,
-                },
-            )
-            .await;
             send_notification(
                 event_tx,
                 state,

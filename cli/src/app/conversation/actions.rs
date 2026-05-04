@@ -369,13 +369,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 HistoryTone::Error,
             ));
         }
-        ServerAction::PushInfoCell(message) => {
-            app.push_cell(HistoryCell::from_message(
-                "context",
-                message,
-                HistoryTone::Control,
-            ));
-        }
         ServerAction::ItemDispatch(dispatch) => {
             conversation_facade::apply_item_dispatch(app, dispatch)
         }

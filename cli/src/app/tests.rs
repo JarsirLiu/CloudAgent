@@ -260,11 +260,11 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
             .await
             .expect("timed out waiting after restart")
             .expect("client event after restart");
-        match &event {
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::ConversationHistory { .. },
-            )) => restarted_history_loaded = true,
-            _ => {}
+        if let AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::ConversationHistory { .. },
+        )) = &event
+        {
+            restarted_history_loaded = true;
         }
         event_router::handle_client_event(&mut restarted_app, event);
     }
@@ -458,11 +458,11 @@ async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
             .await
             .expect("timed out waiting after restart")
             .expect("client event after restart");
-        match &event {
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::ConversationHistory { .. },
-            )) => restarted_history_loaded = true,
-            _ => {}
+        if let AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::ConversationHistory { .. },
+        )) = &event
+        {
+            restarted_history_loaded = true;
         }
         event_router::handle_client_event(&mut restarted_app, event);
     }
@@ -660,11 +660,11 @@ async fn consecutive_tool_turns_preserve_history_across_restart() {
             .await
             .expect("timed out waiting after restart")
             .expect("client event after restart");
-        match event {
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::ConversationHistory { turns, .. },
-            )) => break flatten_turns(turns),
-            _ => {}
+        if let AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::ConversationHistory { turns, .. },
+        )) = event
+        {
+            break flatten_turns(turns);
         }
     };
     restarted_client

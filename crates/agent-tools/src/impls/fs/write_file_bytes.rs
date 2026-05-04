@@ -95,10 +95,10 @@ impl LocalTool for WriteFileBytesLocalTool {
             &ctx.permission_profile,
             Some(args.path.as_str()),
         )?;
-        if args.create_parents.unwrap_or(true) {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).await?;
-            }
+        if args.create_parents.unwrap_or(true)
+            && let Some(parent) = path.parent()
+        {
+            fs::create_dir_all(parent).await?;
         }
 
         let bytes = STANDARD.decode(args.data_base64.as_bytes())?;

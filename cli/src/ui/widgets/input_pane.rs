@@ -381,6 +381,12 @@ impl InputPane {
     }
 }
 
+impl Default for InputPane {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn border_style(mode: FrontendMode) -> Style {
     match mode {
         FrontendMode::Idle => Style::default().fg(Color::Rgb(75, 82, 110)),

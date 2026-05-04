@@ -16,6 +16,7 @@ pub enum EventStream {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum CoreTranscriptEvent {
     TurnCompleted {
         turn_id: TurnId,

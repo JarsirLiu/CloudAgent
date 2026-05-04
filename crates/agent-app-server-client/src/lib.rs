@@ -13,6 +13,7 @@ pub use stdio::StdioClientConfig;
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum AppServerEvent {
     Message(AppServerMessage),
     Lagged { skipped: usize },

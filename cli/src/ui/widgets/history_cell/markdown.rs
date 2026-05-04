@@ -272,10 +272,7 @@ fn push_wrapped_spans(
         } else if !prefix.is_empty() {
             line_spans.push(Span::raw(" ".repeat(display_width(prefix))));
         }
-        let style = spans
-            .first()
-            .map(|span| span.style)
-            .unwrap_or_else(Style::default);
+        let style = spans.first().map(|span| span.style).unwrap_or_default();
         line_spans.push(Span::styled(wrapped_line.into_owned(), style));
         out.push(Line::from(line_spans));
     }

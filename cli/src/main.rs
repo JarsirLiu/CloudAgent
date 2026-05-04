@@ -132,6 +132,6 @@ fn exe_name(base: &str) -> String {
 
 fn arg_value(args: &[OsString], name: &str) -> Option<OsString> {
     args.windows(2)
-        .find(|pair| pair[0] == OsString::from(name))
+        .find(|pair| pair[0] == name)
         .map(|pair| pair[1].clone())
 }

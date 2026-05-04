@@ -9,6 +9,8 @@ use textwrap::wrap;
 
 pub use render::render_history_entry;
 
+type RenderCache = std::sync::Arc<std::sync::Mutex<Option<(usize, Vec<Line<'static>>)>>>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryTone {
     User,
@@ -28,7 +30,7 @@ pub struct HistoryCell {
     pub tone: HistoryTone,
     pub expanded: bool,
     pub repeat_count: usize,
-    cache: std::sync::Arc<std::sync::Mutex<Option<(usize, Vec<Line<'static>>)>>>,
+    cache: RenderCache,
 }
 
 impl HistoryCell {
@@ -73,10 +75,10 @@ impl HistoryCell {
 
     pub fn to_lines_with_mode(&self, width: usize) -> Vec<Line<'static>> {
         if let Ok(mut cache) = self.cache.lock() {
-            if let Some((w, lines)) = &*cache {
-                if *w == width {
-                    return lines.clone();
-                }
+            if let Some((w, lines)) = &*cache
+                && *w == width
+            {
+                return lines.clone();
             }
             let lines = self.render_now(width);
             *cache = Some((width, lines.clone()));

@@ -32,41 +32,41 @@ impl WelcomeScreen {
             "Loading your workspace context...".to_string()
         };
 
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::raw(""));
-
-        lines.push(Line::from(vec![
-            Span::raw("      "),
-            Span::styled("▄▄▄▄▄▄▄", Style::default().fg(mascot_color)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::raw("     "),
-            Span::styled("█ ", Style::default().fg(mascot_color)),
-            Span::styled("●", Style::default().fg(Color::Rgb(100, 255, 100))),
-            Span::styled("   ", Style::default().fg(mascot_color)),
-            Span::styled("●", Style::default().fg(Color::Rgb(100, 255, 100))),
-            Span::styled(" █", Style::default().fg(mascot_color)),
-            Span::raw("   "),
-            Span::styled(
-                "Hello, I'm CloudAgent",
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::raw("     "),
-            Span::styled("█   ", Style::default().fg(mascot_color)),
-            Span::styled("▄", Style::default().fg(mascot_color)),
-            Span::styled("   █", Style::default().fg(mascot_color)),
-            Span::raw("   "),
-            Span::styled("Your autonomous ops partner", Style::default().fg(dim)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::raw("      "),
-            Span::styled("▀▀▀▀▀▀▀", Style::default().fg(mascot_color)),
-        ]));
-        lines.push(Line::raw(""));
+        let mut lines: Vec<Line<'static>> = vec![
+            Line::raw(""),
+            Line::from(vec![
+                Span::raw("      "),
+                Span::styled("▄▄▄▄▄▄▄", Style::default().fg(mascot_color)),
+            ]),
+            Line::from(vec![
+                Span::raw("     "),
+                Span::styled("█ ", Style::default().fg(mascot_color)),
+                Span::styled("●", Style::default().fg(Color::Rgb(100, 255, 100))),
+                Span::styled("   ", Style::default().fg(mascot_color)),
+                Span::styled("●", Style::default().fg(Color::Rgb(100, 255, 100))),
+                Span::styled(" █", Style::default().fg(mascot_color)),
+                Span::raw("   "),
+                Span::styled(
+                    "Hello, I'm CloudAgent",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("     "),
+                Span::styled("█   ", Style::default().fg(mascot_color)),
+                Span::styled("▄", Style::default().fg(mascot_color)),
+                Span::styled("   █", Style::default().fg(mascot_color)),
+                Span::raw("   "),
+                Span::styled("Your autonomous ops partner", Style::default().fg(dim)),
+            ]),
+            Line::from(vec![
+                Span::raw("      "),
+                Span::styled("▀▀▀▀▀▀▀", Style::default().fg(mascot_color)),
+            ]),
+            Line::raw(""),
+        ];
 
         let title_spans = if self.history_loaded {
             shimmer_spans_for_frame("CloudAgent", self.animation_frame)

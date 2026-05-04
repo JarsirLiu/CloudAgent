@@ -20,6 +20,7 @@ struct ReadyToolCall<'a> {
     tool_item_id: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_host_tool_batch(
     host: &AgentHost,
     conversation_id: &str,
@@ -335,6 +336,7 @@ impl<'a> ToolBatchRunner<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn emit_finished_tool(
         &self,
         call: &ToolCall,
@@ -375,6 +377,7 @@ impl<'a> ToolBatchRunner<'a> {
         self.record_tool_result(context_manager, result).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn request_approval(
         &self,
         approval_runtime: &ApprovalRuntime<'_>,
@@ -392,13 +395,14 @@ impl<'a> ToolBatchRunner<'a> {
                 call,
                 spec,
                 approval_grant_key,
-                approval_reason.as_deref(),
+                approval_reason,
                 events,
                 on_event,
             )
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn record_denied_tool_result(
         &self,
         call: &ToolCall,

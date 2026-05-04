@@ -529,7 +529,7 @@ fn truncate_text_tokens(text: &str, token_budget: usize) -> String {
 }
 
 fn single_line(value: &str) -> String {
-    let compact = value.replace('\n', " ").replace('\r', " ");
+    let compact = value.replace(['\n', '\r'], " ");
     let trimmed = compact.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = trimmed.chars();
     let snippet = chars.by_ref().take(220).collect::<String>();

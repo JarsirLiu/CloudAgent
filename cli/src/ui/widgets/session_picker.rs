@@ -110,7 +110,7 @@ impl BottomPaneView for SessionPicker {
                 Style::default().fg(Color::Rgb(135, 145, 175))
             };
             lines.push(Line::from(vec![
-                Span::raw(format!("  ")),
+                Span::raw("  ".to_string()),
                 Span::styled(row, style),
             ]));
         }

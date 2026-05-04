@@ -78,7 +78,7 @@ where
 {
     tokio::select! {
         _ = cancellation_token.cancelled() => {
-            return Err(anyhow!(interrupted_error.to_string()));
+            Err(anyhow!(interrupted_error.to_string()))
         }
         response = decision_future => response,
     }

@@ -24,6 +24,12 @@ impl ConsoleState {
     }
 }
 
+impl Default for ConsoleState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ServerRequestState {
     pub active_request_id: Option<RequestId>,
