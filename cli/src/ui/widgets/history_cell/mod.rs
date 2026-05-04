@@ -273,7 +273,7 @@ fn render_meta(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
 fn pretty_tool_title(label: &str) -> String {
     match label {
         "exec_command" | "tool" => "Run command".to_string(),
-        "apply_patch" => "Edit file".to_string(),
+        "apply_patch" | "edit_file" => "Edit file".to_string(),
         "read_files" => "Read files".to_string(),
         "search_workspace" => "Search workspace".to_string(),
         "list_directory" => "List directory".to_string(),
