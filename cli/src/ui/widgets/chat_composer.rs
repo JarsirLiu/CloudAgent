@@ -7,7 +7,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use std::time::{Duration, Instant};
 
 use crate::ui::widgets::textarea::{TextArea, display_width, is_altgr};
 
@@ -20,61 +19,6 @@ pub struct ComposerRender {
 pub struct ChatComposer {
     textarea: TextArea,
     completion: CompletionState,
-    paste_burst: PasteBurst,
-}
-
-#[derive(Debug, Default, Clone)]
-struct PasteBurst {
-    last_plain_key_at: Option<Instant>,
-    consecutive_plain_keys: u16,
-    in_paste_burst: bool,
-}
-
-impl PasteBurst {
-    #[cfg(windows)]
-    const CHAR_INTERVAL: Duration = Duration::from_millis(30);
-    #[cfg(not(windows))]
-    const CHAR_INTERVAL: Duration = Duration::from_millis(12);
-
-    #[cfg(windows)]
-    const IDLE_TIMEOUT: Duration = Duration::from_millis(70);
-    #[cfg(not(windows))]
-    const IDLE_TIMEOUT: Duration = Duration::from_millis(30);
-
-    const MIN_BURST_KEYS: u16 = 3;
-
-    fn on_plain_key(&mut self, now: Instant) {
-        match self.last_plain_key_at {
-            Some(prev) if now.duration_since(prev) <= Self::CHAR_INTERVAL => {
-                self.consecutive_plain_keys = self.consecutive_plain_keys.saturating_add(1);
-            }
-            _ => {
-                self.consecutive_plain_keys = 1;
-                self.in_paste_burst = false;
-            }
-        }
-        self.last_plain_key_at = Some(now);
-        if self.consecutive_plain_keys >= Self::MIN_BURST_KEYS {
-            self.in_paste_burst = true;
-        }
-    }
-
-    fn refresh_timeout(&mut self, now: Instant) {
-        if self.in_paste_burst
-            && let Some(prev) = self.last_plain_key_at
-            && now.duration_since(prev) > Self::IDLE_TIMEOUT
-        {
-            self.in_paste_burst = false;
-            self.consecutive_plain_keys = 0;
-            self.last_plain_key_at = None;
-        }
-    }
-
-    fn reset(&mut self) {
-        self.in_paste_burst = false;
-        self.consecutive_plain_keys = 0;
-        self.last_plain_key_at = None;
-    }
 }
 
 impl ChatComposer {
@@ -82,30 +26,11 @@ impl ChatComposer {
         Self {
             textarea: TextArea::new(),
             completion: CompletionState::default(),
-            paste_burst: PasteBurst::default(),
         }
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ComposerIntent> {
         if !matches!(key.kind, KeyEventKind::Press) {
-            return None;
-        }
-        let now = Instant::now();
-        self.paste_burst.refresh_timeout(now);
-        let is_plain_char = matches!(key.code, KeyCode::Char(_))
-            && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT);
-        let is_plain_enter = key.code == KeyCode::Enter && key.modifiers.is_empty();
-        if is_plain_char || is_plain_enter {
-            self.paste_burst.on_plain_key(now);
-        } else {
-            self.paste_burst.reset();
-        }
-
-        let current_text = self.textarea.text();
-        let is_trimmed_slash_command = current_text.trim_start().starts_with('/');
-        if is_plain_enter && self.paste_burst.in_paste_burst && !is_trimmed_slash_command {
-            self.textarea.insert_str("\n");
-            self.sync_completion();
             return None;
         }
 
@@ -178,7 +103,6 @@ impl ChatComposer {
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> ComposerIntent {
-        self.paste_burst.reset();
         self.textarea.insert_str(text);
         self.sync_completion();
         ComposerIntent::None
@@ -232,6 +156,11 @@ impl ChatComposer {
                     wrapped_line,
                     if is_placeholder {
                         Style::default().fg(Color::Rgb(65, 65, 80))
+                    } else if self.textarea.is_all_selected() {
+                        Style::default()
+                            .fg(Color::Rgb(40, 40, 52))
+                            .bg(Color::Rgb(220, 220, 230))
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::Rgb(220, 220, 230))
                     },
@@ -362,7 +291,6 @@ fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread::sleep;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -546,7 +474,6 @@ mod tests {
         let newline_action =
             composer.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
         type_text(&mut composer, "second");
-        sleep(Duration::from_millis(120));
         let submit_action = composer.handle_key(key(KeyCode::Enter));
 
         assert_eq!(newline_action, None);
@@ -558,38 +485,38 @@ mod tests {
     }
 
     #[test]
-    fn plain_enter_submits_after_paste_burst_timeout() {
+    fn ctrl_a_selects_all_and_replaces_text() {
         let mut composer = ChatComposer::new();
-        type_text(&mut composer, "abc");
+        type_text(&mut composer, "alpha");
 
-        sleep(Duration::from_millis(120));
-        let action = composer.handle_key(key(KeyCode::Enter));
+        composer.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        type_text(&mut composer, "beta");
 
-        assert_eq!(action, Some(ComposerIntent::Submit("abc".to_string())));
-        assert!(composer.textarea.is_empty());
+        assert_eq!(composer.textarea.text(), "beta");
+        assert!(!composer.textarea.is_all_selected());
     }
 
     #[test]
-    fn rapid_key_stream_treats_enter_as_newline_not_submit() {
+    fn down_moves_to_next_line_and_then_end_of_text() {
         let mut composer = ChatComposer::new();
-        type_text(&mut composer, "abc");
+        type_text(&mut composer, "first\nsecond");
 
-        let action = composer.handle_key(key(KeyCode::Enter));
+        composer.handle_key(key(KeyCode::Home));
+        composer.handle_key(key(KeyCode::Down));
+        assert_eq!(
+            composer
+                .textarea
+                .text()
+                .chars()
+                .take(composer.textarea.cursor())
+                .collect::<String>(),
+            "first\n"
+        );
 
-        assert_eq!(action, None);
-        assert_eq!(composer.textarea.text(), "abc\n");
-    }
-
-    #[test]
-    fn paste_burst_times_out_then_enter_submits_again() {
-        let mut burst = PasteBurst::default();
-        let now = Instant::now();
-        burst.on_plain_key(now);
-        burst.on_plain_key(now + Duration::from_millis(1));
-        burst.on_plain_key(now + Duration::from_millis(2));
-        assert!(burst.in_paste_burst);
-
-        burst.refresh_timeout(now + Duration::from_millis(200));
-        assert!(!burst.in_paste_burst);
+        composer.handle_key(key(KeyCode::Down));
+        assert_eq!(
+            composer.textarea.cursor(),
+            composer.textarea.text().chars().count()
+        );
     }
 }

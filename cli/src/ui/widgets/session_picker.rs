@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::textarea::display_width;
@@ -26,7 +28,7 @@ impl SessionPicker {
         active_id: &str,
         mode: SessionPickerMode,
     ) -> Self {
-        sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+        sessions.sort_by_key(|session| Reverse(session.updated_at_ms));
         let selected = sessions
             .iter()
             .position(|s| s.conversation_id == active_id)

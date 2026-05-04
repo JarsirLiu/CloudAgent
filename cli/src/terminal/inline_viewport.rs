@@ -1,5 +1,4 @@
 use std::fmt;
-use std::io;
 
 use anyhow::Result;
 use crossterm::cursor::MoveTo;
@@ -58,8 +57,10 @@ impl crossterm::Command for SetScrollRegion {
     }
 
     #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        Err(io::Error::other("SetScrollRegion requires ANSI execution"))
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Err(std::io::Error::other(
+            "SetScrollRegion requires ANSI execution",
+        ))
     }
 
     #[cfg(windows)]
@@ -77,8 +78,8 @@ impl crossterm::Command for ResetScrollRegion {
     }
 
     #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        Err(io::Error::other(
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Err(std::io::Error::other(
             "ResetScrollRegion requires ANSI execution",
         ))
     }

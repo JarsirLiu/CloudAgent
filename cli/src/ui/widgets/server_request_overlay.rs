@@ -450,7 +450,7 @@ fn intent_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyEventKind, KeyModifiers};
+    use crossterm::event::KeyModifiers;
 
     fn request_state(id: &str) -> ServerRequestInlineState {
         ServerRequestInlineState {
