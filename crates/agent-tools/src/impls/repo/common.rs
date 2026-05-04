@@ -81,8 +81,17 @@ pub(crate) fn collect_repo_entries(
     Ok(entries)
 }
 
-pub(crate) fn sort_ranked_paths(matches: &mut [(usize, String)]) {
-    matches.sort_by(|(score_a, path_a), (score_b, path_b)| {
-        score_b.cmp(score_a).then_with(|| path_a.cmp(path_b))
+pub(crate) fn sort_ranked_paths<T, FScore, FPath>(
+    matches: &mut [T],
+    mut score_of: FScore,
+    mut path_of: FPath,
+) where
+    FScore: FnMut(&T) -> u32,
+    FPath: FnMut(&T) -> &str,
+{
+    matches.sort_by(|left, right| {
+        score_of(right)
+            .cmp(&score_of(left))
+            .then_with(|| path_of(left).cmp(path_of(right)))
     });
 }

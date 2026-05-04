@@ -156,12 +156,11 @@ impl InputPane {
         input_lines.extend(composer.lines);
         frame.render_widget(input_block(input_lines, border_style), input_area);
 
-        let panel = Paragraph::new(Text::from(completion_lines))
-            .block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_style(Style::default().fg(Color::Rgb(58, 64, 86))),
-            );
+        let panel = Paragraph::new(Text::from(completion_lines)).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(Color::Rgb(58, 64, 86))),
+        );
         frame.render_widget(panel, completion_area);
 
         InputPaneRenderResult {
@@ -391,19 +390,18 @@ fn border_style(mode: FrontendMode) -> Style {
 }
 
 fn input_block(lines: Vec<Line<'static>>, border_style: Style) -> Paragraph<'static> {
-    Paragraph::new(Text::from(lines))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(border_style)
-                .title_style(
-                    Style::default()
-                        .fg(Color::Rgb(215, 220, 235))
-                        .add_modifier(Modifier::BOLD),
-                )
-                .title(" prompt "),
-        )
+    Paragraph::new(Text::from(lines)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(border_style)
+            .title_style(
+                Style::default()
+                    .fg(Color::Rgb(215, 220, 235))
+                    .add_modifier(Modifier::BOLD),
+            )
+            .title(" prompt "),
+    )
 }
 
 fn composer_area(area: Rect, content_row_offset: u16) -> Rect {

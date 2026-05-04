@@ -264,7 +264,11 @@ pub fn delete_session(db_path: &Path, conversation_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn has_approval_grant(db_path: &Path, conversation_id: &str, grant_key_json: &str) -> Result<bool> {
+pub fn has_approval_grant(
+    db_path: &Path,
+    conversation_id: &str,
+    grant_key_json: &str,
+) -> Result<bool> {
     let conn = open(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT 1 FROM approval_grants WHERE conversation_id=?1 AND grant_key_json=?2 LIMIT 1",

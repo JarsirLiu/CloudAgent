@@ -110,6 +110,7 @@ dependencies = [
  "agent-protocol",
  "anyhow",
  "async-trait",
+ "base64",
  "blake3",
  "ignore",
  "nucleo",

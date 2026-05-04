@@ -3,7 +3,9 @@ use crate::registry::shared::{
     resolve_write_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
-use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolOutputStream, ToolSpec};
+use agent_core::{
+    ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolOutputStream, ToolSpec,
+};
 use agent_protocol::{CommandExecutionStatus, StructuredToolResult};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -36,11 +38,6 @@ impl ExecCommandTool {
                     "interactive command sessions",
                 ],
                 avoid_for: vec!["workspace file edits", "repository search when structured tools are available"],
-                preferred_task_kinds: vec![
-                    agent_core::TaskKind::Verification,
-                    agent_core::TaskKind::CodeEdit,
-                ],
-                preferred_modes: vec![agent_core::ToolMode::Verify, agent_core::ToolMode::Edit],
                 follow_up_hint: Some("prefer `workdir` over inline `cd`; on Windows use PowerShell syntax"),
                 ..ToolUsageGuidance::default()
             },
@@ -197,7 +194,11 @@ impl LocalTool for ExecCommandLocalTool {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow!("`command` is required"))?;
-        let workdir = resolve_write_path(&ctx.workspace_root, args.workdir.as_deref())?;
+        let workdir = resolve_write_path(
+            &ctx.workspace_root,
+            &ctx.permission_profile,
+            args.workdir.as_deref(),
+        )?;
         if looks_like_apply_patch_command(command) {
             return Ok(reject_patch_via_exec_command(command, &workdir));
         }
@@ -1029,8 +1030,10 @@ mod tests {
             conversation_id: "test".to_string(),
             workspace_root: std::env::temp_dir(),
             conversation_store_dir: std::env::temp_dir(),
+            permission_profile: agent_core::PermissionProfile::ReadOnly,
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
+            discoverable_tools: Vec::new(),
             output_tx: None,
         };
 
@@ -1063,3 +1066,4 @@ mod tests {
         }
     }
 }
+

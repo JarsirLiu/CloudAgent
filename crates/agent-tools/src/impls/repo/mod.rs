@@ -1,13 +1,10 @@
 mod common;
-mod list_directory;
-mod read_files;
+mod read_file;
 mod search_workspace;
 mod text_read;
 
-pub(crate) use list_directory::ListDirectoryLocalTool;
-pub use list_directory::ListDirectoryTool;
-pub(crate) use read_files::ReadFilesLocalTool;
-pub use read_files::ReadFilesTool;
+pub(crate) use read_file::ReadFileLocalTool;
+pub use read_file::ReadFileTool;
 pub(crate) use search_workspace::SearchWorkspaceLocalTool;
 pub use search_workspace::SearchWorkspaceTool;
 
@@ -43,8 +40,10 @@ mod tests {
             conversation_id: "test".to_string(),
             workspace_root: base.clone(),
             conversation_store_dir: base.clone(),
+            permission_profile: agent_core::PermissionProfile::ReadOnly,
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
+            discoverable_tools: Vec::new(),
             output_tx: None,
         };
         let output = tool
@@ -81,11 +80,20 @@ mod tests {
                 .any(|line| line == "Top 2 matches (showing 2 of 2):")
         );
         assert!(lines.iter().any(|line| line == "src/service.rs"));
+        assert!(matches!(
+            output.structured.as_ref(),
+            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. })
+                if hits.first().and_then(|hit| hit.score).is_some()
+                    && hits.first().and_then(|hit| hit.file_score).is_some()
+                    && hits.first().and_then(|hit| hit.file_match_count) == Some(1)
+                    && hits.first().and_then(|hit| hit.rank) == Some(1)
+                    && hits.first().and_then(|hit| hit.match_kind.as_deref()) == Some("file_name")
+        ));
     }
 
     #[tokio::test]
-    async fn read_files_supports_single_path_reads() {
-        let base = test_workspace("read_files_supports_single_path_reads");
+    async fn read_file_supports_single_path_reads() {
+        let base = test_workspace("read_file_supports_single_path_reads");
         fs::create_dir_all(base.join("src"))
             .await
             .expect("create src");
@@ -93,7 +101,7 @@ mod tests {
             .await
             .expect("write file");
 
-        let tool = ReadFilesLocalTool {
+        let tool = ReadFileLocalTool {
             max_read_chars: 10_000,
             read_state: crate::impls::file_read_state::FileReadStateStore::new(),
         };
@@ -108,7 +116,7 @@ mod tests {
                 &ctx,
             )
             .await
-            .expect("read_files works");
+            .expect("read_file works");
 
         assert!(output.content.contains("==>"));
         assert!(output.content.contains("2  two"));
@@ -148,6 +156,50 @@ mod tests {
             output
                 .content
                 .contains("src/lib.rs:1: fn render_active_cell() {}")
+        );
+        assert!(matches!(
+            output.structured.as_ref(),
+            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. })
+                if hits.first().and_then(|hit| hit.score).is_some()
+                    && hits.first().and_then(|hit| hit.file_score).is_some()
+                    && hits.first().and_then(|hit| hit.file_match_count) == Some(2)
+                    && hits.first().and_then(|hit| hit.rank) == Some(1)
+        ));
+    }
+
+    #[tokio::test]
+    async fn search_workspace_text_prefers_definition_like_hits() {
+        let base = test_workspace("search_workspace_text_prefers_definition_like_hits");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "call_target();\nfn target() {}\n")
+            .await
+            .expect("write lib");
+
+        let tool = SearchWorkspaceLocalTool::new();
+        let ctx = tool_context(&base);
+        let output = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "mode": "text",
+                    "query": "target",
+                    "path_scope": "src",
+                    "max_results": 10
+                })),
+                &ctx,
+            )
+            .await
+            .expect("search_workspace works");
+
+        let hits = match output.structured.as_ref() {
+            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
+            other => panic!("expected structured hits, got {other:?}"),
+        };
+        assert_eq!(hits.first().and_then(|hit| hit.line), Some(2));
+        assert_eq!(
+            hits.first().and_then(|hit| hit.match_kind.as_deref()),
+            Some("definition")
         );
     }
 
@@ -217,42 +269,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_files_batches_multiple_paths() {
-        let base = test_workspace("read_files_batches_multiple_paths");
-        fs::create_dir_all(base.join("src"))
-            .await
-            .expect("create src");
-        fs::write(base.join("src/a.rs"), "alpha\n")
-            .await
-            .expect("write a");
-        fs::write(base.join("src/b.rs"), "beta\n")
-            .await
-            .expect("write b");
-
-        let tool = ReadFilesLocalTool {
-            max_read_chars: 10_000,
-            read_state: crate::impls::file_read_state::FileReadStateStore::new(),
-        };
-        let ctx = tool_context(&base);
-        let output = tool
-            .invoke(
-                tool_invocation(serde_json::json!({
-                    "paths": ["src/a.rs", "src/b.rs"]
-                })),
-                &ctx,
-            )
-            .await
-            .expect("read_files works");
-
-        assert!(output.content.contains("a.rs"));
-        assert!(output.content.contains("b.rs"));
-        assert!(output.content.contains("alpha"));
-        assert!(output.content.contains("beta"));
-    }
-
-    #[tokio::test]
-    async fn read_files_reports_when_output_is_truncated() {
-        let base = test_workspace("read_files_reports_when_output_is_truncated");
+    async fn read_file_reports_when_output_is_truncated() {
+        let base = test_workspace("read_file_reports_when_output_is_truncated");
         fs::create_dir_all(base.join("src"))
             .await
             .expect("create src");
@@ -263,7 +281,7 @@ mod tests {
         .await
         .expect("write file");
 
-        let tool = ReadFilesLocalTool {
+        let tool = ReadFileLocalTool {
             max_read_chars: 10_000,
             read_state: crate::impls::file_read_state::FileReadStateStore::new(),
         };
@@ -277,16 +295,19 @@ mod tests {
                 &ctx,
             )
             .await
-            .expect("read_files works");
+            .expect("read_file works");
 
-        assert!(output.content.contains("[read_files note]"));
-        assert!(output.content.contains("start_line"));
+        assert!(output.content.contains("[read_file note]"));
+        assert!(output.content.contains("next_start_line"));
         assert!(matches!(
             output.structured.as_ref(),
-            Some(agent_protocol::StructuredToolResult::ReadFiles {
-                truncated_count,
+            Some(agent_protocol::StructuredToolResult::ReadFile {
+                read,
                 ..
-            }) if *truncated_count > 0
+            }) if read.truncated
+                && read.next_start_line == Some(2)
+                && read.returned_line_count == 1
+                && read.total_line_count == Some(6)
         ));
     }
 
@@ -306,8 +327,10 @@ mod tests {
             conversation_id: "test".to_string(),
             workspace_root: workspace_root.to_path_buf(),
             conversation_store_dir: workspace_root.to_path_buf(),
+            permission_profile: agent_core::PermissionProfile::ReadOnly,
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
+            discoverable_tools: Vec::new(),
             output_tx: None,
         }
     }

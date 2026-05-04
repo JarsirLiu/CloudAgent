@@ -31,7 +31,6 @@ where
 {
     let mut history = host.load_history(conversation_id).await?;
     let context_facade = ContextFacade::new();
-    let tool_specs = host.all_tool_specs();
     let environment_context = host.environment_context();
     let settings = host.regular_turn_settings();
     let estimated_history_tokens = context_facade.estimate_history_tokens_for_canonical_compaction(
@@ -50,7 +49,7 @@ where
         request_overhead_tokens: context_facade.estimate_request_overhead_tokens(
             &history.messages,
             &environment_context.render(),
-            &tool_specs,
+            &[],
             settings.context_compaction_request_overhead_tokens,
         ),
         compacted_target_tokens: settings.context_compaction_target_tokens,

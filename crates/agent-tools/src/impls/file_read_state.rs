@@ -175,33 +175,31 @@ fn apply_rollout_item_to_state(
     };
 
     match structured {
-        Some(StructuredToolResult::ReadFiles { reads, .. }) => {
-            for read in reads {
-                if read.status != ReadFileStatus::Ok {
-                    continue;
-                }
-                let path_key = canonical_rollout_path_key(workspace_root, &read.path);
-                let is_partial_view = read.truncated || read.start_line.unwrap_or(1) > 1;
-                if let Some(version_token) = &read.version_token {
-                    restored.insert(
-                        path_key,
-                        FileReadSnapshot {
-                            version_token: Some(version_token.clone()),
-                            is_partial_view,
-                        },
-                    );
-                } else if !restored
-                    .get(&path_key)
-                    .is_some_and(|snapshot| snapshot.version_token.is_some())
-                {
-                    restored.insert(
-                        path_key,
-                        FileReadSnapshot {
-                            version_token: None,
-                            is_partial_view: true,
-                        },
-                    );
-                }
+        Some(StructuredToolResult::ReadFile { read, .. }) => {
+            if read.status != ReadFileStatus::Ok {
+                return;
+            }
+            let path_key = canonical_rollout_path_key(workspace_root, &read.path);
+            let is_partial_view = read.truncated || read.start_line.unwrap_or(1) > 1;
+            if let Some(version_token) = &read.version_token {
+                restored.insert(
+                    path_key,
+                    FileReadSnapshot {
+                        version_token: Some(version_token.clone()),
+                        is_partial_view,
+                    },
+                );
+            } else if !restored
+                .get(&path_key)
+                .is_some_and(|snapshot| snapshot.version_token.is_some())
+            {
+                restored.insert(
+                    path_key,
+                    FileReadSnapshot {
+                        version_token: None,
+                        is_partial_view: true,
+                    },
+                );
             }
         }
         Some(StructuredToolResult::EditFile {
@@ -267,50 +265,52 @@ mod tests {
             RolloutItem::ResponseItem {
                 item: ResponseItem::Tool {
                     tool_call_id: "call-1".to_string(),
-                    name: "read_files".to_string(),
+                    name: "read_file".to_string(),
                     content: "ok".to_string(),
-                    structured: Some(StructuredToolResult::ReadFiles {
-                        paths: vec![target_path.display().to_string()],
+                    structured: Some(StructuredToolResult::ReadFile {
+                        path: target_path.display().to_string(),
                         start_line: Some(1),
                         max_lines: None,
-                        file_count: 1,
-                        failed_count: 0,
-                        truncated_count: 0,
                         total_chars: 10,
-                        reads: vec![agent_core::ReadFileEntry {
+                        read: agent_core::ReadFileEntry {
                             path: target_path.display().to_string(),
                             start_line: Some(1),
                             end_line: Some(1),
+                            next_start_line: None,
+                            returned_line_count: 1,
+                            total_line_count: Some(1),
+                            returned_char_count: 10,
                             truncated: false,
                             char_count: 10,
                             status: ReadFileStatus::Ok,
                             version_token: Some("abc123".to_string()),
-                        }],
+                        },
                     }),
                 },
             },
             RolloutItem::ResponseItem {
                 item: ResponseItem::Tool {
                     tool_call_id: "call-2".to_string(),
-                    name: "read_files".to_string(),
+                    name: "read_file".to_string(),
                     content: "partial".to_string(),
-                    structured: Some(StructuredToolResult::ReadFiles {
-                        paths: vec![target_path.display().to_string()],
+                    structured: Some(StructuredToolResult::ReadFile {
+                        path: target_path.display().to_string(),
                         start_line: Some(10),
                         max_lines: Some(10),
-                        file_count: 1,
-                        failed_count: 0,
-                        truncated_count: 1,
                         total_chars: 10,
-                        reads: vec![agent_core::ReadFileEntry {
+                        read: agent_core::ReadFileEntry {
                             path: target_path.display().to_string(),
                             start_line: Some(10),
                             end_line: Some(10),
+                            next_start_line: Some(11),
+                            returned_line_count: 1,
+                            total_line_count: Some(10),
+                            returned_char_count: 10,
                             truncated: true,
                             char_count: 10,
                             status: ReadFileStatus::Ok,
                             version_token: None,
-                        }],
+                        },
                     }),
                 },
             },
@@ -395,25 +395,26 @@ mod tests {
         let items = vec![RolloutItem::ResponseItem {
             item: ResponseItem::Tool {
                 tool_call_id: "call-1".to_string(),
-                name: "read_files".to_string(),
+                name: "read_file".to_string(),
                 content: "partial".to_string(),
-                structured: Some(StructuredToolResult::ReadFiles {
-                    paths: vec![target_path.display().to_string()],
+                structured: Some(StructuredToolResult::ReadFile {
+                    path: target_path.display().to_string(),
                     start_line: Some(2),
                     max_lines: Some(1),
-                    file_count: 1,
-                    failed_count: 0,
-                    truncated_count: 0,
                     total_chars: 6,
-                    reads: vec![agent_core::ReadFileEntry {
+                    read: agent_core::ReadFileEntry {
                         path: target_path.display().to_string(),
                         start_line: Some(2),
                         end_line: Some(2),
+                        next_start_line: None,
+                        returned_line_count: 1,
+                        total_line_count: Some(3),
+                        returned_char_count: 6,
                         truncated: false,
                         char_count: 6,
                         status: ReadFileStatus::Ok,
                         version_token: Some("abc123".to_string()),
-                    }],
+                    },
                 }),
             },
         }];

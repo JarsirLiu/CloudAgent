@@ -4,19 +4,18 @@ mod presentation;
 mod resolution;
 pub(crate) mod shared;
 
-use crate::selection::ToolSelector;
 use crate::spec::ToolDescriptor;
 use agent_core::{
-    ApprovalPolicy, ApprovalRequirement, PermissionProfile, ResolvedToolSet, TaskKind, ToolBackend,
-    ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext, ToolExecutor, ToolMode, ToolResult,
-    ToolSpec, ToolSurface,
+    ApprovalPolicy, ApprovalRequirement, PermissionProfile, RegularTurnToolExposure,
+    ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext, ToolExecutor,
+    ToolResult, ToolSpec,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::policy::{approval_grant_key_for_tool, approval_requirement_for_tool};
 use agent_protocol::TranscriptItem;
-use catalog::{LocalToolMap, build_descriptors, build_selector, build_tools};
+use catalog::{LocalToolMap, build_descriptors, build_tools};
 use mcp::McpRegistry;
 pub use mcp::{McpToolClient, McpToolDescriptor, McpToolInvocation, McpToolResponse};
 use presentation::{
@@ -32,7 +31,6 @@ pub struct ToolRegistry {
     tools: LocalToolMap,
     mcp: McpRegistry,
     descriptors: Vec<ToolDescriptor>,
-    selector: ToolSelector,
 }
 
 #[derive(Clone, Debug)]
@@ -54,22 +52,7 @@ impl ToolRegistry {
             tools: build_tools(max_read_chars),
             mcp: McpRegistry::default(),
             descriptors: build_descriptors(max_read_chars),
-            selector: build_selector(),
         }
-    }
-
-    pub fn specs_for_mode(&self, mode: ToolMode, task_kind: TaskKind) -> Vec<ToolSpec> {
-        let mut specs = resolution::specs_for_surface(self.selector.select(
-            &mode,
-            &task_kind,
-            &self.descriptors,
-        ));
-        specs.extend(self.mcp.descriptor_specs());
-        specs
-    }
-
-    pub fn specs_for_surface(&self, tool_surface: &ToolSurface) -> Vec<ToolSpec> {
-        self.specs_for_mode(tool_surface.mode.clone(), tool_surface.task_kind.clone())
     }
 
     pub fn register_mcp_tool(&mut self, descriptor: McpToolDescriptor) {
@@ -80,23 +63,44 @@ impl ToolRegistry {
         self.mcp.set_client(client);
     }
 
-    pub fn resolve_surface(
+    pub fn resolve_regular_turn_tool_exposure(
         &self,
-        tool_surface: &ToolSurface,
         permission_profile: &PermissionProfile,
-    ) -> ResolvedToolSet {
-        let mut resolved = resolution::resolve_surface(
-            self.selector.select(
-                &tool_surface.mode,
-                &tool_surface.task_kind,
-                &self.descriptors,
-            ),
-            permission_profile,
+    ) -> RegularTurnToolExposure {
+        let mcp_client_is_configured = self.mcp.client_is_configured();
+        let discoverable_count = self
+            .descriptors
+            .iter()
+            .filter(|descriptor| {
+                descriptor.default_visibility == crate::spec::ToolDefaultVisibility::Deferred
+            })
+            .count()
+            + if mcp_client_is_configured {
+                self.mcp
+                    .registered_descriptors()
+                    .into_iter()
+                    .filter(|descriptor| {
+                        descriptor.default_visibility == crate::spec::ToolDefaultVisibility::Deferred
+                    })
+                    .count()
+            } else {
+                0
+            };
+        let registered = resolution::registered_tools(
+            &self.descriptors,
+            self.mcp.registered_descriptors(),
+            mcp_client_is_configured,
+            discoverable_count > 0,
         );
-        for spec in self.mcp.descriptor_specs() {
-            resolved.specs.push(spec);
+        let environment_visible = resolution::environment_visible_tools(registered);
+        let permission_allowed =
+            resolution::permission_allowed_tools(environment_visible, permission_profile);
+        let default_visible = resolution::model_visible_default_tools(permission_allowed.clone());
+        let deferred_visible = resolution::deferred_discoverable_tools(permission_allowed);
+        RegularTurnToolExposure {
+            default_tools: resolution::specs_for_registered_tools(default_visible),
+            deferred_tools: resolution::specs_for_registered_tools(deferred_visible),
         }
-        resolved
     }
 
     pub fn tool_supports_parallel(&self, tool_name: &str) -> bool {
@@ -245,7 +249,6 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::selection::ToolSurface;
     use agent_core::{ToolExecutionContext, TurnItemDeltaKind, TurnItemKind};
     use anyhow::Result;
     use async_trait::async_trait;
@@ -253,58 +256,175 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     #[test]
-    fn resolve_surface_filters_tools_by_permission_profile() {
+    fn resolve_exposure_filters_tools_by_permission_profile() {
         let registry = ToolRegistry::new(4_096);
-        let surface = ToolSurface::regular_turn();
-
-        let read_only = registry.resolve_surface(&surface, &PermissionProfile::ReadOnly);
+        let read_only = registry.resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly);
         let workspace_write =
-            registry.resolve_surface(&surface, &PermissionProfile::WorkspaceWrite);
+            registry.resolve_regular_turn_tool_exposure(&PermissionProfile::WorkspaceWrite);
 
-        assert!(read_only.specs.iter().all(|spec| spec.name != "edit_file"));
-        assert!(
-            workspace_write
-                .specs
-                .iter()
-                .any(|spec| spec.name == "edit_file")
-        );
-        assert!(
-            read_only
-                .specs
-                .iter()
-                .any(|spec| spec.name == "exec_command")
-        );
+        assert!(read_only.default_tools.iter().all(|spec| spec.name != "edit_file"));
+        assert!(workspace_write
+            .default_tools
+            .iter()
+            .any(|spec| spec.name == "edit_file"));
+        assert!(read_only
+            .default_tools
+            .iter()
+            .any(|spec| spec.name == "exec_command"));
+        assert!(read_only
+            .default_tools
+            .iter()
+            .all(|spec| spec.name != "write_file_bytes"));
+        assert!(workspace_write
+            .default_tools
+            .iter()
+            .all(|spec| spec.name != "write_file_bytes"));
+        assert!(workspace_write
+            .deferred_tools
+            .iter()
+            .any(|spec| spec.name == "write_file_bytes"));
     }
 
     #[test]
-    fn resolve_surface_orders_tools_by_task_guidance() {
+    fn regular_turn_default_visible_set_uses_default_priority_ordering() {
         let registry = ToolRegistry::new(4_096);
-        let surface = ToolSurface::new(ToolMode::Explore, TaskKind::RepositoryAnalysis);
-        let resolved = registry.resolve_surface(&surface, &PermissionProfile::ReadOnly);
+        let resolved = registry
+            .resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly)
+            .default_tools;
 
         let ordered_names = resolved
-            .specs
             .iter()
             .map(|spec| spec.name.as_str())
             .take(3)
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            ordered_names,
-            vec!["search_workspace", "read_files", "list_directory"]
-        );
+        assert_eq!(ordered_names, vec!["search_workspace", "read_file", "exec_command"]);
     }
 
     #[test]
-    fn resolve_surface_tracks_parallel_safe_tools() {
-        let registry = ToolRegistry::new(4_096);
-        let surface = ToolSurface::regular_turn();
-        let resolved = registry.resolve_surface(&surface, &PermissionProfile::ReadOnly);
+    fn regular_turn_hides_mcp_tools_without_a_configured_client() {
+        let mut registry = ToolRegistry::new(4_096);
+        registry.register_mcp_tool(McpToolDescriptor::new(
+            "mcp__demo__lookup".to_string(),
+            "demo".to_string(),
+            "lookup".to_string(),
+            ToolSpec {
+                name: "mcp__demo__lookup".to_string(),
+                identity: agent_core::ToolIdentity::mcp(
+                    "demo".to_string(),
+                    "lookup".to_string(),
+                    "mcp__demo__lookup".to_string(),
+                ),
+                description: "demo mcp tool".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+                mutating: false,
+                execution_policy: agent_core::ToolExecutionPolicy::Sequential,
+                requires_approval: false,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
+                approval_reason: None,
+            },
+        ));
 
-        assert!(resolved.supports_parallel_tool("search_workspace"));
-        assert!(resolved.supports_parallel_tool("read_files"));
-        assert!(!resolved.supports_parallel_tool("exec_command"));
-        assert!(!resolved.supports_parallel_tool("edit_file"));
+        let resolved = registry
+            .resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly)
+            .default_tools;
+
+        assert!(resolved.iter().all(|spec| spec.name != "mcp__demo__lookup"));
+    }
+
+    #[test]
+    fn regular_turn_shows_mcp_tools_only_when_the_client_is_configured() {
+        let mut registry = ToolRegistry::new(4_096);
+        registry.register_mcp_tool(McpToolDescriptor::new(
+            "mcp__demo__lookup".to_string(),
+            "demo".to_string(),
+            "lookup".to_string(),
+            ToolSpec {
+                name: "mcp__demo__lookup".to_string(),
+                identity: agent_core::ToolIdentity::mcp(
+                    "demo".to_string(),
+                    "lookup".to_string(),
+                    "mcp__demo__lookup".to_string(),
+                ),
+                description: "demo mcp tool".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+                mutating: false,
+                execution_policy: agent_core::ToolExecutionPolicy::Sequential,
+                requires_approval: false,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
+                approval_reason: None,
+            },
+        ));
+        registry.set_mcp_client(Arc::new(FakeMcpClient));
+
+        let resolved = registry
+            .resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly)
+            .default_tools;
+
+        assert!(resolved.iter().any(|spec| spec.name == "mcp__demo__lookup"));
+    }
+
+    #[test]
+    fn regular_turn_exposes_tool_search_when_deferred_tools_exist() {
+        let registry = ToolRegistry::new(4_096);
+        let exposure = registry.resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly);
+
+        assert!(exposure
+            .default_tools
+            .iter()
+            .any(|spec| spec.name == "tool_search"));
+        assert!(exposure
+            .deferred_tools
+            .iter()
+            .any(|spec| spec.name == "read_file_bytes"));
+    }
+
+    #[test]
+    fn regular_turn_puts_deferred_mcp_tools_in_the_discoverable_set() {
+        let mut registry = ToolRegistry::new(4_096);
+        registry.register_mcp_tool(
+            McpToolDescriptor::new(
+                "mcp__demo__bytes".to_string(),
+                "demo".to_string(),
+                "bytes".to_string(),
+                ToolSpec {
+                    name: "mcp__demo__bytes".to_string(),
+                    identity: agent_core::ToolIdentity::mcp(
+                        "demo".to_string(),
+                        "bytes".to_string(),
+                        "mcp__demo__bytes".to_string(),
+                    ),
+                    description: "read raw bytes from external storage".to_string(),
+                    parameters: serde_json::json!({"type": "object"}),
+                    mutating: false,
+                    execution_policy: agent_core::ToolExecutionPolicy::Sequential,
+                    requires_approval: false,
+                    item_kind: TurnItemKind::ToolCall,
+                    delta_kind: TurnItemDeltaKind::ToolOutput,
+                    approval_reason: None,
+                },
+            )
+            .with_default_visibility(crate::spec::ToolDefaultVisibility::Deferred)
+            .with_selection_priority(1),
+        );
+        registry.set_mcp_client(Arc::new(FakeMcpClient));
+
+        let exposure = registry.resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly);
+
+        assert!(exposure
+            .default_tools
+            .iter()
+            .any(|spec| spec.name == "tool_search"));
+        assert!(exposure
+            .default_tools
+            .iter()
+            .all(|spec| spec.name != "mcp__demo__bytes"));
+        assert!(exposure
+            .deferred_tools
+            .iter()
+            .any(|spec| spec.name == "mcp__demo__bytes"));
     }
 
     #[test]
@@ -319,8 +439,8 @@ mod tests {
             },
             ToolCall {
                 id: "call-2".to_string(),
-                name: "read_files".to_string(),
-                identity: agent_core::ToolIdentity::built_in("read_files"),
+                name: "read_file".to_string(),
+                identity: agent_core::ToolIdentity::built_in("read_file"),
                 arguments: serde_json::json!({"path": "src/main.rs"}),
             },
         ];
@@ -406,8 +526,10 @@ mod tests {
                     conversation_id: "test".to_string(),
                     workspace_root: std::env::temp_dir(),
                     conversation_store_dir: std::env::temp_dir(),
+                    permission_profile: PermissionProfile::ReadOnly,
                     default_shell_timeout_ms: 5_000,
                     cancellation_token: CancellationToken::new(),
+                    discoverable_tools: Vec::new(),
                     output_tx: None,
                 },
             )
@@ -427,16 +549,13 @@ mod tests {
 impl ToolExecutor for ToolRegistry {
     fn specs(&self) -> Vec<ToolSpec> {
         let mut specs = self
-            .descriptors
-            .iter()
-            .map(|descriptor| descriptor.spec.clone())
-            .collect::<Vec<_>>();
-        specs.extend(self.mcp.descriptor_specs());
+            .resolve_regular_turn_tool_exposure(&PermissionProfile::FullAccess)
+            .default_tools;
+        specs.extend(
+            self.resolve_regular_turn_tool_exposure(&PermissionProfile::FullAccess)
+                .deferred_tools,
+        );
         specs
-    }
-
-    fn specs_for_surface(&self, tool_surface: &ToolSurface) -> Vec<ToolSpec> {
-        ToolRegistry::specs_for_surface(self, tool_surface)
     }
 
     async fn execute(&self, call: ToolCall, ctx: &ToolExecutionContext) -> Result<ToolResult> {
@@ -488,12 +607,11 @@ impl ToolBackend for ToolRegistry {
     type PermissionProfile = PermissionProfile;
     type ApprovalPolicy = ApprovalPolicy;
 
-    fn resolve_surface(
+    fn resolve_regular_turn_tool_exposure(
         &self,
-        tool_surface: &ToolSurface,
         permission_profile: &Self::PermissionProfile,
-    ) -> ResolvedToolSet {
-        ToolRegistry::resolve_surface(self, tool_surface, permission_profile)
+    ) -> RegularTurnToolExposure {
+        ToolRegistry::resolve_regular_turn_tool_exposure(self, permission_profile)
     }
 
     fn batch_execution_strategy(&self, calls: &[ToolCall]) -> ToolBatchExecutionStrategy {

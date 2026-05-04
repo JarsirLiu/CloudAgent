@@ -178,10 +178,10 @@ mod tests {
     use crate::turn::{TurnItemDeltaKind, TurnItemKind};
     use serde_json::json;
 
-    fn read_files_spec() -> ToolSpec {
+    fn read_file_spec() -> ToolSpec {
         ToolSpec {
-            name: "read_files".to_string(),
-            identity: ToolIdentity::built_in("read_files"),
+            name: "read_file".to_string(),
+            identity: ToolIdentity::built_in("read_file"),
             description: String::new(),
             parameters: json!({}),
             mutating: false,
@@ -196,27 +196,36 @@ mod tests {
     #[test]
     fn trips_after_three_identical_read_only_roundtrips() {
         let mut history = ConversationHistory::new("conv".to_string(), "system".to_string());
-        let tool_specs = vec![read_files_spec()];
+        let tool_specs = vec![read_file_spec()];
         let tool_call = ToolCall {
             id: "call-1".to_string(),
-            name: "read_files".to_string(),
-            identity: ToolIdentity::built_in("read_files"),
+            name: "read_file".to_string(),
+            identity: ToolIdentity::built_in("read_file"),
             arguments: json!({"path":"cli/src/ui/chat_surface.rs"}),
         };
         let tool_result = crate::tool::ToolResult {
             tool_call_id: "call-1".to_string(),
-            name: "read_files".to_string(),
+            name: "read_file".to_string(),
             content: "same output".to_string(),
             is_error: false,
-            structured: Some(StructuredToolResult::ReadFiles {
-                paths: vec!["cli/src/ui/chat_surface.rs".to_string()],
+            structured: Some(StructuredToolResult::ReadFile {
+                path: "cli/src/ui/chat_surface.rs".to_string(),
                 start_line: None,
                 max_lines: None,
-                file_count: 1,
-                failed_count: 0,
-                truncated_count: 0,
                 total_chars: 8115,
-                reads: Vec::new(),
+                read: crate::tool::ReadFileEntry {
+                    path: "cli/src/ui/chat_surface.rs".to_string(),
+                    start_line: None,
+                    end_line: None,
+                    next_start_line: None,
+                    returned_line_count: 0,
+                    total_line_count: None,
+                    returned_char_count: 0,
+                    truncated: false,
+                    char_count: 8115,
+                    status: crate::tool::ReadFileStatus::Ok,
+                    version_token: None,
+                },
             }),
         };
         let mut guard = LoopGuard::new();

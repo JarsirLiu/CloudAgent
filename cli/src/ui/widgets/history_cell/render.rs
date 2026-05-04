@@ -101,46 +101,17 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
             stderr.as_deref(),
         );
     }
-    if let Some(StructuredToolResult::ListDirectory {
+    if let Some(StructuredToolResult::ReadFile {
         path,
-        shown_count,
-        total_count,
-        truncated,
-        ..
-    }) = structured
-    {
-        return format!(
-            "listed {shown_count} of {total_count} entries{} @ {}",
-            if *truncated { " truncated" } else { "" },
-            compact_path(path, 48)
-        );
-    }
-    if let Some(StructuredToolResult::ReadFiles {
-        paths,
-        file_count,
-        truncated_count,
         total_chars,
+        read,
         ..
     }) = structured
     {
-        let target = paths
-            .first()
-            .map(|path| compact_path(path, 48))
-            .unwrap_or_else(|| "workspace".to_string());
-        if *file_count == 1 {
-            return format!(
-                "read {total_chars} chars{} @ {}",
-                if *truncated_count > 0 {
-                    " truncated"
-                } else {
-                    ""
-                },
-                target
-            );
-        }
         return format!(
-            "read {file_count} files ({} truncated, {total_chars} chars)",
-            truncated_count
+            "read {total_chars} chars{} @ {}",
+            if read.truncated { " truncated" } else { "" },
+            compact_path(path, 48)
         );
     }
     if let Some(StructuredToolResult::SearchWorkspace {

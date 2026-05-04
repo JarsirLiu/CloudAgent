@@ -1,23 +1,42 @@
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
-use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
+use crate::spec::{
+    ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolPermissionTier, ToolRisk,
+    ToolUsageGuidance,
+};
 use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
+use std::time::UNIX_EPOCH;
 use tokio::fs;
 
 pub struct GetMetadataTool;
 
 impl GetMetadataTool {
     pub fn descriptor() -> ToolDescriptor {
-        ToolDescriptor::new(
+        ToolDescriptor::new_with_guidance(
             ToolCategory::WorkspaceFileOps,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
-            vec!["explore", "verify", "repo", "fs"],
+            vec!["explore", "verify", "fs"],
+            ToolUsageGuidance {
+                selection_priority: 2,
+                preferred_for: vec![
+                    "checking whether one exact path exists",
+                    "verifying file type or size after a path is already known",
+                ],
+                avoid_for: vec![
+                    "repository discovery",
+                    "choosing which source file to read next",
+                ],
+                follow_up_hint: Some(
+                    "use `search_workspace` to discover candidate files and `read_file` to inspect source",
+                ),
+                ..ToolUsageGuidance::default()
+            },
             ToolSpec {
                 name: "get_metadata".to_string(),
                 identity: ToolIdentity::built_in("get_metadata"),
@@ -39,6 +58,7 @@ impl GetMetadataTool {
                 approval_reason: None,
             },
         )
+        .with_default_visibility(ToolDefaultVisibility::Deferred)
     }
 }
 
@@ -61,14 +81,27 @@ impl LocalTool for GetMetadataLocalTool {
     ) -> Result<ToolInvocationOutput> {
         let args: GetMetadataArgs = invocation.payload.parse_arguments()?;
         let path = resolve_read_path(&ctx.workspace_root, Some(args.path.as_str()))?;
-        let metadata = fs::metadata(&path).await?;
+        let metadata = fs::symlink_metadata(&path).await?;
+        let created_at_ms = metadata
+            .created()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok());
+        let modified_at_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok());
         let value = json!({
             "path": path.display().to_string(),
             "exists": true,
             "is_file": metadata.is_file(),
             "is_dir": metadata.is_dir(),
+            "is_symlink": metadata.file_type().is_symlink(),
             "size": metadata.len(),
-            "readonly": metadata.permissions().readonly()
+            "readonly": metadata.permissions().readonly(),
+            "created_at_ms": created_at_ms,
+            "modified_at_ms": modified_at_ms
         });
         Ok(ToolInvocationOutput {
             content: serde_json::to_string_pretty(&value)?,
@@ -77,9 +110,13 @@ impl LocalTool for GetMetadataLocalTool {
                 exists: true,
                 is_file: metadata.is_file(),
                 is_dir: metadata.is_dir(),
+                is_symlink: metadata.file_type().is_symlink(),
                 size: metadata.len(),
                 readonly: metadata.permissions().readonly(),
+                created_at_ms,
+                modified_at_ms,
             }),
         })
     }
 }
+

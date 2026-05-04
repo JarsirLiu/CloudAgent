@@ -1,6 +1,7 @@
 use crate::registry::shared::{
     LocalToolInvocation, LocalToolPayload, LocalToolSource, ToolInvocationOutput,
 };
+use crate::spec::{ToolDefaultVisibility, ToolPermissionTier};
 use agent_core::{McpCallResult, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -28,6 +29,9 @@ pub struct McpDiscoveredTool {
     pub description: String,
     pub parameters: Value,
     pub mutating: bool,
+    pub min_permission: ToolPermissionTier,
+    pub default_visibility: ToolDefaultVisibility,
+    pub selection_priority: i32,
     pub requires_approval: bool,
     pub item_kind: TurnItemKind,
     pub delta_kind: TurnItemDeltaKind,
@@ -39,6 +43,9 @@ pub struct McpToolDescriptor {
     pub wire_name: String,
     pub server: String,
     pub tool: String,
+    pub min_permission: ToolPermissionTier,
+    pub default_visibility: ToolDefaultVisibility,
+    pub selection_priority: i32,
     pub spec: ToolSpec,
 }
 
@@ -49,8 +56,29 @@ impl McpToolDescriptor {
             wire_name,
             server,
             tool,
+            min_permission: ToolPermissionTier::ReadOnly,
+            default_visibility: ToolDefaultVisibility::Default,
+            selection_priority: 0,
             spec,
         }
+    }
+
+    pub fn with_min_permission(mut self, min_permission: ToolPermissionTier) -> Self {
+        self.min_permission = min_permission;
+        self
+    }
+
+    pub fn with_default_visibility(
+        mut self,
+        default_visibility: ToolDefaultVisibility,
+    ) -> Self {
+        self.default_visibility = default_visibility;
+        self
+    }
+
+    pub fn with_selection_priority(mut self, selection_priority: i32) -> Self {
+        self.selection_priority = selection_priority;
+        self
     }
 }
 
@@ -74,6 +102,9 @@ impl McpDiscoveredTool {
                 approval_reason: self.approval_reason,
             },
         )
+        .with_min_permission(self.min_permission)
+        .with_default_visibility(self.default_visibility)
+        .with_selection_priority(self.selection_priority)
     }
 }
 

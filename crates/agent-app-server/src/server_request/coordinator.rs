@@ -164,9 +164,7 @@ fn request_id_order(left: &RequestId, right: &RequestId) -> CmpOrdering {
 #[cfg(test)]
 mod tests {
     use super::ServerRequestCoordinator;
-    use agent_protocol::{
-        CommandApprovalRequest, RequestId, ServerRequest, ServerRequestDecision,
-    };
+    use agent_protocol::{CommandApprovalRequest, RequestId, ServerRequest, ServerRequestDecision};
     use tokio::sync::oneshot;
 
     #[test]

@@ -63,15 +63,6 @@ impl ApplyPatchTool {
                     "directory discovery",
                     "build or runtime verification",
                 ],
-                preferred_task_kinds: vec![
-                    agent_core::TaskKind::CodeEdit,
-                    agent_core::TaskKind::WorkspaceFileOperation,
-                ],
-                preferred_modes: vec![agent_core::ToolMode::Edit],
-                avoid_task_kinds: vec![
-                    agent_core::TaskKind::RepositoryAnalysis,
-                    agent_core::TaskKind::Verification,
-                ],
                 follow_up_hint: Some(
                     "after editing, inspect the diff and run the narrowest relevant verification",
                 ),
@@ -659,8 +650,10 @@ mod tests {
             conversation_id: "test".to_string(),
             workspace_root: workspace_root.to_path_buf(),
             conversation_store_dir: workspace_root.to_path_buf(),
+            permission_profile: agent_core::PermissionProfile::WorkspaceWrite,
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
+            discoverable_tools: Vec::new(),
             output_tx: None,
         }
     }
@@ -673,3 +666,4 @@ mod tests {
         }
     }
 }
+

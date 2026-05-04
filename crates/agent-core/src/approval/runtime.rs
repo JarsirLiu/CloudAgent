@@ -3,8 +3,7 @@ use crate::model::await_server_request_decision;
 use crate::tool::{ToolCall, ToolSpec};
 use crate::turn::{
     CommandApprovalRequest, EventMsg, FileChangeApprovalRequest, ServerRequest,
-    ServerRequestDecisionKind, ServerRequestHandler, TurnHost, TurnItemKind, TurnState,
-    emit_event,
+    ServerRequestDecisionKind, ServerRequestHandler, TurnHost, TurnItemKind, TurnState, emit_event,
 };
 use crate::{ApprovalGrantKey, ApprovalPolicy, PermissionProfile};
 use anyhow::Result;
@@ -119,8 +118,10 @@ impl<'a> ApprovalRuntime<'a> {
             .audit_tool_approval_decided(self.conversation_id, self.turn_id, call, &decision);
 
         if decision.is_approved() {
-            if matches!(decision.decision, ServerRequestDecisionKind::AcceptForSession)
-                && let Some(key) = approval_grant_key
+            if matches!(
+                decision.decision,
+                ServerRequestDecisionKind::AcceptForSession
+            ) && let Some(key) = approval_grant_key
             {
                 let _ = self
                     .host

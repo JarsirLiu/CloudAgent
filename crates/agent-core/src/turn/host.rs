@@ -3,7 +3,7 @@ use crate::conversation::ConversationHistory;
 use crate::model::{ModelRequest, ModelResponse, ModelStreamObserver};
 use crate::rollout::RolloutItem;
 use crate::state::ActiveTurnHandle;
-use crate::tool::{ToolCall, ToolSpec};
+use crate::tool::{RegularTurnToolExposure, ToolCall, ToolSpec};
 use crate::turn::{EventMsg, ServerRequest, ServerRequestDecision};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -37,9 +37,10 @@ pub struct RegularTurnSettings {
     pub enable_mcp_bucket: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolBatchOutcome {
     pub cancelled: bool,
+    pub exposed_tools: Vec<String>,
 }
 
 #[async_trait]
@@ -67,11 +68,10 @@ pub trait TurnHost: Send + Sync {
     fn regular_turn_settings(&self) -> RegularTurnSettings;
     fn environment_context(&self) -> EnvironmentContext;
     fn raw_memory_fragment(&self) -> Option<String>;
-    fn all_tool_specs(&self) -> Vec<ToolSpec>;
-    fn resolve_regular_turn_tools(
+    fn resolve_regular_turn_tool_exposure(
         &self,
         permission_profile: &Self::PermissionProfile,
-    ) -> Vec<ToolSpec>;
+    ) -> RegularTurnToolExposure;
 
     async fn start_turn(
         &self,
@@ -117,6 +117,7 @@ pub trait TurnHost: Send + Sync {
         cancellation_token: CancellationToken,
         tool_calls: Vec<ToolCall>,
         tool_specs: &[ToolSpec],
+        discoverable_tools: &[ToolSpec],
         context_manager: &mut ContextManager,
         events: &mut Vec<EventMsg>,
         on_event: &mut (dyn for<'a> FnMut(&'a EventMsg) + Send + '_),

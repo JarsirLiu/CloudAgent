@@ -22,9 +22,9 @@ use crate::turn::{
 use crate::{
     ActiveTurnHandle, AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy,
     ChatModel, ContextManager, ConversationTurn, ExecutionPolicy, PermissionProfile,
-    RegularTurnSettings, ResponseItem, ToolSurface, build_turns_from_rollout_items,
-    complete_model_request,
-    complete_model_request_streaming, paginate_turns, visible_message_count,
+    RegularTurnSettings, ResponseItem, build_turns_from_rollout_items,
+    complete_model_request, complete_model_request_streaming, paginate_turns,
+    visible_message_count,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -558,13 +558,11 @@ impl TurnHost for AgentHost {
     fn raw_memory_fragment(&self) -> Option<String> {
         self.memory.raw_memory_fragment()
     }
-    fn all_tool_specs(&self) -> Vec<ToolSpec> {
-        self.tools.specs()
-    }
-    fn resolve_regular_turn_tools(&self, permission_profile: &PermissionProfile) -> Vec<ToolSpec> {
-        self.tools
-            .resolve_surface(&ToolSurface::regular_turn(), permission_profile)
-            .specs
+    fn resolve_regular_turn_tool_exposure(
+        &self,
+        permission_profile: &PermissionProfile,
+    ) -> crate::RegularTurnToolExposure {
+        self.tools.resolve_regular_turn_tool_exposure(permission_profile)
     }
 
     async fn start_turn(
@@ -651,6 +649,7 @@ impl TurnHost for AgentHost {
         cancellation_token: CancellationToken,
         tool_calls: Vec<ToolCall>,
         tool_specs: &[ToolSpec],
+        discoverable_tools: &[ToolSpec],
         context_manager: &mut ContextManager,
         events: &mut Vec<EventMsg>,
         on_event: &mut (dyn for<'a> FnMut(&'a EventMsg) + Send + '_),
@@ -666,6 +665,7 @@ impl TurnHost for AgentHost {
             cancellation_token,
             tool_calls,
             tool_specs,
+            discoverable_tools,
             context_manager,
             events,
             on_event,

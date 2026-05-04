@@ -1,4 +1,7 @@
-use agent_core::{ToolExecutionContext, ToolIdentity, ToolOutputDelta, ToolOutputStream, ToolSpec};
+use agent_core::{
+    PermissionProfile, ToolExecutionContext, ToolIdentity, ToolOutputDelta, ToolOutputStream,
+    ToolSpec,
+};
 use agent_protocol::{StructuredToolResult, WriteFileStatus};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -208,8 +211,48 @@ pub(crate) fn resolve_read_path(workspace_root: &Path, value: Option<&str>) -> R
     Ok(candidate)
 }
 
-pub(crate) fn resolve_write_path(workspace_root: &Path, value: Option<&str>) -> Result<PathBuf> {
-    resolve_workspace_path(workspace_root, value)
+fn resolve_full_access_path(workspace_root: &Path, value: Option<&str>) -> Result<PathBuf> {
+    let root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let Some(value) = value else {
+        return Ok(root);
+    };
+    let input = Path::new(value.trim());
+    if input.as_os_str().is_empty() {
+        return Ok(root);
+    }
+    if input.is_absolute() {
+        return Ok(input.to_path_buf());
+    }
+
+    let mut candidate = root.clone();
+    for component in input.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(segment) => candidate.push(segment),
+            Component::ParentDir => {
+                if !candidate.pop() {
+                    bail!("path escapes the filesystem root");
+                }
+            }
+            Component::Prefix(_) | Component::RootDir => bail!("unsupported path component"),
+        }
+    }
+    Ok(candidate)
+}
+
+pub(crate) fn resolve_write_path(
+    workspace_root: &Path,
+    permission_profile: &PermissionProfile,
+    value: Option<&str>,
+) -> Result<PathBuf> {
+    match permission_profile {
+        PermissionProfile::FullAccess => resolve_full_access_path(workspace_root, value),
+        PermissionProfile::ReadOnly | PermissionProfile::WorkspaceWrite => {
+            resolve_workspace_path(workspace_root, value)
+        }
+    }
 }
 
 pub(crate) fn structured_failure_result(
@@ -224,6 +267,27 @@ pub(crate) fn structured_failure_result(
                 version_token: None,
             })
         }
+        (LocalToolSource::BuiltIn, "write_file_bytes") => {
+            Some(StructuredToolResult::WriteFileBytes {
+                path: String::new(),
+                bytes_written: 0,
+                status: WriteFileStatus::Failed,
+                version_token: None,
+            })
+        }
+        (LocalToolSource::BuiltIn, "copy_path") => Some(StructuredToolResult::CopyPath {
+            source_path: String::new(),
+            destination_path: String::new(),
+            recursive: false,
+            status: WriteFileStatus::Failed,
+        }),
+        (LocalToolSource::BuiltIn, "remove_path") => Some(StructuredToolResult::RemovePath {
+            path: String::new(),
+            recursive: false,
+            force: false,
+            removed: false,
+            status: WriteFileStatus::Failed,
+        }),
         (LocalToolSource::BuiltIn, _) | (LocalToolSource::Mcp, _) => {
             Some(StructuredToolResult::ToolError {
                 tool_name: invocation.identity.wire_name.clone(),

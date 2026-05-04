@@ -1,12 +1,15 @@
-use crate::approval::{ApprovalFlow, ApprovalRuntime};
 use super::{ToolBatchExecutionStrategy, ToolCall, ToolResult, ToolSpec};
+use crate::approval::{ApprovalFlow, ApprovalRuntime};
 use crate::context::{ContextManager, ToolExecutionContext};
 use crate::host::{AgentHost, AgentHostExt};
 use crate::rollout::RolloutItem;
 use crate::turn::{
     EventMsg, ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnItemDeltaKind, TurnItemKind,
 };
-use crate::{ApprovalPolicy, PermissionProfile, emit_event, execute_tool_call_streaming, run_parallel_tool_invocations};
+use crate::{
+    ApprovalPolicy, PermissionProfile, emit_event, execute_tool_call_streaming,
+    run_parallel_tool_invocations,
+};
 use anyhow::Result;
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
@@ -26,6 +29,7 @@ pub(crate) async fn run_host_tool_batch(
     cancellation_token: CancellationToken,
     tool_calls: Vec<ToolCall>,
     tool_specs: &[ToolSpec],
+    discoverable_tools: &[ToolSpec],
     context_manager: &mut ContextManager,
     events: &mut Vec<EventMsg>,
     on_event: &mut (dyn for<'a> FnMut(&'a EventMsg) + Send + '_),
@@ -40,6 +44,7 @@ pub(crate) async fn run_host_tool_batch(
         approval_policy,
         cancellation_token,
         tool_specs,
+        discoverable_tools,
     };
     runner
         .run(
@@ -61,6 +66,7 @@ struct ToolBatchRunner<'a> {
     approval_policy: &'a ApprovalPolicy,
     cancellation_token: CancellationToken,
     tool_specs: &'a [ToolSpec],
+    discoverable_tools: &'a [ToolSpec],
 }
 
 impl<'a> ToolBatchRunner<'a> {
@@ -75,7 +81,9 @@ impl<'a> ToolBatchRunner<'a> {
     ) -> Result<ToolBatchOutcome> {
         let tool_ctx = self.host.context().tool_context(
             self.conversation_id.to_string(),
+            self.permission_profile.clone(),
             self.cancellation_token.clone(),
+            self.discoverable_tools.to_vec(),
         );
         let approval_runtime = ApprovalRuntime::new(
             self.host,
@@ -92,7 +100,10 @@ impl<'a> ToolBatchRunner<'a> {
         for call in tool_calls {
             if self.is_cancelled().await {
                 self.emit_cancelled(events, on_event);
-                return Ok(ToolBatchOutcome { cancelled: true });
+                return Ok(ToolBatchOutcome {
+                    cancelled: true,
+                    exposed_tools: Vec::new(),
+                });
             }
 
             let tool_item_id = format!("tool:{}", call.id);
@@ -181,7 +192,10 @@ impl<'a> ToolBatchRunner<'a> {
                     }
                     ApprovalFlow::Cancelled => {
                         self.emit_cancelled(events, on_event);
-                        return Ok(ToolBatchOutcome { cancelled: true });
+                        return Ok(ToolBatchOutcome {
+                            cancelled: true,
+                            exposed_tools: Vec::new(),
+                        });
                     }
                 }
             }
@@ -216,7 +230,10 @@ impl<'a> ToolBatchRunner<'a> {
             }
         }
 
-        Ok(ToolBatchOutcome { cancelled: false })
+        Ok(ToolBatchOutcome {
+            cancelled: false,
+            exposed_tools: collect_exposed_tools(context_manager.history()),
+        })
     }
 
     async fn run_ready_calls_sequentially(
@@ -370,15 +387,16 @@ impl<'a> ToolBatchRunner<'a> {
         _approval: &dyn ServerRequestHandler,
         _denied_requests: &mut HashSet<String>,
     ) -> Result<ApprovalFlow> {
-        approval_runtime.authorize_tool_call(
-            call,
-            spec,
-            approval_grant_key,
-            approval_reason
-                .as_deref(),
-            events,
-            on_event,
-        ).await
+        approval_runtime
+            .authorize_tool_call(
+                call,
+                spec,
+                approval_grant_key,
+                approval_reason.as_deref(),
+                events,
+                on_event,
+            )
+            .await
     }
 
     async fn record_denied_tool_result(
@@ -527,5 +545,72 @@ impl<'a> ToolBatchRunner<'a> {
             .map(|ready| ready.call.clone())
             .collect::<Vec<_>>();
         self.host.tools().batch_execution_strategy(&calls)
+    }
+}
+
+fn collect_exposed_tools(history: &crate::ConversationHistory) -> Vec<String> {
+    let mut exposed = Vec::new();
+    for item in &history.messages {
+        let crate::ResponseItem::Tool { structured, .. } = item else {
+            continue;
+        };
+        let Some(crate::StructuredToolResult::ToolSearch { hits, .. }) = structured else {
+            continue;
+        };
+        for hit in hits {
+            if !exposed.iter().any(|name| name == &hit.tool_name) {
+                exposed.push(hit.tool_name.clone());
+            }
+        }
+    }
+    exposed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_exposed_tools;
+    use crate::{
+        ConversationHistory, StructuredToolResult, ToolResult, ToolSearchHit, ToolSource,
+    };
+
+    #[test]
+    fn collect_exposed_tools_reads_tool_search_hits_from_history() {
+        let mut history = ConversationHistory::new("test", "system");
+        history.push_tool_result(ToolResult {
+            tool_call_id: "call-1".to_string(),
+            name: "tool_search".to_string(),
+            content: "found".to_string(),
+            is_error: false,
+            structured: Some(StructuredToolResult::ToolSearch {
+                query: "bytes".to_string(),
+                max_results: 8,
+                match_count: 2,
+                hits: vec![
+                    ToolSearchHit {
+                        tool_name: "read_file_bytes".to_string(),
+                        source: ToolSource::BuiltIn,
+                        description: "Read raw bytes".to_string(),
+                        mutating: false,
+                        rank: 1,
+                        match_reason: "tool name match".to_string(),
+                    },
+                    ToolSearchHit {
+                        tool_name: "write_file_bytes".to_string(),
+                        source: ToolSource::BuiltIn,
+                        description: "Write raw bytes".to_string(),
+                        mutating: true,
+                        rank: 2,
+                        match_reason: "tool description match".to_string(),
+                    },
+                ],
+            }),
+        });
+
+        let exposed = collect_exposed_tools(&history);
+
+        assert_eq!(
+            exposed,
+            vec!["read_file_bytes".to_string(), "write_file_bytes".to_string()]
+        );
     }
 }

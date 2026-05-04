@@ -127,21 +127,15 @@ fn summarize_superseded_tool_result(
 
 fn dedupe_key(tool_name: &str, structured: &StructuredToolResult) -> Option<String> {
     match structured {
-        StructuredToolResult::ReadFiles {
-            paths,
+        StructuredToolResult::ReadFile {
+            path,
             start_line,
             max_lines,
             ..
         } => Some(format!(
-            "read_files:{tool_name}:{:?}:{:?}:{:?}",
-            paths, start_line, max_lines
+            "{tool_name}:{path}:{:?}:{:?}",
+            start_line, max_lines
         )),
-        StructuredToolResult::ListDirectory {
-            path,
-            recursive,
-            offset,
-            ..
-        } => Some(format!("list_directory:{path}:{recursive}:{offset}")),
         StructuredToolResult::GetMetadata { path, .. } => Some(format!("metadata:{path}")),
         StructuredToolResult::SearchWorkspace {
             operation,
@@ -163,36 +157,36 @@ fn dedupe_key(tool_name: &str, structured: &StructuredToolResult) -> Option<Stri
 
 fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult) -> String {
     match structured {
-        StructuredToolResult::ReadFiles {
-            paths,
-            file_count,
-            failed_count,
-            truncated_count,
-            total_chars,
-            ..
-        } => format!(
-            "[rtk:read_files]\ntool: {tool_name}\npaths: {}\nstatus: superseded by a newer read\nfiles: {file_count}\nfailed_files: {failed_count}\ntruncated_files: {truncated_count}\ntotal_chars: {total_chars}",
-            paths.join(", ")
-        ),
-        StructuredToolResult::ListDirectory {
+        StructuredToolResult::ReadFile {
             path,
-            recursive,
-            shown_count,
-            total_count,
-            truncated,
+            total_chars,
+            read,
             ..
         } => format!(
-            "[rtk:list_directory]\npath: {path}\nrecursive: {recursive}\nstatus: superseded by a newer directory listing\nshown: {shown_count}\ntotal: {total_count}\ntruncated: {truncated}"
+            "[rtk:{tool_name}]\ntool: {tool_name}\npath: {path}\nstatus: superseded by a newer read\ntruncated: {}\nnext_start_line: {}\ntotal_chars: {total_chars}",
+            read.truncated,
+            read.next_start_line
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_string())
         ),
         StructuredToolResult::GetMetadata {
             path,
             exists,
             is_file,
             is_dir,
+            is_symlink,
             size,
             readonly,
+            created_at_ms,
+            modified_at_ms,
         } => format!(
-            "[rtk:get_metadata]\npath: {path}\nstatus: superseded by a newer metadata lookup\nexists: {exists}\nis_file: {is_file}\nis_dir: {is_dir}\nsize: {size}\nreadonly: {readonly}"
+            "[rtk:get_metadata]\npath: {path}\nstatus: superseded by a newer metadata lookup\nexists: {exists}\nis_file: {is_file}\nis_dir: {is_dir}\nis_symlink: {is_symlink}\nsize: {size}\nreadonly: {readonly}\ncreated_at_ms: {}\nmodified_at_ms: {}",
+            created_at_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            modified_at_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_string())
         ),
         StructuredToolResult::SearchWorkspace {
             session_id,
@@ -381,32 +375,50 @@ mod tests {
         let messages = vec![
             ResponseItem::Tool {
                 tool_call_id: "1".to_string(),
-                name: "read_files".to_string(),
+                name: "read_file".to_string(),
                 content: "old file body".to_string(),
-                structured: Some(StructuredToolResult::ReadFiles {
-                    paths: vec!["src/app.rs".to_string()],
+                structured: Some(StructuredToolResult::ReadFile {
+                    path: "src/app.rs".to_string(),
                     start_line: None,
                     max_lines: None,
-                    file_count: 1,
-                    failed_count: 0,
-                    truncated_count: 0,
                     total_chars: 120,
-                    reads: Vec::new(),
+                    read: crate::tool::ReadFileEntry {
+                        path: "src/app.rs".to_string(),
+                        start_line: None,
+                        end_line: None,
+                        next_start_line: None,
+                        returned_line_count: 0,
+                        total_line_count: None,
+                        returned_char_count: 0,
+                        truncated: false,
+                        char_count: 120,
+                        status: crate::tool::ReadFileStatus::Ok,
+                        version_token: None,
+                    },
                 }),
             },
             ResponseItem::Tool {
                 tool_call_id: "2".to_string(),
-                name: "read_files".to_string(),
+                name: "read_file".to_string(),
                 content: "new file body".to_string(),
-                structured: Some(StructuredToolResult::ReadFiles {
-                    paths: vec!["src/app.rs".to_string()],
+                structured: Some(StructuredToolResult::ReadFile {
+                    path: "src/app.rs".to_string(),
                     start_line: None,
                     max_lines: None,
-                    file_count: 1,
-                    failed_count: 0,
-                    truncated_count: 0,
                     total_chars: 160,
-                    reads: Vec::new(),
+                    read: crate::tool::ReadFileEntry {
+                        path: "src/app.rs".to_string(),
+                        start_line: None,
+                        end_line: None,
+                        next_start_line: None,
+                        returned_line_count: 0,
+                        total_line_count: None,
+                        returned_char_count: 0,
+                        truncated: false,
+                        char_count: 160,
+                        status: crate::tool::ReadFileStatus::Ok,
+                        version_token: None,
+                    },
                 }),
             },
         ];
@@ -414,7 +426,7 @@ mod tests {
         let out = svc.filter_for_model(messages, FilterPolicy { enabled: true });
         match &out[0] {
             ResponseItem::Tool { content, .. } => {
-                assert!(content.starts_with("[rtk:read_files]"));
+                assert!(content.starts_with("[rtk:read_file]"));
                 assert!(content.contains("superseded by a newer read"));
             }
             _ => panic!("expected tool message"),

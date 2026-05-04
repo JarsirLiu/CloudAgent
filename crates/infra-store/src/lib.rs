@@ -1,4 +1,6 @@
-use agent_core::{ApprovalGrantKey, ApprovalGrantStoreBackend, ConversationStoreBackend, ConversationSummary};
+use agent_core::{
+    ApprovalGrantKey, ApprovalGrantStoreBackend, ConversationStoreBackend, ConversationSummary,
+};
 use agent_core::{ResponseItem, RolloutItem, conversation_history_from_rollout_items};
 use agent_protocol::EventMsg;
 use anyhow::{Context, Result};

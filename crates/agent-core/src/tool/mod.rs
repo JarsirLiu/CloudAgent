@@ -161,41 +161,6 @@ pub struct ToolCall {
     pub arguments: Value,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskKind {
-    RepositoryAnalysis,
-    CodeEdit,
-    Verification,
-    WorkspaceFileOperation,
-    General,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolMode {
-    Explore,
-    Edit,
-    Verify,
-    Full,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ToolSurface {
-    pub mode: ToolMode,
-    pub task_kind: TaskKind,
-}
-
-impl ToolSurface {
-    pub fn new(mode: ToolMode, task_kind: TaskKind) -> Self {
-        Self { mode, task_kind }
-    }
-
-    pub fn regular_turn() -> Self {
-        Self::new(ToolMode::Full, TaskKind::General)
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolResult {
     pub tool_call_id: String,
@@ -210,6 +175,28 @@ pub struct SearchWorkspaceHit {
     pub path: String,
     pub line: Option<usize>,
     pub preview: String,
+    #[serde(default)]
+    pub score: Option<u32>,
+    #[serde(default)]
+    pub file_score: Option<u32>,
+    #[serde(default)]
+    pub file_match_count: Option<usize>,
+    #[serde(default)]
+    pub rank: Option<usize>,
+    #[serde(default)]
+    pub indices: Option<Vec<u32>>,
+    #[serde(default)]
+    pub match_kind: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolSearchHit {
+    pub tool_name: String,
+    pub source: ToolSource,
+    pub description: String,
+    pub mutating: bool,
+    pub rank: usize,
+    pub match_reason: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -217,11 +204,29 @@ pub struct ReadFileEntry {
     pub path: String,
     pub start_line: Option<usize>,
     pub end_line: Option<usize>,
+    #[serde(default)]
+    pub next_start_line: Option<usize>,
+    #[serde(default)]
+    pub returned_line_count: usize,
+    #[serde(default)]
+    pub total_line_count: Option<usize>,
+    #[serde(default)]
+    pub returned_char_count: usize,
     pub truncated: bool,
     pub char_count: usize,
     pub status: ReadFileStatus,
     #[serde(default)]
     pub version_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DirectoryEntry {
+    pub name: String,
+    pub path: String,
+    pub is_file: bool,
+    pub is_dir: bool,
+    #[serde(default)]
+    pub is_symlink: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -267,31 +272,71 @@ pub enum StructuredToolResult {
         next_offset: Option<usize>,
         hits: Vec<SearchWorkspaceHit>,
     },
-    ListDirectory {
-        path: String,
-        recursive: bool,
-        offset: usize,
-        shown_count: usize,
-        total_count: usize,
-        truncated: bool,
+    ToolSearch {
+        query: String,
+        max_results: usize,
+        match_count: usize,
+        hits: Vec<ToolSearchHit>,
     },
-    ReadFiles {
-        paths: Vec<String>,
+    ReadDirectory {
+        path: String,
+        entry_count: usize,
+        truncated: bool,
+        entries: Vec<DirectoryEntry>,
+    },
+    ReadFileBytes {
+        path: String,
+        offset: usize,
+        bytes_read: usize,
+        total_bytes: usize,
+        truncated: bool,
+        next_offset: Option<usize>,
+        data_base64: String,
+    },
+    ReadFile {
+        path: String,
         start_line: Option<usize>,
         max_lines: Option<usize>,
-        file_count: usize,
-        failed_count: usize,
-        truncated_count: usize,
         total_chars: usize,
-        reads: Vec<ReadFileEntry>,
+        read: ReadFileEntry,
     },
     GetMetadata {
         path: String,
         exists: bool,
         is_file: bool,
         is_dir: bool,
+        is_symlink: bool,
         size: u64,
         readonly: bool,
+        #[serde(default)]
+        created_at_ms: Option<u64>,
+        #[serde(default)]
+        modified_at_ms: Option<u64>,
+    },
+    CreateDirectory {
+        path: String,
+        recursive: bool,
+        created: bool,
+    },
+    WriteFileBytes {
+        path: String,
+        bytes_written: usize,
+        status: WriteFileStatus,
+        #[serde(default)]
+        version_token: Option<String>,
+    },
+    CopyPath {
+        source_path: String,
+        destination_path: String,
+        recursive: bool,
+        status: WriteFileStatus,
+    },
+    RemovePath {
+        path: String,
+        recursive: bool,
+        force: bool,
+        removed: bool,
+        status: WriteFileStatus,
     },
     EditFile {
         changed_paths: Vec<String>,
@@ -364,12 +409,15 @@ pub struct ToolEvent {
     pub is_error: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RegularTurnToolExposure {
+    pub default_tools: Vec<ToolSpec>,
+    pub deferred_tools: Vec<ToolSpec>,
+}
+
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
     fn specs(&self) -> Vec<ToolSpec>;
-    fn specs_for_surface(&self, _surface: &ToolSurface) -> Vec<ToolSpec> {
-        self.specs()
-    }
 
     async fn execute(&self, call: ToolCall, ctx: &ToolExecutionContext) -> Result<ToolResult>;
 }
@@ -378,11 +426,10 @@ pub trait ToolBackend: ToolExecutor {
     type PermissionProfile: Send + Sync;
     type ApprovalPolicy: Send + Sync;
 
-    fn resolve_surface(
+    fn resolve_regular_turn_tool_exposure(
         &self,
-        tool_surface: &ToolSurface,
         permission_profile: &Self::PermissionProfile,
-    ) -> ResolvedToolSet;
+    ) -> RegularTurnToolExposure;
 
     fn batch_execution_strategy(&self, calls: &[ToolCall]) -> ToolBatchExecutionStrategy;
 

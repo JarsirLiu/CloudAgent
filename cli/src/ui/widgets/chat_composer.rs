@@ -459,7 +459,9 @@ mod tests {
         assert_eq!(paste_action, ComposerIntent::None);
         assert_eq!(
             submit_action,
-            Some(ComposerIntent::Submit("first line\nsecond line".to_string()))
+            Some(ComposerIntent::Submit(
+                "first line\nsecond line".to_string()
+            ))
         );
         assert!(composer.textarea.is_empty());
     }
@@ -535,7 +537,8 @@ mod tests {
         let mut composer = ChatComposer::new();
         type_text(&mut composer, "first");
 
-        let newline_action = composer.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        let newline_action =
+            composer.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
         type_text(&mut composer, "second");
         sleep(Duration::from_millis(120));
         let submit_action = composer.handle_key(key(KeyCode::Enter));

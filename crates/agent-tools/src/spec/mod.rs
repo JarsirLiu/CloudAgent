@@ -1,4 +1,4 @@
-use agent_core::{PermissionProfile, TaskKind, ToolMode, ToolSpec};
+use agent_core::{PermissionProfile, ToolSpec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolCategory {
@@ -34,11 +34,25 @@ impl ToolPermissionTier {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolDefaultVisibility {
+    Default,
+    Deferred,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolEnvironmentRequirement {
+    Always,
+    RequiresDiscoverableTools,
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolDescriptor {
     pub category: ToolCategory,
     pub risk: ToolRisk,
     pub min_permission: ToolPermissionTier,
+    pub default_visibility: ToolDefaultVisibility,
+    pub environment_requirement: ToolEnvironmentRequirement,
     pub mode_tags: Vec<&'static str>,
     pub usage: ToolUsageGuidance,
     pub spec: ToolSpec,
@@ -49,10 +63,6 @@ pub struct ToolUsageGuidance {
     pub selection_priority: i32,
     pub preferred_for: Vec<&'static str>,
     pub avoid_for: Vec<&'static str>,
-    pub preferred_task_kinds: Vec<TaskKind>,
-    pub avoid_task_kinds: Vec<TaskKind>,
-    pub preferred_modes: Vec<ToolMode>,
-    pub avoid_modes: Vec<ToolMode>,
     pub follow_up_hint: Option<&'static str>,
     pub if_truncated_hint: Option<&'static str>,
 }
@@ -88,29 +98,25 @@ impl ToolDescriptor {
             category,
             risk,
             min_permission,
+            default_visibility: ToolDefaultVisibility::Default,
+            environment_requirement: ToolEnvironmentRequirement::Always,
             mode_tags,
             usage,
             spec,
         }
     }
 
-    pub fn selection_score(&self, mode: &ToolMode, task_kind: &TaskKind) -> i32 {
-        let mut score = self.usage.selection_priority;
+    pub fn with_default_visibility(mut self, default_visibility: ToolDefaultVisibility) -> Self {
+        self.default_visibility = default_visibility;
+        self
+    }
 
-        if self.usage.preferred_modes.contains(mode) {
-            score += 4;
-        }
-        if self.usage.avoid_modes.contains(mode) {
-            score -= 4;
-        }
-        if self.usage.preferred_task_kinds.contains(task_kind) {
-            score += 8;
-        }
-        if self.usage.avoid_task_kinds.contains(task_kind) {
-            score -= 8;
-        }
-
-        score
+    pub fn with_environment_requirement(
+        mut self,
+        environment_requirement: ToolEnvironmentRequirement,
+    ) -> Self {
+        self.environment_requirement = environment_requirement;
+        self
     }
 }
 
@@ -139,7 +145,7 @@ fn render_tool_description(base: &str, usage: &ToolUsageGuidance) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::{ToolIdentity, TurnItemDeltaKind, TurnItemKind};
+    use agent_core::{ToolExecutionPolicy, ToolIdentity, TurnItemDeltaKind, TurnItemKind};
     use serde_json::json;
 
     #[test]
@@ -152,7 +158,6 @@ mod tests {
             ToolUsageGuidance {
                 preferred_for: vec!["first-step discovery"],
                 avoid_for: vec!["editing files"],
-                preferred_task_kinds: vec![TaskKind::RepositoryAnalysis],
                 follow_up_hint: Some("open the strongest hit next"),
                 if_truncated_hint: Some("narrow the line range"),
                 ..ToolUsageGuidance::default()
@@ -198,35 +203,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn selection_score_prefers_matching_task_kinds_and_modes() {
-        let descriptor = ToolDescriptor::new_with_guidance(
-            ToolCategory::RepositoryExploration,
-            ToolRisk::Low,
-            ToolPermissionTier::ReadOnly,
-            vec!["explore"],
-            ToolUsageGuidance {
-                preferred_task_kinds: vec![TaskKind::RepositoryAnalysis],
-                avoid_task_kinds: vec![TaskKind::CodeEdit],
-                preferred_modes: vec![ToolMode::Explore],
-                avoid_modes: vec![ToolMode::Edit],
-                ..ToolUsageGuidance::default()
-            },
-            ToolSpec {
-                name: "demo".to_string(),
-                identity: ToolIdentity::built_in("demo"),
-                description: "Base description.".to_string(),
-                parameters: json!({"type": "object"}),
-                mutating: false,
-                execution_policy: ToolExecutionPolicy::Sequential,
-                requires_approval: false,
-                item_kind: TurnItemKind::ToolCall,
-                delta_kind: TurnItemDeltaKind::ToolOutput,
-                approval_reason: None,
-            },
-        );
-
-        assert!(descriptor.selection_score(&ToolMode::Explore, &TaskKind::RepositoryAnalysis) > 0);
-        assert!(descriptor.selection_score(&ToolMode::Edit, &TaskKind::CodeEdit) < 0);
-    }
 }

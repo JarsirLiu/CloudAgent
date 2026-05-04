@@ -80,7 +80,10 @@ mod tests {
     fn normalizes_legacy_and_canonical_permission_modes() {
         assert_eq!(normalize_permission_mode("safe"), Some("ReadOnly"));
         assert_eq!(normalize_permission_mode("ReadOnly"), Some("ReadOnly"));
-        assert_eq!(normalize_permission_mode("balanced"), Some("WorkspaceWrite"));
+        assert_eq!(
+            normalize_permission_mode("balanced"),
+            Some("WorkspaceWrite")
+        );
         assert_eq!(
             normalize_permission_mode("WorkspaceWrite"),
             Some("WorkspaceWrite")

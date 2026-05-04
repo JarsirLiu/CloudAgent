@@ -1,17 +1,21 @@
 use super::shared::{LocalToolInvocation, LocalToolPayload, LocalToolSource, ToolInvocationOutput};
-use agent_core::{ToolSource, ToolSpec};
+use agent_core::ToolSpec;
 use agent_protocol::StructuredToolResult;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use crate::spec::{ToolDefaultVisibility, ToolPermissionTier};
 
 #[derive(Clone, Debug)]
 pub struct McpToolDescriptor {
     pub wire_name: String,
     pub server: String,
     pub tool: String,
+    pub min_permission: ToolPermissionTier,
+    pub default_visibility: ToolDefaultVisibility,
+    pub selection_priority: i32,
     pub spec: ToolSpec,
 }
 
@@ -23,8 +27,29 @@ impl McpToolDescriptor {
             wire_name,
             server,
             tool,
+            min_permission: ToolPermissionTier::ReadOnly,
+            default_visibility: ToolDefaultVisibility::Default,
+            selection_priority: 0,
             spec,
         }
+    }
+
+    pub fn with_min_permission(mut self, min_permission: ToolPermissionTier) -> Self {
+        self.min_permission = min_permission;
+        self
+    }
+
+    pub fn with_default_visibility(
+        mut self,
+        default_visibility: ToolDefaultVisibility,
+    ) -> Self {
+        self.default_visibility = default_visibility;
+        self
+    }
+
+    pub fn with_selection_priority(mut self, selection_priority: i32) -> Self {
+        self.selection_priority = selection_priority;
+        self
     }
 }
 
@@ -69,6 +94,10 @@ impl McpRegistry {
         self.client = Some(client);
     }
 
+    pub(crate) fn client_is_configured(&self) -> bool {
+        self.client.is_some()
+    }
+
     pub(crate) fn resolve(&self, wire_name: &str, arguments: Value) -> Option<RoutedMcpTool> {
         let descriptor = self.descriptors.get(wire_name)?;
         Some(RoutedMcpTool {
@@ -85,15 +114,8 @@ impl McpRegistry {
         })
     }
 
-    pub(crate) fn descriptor_specs(&self) -> Vec<ToolSpec> {
-        self.descriptors
-            .values()
-            .map(|descriptor| {
-                debug_assert_eq!(descriptor.spec.identity.source, ToolSource::Mcp);
-                debug_assert_eq!(descriptor.spec.identity.wire_name, descriptor.wire_name);
-                descriptor.spec.clone()
-            })
-            .collect()
+    pub(crate) fn registered_descriptors(&self) -> Vec<McpToolDescriptor> {
+        self.descriptors.values().cloned().collect()
     }
 
     pub(crate) fn supports_parallel_tool(&self, wire_name: &str) -> bool {

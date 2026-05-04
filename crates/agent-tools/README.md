@@ -16,7 +16,7 @@ execution clarity, stable routing, and structured evidence density rather than b
 
 - built-in tool descriptors exposed to the model
 - shared implementations for repository exploration, file reads, file mutation, and command execution
-- tool surface resolution and permission-aware visibility
+- tool exposure resolution and permission-aware visibility
 - execution metadata such as parallel-safety and tool risk
 - the canonical invocation and result model for tool capabilities
 
@@ -125,7 +125,7 @@ Read tools should make it clear:
 If the model cannot tell what it already saw, it will keep issuing extra read calls. Read tools are
 therefore expected to support fact confirmation and comparison, not just raw file dumping.
 
-### 4. Execution is a first-class runtime surface
+### 4. Execution is a first-class runtime capability
 
 Command execution is not just an escape hatch. It is a capability family used for build, test,
 runtime inspection, and environment verification.
@@ -142,7 +142,7 @@ The model should not need to infer process state from incidental text.
 ### 5. Edits are protocol work, not text tricks
 
 File modification should flow through an editing capability with explicit structure, validation, and
-clear changed-file reporting. The edit surface is responsible for stable mutation semantics; it
+clear changed-file reporting. The edit capability is responsible for stable mutation semantics; it
 should not rely on ad hoc command execution when a structured edit path exists.
 
 ### 6. Structured results are the fact source
@@ -188,7 +188,7 @@ External does not mean special. It means a different source behind the same cont
 
 ## Design Principles
 
-- Keep the default tool surface small and high leverage.
+- Keep the default visible tool set small and high leverage.
 - Prefer stronger structured tools over many narrow wrappers.
 - Keep routing and tool metadata concentrated in this crate.
 - Treat structured results as the fact source and display text as a projection.
@@ -197,6 +197,55 @@ External does not mean special. It means a different source behind the same cont
 
 When these principles conflict, favor the option that reduces repeated search, repeated reads, and
 repeated command retries for common coding tasks.
+
+## Tool Exposure Pipeline
+
+The model-visible tool list should follow one fixed pipeline. This is the canonical exposure model
+for `agent-tools` and should be treated as architecture, not as an experiment or temporary routing
+policy.
+
+Tool exposure is resolved in this order:
+
+- `registered tools`
+- `environment-visible`
+- `permission-allowed`
+- `model-visible default set`
+- `deferred tools discoverable via tool_search`
+
+Each stage has one responsibility:
+
+- `registered tools`:
+  the full built-in and external tool set known to the runtime
+- `environment-visible`:
+  the subset that is actually available in the current thread, runtime, feature set, connector
+  state, and execution environment
+- `permission-allowed`:
+  the subset allowed by the active permission profile
+- `model-visible default set`:
+  the compact default visible tool set sent to the model for ordinary turns
+- `deferred tools discoverable via tool_search`:
+  deferred tools do not appear on the ordinary model-visible set, but they remain searchable
+  through `tool_search`; when discovered, they become explicitly visible on the next model roundtrip
+  instead of being silently callable
+
+`tool_search` should operate only on tools that have already passed `environment-visible` and
+`permission-allowed`. It must not bypass either stage, and it must not search the entire registered
+tool set indiscriminately. That keeps tools kept out of the default visible set still available
+through explicit discovery without widening the default set.
+
+This pipeline intentionally replaces task-kind-first routing as the primary exposure strategy.
+Environment visibility and permission gating should be decided before model exposure is computed.
+The default model-facing set should stay stable and compact, while lower-frequency or broader
+tool families should prefer deferred discovery over direct default exposure.
+
+Permission profiles should be interpreted only after environment visibility is known:
+
+- `ReadOnly`:
+  expose read/search/inspect capabilities without workspace mutation
+- `WorkspaceWrite`:
+  add workspace-scoped file mutation and editing capabilities
+- `FullAccess`:
+  add unrestricted file mutation and higher-risk capabilities outside the workspace boundary
 
 ## What Counts As A Tool
 
@@ -226,14 +275,12 @@ The crate is split into a few focused modules:
 
 - [`src/impls`](./src/impls) contains concrete built-in tool implementations.
 - [`src/spec`](./src/spec) defines descriptor metadata shared across the tool catalog.
-- [`src/selection`](./src/selection) resolves tool surfaces and catalog filtering.
 - [`src/policy`](./src/policy) contains shared tool-level policy and approval helpers.
 - [`src/registry`](./src/registry) wires descriptors, routing, presentation, and dispatch together.
 
 ## Boundary With Other Crates
 
-- `agent-core` defines the stable shared contracts such as `ToolSpec`, `ToolCall`, `ToolResult`,
-  and `ToolSurface`.
+- `agent-core` defines the stable shared contracts such as `ToolSpec`, `ToolCall`, and `ToolResult`.
 - `agent-core` owns the agent execution backbone and the concrete `AgentHost`, and should call
   into this crate through stable tool contracts rather than through a separate runtime layer.
 - `agent-tools` builds the concrete tool catalog and execution model on top of those contracts.

@@ -34,9 +34,9 @@ Rules:
 - Use relative workspace paths only
 - Every edit's `old_string` and `new_string` must differ
 - If the target file does not exist, provide exactly one edit with `old_string: ""` to create it
-- Existing files must have a prior `read_files` witness in this conversation, and the current file must still match that witnessed version
+- Existing files must have a prior `read_file` witness in this conversation, and the current file must still match that witnessed version
 - Use the smallest exact `old_string` that is still unique, usually 2-4 adjacent lines
-- Preserve exact indentation and do not include the leading line numbers shown by `read_files`
+- Preserve exact indentation and do not include the leading line numbers shown by `read_file`
 - If `replace_all` is false, `old_string` must match exactly once at the moment that edit runs
 - If `old_string` matches multiple locations, provide more surrounding context or set `replace_all` to true
 - The edits run in order and must not depend on accidentally re-matching text introduced by earlier edits
@@ -62,11 +62,6 @@ impl EditFileTool {
                     "build or runtime verification",
                     "multi-file patch authoring",
                 ],
-                preferred_task_kinds: vec![
-                    agent_core::TaskKind::CodeEdit,
-                    agent_core::TaskKind::WorkspaceFileOperation,
-                ],
-                preferred_modes: vec![agent_core::ToolMode::Edit],
                 follow_up_hint: Some(
                     "after editing, inspect the diff and run the narrowest relevant verification",
                 ),
@@ -180,7 +175,7 @@ impl EditFileLocalTool {
         if !file_exists {
             if args.edits.len() != 1 || !args.edits[0].old_string.is_empty() {
                 bail!(
-                    "file does not exist; provide exactly one edit with `old_string: \"\"` to create it. If you meant to edit an existing file, rerun `read_files` and copy the exact current text."
+                    "file does not exist; provide exactly one edit with `old_string: \"\"` to create it. If you meant to edit an existing file, rerun `read_file` and copy the exact current text."
                 );
             }
             let decoded = crate::impls::text_codec::DecodedTextFile {
@@ -220,13 +215,13 @@ impl EditFileLocalTool {
             .await?
         else {
             bail!(
-                "edit_file requires a prior `read_files` witness for {}; run `read_files` on the file before editing",
+                "edit_file requires a prior `read_file` witness for {}; run `read_file` on the file before editing",
                 path.display()
             );
         };
         if snapshot.version_token.is_none() {
             bail!(
-                "latest available read of {} did not capture a reusable file version; rerun `read_files` on the file before editing",
+                "latest available read of {} did not capture a reusable file version; rerun `read_file` on the file before editing",
                 path.display()
             );
         }
@@ -235,7 +230,7 @@ impl EditFileLocalTool {
         let current_version_token = version_token_for_bytes(&current_bytes);
         if snapshot.version_token.as_deref() != Some(current_version_token.as_str()) {
             bail!(
-                "file changed since it was last read; rerun `read_files` for {} before editing",
+                "file changed since it was last read; rerun `read_file` for {} before editing",
                 path.display()
             );
         }
@@ -260,7 +255,10 @@ impl EditFileLocalTool {
     ) -> Result<ToolInvocationOutput> {
         if !fs::try_exists(&plan.path).await? {
             let Some(parent) = plan.path.parent() else {
-                bail!("cannot determine parent directory for {}", plan.path.display());
+                bail!(
+                    "cannot determine parent directory for {}",
+                    plan.path.display()
+                );
             };
             fs::create_dir_all(parent).await?;
             let created_bytes = plan.edits[0].new_string.as_bytes().to_vec();
@@ -356,7 +354,11 @@ fn count_matches(haystack: &str, needle: &str) -> usize {
 fn repeated_match_line_hint(haystack: &str, needle: &str) -> String {
     let mut lines = Vec::new();
     for (offset, _) in haystack.match_indices(needle).take(4) {
-        let line = haystack[..offset].bytes().filter(|byte| *byte == b'\n').count() + 1;
+        let line = haystack[..offset]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
         lines.push(line.to_string());
     }
     if lines.is_empty() {
@@ -368,7 +370,10 @@ fn repeated_match_line_hint(haystack: &str, needle: &str) -> String {
 
 fn reject_line_number_prefixed_text(field_name: &str, value: &str) -> Result<()> {
     for line in value.lines().filter(|line| !line.trim().is_empty()) {
-        let digit_count = line.chars().take_while(|ch| ch.is_ascii_whitespace()).count();
+        let digit_count = line
+            .chars()
+            .take_while(|ch| ch.is_ascii_whitespace())
+            .count();
         let trimmed = line.trim_start();
         let digits = trimmed.chars().take_while(|ch| ch.is_ascii_digit()).count();
         if digits == 0 {
@@ -377,7 +382,7 @@ fn reject_line_number_prefixed_text(field_name: &str, value: &str) -> Result<()>
         let remainder = &trimmed[digits..];
         if remainder.starts_with("  ") && digit_count + digits + 2 < line.len() {
             bail!(
-                "`{field_name}` appears to include leading line numbers from `read_files`. Copy only the file text after the line number prefix."
+                "`{field_name}` appears to include leading line numbers from `read_file`. Copy only the file text after the line number prefix."
             );
         }
     }
@@ -425,7 +430,7 @@ fn prepare_instruction_sequence(
             let match_count = count_matches(&virtual_text, &old_string);
             if match_count == 0 {
                 bail!(
-                    "`old_string` was not found in {}. Rerun `read_files` and copy the exact current text, including indentation and surrounding lines.",
+                    "`old_string` was not found in {}. Rerun `read_file` and copy the exact current text, including indentation and surrounding lines.",
                     path.display()
                 );
             }
@@ -490,10 +495,10 @@ fn preserve_quote_style(original_old: &str, actual_old: &str, new_string: &str) 
         return new_string.to_string();
     }
 
-    let has_double_quotes =
-        actual_old.contains(LEFT_DOUBLE_CURLY_QUOTE) || actual_old.contains(RIGHT_DOUBLE_CURLY_QUOTE);
-    let has_single_quotes =
-        actual_old.contains(LEFT_SINGLE_CURLY_QUOTE) || actual_old.contains(RIGHT_SINGLE_CURLY_QUOTE);
+    let has_double_quotes = actual_old.contains(LEFT_DOUBLE_CURLY_QUOTE)
+        || actual_old.contains(RIGHT_DOUBLE_CURLY_QUOTE);
+    let has_single_quotes = actual_old.contains(LEFT_SINGLE_CURLY_QUOTE)
+        || actual_old.contains(RIGHT_SINGLE_CURLY_QUOTE);
 
     let mut result = new_string.to_string();
     if has_double_quotes {
@@ -739,7 +744,9 @@ mod tests {
             .await
             .expect("create src");
         let path = base.join("src/lib.rs");
-        fs::write(&path, "line1\nline2\nline3\n").await.expect("write");
+        fs::write(&path, "line1\nline2\nline3\n")
+            .await
+            .expect("write");
 
         let read_state = FileReadStateStore::new();
         let bytes = fs::read(&path).await.expect("read file for token");
@@ -867,9 +874,10 @@ mod tests {
             .await
             .expect_err("should reject sequential overlapping edits");
 
-        assert!(err
-            .to_string()
-            .contains("substring of text introduced by an earlier edit"));
+        assert!(
+            err.to_string()
+                .contains("substring of text introduced by an earlier edit")
+        );
     }
 
     fn test_workspace(name: &str) -> PathBuf {
@@ -888,8 +896,10 @@ mod tests {
             conversation_id: "test".to_string(),
             workspace_root: workspace_root.to_path_buf(),
             conversation_store_dir: workspace_root.to_path_buf(),
+            permission_profile: agent_core::PermissionProfile::WorkspaceWrite,
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
+            discoverable_tools: Vec::new(),
             output_tx: None,
         }
     }
@@ -908,3 +918,4 @@ mod tests {
         }
     }
 }
+

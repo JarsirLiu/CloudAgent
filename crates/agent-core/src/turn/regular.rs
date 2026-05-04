@@ -8,7 +8,7 @@ use crate::{
 };
 use crate::{EventMsg, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState};
 use anyhow::Result;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use tokio_util::sync::CancellationToken;
 
 pub async fn execute_regular_turn<H: TurnHost>(
@@ -27,7 +27,14 @@ pub async fn execute_regular_turn<H: TurnHost>(
     let mut events = Vec::new();
     let mut last_model_name = None;
     let mut assistant_item_seq: usize = 0;
-    let tool_specs = host.resolve_regular_turn_tools(permission_profile);
+    let tool_exposure = host.resolve_regular_turn_tool_exposure(permission_profile);
+    let deferred_tool_map = tool_exposure
+        .deferred_tools
+        .iter()
+        .cloned()
+        .map(|spec| (spec.identity.wire_name.clone(), spec))
+        .collect::<BTreeMap<_, _>>();
+    let mut exposed_tool_names = Vec::new();
     let mut denied_requests = HashSet::new();
     let mut loop_guard = LoopGuard::new();
     let environment_context = host.environment_context();
@@ -48,6 +55,13 @@ pub async fn execute_regular_turn<H: TurnHost>(
             break;
         }
         roundtrip_count += 1;
+        let tool_specs = compose_visible_tool_specs(
+            &tool_exposure.default_tools,
+            &deferred_tool_map,
+            &exposed_tool_names,
+        );
+        let discoverable_tools =
+            collect_discoverable_tools(&deferred_tool_map, &exposed_tool_names);
         if cancellation_token.is_cancelled() || host.is_turn_cancelled(conversation_id).await {
             emit_event(
                 &mut events,
@@ -429,6 +443,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 cancellation_token.clone(),
                 tool_calls.clone(),
                 &tool_specs,
+                &discoverable_tools,
                 &mut context_manager,
                 &mut events,
                 on_event,
@@ -445,6 +460,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 state: TurnState::Cancelled,
             });
         }
+        exposed_tool_names = tool_batch.exposed_tools;
         if let Some(loop_abort) = loop_guard.record_roundtrip(
             &tool_calls,
             &tool_specs,
@@ -513,4 +529,103 @@ pub async fn execute_regular_turn<H: TurnHost>(
         model_name: last_model_name,
         state: TurnState::Completed,
     })
+}
+
+fn compose_visible_tool_specs(
+    default_tools: &[crate::ToolSpec],
+    deferred_tool_map: &BTreeMap<String, crate::ToolSpec>,
+    exposed_tool_names: &[String],
+) -> Vec<crate::ToolSpec> {
+    let mut tools = default_tools.to_vec();
+    for tool_name in exposed_tool_names {
+        if let Some(spec) = deferred_tool_map.get(tool_name) {
+            if !tools
+                .iter()
+                .any(|existing| existing.identity.wire_name == spec.identity.wire_name)
+            {
+                tools.push(spec.clone());
+            }
+        }
+    }
+    tools
+}
+
+fn collect_discoverable_tools(
+    deferred_tool_map: &BTreeMap<String, crate::ToolSpec>,
+    exposed_tool_names: &[String],
+) -> Vec<crate::ToolSpec> {
+    deferred_tool_map
+        .iter()
+        .filter(|(tool_name, _)| !exposed_tool_names.iter().any(|name| name == *tool_name))
+        .map(|(_, spec)| spec.clone())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_discoverable_tools, compose_visible_tool_specs};
+    use crate::{ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind};
+    use std::collections::BTreeMap;
+
+    fn demo_spec(name: &str) -> ToolSpec {
+        ToolSpec {
+            name: name.to_string(),
+            identity: ToolIdentity {
+                source: ToolSource::BuiltIn,
+                namespace: None,
+                wire_name: name.to_string(),
+            },
+            description: format!("demo spec for {name}"),
+            parameters: serde_json::json!({"type": "object"}),
+            mutating: false,
+            execution_policy: ToolExecutionPolicy::Sequential,
+            requires_approval: false,
+            item_kind: TurnItemKind::ToolCall,
+            delta_kind: TurnItemDeltaKind::ToolOutput,
+            approval_reason: None,
+        }
+    }
+
+    #[test]
+    fn next_round_visible_tools_include_deferred_hits_from_tool_search() {
+        let default_tools = vec![demo_spec("search_workspace"), demo_spec("tool_search")];
+        let deferred_tool = demo_spec("read_file_bytes");
+        let deferred_tool_map = BTreeMap::from([(
+            deferred_tool.identity.wire_name.clone(),
+            deferred_tool.clone(),
+        )]);
+
+        let visible = compose_visible_tool_specs(
+            &default_tools,
+            &deferred_tool_map,
+            &["read_file_bytes".to_string()],
+        );
+
+        assert_eq!(
+            visible
+                .iter()
+                .map(|spec| spec.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["search_workspace", "tool_search", "read_file_bytes"]
+        );
+    }
+
+    #[test]
+    fn discoverable_tools_exclude_already_exposed_deferred_hits() {
+        let deferred_tool_map = BTreeMap::from([
+            ("read_file_bytes".to_string(), demo_spec("read_file_bytes")),
+            ("write_file_bytes".to_string(), demo_spec("write_file_bytes")),
+        ]);
+
+        let discoverable =
+            collect_discoverable_tools(&deferred_tool_map, &["read_file_bytes".to_string()]);
+
+        assert_eq!(
+            discoverable
+                .iter()
+                .map(|spec| spec.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["write_file_bytes"]
+        );
+    }
 }

@@ -34,7 +34,10 @@ impl TextReadOptions {
 pub(crate) struct TextReadResult {
     pub(crate) rendered: String,
     pub(crate) source_char_count: usize,
+    pub(crate) rendered_char_count: usize,
     pub(crate) end_line: Option<usize>,
+    pub(crate) returned_line_count: usize,
+    pub(crate) total_line_count: usize,
     pub(crate) truncated: bool,
 }
 
@@ -81,8 +84,10 @@ pub(crate) async fn read_text_snippet(
     };
     let text = decoded.text;
     let source_char_count = text.chars().count();
+    let total_line_count = text.lines().count();
     let mut truncated = false;
     let mut rendered_lines = Vec::new();
+    let mut rendered_char_count = 0usize;
     let mut end_line = None;
 
     for (idx, line) in text
@@ -95,7 +100,15 @@ pub(crate) async fn read_text_snippet(
             break;
         }
         let line_number = idx + 1;
-        rendered_lines.push(render_line(line_number, line, options.include_line_numbers));
+        let rendered_line = render_line(line_number, line, options.include_line_numbers);
+        let line_chars = rendered_line.chars().count();
+        let separator_chars = usize::from(!rendered_lines.is_empty());
+        if rendered_char_count + separator_chars + line_chars > options.max_chars {
+            truncated = true;
+            break;
+        }
+        rendered_char_count += separator_chars + line_chars;
+        rendered_lines.push(rendered_line);
         end_line = Some(line_number);
     }
 
@@ -107,11 +120,6 @@ pub(crate) async fn read_text_snippet(
     }
 
     let mut rendered = rendered_lines.join("\n");
-    let rendered_char_count = rendered.chars().count();
-    if rendered_char_count > options.max_chars {
-        rendered = rendered.chars().take(options.max_chars).collect::<String>();
-        truncated = true;
-    }
     if truncated {
         if !rendered.is_empty() {
             rendered.push_str("\n");
@@ -122,7 +130,10 @@ pub(crate) async fn read_text_snippet(
     Ok(Ok(TextReadResult {
         rendered,
         source_char_count,
+        rendered_char_count,
         end_line,
+        returned_line_count: rendered_lines.len(),
+        total_line_count,
         truncated,
     }))
 }
@@ -171,6 +182,35 @@ mod tests {
 
         assert_eq!(result.rendered, "     2  beta\n[truncated]");
         assert!(result.truncated);
+        assert_eq!(result.returned_line_count, 1);
+        assert_eq!(result.total_line_count, 3);
+    }
+
+    #[tokio::test]
+    async fn text_read_truncates_on_line_boundaries_for_char_limit() {
+        let path = temp_file_path("text_read_char_boundary.txt");
+        tokio::fs::write(&path, "alpha\nbeta\ngamma\n")
+            .await
+            .expect("write");
+
+        let result = read_text_snippet(
+            &path,
+            &TextReadOptions {
+                start_line: 1,
+                max_lines: 10,
+                max_chars: 20,
+                max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+                include_line_numbers: true,
+            },
+        )
+        .await
+        .expect("read ok")
+        .expect("text file");
+
+        assert_eq!(result.rendered, "     1  alpha\n[truncated]");
+        assert_eq!(result.end_line, Some(1));
+        assert!(result.truncated);
+        assert_eq!(result.rendered_char_count, "     1  alpha".chars().count());
     }
 
     #[tokio::test]

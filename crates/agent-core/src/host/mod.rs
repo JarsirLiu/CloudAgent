@@ -2,9 +2,8 @@ mod agent;
 
 use crate::{
     AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy, ChatModel,
-    ConversationHistory,
-    ConversationSummary, ExecutionPolicy, PermissionProfile, RegularTurnSettings, RolloutItem,
-    ToolBackend,
+    ConversationHistory, ConversationSummary, ExecutionPolicy, PermissionProfile,
+    RegularTurnSettings, RolloutItem, ToolBackend,
 };
 use anyhow::Result;
 use async_trait::async_trait;
