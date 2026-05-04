@@ -132,6 +132,9 @@ impl LocalTool for ReadFilesLocalTool {
                         crate::impls::repo::text_read::TextReadFailure::TooLarge { .. } => {
                             ReadFileStatus::TooLarge
                         }
+                        crate::impls::repo::text_read::TextReadFailure::UnsupportedEncoding(_) => {
+                            ReadFileStatus::UnsupportedEncoding
+                        }
                     };
                     reads.push(ReadFileEntry {
                         path: path.display().to_string(),

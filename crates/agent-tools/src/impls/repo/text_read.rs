@@ -1,3 +1,4 @@
+use crate::impls::text_codec::{decode_text_file, TextDecodeFailure};
 use anyhow::{Context, Result};
 use std::path::Path;
 
@@ -41,6 +42,7 @@ pub(crate) struct TextReadResult {
 pub(crate) enum TextReadFailure {
     Binary,
     TooLarge { bytes: usize, limit: usize },
+    UnsupportedEncoding(TextDecodeFailure),
 }
 
 impl TextReadFailure {
@@ -50,6 +52,7 @@ impl TextReadFailure {
             Self::TooLarge { bytes, limit } => {
                 format!("[file omitted: {bytes} bytes exceeds {limit} byte read limit]")
             }
+            Self::UnsupportedEncoding(reason) => reason.render().to_string(),
         }
     }
 }
@@ -72,7 +75,11 @@ pub(crate) async fn read_text_snippet(
         }));
     }
 
-    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let decoded = match decode_text_file(&bytes) {
+        Ok(decoded) => decoded,
+        Err(err) => return Ok(Err(TextReadFailure::UnsupportedEncoding(err))),
+    };
+    let text = decoded.text;
     let source_char_count = text.chars().count();
     let mut truncated = false;
     let mut rendered_lines = Vec::new();
@@ -178,6 +185,23 @@ mod tests {
             .expect("read ok");
 
         assert!(matches!(result, Err(TextReadFailure::Binary)));
+    }
+
+    #[tokio::test]
+    async fn text_read_rejects_unsupported_encoding_without_lossy_decode() {
+        let path = temp_file_path("text_read_unsupported_encoding.txt");
+        tokio::fs::write(&path, [0xD6_u8, 0xD0, 0xCE, 0xC4])
+            .await
+            .expect("write");
+
+        let result = read_text_snippet(&path, &TextReadOptions::for_single_file(200, None, None))
+            .await
+            .expect("read ok");
+
+        assert!(matches!(
+            result,
+            Err(TextReadFailure::UnsupportedEncoding(_))
+        ));
     }
 
     fn temp_file_path(name: &str) -> std::path::PathBuf {

@@ -8,6 +8,8 @@ use anyhow::Result;
 use config::AgentConfig;
 use infra_http::OpenAiCompatibleModel;
 use infra_store::{JsonConversationStore, RolloutRecorder};
+use std::env;
+use std::path::Path;
 use std::sync::Arc;
 
 pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
@@ -47,7 +49,7 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         conversation_store_dir: config.runtime.conversation_store_dir.clone(),
         cli_pre_llm_filter_enabled: config.cli.pre_llm_filter_enabled,
         cli_permission_mode: config.cli.permission_mode.clone(),
-        shell_name: default_shell_name().to_string(),
+        shell_name: default_shell_name(),
         system_prompt: config.runtime.system_prompt.clone(),
     };
     let model = Arc::new(OpenAiCompatibleModel::new(config.llm.clone())?);
@@ -73,6 +75,38 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     })))
 }
 
-fn default_shell_name() -> &'static str {
-    if cfg!(windows) { "powershell" } else { "sh" }
+fn default_shell_name() -> String {
+    if cfg!(windows) {
+        preferred_windows_shell().unwrap_or_else(|| "powershell".to_string())
+    } else {
+        "sh".to_string()
+    }
+}
+
+fn preferred_windows_shell() -> Option<String> {
+    for candidate in ["pwsh.exe", "pwsh", "powershell.exe", "powershell"] {
+        if command_exists(candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+fn command_exists(candidate: &str) -> bool {
+    if candidate.contains('\\') || candidate.contains('/') {
+        return Path::new(candidate).exists();
+    }
+    let Some(path_value) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&path_value).any(|dir| {
+        let direct = dir.join(candidate);
+        if direct.exists() {
+            return true;
+        }
+        if direct.extension().is_none() {
+            return dir.join(format!("{candidate}.exe")).exists();
+        }
+        false
+    })
 }

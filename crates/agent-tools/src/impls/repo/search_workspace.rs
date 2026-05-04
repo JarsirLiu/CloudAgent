@@ -1,4 +1,5 @@
 use super::common::{collect_repo_entries, sort_ranked_paths};
+use crate::impls::text_codec::decode_text_file;
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
@@ -485,7 +486,10 @@ async fn run_text_search(
             if bytes.contains(&0) {
                 continue;
             }
-            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let Ok(decoded) = decode_text_file(&bytes) else {
+                continue;
+            };
+            let text = decoded.text;
             let lines = text.lines().collect::<Vec<_>>();
             for (index, line) in lines.iter().enumerate() {
                 if !line_matches(line, &query_for_search, case_sensitive) {

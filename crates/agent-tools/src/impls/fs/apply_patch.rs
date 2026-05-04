@@ -1,3 +1,4 @@
+use crate::impls::text_codec::{LineEnding, decode_text_file, encode_text_file};
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
@@ -74,7 +75,7 @@ impl LocalTool for ApplyPatchLocalTool {
                         anyhow::bail!("cannot determine parent directory for {}", path.display());
                     };
                     fs::create_dir_all(parent).await?;
-                    fs::write(&path, next).await?;
+                    fs::write(&path, next.as_bytes()).await?;
                     changed_files.insert(new_path.to_string());
                 }
                 (old_path, "/dev/null") => {
@@ -95,11 +96,18 @@ impl LocalTool for ApplyPatchLocalTool {
                     if !path.exists() {
                         anyhow::bail!("refusing to update missing file {}", path.display());
                     }
-                    let current = fs::read_to_string(&path).await?;
-                    let next = apply_hunks(&current, &file_patch.hunks).map_err(|err| {
+                    let current_bytes = fs::read(&path).await?;
+                    let decoded = decode_text_file(&current_bytes).map_err(|err| {
+                        anyhow::anyhow!(
+                            "failed to apply patch for {}: {}",
+                            new_path,
+                            err.render()
+                        )
+                    })?;
+                    let next = apply_hunks(&decoded.text, decoded.line_ending, &file_patch.hunks).map_err(|err| {
                         anyhow::anyhow!("failed to apply patch for {}: {err}", new_path)
                     })?;
-                    if next != current {
+                    if next != decoded.text {
                         let Some(parent) = path.parent() else {
                             anyhow::bail!(
                                 "cannot determine parent directory for {}",
@@ -107,7 +115,7 @@ impl LocalTool for ApplyPatchLocalTool {
                             );
                         };
                         fs::create_dir_all(parent).await?;
-                        fs::write(&path, next).await?;
+                        fs::write(&path, encode_text_file(&decoded, &next)).await?;
                         changed_files.insert(new_path.to_string());
                     }
                 }
@@ -296,15 +304,15 @@ fn render_hunks_as_new_file(hunks: &[Hunk]) -> anyhow::Result<String> {
     Ok(lines.join("\n"))
 }
 
-fn apply_hunks(original: &str, hunks: &[Hunk]) -> anyhow::Result<String> {
+fn apply_hunks(original: &str, line_ending: LineEnding, hunks: &[Hunk]) -> anyhow::Result<String> {
     let mut content = original.to_string();
     for hunk in hunks {
-        content = apply_single_hunk(&content, hunk)?;
+        content = apply_single_hunk(&content, line_ending, hunk)?;
     }
     Ok(content)
 }
 
-fn apply_single_hunk(content: &str, hunk: &Hunk) -> anyhow::Result<String> {
+fn apply_single_hunk(content: &str, line_ending: LineEnding, hunk: &Hunk) -> anyhow::Result<String> {
     let mut old_block: Vec<String> = Vec::new();
     let mut new_block: Vec<String> = Vec::new();
     for line in &hunk.lines {
@@ -330,9 +338,9 @@ fn apply_single_hunk(content: &str, hunk: &Hunk) -> anyhow::Result<String> {
     let end = start + old_block.len();
     lines.splice(start..end, new_block);
 
-    let mut next = lines.join("\n");
+    let mut next = lines.join(line_ending.as_str());
     if has_trailing_newline {
-        next.push('\n');
+        next.push_str(line_ending.as_str());
     }
     Ok(next)
 }
@@ -485,8 +493,68 @@ mod tests {
             lines: vec!["-same".to_string(), "+changed".to_string()],
         };
 
-        let err = apply_single_hunk(content, &hunk).expect_err("should reject missing position");
+        let err =
+            apply_single_hunk(content, LineEnding::Lf, &hunk).expect_err("should reject missing position");
         assert!(err.to_string().contains("missing a source line position"));
+    }
+
+    #[tokio::test]
+    async fn apply_patch_preserves_crlf_line_endings() {
+        let base = test_workspace("apply_patch_preserves_crlf_line_endings");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), b"fn a() {\r\n    println!(\"same\");\r\n}\r\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        tool.invoke(
+            tool_invocation(serde_json::json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@ -1,3 +1,3 @@\n fn a() {\n-    println!(\"same\");\n+    println!(\"changed\");\n }\n*** End Patch"
+            })),
+            &ctx,
+        )
+        .await
+        .expect("apply patch");
+
+        let updated = fs::read(base.join("src/lib.rs")).await.expect("read updated file");
+        assert_eq!(
+            String::from_utf8(updated).expect("utf8"),
+            "fn a() {\r\n    println!(\"changed\");\r\n}\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_preserves_utf8_bom() {
+        let base = test_workspace("apply_patch_preserves_utf8_bom");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(
+            base.join("src/lib.rs"),
+            [0xEF, 0xBB, 0xBF]
+                .into_iter()
+                .chain(b"fn a() {\n    println!(\"same\");\n}\n".iter().copied())
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        tool.invoke(
+            tool_invocation(serde_json::json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@ -1,3 +1,3 @@\n fn a() {\n-    println!(\"same\");\n+    println!(\"changed\");\n }\n*** End Patch"
+            })),
+            &ctx,
+        )
+        .await
+        .expect("apply patch");
+
+        let updated = fs::read(base.join("src/lib.rs")).await.expect("read updated file");
+        assert!(updated.starts_with(&[0xEF, 0xBB, 0xBF]));
     }
 
     fn test_workspace(name: &str) -> PathBuf {

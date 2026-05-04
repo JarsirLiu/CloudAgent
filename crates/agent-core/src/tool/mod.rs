@@ -308,6 +308,7 @@ pub enum ReadFileStatus {
     Ok,
     Binary,
     TooLarge,
+    UnsupportedEncoding,
     Failed,
 }
 
