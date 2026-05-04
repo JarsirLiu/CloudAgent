@@ -4,7 +4,7 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
-use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
+use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
 use agent_protocol::SearchWorkspaceHit;
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -64,6 +64,7 @@ impl SearchWorkspaceTool {
                     }
                 }),
                 mutating: false,
+                execution_policy: ToolExecutionPolicy::ParallelSafe,
                 requires_approval: false,
                 item_kind: agent_protocol::TurnItemKind::ToolCall,
                 delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,

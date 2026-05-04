@@ -1,4 +1,4 @@
-use agent_core::{PermissionProfile, TaskKind, ToolMode, ToolSpec};
+use agent_core::{PermissionProfile, TaskKind, ToolExecutionPolicy, ToolMode, ToolSpec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolCategory {
@@ -39,7 +39,6 @@ pub struct ToolDescriptor {
     pub category: ToolCategory,
     pub risk: ToolRisk,
     pub min_permission: ToolPermissionTier,
-    pub supports_parallel_calls: bool,
     pub mode_tags: Vec<&'static str>,
     pub usage: ToolUsageGuidance,
     pub spec: ToolSpec,
@@ -88,11 +87,15 @@ impl ToolDescriptor {
         mut spec: ToolSpec,
     ) -> Self {
         spec.description = render_tool_description(&spec.description, &usage);
+        spec.execution_policy = if supports_parallel_calls && !spec.mutating {
+            ToolExecutionPolicy::ParallelSafe
+        } else {
+            ToolExecutionPolicy::Sequential
+        };
         Self {
             category,
             risk,
             min_permission,
-            supports_parallel_calls,
             mode_tags,
             usage,
             spec,
@@ -169,6 +172,7 @@ mod tests {
                 description: "Base description.".to_string(),
                 parameters: json!({"type": "object"}),
                 mutating: false,
+                execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: false,
                 item_kind: TurnItemKind::ToolCall,
                 delta_kind: TurnItemDeltaKind::ToolOutput,
@@ -224,6 +228,7 @@ mod tests {
                 description: "Base description.".to_string(),
                 parameters: json!({"type": "object"}),
                 mutating: false,
+                execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: false,
                 item_kind: TurnItemKind::ToolCall,
                 delta_kind: TurnItemDeltaKind::ToolOutput,

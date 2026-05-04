@@ -48,7 +48,7 @@ pub use tool::{
     ApprovalGrantKey, ApprovalRequirement, CommandExecutionStatus, McpCallResult, ParallelToolInvocation,
     ParallelToolResult, ReadFileEntry, ReadFileStatus, ResolvedToolSet, SearchWorkspaceHit,
     SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
-    TaskKind, ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolEvent, ToolExecutor,
+    TaskKind, ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolEvent, ToolExecutionPolicy, ToolExecutor,
     ToolIdentity, ToolMode, ToolOutputDelta, ToolOutputStream, ToolResult, ToolSource, ToolSpec,
     ToolSurface, WriteFileStatus, execute_tool_call_streaming, run_parallel_tool_invocations,
     summarize_arguments,

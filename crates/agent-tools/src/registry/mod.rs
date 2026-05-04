@@ -94,9 +94,6 @@ impl ToolRegistry {
             permission_profile,
         );
         for spec in self.mcp.descriptor_specs() {
-            if self.mcp.supports_parallel_tool(&spec.identity.wire_name) {
-                resolved.mark_parallel_tool(spec.identity.wire_name.clone());
-            }
             resolved.specs.push(spec);
         }
         resolved
@@ -106,7 +103,7 @@ impl ToolRegistry {
         self.descriptors
             .iter()
             .find(|descriptor| descriptor.spec.identity.wire_name == tool_name)
-            .is_some_and(|descriptor| descriptor.supports_parallel_calls)
+            .is_some_and(|descriptor| descriptor.spec.execution_policy.supports_parallel())
             || self.mcp.supports_parallel_tool(tool_name)
     }
 
@@ -124,9 +121,7 @@ impl ToolRegistry {
                     .find(|descriptor| {
                         descriptor.spec.identity.wire_name == call.identity.wire_name
                     })
-                    .is_some_and(|descriptor| {
-                        !descriptor.spec.mutating && descriptor.supports_parallel_calls
-                    })
+                    .is_some_and(|descriptor| descriptor.spec.execution_policy.supports_parallel())
                     || self.mcp.supports_parallel_tool(&call.identity.wire_name)
             })
         {
@@ -386,6 +381,7 @@ mod tests {
                 description: "demo mcp tool".to_string(),
                 parameters: serde_json::json!({"type": "object"}),
                 mutating: false,
+                execution_policy: agent_core::ToolExecutionPolicy::Sequential,
                 requires_approval: false,
                 item_kind: TurnItemKind::ToolCall,
                 delta_kind: TurnItemDeltaKind::ToolOutput,

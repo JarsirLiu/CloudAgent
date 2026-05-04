@@ -2,7 +2,8 @@ use crate::registry::shared::{
     LocalToolInvocation, LocalToolPayload, LocalToolSource, ToolInvocationOutput,
 };
 use agent_core::{
-    McpCallResult, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind,
+    McpCallResult, ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind,
+    TurnItemKind,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -42,7 +43,6 @@ pub struct McpToolDescriptor {
     pub server: String,
     pub tool: String,
     pub spec: ToolSpec,
-    pub supports_parallel_calls: bool,
 }
 
 impl McpToolDescriptor {
@@ -54,12 +54,16 @@ impl McpToolDescriptor {
         supports_parallel_calls: bool,
     ) -> Self {
         spec.identity = ToolIdentity::mcp(server.clone(), tool.clone(), wire_name.clone());
+        spec.execution_policy = if supports_parallel_calls && !spec.mutating {
+            ToolExecutionPolicy::ParallelSafe
+        } else {
+            ToolExecutionPolicy::Sequential
+        };
         Self {
             wire_name,
             server,
             tool,
             spec,
-            supports_parallel_calls,
         }
     }
 }
@@ -77,6 +81,7 @@ impl McpDiscoveredTool {
                 description: self.description,
                 parameters: self.parameters,
                 mutating: self.mutating,
+                execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: self.requires_approval,
                 item_kind: self.item_kind,
                 delta_kind: self.delta_kind,
@@ -296,4 +301,3 @@ fn sanitize_segment(value: &str) -> String {
 
     result.trim_matches('_').to_string()
 }
-

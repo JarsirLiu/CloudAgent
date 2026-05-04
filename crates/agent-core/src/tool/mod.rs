@@ -5,7 +5,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeSet;
 use std::path::Path;
 
 mod batch;
@@ -82,12 +81,26 @@ impl ToolIdentity {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolExecutionPolicy {
+    Sequential,
+    ParallelSafe,
+}
+
+impl ToolExecutionPolicy {
+    pub fn supports_parallel(&self) -> bool {
+        matches!(self, Self::ParallelSafe)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,
     pub identity: ToolIdentity,
     pub description: String,
     pub parameters: Value,
     pub mutating: bool,
+    pub execution_policy: ToolExecutionPolicy,
     pub requires_approval: bool,
     pub item_kind: TurnItemKind,
     pub delta_kind: TurnItemDeltaKind,
@@ -97,7 +110,6 @@ pub struct ToolSpec {
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedToolSet {
     pub specs: Vec<ToolSpec>,
-    parallel_tool_names: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -130,18 +142,14 @@ impl ApprovalRequirement {
 
 impl ResolvedToolSet {
     pub fn new(specs: Vec<ToolSpec>) -> Self {
-        Self {
-            specs,
-            parallel_tool_names: BTreeSet::new(),
-        }
+        Self { specs }
     }
 
     pub fn supports_parallel_tool(&self, tool_name: &str) -> bool {
-        self.parallel_tool_names.contains(tool_name)
-    }
-
-    pub fn mark_parallel_tool(&mut self, tool_name: String) {
-        self.parallel_tool_names.insert(tool_name);
+        self.specs
+            .iter()
+            .find(|spec| spec.identity.wire_name == tool_name)
+            .is_some_and(|spec| spec.execution_policy.supports_parallel())
     }
 }
 

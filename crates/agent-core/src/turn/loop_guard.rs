@@ -174,7 +174,7 @@ fn find_latest_result(
 mod tests {
     use super::*;
     use crate::conversation::ConversationHistory;
-    use crate::tool::{StructuredToolResult, ToolIdentity};
+    use crate::tool::{StructuredToolResult, ToolExecutionPolicy, ToolIdentity};
     use crate::turn::{TurnItemDeltaKind, TurnItemKind};
     use serde_json::json;
 
@@ -185,6 +185,7 @@ mod tests {
             description: String::new(),
             parameters: json!({}),
             mutating: false,
+            execution_policy: ToolExecutionPolicy::Sequential,
             requires_approval: false,
             item_kind: TurnItemKind::ToolCall,
             delta_kind: TurnItemDeltaKind::ToolOutput,

@@ -3,7 +3,7 @@ use crate::registry::shared::{
     resolve_write_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
-use agent_core::{ToolExecutionContext, ToolIdentity, ToolOutputStream, ToolSpec};
+use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolOutputStream, ToolSpec};
 use agent_protocol::{CommandExecutionStatus, StructuredToolResult};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -63,6 +63,7 @@ impl ExecCommandTool {
                     }
                 }),
                 mutating: true,
+                execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: true,
                 item_kind: agent_protocol::TurnItemKind::CommandExecution,
                 delta_kind: agent_protocol::TurnItemDeltaKind::CommandExecutionOutput,

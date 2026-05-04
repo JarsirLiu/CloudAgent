@@ -5,7 +5,7 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
-use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
+use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -98,6 +98,7 @@ impl EditFileTool {
                     "required": ["path", "edits"]
                 }),
                 mutating: true,
+                execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: true,
                 item_kind: agent_protocol::TurnItemKind::FileChange,
                 delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
