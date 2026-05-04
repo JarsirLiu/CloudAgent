@@ -133,29 +133,23 @@ impl LocalTool for ReadFilesLocalTool {
             .await?;
             let content = match read_result {
                 Ok(text) => {
-                    let mut version_token = None;
+                    let version_token = tokio::fs::read(&path)
+                        .await
+                        .ok()
+                        .map(|bytes| version_token_for_bytes(&bytes));
+                    let is_partial_view =
+                        text.truncated || args.start_line.unwrap_or(1) > 1 || args.max_lines.is_some();
                     if text.truncated {
                         truncated_count += 1;
-                        self.read_state
-                            .record_partial(&ctx.conversation_id, &path)
-                            .await;
-                    } else if args.start_line.unwrap_or(1) == 1 {
-                        if let Ok(bytes) = tokio::fs::read(&path).await {
-                            let token = version_token_for_bytes(&bytes);
-                            version_token = Some(token.clone());
-                            self.read_state
-                                .record_full(&ctx.conversation_id, &path, token)
-                                .await;
-                        } else {
-                            self.read_state
-                                .record_partial(&ctx.conversation_id, &path)
-                                .await;
-                        }
-                    } else {
-                        self.read_state
-                            .record_partial(&ctx.conversation_id, &path)
-                            .await;
                     }
+                    self.read_state
+                        .record_snapshot(
+                            &ctx.conversation_id,
+                            &path,
+                            version_token.clone(),
+                            is_partial_view,
+                        )
+                        .await;
                     total_chars += text.source_char_count;
                     reads.push(ReadFileEntry {
                         path: path.display().to_string(),

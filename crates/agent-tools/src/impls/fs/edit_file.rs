@@ -34,7 +34,7 @@ Rules:
 - Use relative workspace paths only
 - Every edit's `old_string` and `new_string` must differ
 - If the target file does not exist, provide exactly one edit with `old_string: ""` to create it
-- Existing files must have been fully read earlier in this conversation and still match that read version
+- Existing files must have a prior `read_files` witness in this conversation, and the current file must still match that witnessed version
 - Use the smallest exact `old_string` that is still unique, usually 2-4 adjacent lines
 - Preserve exact indentation and do not include the leading line numbers shown by `read_files`
 - If `replace_all` is false, `old_string` must match exactly once at the moment that edit runs
@@ -220,13 +220,13 @@ impl EditFileLocalTool {
             .await?
         else {
             bail!(
-                "edit_file requires a prior full read of {}; run `read_files` on the file before editing",
+                "edit_file requires a prior `read_files` witness for {}; run `read_files` on the file before editing",
                 path.display()
             );
         };
-        if snapshot.is_partial_view {
+        if snapshot.version_token.is_none() {
             bail!(
-                "latest available read of {} was partial or truncated; rerun `read_files` on the full file before editing",
+                "latest available read of {} did not capture a reusable file version; rerun `read_files` on the file before editing",
                 path.display()
             );
         }
@@ -730,6 +730,40 @@ mod tests {
             err.to_string()
                 .contains("file changed since it was last read")
         );
+    }
+
+    #[tokio::test]
+    async fn edit_file_accepts_partial_read_witness_when_version_matches() {
+        let base = test_workspace("edit_file_accepts_partial_read_witness_when_version_matches");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        let path = base.join("src/lib.rs");
+        fs::write(&path, "line1\nline2\nline3\n").await.expect("write");
+
+        let read_state = FileReadStateStore::new();
+        let bytes = fs::read(&path).await.expect("read file for token");
+        let token = version_token_for_bytes(&bytes);
+        read_state
+            .record_snapshot("test", &path, Some(token), true)
+            .await;
+
+        let tool = EditFileLocalTool { read_state };
+        tool.invoke(
+            tool_invocation(serde_json::json!({
+                "path": "src/lib.rs",
+                "edits": [{
+                    "old_string": "line2\n",
+                    "new_string": "changed\n"
+                }]
+            })),
+            &tool_context(&base),
+        )
+        .await
+        .expect("edit file");
+
+        let updated = fs::read_to_string(&path).await.expect("read file");
+        assert_eq!(updated, "line1\nchanged\nline3\n");
     }
 
     #[tokio::test]

@@ -27,24 +27,31 @@ impl FileReadStateStore {
         Self::default()
     }
 
-    pub(crate) async fn record_partial(&self, conversation_id: &str, path: &Path) {
+    pub(crate) async fn record_snapshot(
+        &self,
+        conversation_id: &str,
+        path: &Path,
+        version_token: Option<String>,
+        is_partial_view: bool,
+    ) {
         let path_key = canonical_path_key(path);
         let mut guard = self.inner.lock().await;
         let conversation = guard
             .conversations
             .entry(conversation_id.to_string())
             .or_default();
-        if conversation
-            .get(&path_key)
-            .is_some_and(|snapshot| !snapshot.is_partial_view)
+        if version_token.is_none()
+            && conversation
+                .get(&path_key)
+                .is_some_and(|snapshot| snapshot.version_token.is_some())
         {
             return;
         }
         conversation.insert(
             path_key,
             FileReadSnapshot {
-                version_token: None,
-                is_partial_view: true,
+                version_token,
+                is_partial_view,
             },
         );
     }
@@ -55,19 +62,8 @@ impl FileReadStateStore {
         path: &Path,
         version_token: String,
     ) {
-        let path_key = canonical_path_key(path);
-        let mut guard = self.inner.lock().await;
-        let conversation = guard
-            .conversations
-            .entry(conversation_id.to_string())
-            .or_default();
-        conversation.insert(
-            path_key,
-            FileReadSnapshot {
-                version_token: Some(version_token),
-                is_partial_view: false,
-            },
-        );
+        self.record_snapshot(conversation_id, path, Some(version_token), false)
+            .await;
     }
 
     pub(crate) async fn get(&self, conversation_id: &str, path: &Path) -> Option<FileReadSnapshot> {
@@ -150,10 +146,10 @@ impl FileReadStateStore {
             .entry(conversation_id.to_string())
             .or_default();
         for (path_key, snapshot) in restored {
-            if snapshot.is_partial_view
+            if snapshot.version_token.is_none()
                 && conversation
                     .get(&path_key)
-                    .is_some_and(|existing| !existing.is_partial_view)
+                    .is_some_and(|existing| existing.version_token.is_some())
             {
                 continue;
             }
@@ -185,17 +181,18 @@ fn apply_rollout_item_to_state(
                     continue;
                 }
                 let path_key = canonical_rollout_path_key(workspace_root, &read.path);
+                let is_partial_view = read.truncated || read.start_line.unwrap_or(1) > 1;
                 if let Some(version_token) = &read.version_token {
                     restored.insert(
                         path_key,
                         FileReadSnapshot {
                             version_token: Some(version_token.clone()),
-                            is_partial_view: false,
+                            is_partial_view,
                         },
                     );
                 } else if !restored
                     .get(&path_key)
-                    .is_some_and(|snapshot| !snapshot.is_partial_view)
+                    .is_some_and(|snapshot| snapshot.version_token.is_some())
                 {
                     restored.insert(
                         path_key,
@@ -382,6 +379,63 @@ mod tests {
             FileReadSnapshot {
                 version_token: Some("def456".to_string()),
                 is_partial_view: false,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_keeps_version_token_for_partial_read() {
+        let store_dir = temp_dir("restore_keeps_version_token_for_partial_read");
+        let conversation_id = "test";
+        let target_path = store_dir.join("src/lib.rs");
+        std::fs::create_dir_all(target_path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&target_path, "line1\nline2\nline3\n").expect("write file");
+
+        let rollout_path = store_dir.join(format!("{}.rollout.jsonl", conversation_id));
+        let items = vec![RolloutItem::ResponseItem {
+            item: ResponseItem::Tool {
+                tool_call_id: "call-1".to_string(),
+                name: "read_files".to_string(),
+                content: "partial".to_string(),
+                structured: Some(StructuredToolResult::ReadFiles {
+                    paths: vec![target_path.display().to_string()],
+                    start_line: Some(2),
+                    max_lines: Some(1),
+                    file_count: 1,
+                    failed_count: 0,
+                    truncated_count: 0,
+                    total_chars: 6,
+                    reads: vec![agent_core::ReadFileEntry {
+                        path: target_path.display().to_string(),
+                        start_line: Some(2),
+                        end_line: Some(2),
+                        truncated: false,
+                        char_count: 6,
+                        status: ReadFileStatus::Ok,
+                        version_token: Some("abc123".to_string()),
+                    }],
+                }),
+            },
+        }];
+        let rollout_text = items
+            .into_iter()
+            .map(|item| serde_json::to_string(&item).expect("serialize"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&rollout_path, rollout_text).expect("write rollout");
+
+        let store = FileReadStateStore::new();
+        let snapshot = store
+            .get_or_restore(conversation_id, &store_dir, &store_dir, &target_path)
+            .await
+            .expect("restore")
+            .expect("snapshot");
+
+        assert_eq!(
+            snapshot,
+            FileReadSnapshot {
+                version_token: Some("abc123".to_string()),
+                is_partial_view: true,
             }
         );
     }
