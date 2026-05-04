@@ -424,7 +424,7 @@ mod tests {
         pane.set_server_request(ServerRequestInlineState {
             request_id: RequestId::String("req-1".to_string()),
             title: "Run command?".to_string(),
-            detail: "shell_command".to_string(),
+            detail: "exec_command".to_string(),
         });
 
         let action = pane.handle_key(KeyEvent {
@@ -446,12 +446,12 @@ mod tests {
         pane.set_server_request(ServerRequestInlineState {
             request_id: RequestId::String("req-1".to_string()),
             title: "First command".to_string(),
-            detail: "shell_command".to_string(),
+            detail: "exec_command".to_string(),
         });
         pane.set_server_request(ServerRequestInlineState {
             request_id: RequestId::String("req-2".to_string()),
             title: "Second command".to_string(),
-            detail: "shell_command".to_string(),
+            detail: "exec_command".to_string(),
         });
 
         let first = pane.handle_key(KeyEvent {
@@ -491,12 +491,12 @@ mod tests {
         pane.set_server_request(ServerRequestInlineState {
             request_id: RequestId::String("req-1".to_string()),
             title: "First command".to_string(),
-            detail: "shell_command".to_string(),
+            detail: "exec_command".to_string(),
         });
         pane.set_server_request(ServerRequestInlineState {
             request_id: RequestId::String("req-2".to_string()),
             title: "Second command".to_string(),
-            detail: "shell_command".to_string(),
+            detail: "exec_command".to_string(),
         });
 
         let _ = pane.handle_key(KeyEvent {
@@ -519,7 +519,7 @@ mod tests {
         pane.set_server_request(ServerRequestInlineState {
             request_id: RequestId::String("req-1".to_string()),
             title: "Run command?".to_string(),
-            detail: "shell_command".to_string(),
+            detail: "exec_command".to_string(),
         });
 
         assert_eq!(

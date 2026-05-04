@@ -1,12 +1,12 @@
 use crate::impls::repo::text_read::{TextReadOptions, read_text_snippet};
-use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_read_path};
+use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
+use agent_protocol::{ReadFileEntry, ReadFileStatus};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::Value;
 use serde_json::json;
 
 pub struct ReadFilesTool;
@@ -75,10 +75,10 @@ impl LocalTool for ReadFilesLocalTool {
 
     async fn invoke(
         &self,
-        arguments: Value,
+        invocation: LocalToolInvocation,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
-        let args: ReadFilesArgs = serde_json::from_value(arguments)?;
+        let args: ReadFilesArgs = invocation.payload.parse_arguments()?;
         let mut requested_paths = Vec::new();
         if let Some(path) = args.path {
             requested_paths.push(path);
@@ -94,6 +94,8 @@ impl LocalTool for ReadFilesLocalTool {
         let per_file_chars = (self.max_read_chars / requested_paths.len().max(1)).max(512);
         let mut rendered = Vec::new();
         let mut normalized_paths = Vec::new();
+        let mut reads = Vec::new();
+        let mut failed_count = 0usize;
         let mut truncated_count = 0usize;
         let mut total_chars = 0usize;
 
@@ -111,9 +113,36 @@ impl LocalTool for ReadFilesLocalTool {
                         truncated_count += 1;
                     }
                     total_chars += text.source_char_count;
+                    reads.push(ReadFileEntry {
+                        path: path.display().to_string(),
+                        start_line: args.start_line.or(Some(1)),
+                        end_line: text.end_line,
+                        truncated: text.truncated,
+                        char_count: text.source_char_count,
+                        status: ReadFileStatus::Ok,
+                    });
                     text.rendered
                 }
-                Err(failure) => failure.render(),
+                Err(failure) => {
+                    failed_count += 1;
+                    let status = match &failure {
+                        crate::impls::repo::text_read::TextReadFailure::Binary => {
+                            ReadFileStatus::Binary
+                        }
+                        crate::impls::repo::text_read::TextReadFailure::TooLarge { .. } => {
+                            ReadFileStatus::TooLarge
+                        }
+                    };
+                    reads.push(ReadFileEntry {
+                        path: path.display().to_string(),
+                        start_line: args.start_line.or(Some(1)),
+                        end_line: None,
+                        truncated: false,
+                        char_count: 0,
+                        status,
+                    });
+                    failure.render()
+                }
             };
             rendered.push(format!("==> {} <==\n{}", path.display(), content));
         }
@@ -125,8 +154,10 @@ impl LocalTool for ReadFilesLocalTool {
                 start_line: args.start_line,
                 max_lines: args.max_lines,
                 file_count: requested_paths.len(),
+                failed_count,
                 truncated_count,
                 total_chars,
+                reads,
             }),
         })
     }

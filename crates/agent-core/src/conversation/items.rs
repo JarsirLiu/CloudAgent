@@ -35,7 +35,7 @@ pub enum TranscriptItem {
         tool_name: String,
         path: String,
         status: WriteFileStatus,
-        bytes_written: usize,
+        files_changed: usize,
         summary: String,
     },
     ToolResult {

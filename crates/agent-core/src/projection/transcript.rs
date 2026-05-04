@@ -452,7 +452,7 @@ fn transcript_item_from_item_start(
             tool_name: "apply_patch".to_string(),
             path: title,
             status: crate::tool::WriteFileStatus::InProgress,
-            bytes_written: 0,
+            files_changed: 0,
             summary: String::new(),
         }),
         TurnItemKind::ToolCall | TurnItemKind::ToolResult => Some(TranscriptItem::ToolResult {
@@ -652,7 +652,7 @@ fn transcript_item_from_tool_response(
             tool_name: name.to_string(),
             path: changed_paths.join(", "),
             status: status.clone(),
-            bytes_written: *files_changed,
+            files_changed: *files_changed,
             summary: content.to_string(),
         },
         structured => TranscriptItem::ToolResult {

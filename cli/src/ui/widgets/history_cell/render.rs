@@ -62,7 +62,7 @@ fn summarize_command_execution(
     exit_code: Option<i32>,
     detail: Option<&str>,
 ) -> String {
-    let kind = summarize_shell_command_kind(command);
+    let kind = summarize_exec_command_kind(command);
     let command = compact_inline(command, 56);
     let cwd = compact_path(current_directory, 36);
     match status {
@@ -216,7 +216,7 @@ fn exit_suffix(exit_code: Option<i32>) -> String {
         .unwrap_or_default()
 }
 
-fn summarize_shell_command_kind(command: &str) -> &'static str {
+fn summarize_exec_command_kind(command: &str) -> &'static str {
     let normalized = command.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return "command";

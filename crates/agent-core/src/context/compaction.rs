@@ -676,7 +676,7 @@ fn dedupe_limit(lines: Vec<String>, limit: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::ToolCall;
+    use crate::tool::{CommandExecutionStatus, StructuredToolResult, ToolCall};
     use serde_json::json;
 
     #[test]
@@ -747,7 +747,18 @@ mod tests {
                 tool_call_id: format!("call-{i}"),
                 name: "exec_command".to_string(),
                 content: "ok".to_string(),
-                structured: None,
+                structured: Some(StructuredToolResult::CommandExecution {
+                    command: "echo test".to_string(),
+                    current_directory: "D:\\work".to_string(),
+                    session_id: None,
+                    status: CommandExecutionStatus::Completed,
+                    exit_code: Some(0),
+                    success: Some(true),
+                    stdout: Some("ok".to_string()),
+                    stderr: Some(String::new()),
+                    aggregated_output: Some("ok".to_string()),
+                    duration_ms: Some(1),
+                }),
             });
         }
         let tail_before = messages[messages.len().saturating_sub(6)..].to_vec();
@@ -805,7 +816,18 @@ mod tests {
                 tool_call_id: "call-1".to_string(),
                 name: "exec_command".to_string(),
                 content: format!("D:/learn/gifti/cloudagent {}", "z".repeat(80)),
-                structured: None,
+                structured: Some(StructuredToolResult::CommandExecution {
+                    command: "pwd".to_string(),
+                    current_directory: "D:/learn/gifti/cloudagent".to_string(),
+                    session_id: None,
+                    status: CommandExecutionStatus::Completed,
+                    exit_code: Some(0),
+                    success: Some(true),
+                    stdout: Some("D:/learn/gifti/cloudagent".to_string()),
+                    stderr: Some(String::new()),
+                    aggregated_output: Some("D:/learn/gifti/cloudagent".to_string()),
+                    duration_ms: Some(1),
+                }),
             },
             ResponseItem::User {
                 content: format!("continue {}", "q".repeat(80)),

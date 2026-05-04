@@ -11,7 +11,7 @@ catalog policy, runtime orchestration, or storage logic.
 - JSON-RPC envelope types
 - request and response payload types
 - exported protocol-facing enums and structs used by clients
-- compatibility re-exports that make the agent surface easier to consume across crates
+- protocol-facing re-exports that keep the wire contract easy to consume across crates
 
 ## Non-Responsibilities
 

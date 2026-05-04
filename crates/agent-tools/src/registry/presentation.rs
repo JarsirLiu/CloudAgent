@@ -41,7 +41,7 @@ pub(crate) fn transcript_item_from_tool_result(
             tool_name: tool_name.to_string(),
             path: changed_paths.join(", "),
             status: status.clone(),
-            bytes_written: *files_changed,
+            files_changed: *files_changed,
             summary: result.content.clone(),
         },
         _ => TranscriptItem::ToolResult {
@@ -93,7 +93,7 @@ pub(crate) fn denied_transcript_item(
             tool_name: tool_name.to_string(),
             path: changed_paths.join(", "),
             status,
-            bytes_written: files_changed,
+            files_changed,
             summary: reason.to_string(),
         },
         structured => TranscriptItem::ToolResult {

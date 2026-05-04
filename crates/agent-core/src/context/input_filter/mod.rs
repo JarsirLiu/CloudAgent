@@ -161,11 +161,12 @@ fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult)
         StructuredToolResult::ReadFiles {
             paths,
             file_count,
+            failed_count,
             truncated_count,
             total_chars,
             ..
         } => format!(
-            "[rtk:read_files]\ntool: {tool_name}\npaths: {}\nstatus: superseded by a newer read\nfiles: {file_count}\ntruncated_files: {truncated_count}\ntotal_chars: {total_chars}",
+            "[rtk:read_files]\ntool: {tool_name}\npaths: {}\nstatus: superseded by a newer read\nfiles: {file_count}\nfailed_files: {failed_count}\ntruncated_files: {truncated_count}\ntotal_chars: {total_chars}",
             paths.join(", ")
         ),
         StructuredToolResult::ListDirectory {
@@ -202,8 +203,11 @@ fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult)
             match_count,
             file_count,
             truncated,
+            next_offset,
+            ..
         } => format!(
-            "[rtk:search_workspace]\ntool: {tool_name}\nsession_id: {session_id}\noperation: {operation:?}\nmode: {mode:?}\nstatus: {status:?}\nquery: {query}\npath_scope: {}\ncase_sensitive: {case_sensitive}\ncontext_lines: {context_lines}\noffset: {offset}\nmax_results: {max_results}\nstatus_detail: superseded by newer search results\nfiles: {file_count}\nmatches: {match_count}\ntruncated: {truncated}",
+            "[rtk:search_workspace]\ntool: {tool_name}\nsession_id: {session_id}\noperation: {operation:?}\nmode: {mode:?}\nstatus: {status:?}\nquery: {query}\npath_scope: {}\ncase_sensitive: {case_sensitive}\ncontext_lines: {context_lines}\noffset: {offset}\nmax_results: {max_results}\nnext_offset: {}\nstatus_detail: superseded by newer search results\nfiles: {file_count}\nmatches: {match_count}\ntruncated: {truncated}",
+            next_offset.map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()),
             path_scope.as_deref().unwrap_or(".")
         ),
         _ => "(no significant output)".to_string(),
@@ -374,8 +378,10 @@ mod tests {
                     start_line: None,
                     max_lines: None,
                     file_count: 1,
+                    failed_count: 0,
                     truncated_count: 0,
                     total_chars: 120,
+                    reads: Vec::new(),
                 }),
             },
             ResponseItem::Tool {
@@ -387,8 +393,10 @@ mod tests {
                     start_line: None,
                     max_lines: None,
                     file_count: 1,
+                    failed_count: 0,
                     truncated_count: 0,
                     total_chars: 160,
+                    reads: Vec::new(),
                 }),
             },
         ];
@@ -429,6 +437,8 @@ mod tests {
                     file_count: 2,
                     match_count: 0,
                     truncated: false,
+                    next_offset: None,
+                    hits: Vec::new(),
                 }),
             },
             ResponseItem::Tool {
@@ -449,6 +459,8 @@ mod tests {
                     file_count: 3,
                     match_count: 0,
                     truncated: false,
+                    next_offset: None,
+                    hits: Vec::new(),
                 }),
             },
             ResponseItem::Tool {
@@ -469,6 +481,8 @@ mod tests {
                     file_count: 1,
                     match_count: 0,
                     truncated: false,
+                    next_offset: None,
+                    hits: Vec::new(),
                 }),
             },
         ];

@@ -456,7 +456,7 @@ mod tests {
         ServerRequestInlineState {
             request_id: RequestId::String(id.to_string()),
             title: "Run command?".to_string(),
-            detail: "shell_command".to_string(),
+            detail: "exec_command".to_string(),
         }
     }
 

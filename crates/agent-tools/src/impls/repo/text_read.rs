@@ -33,6 +33,7 @@ impl TextReadOptions {
 pub(crate) struct TextReadResult {
     pub(crate) rendered: String,
     pub(crate) source_char_count: usize,
+    pub(crate) end_line: Option<usize>,
     pub(crate) truncated: bool,
 }
 
@@ -75,6 +76,7 @@ pub(crate) async fn read_text_snippet(
     let source_char_count = text.chars().count();
     let mut truncated = false;
     let mut rendered_lines = Vec::new();
+    let mut end_line = None;
 
     for (idx, line) in text
         .lines()
@@ -87,6 +89,7 @@ pub(crate) async fn read_text_snippet(
         }
         let line_number = idx + 1;
         rendered_lines.push(render_line(line_number, line, options.include_line_numbers));
+        end_line = Some(line_number);
     }
 
     if rendered_lines.is_empty() && options.start_line > 1 {
@@ -112,6 +115,7 @@ pub(crate) async fn read_text_snippet(
     Ok(Ok(TextReadResult {
         rendered,
         source_char_count,
+        end_line,
         truncated,
     }))
 }

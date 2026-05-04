@@ -140,7 +140,7 @@ fn tool_approval_key(call: &ToolCall) -> String {
 #[cfg(test)]
 mod tests {
     use crate::engine::visible_message_count;
-    use agent_core::{ConversationHistory, ToolCall};
+    use agent_core::{CommandExecutionStatus, ConversationHistory, StructuredToolResult, ToolCall};
     use serde_json::json;
 
     #[test]
@@ -160,7 +160,18 @@ mod tests {
             name: "exec_command".to_string(),
             content: "D:\\work".to_string(),
             is_error: false,
-            structured: None,
+            structured: Some(StructuredToolResult::CommandExecution {
+                command: "pwd".to_string(),
+                current_directory: "D:\\work".to_string(),
+                session_id: None,
+                status: CommandExecutionStatus::Completed,
+                exit_code: Some(0),
+                success: Some(true),
+                stdout: Some("D:\\work".to_string()),
+                stderr: Some(String::new()),
+                aggregated_output: Some("D:\\work".to_string()),
+                duration_ms: Some(1),
+            }),
         });
         history.push_assistant_message(Some("done".to_string()), Vec::new());
 

@@ -1,11 +1,10 @@
-use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_read_path};
+use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::Value;
 use serde_json::json;
 use tokio::fs;
 
@@ -55,10 +54,10 @@ impl LocalTool for GetMetadataLocalTool {
     }
     async fn invoke(
         &self,
-        arguments: Value,
+        invocation: LocalToolInvocation,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
-        let args: GetMetadataArgs = serde_json::from_value(arguments)?;
+        let args: GetMetadataArgs = invocation.payload.parse_arguments()?;
         let path = resolve_read_path(&ctx.workspace_root, Some(args.path.as_str()))?;
         let metadata = fs::metadata(&path).await?;
         let value = json!({

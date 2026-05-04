@@ -1,5 +1,5 @@
 use super::common::DEFAULT_IGNORED_DIRS;
-use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_read_path};
+use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
@@ -7,7 +7,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use ignore::WalkBuilder;
 use serde::Deserialize;
-use serde_json::Value;
 use serde_json::json;
 use std::path::Path;
 
@@ -65,10 +64,10 @@ impl LocalTool for ListDirectoryLocalTool {
 
     async fn invoke(
         &self,
-        arguments: Value,
+        invocation: LocalToolInvocation,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
-        let args: ListDirectoryArgs = serde_json::from_value(arguments)?;
+        let args: ListDirectoryArgs = invocation.payload.parse_arguments()?;
         let root = resolve_read_path(&ctx.workspace_root, args.path.as_deref())?;
         let recursive = args.recursive.unwrap_or(false);
         let max_results = args.max_results.unwrap_or(200).clamp(1, 2_000);

@@ -14,7 +14,7 @@ pub use search_workspace::SearchWorkspaceTool;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::shared::LocalTool;
+    use crate::registry::shared::{LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::fs;
@@ -46,11 +46,11 @@ mod tests {
         };
         let output = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "mode": "files",
                     "pattern": "service.rs",
                     "max_results": 10
-                }),
+                })),
                 &ctx,
             )
             .await
@@ -92,11 +92,11 @@ mod tests {
         let ctx = tool_context(&base);
         let output = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "path": "src/lib.rs",
                     "start_line": 2,
                     "max_lines": 2
-                }),
+                })),
                 &ctx,
             )
             .await
@@ -124,12 +124,12 @@ mod tests {
         let ctx = tool_context(&base);
         let output = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "mode": "text",
                     "query": "render_",
                     "path_scope": "src",
                     "max_results": 10
-                }),
+                })),
                 &ctx,
             )
             .await
@@ -156,12 +156,12 @@ mod tests {
         let ctx = tool_context(&base);
         let first = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "mode": "text",
                     "query": "render_active",
                     "path_scope": "src",
                     "max_results": 10
-                }),
+                })),
                 &ctx,
             )
             .await
@@ -176,10 +176,10 @@ mod tests {
 
         let refined = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "session_id": session_id,
                     "query": "render_live_status"
-                }),
+                })),
                 &ctx,
             )
             .await
@@ -188,7 +188,7 @@ mod tests {
 
         let closed = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "session_id": match refined.structured.as_ref() {
                         Some(agent_protocol::StructuredToolResult::SearchWorkspace {
                             session_id,
@@ -197,7 +197,7 @@ mod tests {
                         other => panic!("expected search session id, got {other:?}"),
                     },
                     "operation": "close"
-                }),
+                })),
                 &ctx,
             )
             .await
@@ -224,9 +224,9 @@ mod tests {
         let ctx = tool_context(&base);
         let output = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "paths": ["src/a.rs", "src/b.rs"]
-                }),
+                })),
                 &ctx,
             )
             .await
@@ -256,6 +256,14 @@ mod tests {
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
             output_tx: None,
+        }
+    }
+
+    fn tool_invocation(arguments: serde_json::Value) -> LocalToolInvocation {
+        LocalToolInvocation {
+            tool_name: "test_tool".to_string(),
+            source: LocalToolSource::BuiltIn,
+            payload: LocalToolPayload::Function { arguments },
         }
     }
 }

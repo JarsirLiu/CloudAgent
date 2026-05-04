@@ -115,7 +115,10 @@ pub fn ensure_tool_outputs_present(items: &mut Vec<ResponseItem>) {
                         tool_call_id: call.id.clone(),
                         name: call.name.clone(),
                         content: "aborted".to_string(),
-                        structured: None,
+                        structured: Some(StructuredToolResult::ToolError {
+                            tool_name: call.name.clone(),
+                            message: "aborted".to_string(),
+                        }),
                     },
                 ));
             }
@@ -153,9 +156,16 @@ mod tests {
                     tool_call_id,
                     name,
                     content,
-                    ..
+                    structured,
                 }
-            ] if tool_call_id == "call_1" && name == "exec_command" && content == "aborted"
+            ] if tool_call_id == "call_1"
+                && name == "exec_command"
+                && content == "aborted"
+                && matches!(
+                    structured,
+                    Some(StructuredToolResult::ToolError { tool_name, message })
+                        if tool_name == "exec_command" && message == "aborted"
+                )
         ));
     }
 
@@ -174,7 +184,18 @@ mod tests {
                 tool_call_id: "call_1".to_string(),
                 name: "exec_command".to_string(),
                 content: "ok".to_string(),
-                structured: None,
+                structured: Some(StructuredToolResult::CommandExecution {
+                    command: "pwd".to_string(),
+                    current_directory: "D:\\work".to_string(),
+                    session_id: None,
+                    status: crate::tool::CommandExecutionStatus::Completed,
+                    exit_code: Some(0),
+                    success: Some(true),
+                    stdout: Some("D:\\work".to_string()),
+                    stderr: Some(String::new()),
+                    aggregated_output: Some("D:\\work".to_string()),
+                    duration_ms: Some(1),
+                }),
             },
         ];
 

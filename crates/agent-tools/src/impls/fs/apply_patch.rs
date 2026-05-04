@@ -1,11 +1,10 @@
-use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_workspace_path};
+use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeSet;
 use tokio::fs;
@@ -54,10 +53,10 @@ impl LocalTool for ApplyPatchLocalTool {
     }
     async fn invoke(
         &self,
-        arguments: Value,
+        invocation: LocalToolInvocation,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
-        let args: ApplyPatchArgs = serde_json::from_value(arguments)?;
+        let args: ApplyPatchArgs = invocation.payload.parse_arguments()?;
         let file_patches = parse_unified_patch(&args.patch)?;
         if file_patches.is_empty() {
             anyhow::bail!("patch did not contain any editable file hunks");
@@ -137,6 +136,7 @@ struct FilePatch {
 
 #[derive(Debug)]
 struct Hunk {
+    old_start_line: Option<usize>,
     lines: Vec<String>,
 }
 
@@ -257,7 +257,10 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             if let Some(h) = current_hunk.take() {
                 hunks.push(h);
             }
-            current_hunk = Some(Hunk { lines: Vec::new() });
+            current_hunk = Some(Hunk {
+                old_start_line: parse_old_start_line(line),
+                lines: Vec::new(),
+            });
             continue;
         }
         if let Some(hunk) = current_hunk.as_mut() {
@@ -317,26 +320,61 @@ fn apply_single_hunk(content: &str, hunk: &Hunk) -> anyhow::Result<String> {
         }
     }
 
-    let old_text = old_block.join("\n");
-    let replacement = new_block.join("\n");
-    if old_text.is_empty() {
+    if old_block.is_empty() {
         anyhow::bail!("empty deletion context is not supported");
     }
-    let Some(start) = content.find(&old_text) else {
-        anyhow::bail!("could not find hunk context in target file");
-    };
-    let end = start + old_text.len();
-    let mut next = String::with_capacity(content.len() - old_text.len() + replacement.len());
-    next.push_str(&content[..start]);
-    next.push_str(&replacement);
-    next.push_str(&content[end..]);
+
+    let has_trailing_newline = content.ends_with('\n');
+    let mut lines = content.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+    let start = resolve_hunk_start(&lines, &old_block, hunk.old_start_line)?;
+    let end = start + old_block.len();
+    lines.splice(start..end, new_block);
+
+    let mut next = lines.join("\n");
+    if has_trailing_newline {
+        next.push('\n');
+    }
     Ok(next)
+}
+
+fn parse_old_start_line(header: &str) -> Option<usize> {
+    let header = header.trim();
+    let marker = header.strip_prefix("@@ -")?;
+    let number = marker
+        .split_whitespace()
+        .next()?
+        .split(',')
+        .next()?
+        .parse::<usize>()
+        .ok()?;
+    Some(number)
+}
+
+fn resolve_hunk_start(
+    lines: &[String],
+    old_block: &[String],
+    preferred_start_line: Option<usize>,
+) -> anyhow::Result<usize> {
+    let Some(start_line) = preferred_start_line else {
+        anyhow::bail!("patch hunk is missing a source line position");
+    };
+    let preferred_index = start_line.saturating_sub(1);
+    if block_matches(lines, preferred_index, old_block) {
+        return Ok(preferred_index);
+    }
+    anyhow::bail!("could not find hunk context at the expected source location")
+}
+
+fn block_matches(lines: &[String], start: usize, old_block: &[String]) -> bool {
+    lines
+        .get(start..start.saturating_add(old_block.len()))
+        .is_some_and(|slice| slice == old_block)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::shared::LocalTool;
+    use crate::registry::shared::{LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource};
     use agent_core::ToolExecutionContext;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -357,9 +395,9 @@ mod tests {
         let ctx = tool_context(&base);
         let result = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "patch": "*** Begin Patch\n*** Add File: src/lib.rs\n+ new\n*** End Patch"
-                }),
+                })),
                 &ctx,
             )
             .await;
@@ -374,9 +412,9 @@ mod tests {
         let ctx = tool_context(&base);
         let result = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "patch": "*** Begin Patch\n*** Delete File: src/missing.rs\n*** End Patch"
-                }),
+                })),
                 &ctx,
             )
             .await;
@@ -398,14 +436,57 @@ mod tests {
         let ctx = tool_context(&base);
         let result = tool
             .invoke(
-                serde_json::json!({
+                tool_invocation(serde_json::json!({
                     "patch": "--- a/src/lib.rs\n+++ b/src/main.rs\n@@\n- old\n+ new\n"
-                }),
+                })),
                 &ctx,
             )
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn apply_patch_uses_hunk_position_instead_of_first_text_match() {
+        let base = test_workspace("apply_patch_uses_hunk_position_instead_of_first_text_match");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(
+            base.join("src/lib.rs"),
+            "fn a() {\n    println!(\"same\");\n}\n\nfn b() {\n    println!(\"same\");\n}\n",
+        )
+        .await
+        .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        tool.invoke(
+            tool_invocation(serde_json::json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@ -5,3 +5,3 @@\n fn b() {\n-    println!(\"same\");\n+    println!(\"changed\");\n }\n*** End Patch"
+            })),
+            &ctx,
+        )
+        .await
+        .expect("apply patch");
+
+        let updated = fs::read_to_string(base.join("src/lib.rs"))
+            .await
+            .expect("read updated file");
+        assert!(updated.contains("fn a() {\n    println!(\"same\");\n}"));
+        assert!(updated.contains("fn b() {\n    println!(\"changed\");\n}"));
+    }
+
+    #[test]
+    fn apply_patch_rejects_hunk_without_position_hint() {
+        let content = "same\nsame\n";
+        let hunk = Hunk {
+            old_start_line: None,
+            lines: vec!["-same".to_string(), "+changed".to_string()],
+        };
+
+        let err = apply_single_hunk(content, &hunk).expect_err("should reject missing position");
+        assert!(err.to_string().contains("missing a source line position"));
     }
 
     fn test_workspace(name: &str) -> PathBuf {
@@ -426,6 +507,14 @@ mod tests {
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
             output_tx: None,
+        }
+    }
+
+    fn tool_invocation(arguments: serde_json::Value) -> LocalToolInvocation {
+        LocalToolInvocation {
+            tool_name: "apply_patch".to_string(),
+            source: LocalToolSource::BuiltIn,
+            payload: LocalToolPayload::Function { arguments },
         }
     }
 }

@@ -1,5 +1,6 @@
 use crate::registry::shared::{
-    LocalTool, ToolInvocationOutput, decode_utf8_chunk, read_streaming_pipe, resolve_write_path,
+    LocalTool, LocalToolInvocation, ToolInvocationOutput, decode_utf8_chunk, read_streaming_pipe,
+    resolve_write_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::ToolSpec;
@@ -8,7 +9,6 @@ use agent_protocol::{CommandExecutionStatus, StructuredToolResult};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::Value;
 use serde_json::json;
 use std::collections::HashMap;
 use std::env;
@@ -161,10 +161,10 @@ impl LocalTool for ExecCommandLocalTool {
 
     async fn invoke(
         &self,
-        arguments: Value,
+        invocation: LocalToolInvocation,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
-        let args: ExecCommandArgs = serde_json::from_value(arguments)?;
+        let args: ExecCommandArgs = invocation.payload.parse_arguments()?;
         let timeout_ms = args
             .timeout_ms
             .unwrap_or(ctx.default_shell_timeout_ms)
@@ -183,6 +183,9 @@ impl LocalTool for ExecCommandLocalTool {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow!("`command` is required"))?;
         let workdir = resolve_write_path(&ctx.workspace_root, args.workdir.as_deref())?;
+        if looks_like_apply_patch_command(command) {
+            return Ok(reject_patch_via_exec_command(command, &workdir));
+        }
         if args.start_new_session.unwrap_or(false) {
             return self
                 .start_session(command, workdir, timeout_ms, args.wait_for_exit.unwrap_or(false), ctx)
@@ -518,6 +521,47 @@ fn render_command_status(status: &CommandExecutionStatus) -> &'static str {
         CommandExecutionStatus::Completed => "completed",
         CommandExecutionStatus::Failed => "failed",
         CommandExecutionStatus::Declined => "declined",
+    }
+}
+
+fn looks_like_apply_patch_command(command: &str) -> bool {
+    let normalized = command.trim().to_ascii_lowercase();
+    normalized.starts_with("apply_patch ")
+        || normalized == "apply_patch"
+        || normalized.contains("\napply_patch ")
+        || normalized.contains("&& apply_patch ")
+        || normalized.contains("; apply_patch ")
+}
+
+fn reject_patch_via_exec_command(command: &str, workdir: &std::path::Path) -> ToolInvocationOutput {
+    let current_directory = workdir.display().to_string();
+    let message =
+        "Use the apply_patch tool instead of exec_command for workspace file edits.".to_string();
+    let content = format_exec_result_content(
+        "edit",
+        command,
+        &current_directory,
+        None,
+        CommandExecutionStatus::Failed,
+        None,
+        Some(false),
+        "",
+        &message,
+    );
+    ToolInvocationOutput {
+        content: content.clone(),
+        structured: Some(StructuredToolResult::CommandExecution {
+            command: command.to_string(),
+            current_directory,
+            session_id: None,
+            status: CommandExecutionStatus::Failed,
+            exit_code: None,
+            success: Some(false),
+            stdout: Some(String::new()),
+            stderr: Some(message),
+            aggregated_output: Some(content),
+            duration_ms: Some(0),
+        }),
     }
 }
 
@@ -896,6 +940,9 @@ fn windows_utf8_command(command: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::shared::{LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource};
+    use agent_core::ToolExecutionContext;
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn command_exists_rejects_missing_binary() {
@@ -950,5 +997,43 @@ mod tests {
             take_shell_token(&mut input),
             Some("crates/agent-core".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn exec_command_rejects_apply_patch_style_commands() {
+        let tool = ExecCommandLocalTool::new();
+        let ctx = ToolExecutionContext {
+            conversation_id: "test".to_string(),
+            workspace_root: std::env::temp_dir(),
+            default_shell_timeout_ms: 5_000,
+            cancellation_token: CancellationToken::new(),
+            output_tx: None,
+        };
+
+        let output = tool
+            .invoke(
+                LocalToolInvocation {
+                    tool_name: "exec_command".to_string(),
+                    source: LocalToolSource::BuiltIn,
+                    payload: LocalToolPayload::Function {
+                        arguments: serde_json::json!({
+                            "command": "apply_patch *** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch"
+                        }),
+                    },
+                },
+                &ctx,
+            )
+            .await
+            .expect("exec command handled");
+
+        match output.structured {
+            Some(StructuredToolResult::CommandExecution { status, stderr, .. }) => {
+                assert_eq!(status, CommandExecutionStatus::Failed);
+                assert!(stderr
+                    .unwrap_or_default()
+                    .contains("Use the apply_patch tool instead"));
+            }
+            other => panic!("expected structured command rejection, got {other:?}"),
+        }
     }
 }

@@ -36,6 +36,41 @@ pub struct ToolCall {
     pub arguments: Value,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    RepositoryAnalysis,
+    CodeEdit,
+    Verification,
+    WorkspaceFileOperation,
+    General,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolMode {
+    Explore,
+    Edit,
+    Verify,
+    Full,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolSurface {
+    pub mode: ToolMode,
+    pub task_kind: TaskKind,
+}
+
+impl ToolSurface {
+    pub fn new(mode: ToolMode, task_kind: TaskKind) -> Self {
+        Self { mode, task_kind }
+    }
+
+    pub fn regular_turn() -> Self {
+        Self::new(ToolMode::Full, TaskKind::General)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolResult {
     pub tool_call_id: String,
@@ -43,6 +78,23 @@ pub struct ToolResult {
     pub content: String,
     pub is_error: bool,
     pub structured: Option<StructuredToolResult>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SearchWorkspaceHit {
+    pub path: String,
+    pub line: Option<usize>,
+    pub preview: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReadFileEntry {
+    pub path: String,
+    pub start_line: Option<usize>,
+    pub end_line: Option<usize>,
+    pub truncated: bool,
+    pub char_count: usize,
+    pub status: ReadFileStatus,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,6 +130,8 @@ pub enum StructuredToolResult {
         file_count: usize,
         match_count: usize,
         truncated: bool,
+        next_offset: Option<usize>,
+        hits: Vec<SearchWorkspaceHit>,
     },
     ListDirectory {
         path: String,
@@ -92,8 +146,10 @@ pub enum StructuredToolResult {
         start_line: Option<usize>,
         max_lines: Option<usize>,
         file_count: usize,
+        failed_count: usize,
         truncated_count: usize,
         total_chars: usize,
+        reads: Vec<ReadFileEntry>,
     },
     GetMetadata {
         path: String,
@@ -134,6 +190,15 @@ pub enum SearchWorkspaceStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
+pub enum ReadFileStatus {
+    Ok,
+    Binary,
+    TooLarge,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum CommandExecutionStatus {
     InProgress,
     Completed,
@@ -160,7 +225,7 @@ pub struct ToolEvent {
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
     fn specs(&self) -> Vec<ToolSpec>;
-    fn specs_for_context(&self, _mode: &str, _task_kind: &str) -> Vec<ToolSpec> {
+    fn specs_for_surface(&self, _surface: &ToolSurface) -> Vec<ToolSpec> {
         self.specs()
     }
 

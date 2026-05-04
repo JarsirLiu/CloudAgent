@@ -2,17 +2,43 @@ use agent_core::{ToolExecutionContext, ToolOutputDelta, ToolOutputStream, ToolSp
 use agent_protocol::{StructuredToolResult, WriteFileStatus};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
+
+#[derive(Clone, Debug)]
+pub(crate) enum LocalToolSource {
+    BuiltIn,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum LocalToolPayload {
+    Function { arguments: Value },
+}
+
+impl LocalToolPayload {
+    pub(crate) fn parse_arguments<T: DeserializeOwned>(&self) -> Result<T> {
+        match self {
+            LocalToolPayload::Function { arguments } => Ok(serde_json::from_value(arguments.clone())?),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LocalToolInvocation {
+    pub(crate) tool_name: String,
+    pub(crate) source: LocalToolSource,
+    pub(crate) payload: LocalToolPayload,
+}
 
 #[async_trait]
 pub(crate) trait LocalTool: Send + Sync {
     fn spec(&self) -> ToolSpec;
     async fn invoke(
         &self,
-        arguments: Value,
+        invocation: LocalToolInvocation,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput>;
 }
@@ -173,17 +199,16 @@ pub(crate) fn resolve_write_path(workspace_root: &Path, value: Option<&str>) -> 
 }
 
 pub(crate) fn structured_failure_result(
-    tool_name: &str,
-    _arguments: &Value,
+    invocation: &LocalToolInvocation,
 ) -> Option<StructuredToolResult> {
-    match tool_name {
-        "apply_patch" => Some(StructuredToolResult::EditFile {
+    match (&invocation.source, invocation.tool_name.as_str()) {
+        (LocalToolSource::BuiltIn, "apply_patch") => Some(StructuredToolResult::EditFile {
             changed_paths: Vec::new(),
             files_changed: 0,
             status: WriteFileStatus::Failed,
         }),
-        _ => Some(StructuredToolResult::ToolError {
-            tool_name: tool_name.to_string(),
+        (LocalToolSource::BuiltIn, _) => Some(StructuredToolResult::ToolError {
+            tool_name: invocation.tool_name.clone(),
             message: "tool execution failed".to_string(),
         }),
     }

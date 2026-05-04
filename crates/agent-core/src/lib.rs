@@ -26,9 +26,10 @@ pub use projection::{
 };
 pub use rollout::RolloutItem;
 pub use tool::{
-    CommandExecutionStatus, SearchWorkspaceMode, SearchWorkspaceOperation,
-    SearchWorkspaceStatus, StructuredToolResult, ToolCall, ToolEvent, ToolExecutor,
-    ToolOutputDelta, ToolOutputStream, ToolResult, ToolSpec, WriteFileStatus,
+    CommandExecutionStatus, ReadFileEntry, ReadFileStatus, SearchWorkspaceHit,
+    SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
+    TaskKind, ToolCall, ToolEvent, ToolExecutor, ToolMode, ToolOutputDelta, ToolOutputStream,
+    ToolResult, ToolSpec, ToolSurface, WriteFileStatus,
 };
 pub use turn::{
     AgentTurnOutput, EventMsg, ExecutionPolicy, RequestId, ServerRequest, ServerRequestDecision,

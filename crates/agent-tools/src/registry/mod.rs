@@ -3,9 +3,12 @@ mod presentation;
 mod resolution;
 pub(crate) mod shared;
 
-use crate::selection::{TaskKind, ToolMode, ToolSelector, ToolSurface};
+use crate::selection::ToolSelector;
 use crate::spec::ToolDescriptor;
-use agent_core::{ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec};
+use agent_core::{
+    TaskKind, ToolCall, ToolExecutionContext, ToolExecutor, ToolMode, ToolResult, ToolSpec,
+    ToolSurface,
+};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 
@@ -17,7 +20,7 @@ use presentation::{
     repeated_rejection_message, tool_item_title, tool_request_key,
     transcript_item_from_tool_result,
 };
-use shared::structured_failure_result;
+use shared::{LocalToolInvocation, LocalToolPayload, LocalToolSource, structured_failure_result};
 use agent_protocol::PermissionProfile;
 use agent_protocol::ApprovalPolicy;
 use agent_protocol::TranscriptItem;
@@ -28,6 +31,18 @@ pub struct ToolRegistry {
     tools: LocalToolMap,
     descriptors: Vec<ToolDescriptor>,
     selector: ToolSelector,
+}
+
+#[derive(Clone, Debug)]
+enum LocalToolRouteTarget {
+    BuiltIn(String),
+}
+
+#[derive(Clone, Debug)]
+struct LocalToolRoute {
+    display_name: String,
+    target: LocalToolRouteTarget,
+    invocation: LocalToolInvocation,
 }
 
 impl ToolRegistry {
@@ -133,6 +148,24 @@ impl ToolRegistry {
     pub fn missing_tool_result(&self, call: &ToolCall) -> ToolResult {
         missing_tool_result(call)
     }
+
+    fn route_call(&self, call: &ToolCall) -> Result<LocalToolRoute> {
+        if self.tools.contains_key(&call.name) {
+            return Ok(LocalToolRoute {
+                display_name: call.name.clone(),
+                target: LocalToolRouteTarget::BuiltIn(call.name.clone()),
+                invocation: LocalToolInvocation {
+                    tool_name: call.name.clone(),
+                    source: LocalToolSource::BuiltIn,
+                    payload: LocalToolPayload::Function {
+                        arguments: call.arguments.clone(),
+                    },
+                },
+            });
+        }
+
+        bail!("tool `{}` is not registered", call.name)
+    }
 }
 
 #[cfg(test)]
@@ -217,31 +250,20 @@ impl ToolExecutor for ToolRegistry {
             .collect()
     }
 
-    fn specs_for_context(&self, mode: &str, task_kind: &str) -> Vec<ToolSpec> {
-        let parsed_mode = match mode {
-            "explore" => ToolMode::Explore,
-            "edit" => ToolMode::Edit,
-            "verify" => ToolMode::Verify,
-            _ => ToolMode::Full,
-        };
-        let parsed_task = match task_kind {
-            "repository_analysis" => TaskKind::RepositoryAnalysis,
-            "code_edit" => TaskKind::CodeEdit,
-            "verification" => TaskKind::Verification,
-            "workspace_file_operation" => TaskKind::WorkspaceFileOperation,
-            _ => TaskKind::General,
-        };
-        self.specs_for_mode(parsed_mode, parsed_task)
+    fn specs_for_surface(&self, tool_surface: &ToolSurface) -> Vec<ToolSpec> {
+        ToolRegistry::specs_for_surface(self, tool_surface)
     }
 
     async fn execute(&self, call: ToolCall, ctx: &ToolExecutionContext) -> Result<ToolResult> {
-        let call_name = call.name.clone();
-        let call_args = call.arguments.clone();
-        let Some(tool) = self.tools.get(&call.name) else {
-            bail!("tool `{}` is not registered", call.name);
-        };
+        let route = self.route_call(&call)?;
+        let call_name = route.display_name.clone();
+        let LocalToolRouteTarget::BuiltIn(registry_name) = &route.target;
+        let tool = self
+            .tools
+            .get(registry_name)
+            .expect("routed built-in tool should exist in registry");
 
-        match tool.invoke(call.arguments, ctx).await {
+        match tool.invoke(route.invocation.clone(), ctx).await {
             Ok(output) => Ok(ToolResult {
                 tool_call_id: call.id,
                 name: call.name,
@@ -251,7 +273,7 @@ impl ToolExecutor for ToolRegistry {
             }),
             Err(err) => {
                 let message = format!("Tool execution failed: {err:#}");
-                let structured = match structured_failure_result(&call_name, &call_args) {
+                let structured = match structured_failure_result(&route.invocation) {
                     Some(agent_protocol::StructuredToolResult::ToolError { .. }) => {
                         Some(agent_protocol::StructuredToolResult::ToolError {
                             tool_name: call_name.clone(),
@@ -261,12 +283,12 @@ impl ToolExecutor for ToolRegistry {
                     other => other,
                 };
                 Ok(ToolResult {
-                tool_call_id: call.id,
-                name: call.name,
-                content: message,
-                is_error: true,
-                structured,
-            })
+                    tool_call_id: call.id,
+                    name: call.name,
+                    content: message,
+                    is_error: true,
+                    structured,
+                })
             }
         }
     }

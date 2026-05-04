@@ -91,6 +91,7 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::StructuredToolResult;
     use crate::turn::TurnItemDeltaKind;
 
     #[test]
@@ -142,17 +143,24 @@ mod tests {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
                 kind: crate::turn::TurnItemKind::ToolCall,
-                title: Some("custom_tool".to_string()),
+                title: Some("get_metadata".to_string()),
             },
             EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
                 item: TranscriptItem::ToolResult {
                     id: "tool-1".to_string(),
-                    tool_name: "custom_tool".to_string(),
+                    tool_name: "get_metadata".to_string(),
                     content: "ok".to_string(),
                     summary: "ok".to_string(),
-                    structured: None,
+                    structured: Some(StructuredToolResult::GetMetadata {
+                        path: "Cargo.toml".to_string(),
+                        exists: true,
+                        is_file: true,
+                        is_dir: false,
+                        size: 128,
+                        readonly: false,
+                    }),
                 },
             },
         ];
@@ -160,7 +168,7 @@ mod tests {
         let tool_events = tool_events_from_turn_events(&events);
 
         assert_eq!(tool_events.len(), 1);
-        assert_eq!(tool_events[0].name, "custom_tool");
+        assert_eq!(tool_events[0].name, "get_metadata");
         assert_eq!(tool_events[0].summary, "ok");
         assert!(!tool_events[0].is_error);
     }

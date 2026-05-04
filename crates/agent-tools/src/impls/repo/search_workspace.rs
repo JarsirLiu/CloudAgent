@@ -1,14 +1,14 @@
 use super::common::{collect_repo_entries, sort_ranked_paths};
-use crate::registry::shared::{LocalTool, ToolInvocationOutput, resolve_read_path};
+use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::ToolExecutionContext;
 use agent_core::ToolSpec;
+use agent_protocol::SearchWorkspaceHit;
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo::{Config, Matcher, Utf32Str};
 use serde::Deserialize;
-use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -158,10 +158,10 @@ impl LocalTool for SearchWorkspaceLocalTool {
 
     async fn invoke(
         &self,
-        arguments: Value,
+        invocation: LocalToolInvocation,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
-        let args: SearchWorkspaceArgs = serde_json::from_value(arguments)?;
+        let args: SearchWorkspaceArgs = invocation.payload.parse_arguments()?;
         if matches!(args.operation.as_deref(), Some("close")) {
             let session_id = args
                 .session_id
@@ -200,11 +200,13 @@ impl LocalTool for SearchWorkspaceLocalTool {
                     file_count: 0,
                     match_count: 0,
                     truncated: false,
+                    next_offset: None,
+                    hits: Vec::new(),
                 }),
             });
         }
 
-        let resolved = self.resolve_request(args, &ctx.conversation_id).await?;
+        let mut resolved = self.resolve_request(args, &ctx.conversation_id).await?;
         let session_id = resolved.session_id.clone();
         let content = match resolved.mode {
             SearchMode::Files => {
@@ -217,6 +219,14 @@ impl LocalTool for SearchWorkspaceLocalTool {
                     ctx,
                 )
                 .await?;
+                resolved.result_count = search.total_matches;
+                resolved.match_count = search.total_matches;
+                resolved.truncated =
+                    search.total_matches > resolved.offset.saturating_add(resolved.max_results);
+                resolved.next_offset = (search.total_matches
+                    > resolved.offset.saturating_add(resolved.max_results))
+                .then_some(resolved.offset.saturating_add(search.hits.len()));
+                resolved.hits = search.hits.clone();
                 build_file_search_output(&session_id, &resolved, &search)
             }
             SearchMode::Text => {
@@ -226,9 +236,15 @@ impl LocalTool for SearchWorkspaceLocalTool {
                     resolved.case_sensitive,
                     resolved.context_lines,
                     resolved.max_results,
+                    resolved.offset,
                     ctx,
                 )
                 .await?;
+                resolved.result_count = search.file_count;
+                resolved.match_count = search.match_count;
+                resolved.truncated = search.truncated;
+                resolved.next_offset = search.next_offset;
+                resolved.hits = search.hits.clone();
                 build_text_search_output(&session_id, &resolved, &search)
             }
         };
@@ -265,6 +281,8 @@ impl LocalTool for SearchWorkspaceLocalTool {
                 file_count: resolved.result_count,
                 match_count: resolved.match_count,
                 truncated: resolved.truncated,
+                next_offset: resolved.next_offset,
+                hits: resolved.hits,
             }),
         })
     }
@@ -282,6 +300,8 @@ struct ResolvedSearchRequest {
     result_count: usize,
     match_count: usize,
     truncated: bool,
+    next_offset: Option<usize>,
+    hits: Vec<SearchWorkspaceHit>,
 }
 
 impl SearchWorkspaceLocalTool {
@@ -329,6 +349,8 @@ impl SearchWorkspaceLocalTool {
             result_count: 0,
             match_count: 0,
             truncated: false,
+            next_offset: None,
+            hits: Vec::new(),
         })
     }
 }
@@ -353,7 +375,7 @@ fn resolve_query(
 }
 
 struct FileSearchResult {
-    matches: Vec<String>,
+    hits: Vec<SearchWorkspaceHit>,
     total_matches: usize,
 }
 
@@ -410,22 +432,29 @@ async fn run_file_search(
     .await??;
 
     let total_matches = matches.len();
-    let matches = matches
+    let hits = matches
         .into_iter()
         .skip(offset)
         .take(max_results)
+        .map(|path| SearchWorkspaceHit {
+            path: path.clone(),
+            line: None,
+            preview: path,
+        })
         .collect::<Vec<_>>();
     Ok(FileSearchResult {
-        matches,
+        hits,
         total_matches,
     })
 }
 
 struct TextSearchResult {
     rendered: Vec<String>,
+    hits: Vec<SearchWorkspaceHit>,
     match_count: usize,
     file_count: usize,
     truncated: bool,
+    next_offset: Option<usize>,
 }
 
 async fn run_text_search(
@@ -434,6 +463,7 @@ async fn run_text_search(
     case_sensitive: bool,
     context_lines: usize,
     max_results: usize,
+    offset: usize,
     ctx: &ToolExecutionContext,
 ) -> Result<TextSearchResult> {
     let search_root = resolve_read_path(&ctx.workspace_root, path_scope)?;
@@ -443,6 +473,7 @@ async fn run_text_search(
     tokio::task::spawn_blocking(move || -> Result<TextSearchResult> {
         let entries = collect_repo_entries(&workspace_root, &search_root)?;
         let mut rendered = Vec::new();
+        let mut hits = Vec::new();
         let mut file_hits = BTreeSet::new();
         let mut match_count = 0usize;
 
@@ -462,23 +493,35 @@ async fn run_text_search(
                 }
                 match_count += 1;
                 file_hits.insert(entry.relative_path.clone());
+                if match_count <= offset {
+                    continue;
+                }
                 if rendered.len() >= max_results {
                     continue;
                 }
-                rendered.push(render_match(
+                let preview = render_match(
                     &entry.relative_path,
                     index,
                     &lines,
                     context_lines,
-                ));
+                );
+                rendered.push(preview.clone());
+                hits.push(SearchWorkspaceHit {
+                    path: entry.relative_path.clone(),
+                    line: Some(index + 1),
+                    preview,
+                });
             }
         }
 
         Ok(TextSearchResult {
             rendered,
+            hits,
             match_count,
             file_count: file_hits.len(),
-            truncated: match_count > max_results,
+            truncated: match_count > offset.saturating_add(max_results),
+            next_offset: (match_count > offset.saturating_add(max_results))
+                .then_some(offset.saturating_add(max_results)),
         })
     })
     .await?
@@ -489,7 +532,12 @@ fn build_file_search_output(
     _resolved: &ResolvedSearchRequest,
     search: &FileSearchResult,
 ) -> String {
-    let displayed = search.matches.iter().take(10).cloned().collect::<Vec<_>>();
+    let displayed = search
+        .hits
+        .iter()
+        .take(10)
+        .map(|hit| hit.path.clone())
+        .collect::<Vec<_>>();
     let mut sections = Vec::new();
     if displayed.is_empty() {
         sections.push("No files found. Try a broader pattern or set path_scope.".to_string());
@@ -501,10 +549,10 @@ fn build_file_search_output(
             search.total_matches
         ));
         sections.push(displayed.join("\n"));
-        if search.matches.len() > displayed.len() {
+        if search.hits.len() > displayed.len() {
             sections.push(format!(
                 "\n…and {} more",
-                search.matches.len().saturating_sub(displayed.len())
+                search.hits.len().saturating_sub(displayed.len())
             ));
         }
     }
