@@ -356,6 +356,7 @@ fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread::sleep;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -449,6 +450,51 @@ mod tests {
     }
 
     #[test]
+    fn bracketed_paste_only_submits_after_explicit_enter() {
+        let mut composer = ChatComposer::new();
+
+        let paste_action = composer.handle_paste("first line\nsecond line");
+        let submit_action = composer.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(paste_action, ComposerIntent::None);
+        assert_eq!(
+            submit_action,
+            Some(ComposerIntent::Submit("first line\nsecond line".to_string()))
+        );
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn trailing_space_remains_visible_in_rendered_composer() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "abc ");
+
+        let rendered = composer.render(FrontendMode::Idle, 80);
+        let visible_text = rendered.lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(
+            visible_text.ends_with("abc "),
+            "expected rendered composer to preserve trailing space, got {visible_text:?}"
+        );
+    }
+
+    #[test]
+    fn trailing_space_wraps_into_continuation_row() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "abc ");
+
+        let visible_lines = composer.textarea.wrapped_lines(composer.textarea.text(), 3);
+
+        assert_eq!(visible_lines.len(), 2);
+        assert_eq!(visible_lines[0], "abc");
+        assert_eq!(visible_lines[1], " ");
+    }
+
+    #[test]
     fn shift_enter_inserts_newline_without_submitting() {
         let mut composer = ChatComposer::new();
         type_text(&mut composer, "first");
@@ -482,6 +528,36 @@ mod tests {
 
         assert_eq!(action, None);
         assert_eq!(composer.textarea.text(), "first\nsecond");
+    }
+
+    #[test]
+    fn manual_newline_shortcut_submits_multiline_text_only_after_plain_enter() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "first");
+
+        let newline_action = composer.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        type_text(&mut composer, "second");
+        sleep(Duration::from_millis(120));
+        let submit_action = composer.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(newline_action, None);
+        assert_eq!(
+            submit_action,
+            Some(ComposerIntent::Submit("first\nsecond".to_string()))
+        );
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn plain_enter_submits_after_paste_burst_timeout() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "abc");
+
+        sleep(Duration::from_millis(120));
+        let action = composer.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(action, Some(ComposerIntent::Submit("abc".to_string())));
+        assert!(composer.textarea.is_empty());
     }
 
     #[test]

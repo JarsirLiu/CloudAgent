@@ -15,7 +15,7 @@ use ratatui::layout::Rect;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 pub struct InputPane {
     composer: ChatComposer,
@@ -161,8 +161,7 @@ impl InputPane {
                 Block::default()
                     .borders(Borders::TOP)
                     .border_style(Style::default().fg(Color::Rgb(58, 64, 86))),
-            )
-            .wrap(Wrap { trim: false });
+            );
         frame.render_widget(panel, completion_area);
 
         InputPaneRenderResult {
@@ -405,7 +404,6 @@ fn input_block(lines: Vec<Line<'static>>, border_style: Style) -> Paragraph<'sta
                 )
                 .title(" prompt "),
         )
-        .wrap(Wrap { trim: false })
 }
 
 fn composer_area(area: Rect, content_row_offset: u16) -> Rect {
@@ -421,6 +419,8 @@ fn composer_area(area: Rect, content_row_offset: u16) -> Rect {
 mod tests {
     use super::*;
     use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
+    use ratatui::buffer::Buffer;
+    use ratatui::widgets::Widget;
 
     #[test]
     fn ctrl_c_interrupts_even_when_server_request_overlay_is_active() {
@@ -553,5 +553,24 @@ mod tests {
         assert!(after > before);
         let (lines, _) = pane.render_lines_for_test(FrontendMode::Idle, "Idle", "test", 100);
         assert!(lines.len() > 5);
+    }
+
+    #[test]
+    fn input_block_preserves_trailing_space_without_extra_wrapped_row() {
+        let area = Rect::new(0, 0, 10, 4);
+        let mut buf = Buffer::empty(area);
+        let widget = input_block(vec![Line::raw("abc ")], Style::default());
+
+        widget.render(area, &mut buf);
+
+        let content_row = (1..area.width.saturating_sub(1))
+            .map(|x| buf[(x, 1)].symbol())
+            .collect::<String>();
+        let next_row = (1..area.width.saturating_sub(1))
+            .map(|x| buf[(x, 2)].symbol())
+            .collect::<String>();
+
+        assert!(content_row.starts_with("abc "));
+        assert_eq!(next_row.trim(), "");
     }
 }

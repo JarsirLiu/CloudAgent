@@ -1,5 +1,4 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use textwrap::{Options, WordSplitter, wrap};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -174,9 +173,6 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 || text.is_empty() {
         return vec![text.to_string()];
     }
-    let options = Options::new(width)
-        .break_words(false)
-        .word_splitter(WordSplitter::NoHyphenation);
 
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
@@ -184,9 +180,7 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
             lines.push(String::new());
             continue;
         }
-        for line in wrap(paragraph, &options) {
-            lines.push(line.into_owned());
-        }
+        wrap_paragraph_preserving_spaces(paragraph, width, &mut lines);
     }
 
     if lines.is_empty() {
@@ -198,6 +192,32 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
 pub fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
+}
+
+fn wrap_paragraph_preserving_spaces(paragraph: &str, width: usize, out: &mut Vec<String>) {
+    let mut line = String::new();
+    let mut line_width = 0usize;
+
+    for grapheme in paragraph.graphemes(true) {
+        let grapheme_width = display_width(grapheme);
+
+        if !line.is_empty() && line_width + grapheme_width > width {
+            out.push(std::mem::take(&mut line));
+            line_width = 0;
+        }
+
+        line.push_str(grapheme);
+        line_width += grapheme_width;
+
+        if line_width >= width {
+            out.push(std::mem::take(&mut line));
+            line_width = 0;
+        }
+    }
+
+    if !line.is_empty() {
+        out.push(line);
+    }
 }
 
 #[cfg(windows)]
@@ -222,4 +242,21 @@ fn byte_index_from_char_index(s: &str, char_index: usize) -> usize {
         .nth(char_index)
         .map(|(i, _)| i)
         .unwrap_or(s.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_text;
+
+    #[test]
+    fn wrap_text_preserves_trailing_space_visibility() {
+        assert_eq!(wrap_text("abc ", 10), vec!["abc "]);
+        assert_eq!(wrap_text("abc ", 3), vec!["abc", " "]);
+    }
+
+    #[test]
+    fn wrap_text_preserves_consecutive_spaces() {
+        assert_eq!(wrap_text("a  b", 10), vec!["a  b"]);
+        assert_eq!(wrap_text("a  b", 2), vec!["a ", " b"]);
+    }
 }
