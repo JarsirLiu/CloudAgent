@@ -26,8 +26,8 @@ pub use host::{
     MemoryBackend, RolloutRecorderBackend,
 };
 pub use model::{
-    ChatModel, ModelRequest, ModelResponse, ModelUsage, await_server_request_decision,
-    complete_model_request, complete_model_request_streaming,
+    ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelStreamObserver, ModelUsage,
+    await_server_request_decision, complete_model_request, complete_model_request_streaming,
 };
 pub use observability::{
     AuditEventEntry, ContextBudgetLogEntry, append_audit_event, append_audit_event_safe,
@@ -53,14 +53,14 @@ pub use tool::{
 };
 pub use turn::{
     AgentTurnOutput, ApprovalPolicy, CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE,
-    EventMsg, ExecutionPolicy, ManualCompactionOutcome, PermissionProfile, RegularTurnSettings,
-    RequestId, ServerRequest, ServerRequestDecision, ServerRequestDecisionKind,
-    ServerRequestHandler, ToolApprovalRequest, ToolBatchOutcome, TurnHost, TurnId,
-    TurnItemDeltaKind, TurnItemKind, TurnLifecycleClass, TurnLifecyclePhase, TurnOutcome,
-    TurnPolicy, TurnState, UserTurnInput, chat, chat_with_approval, chat_with_approval_and_events,
-    compact_conversation, conversation_busy_error, emit_assistant_message_item, emit_event,
-    execute_regular_turn, next_turn_id, paginate_turns, run_manual_compaction,
-    run_turn_with_approval,
+    EventMsg, ExecutionPolicy, ManualCompactionOutcome, ModelRetryStage, PermissionProfile,
+    RegularTurnSettings, RequestId, ServerRequest, ServerRequestDecision,
+    ServerRequestDecisionKind, ServerRequestHandler, ToolApprovalRequest, ToolBatchOutcome,
+    TurnHost, TurnId, TurnItemDeltaKind, TurnItemKind, TurnLifecycleClass, TurnLifecyclePhase,
+    TurnOutcome, TurnPolicy, TurnState, UserTurnInput, chat, chat_with_approval,
+    chat_with_approval_and_events, compact_conversation, conversation_busy_error,
+    emit_assistant_message_item, emit_event, execute_regular_turn, next_turn_id, paginate_turns,
+    run_manual_compaction, run_turn_with_approval,
 };
 
 pub fn crate_name() -> &'static str {

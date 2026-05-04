@@ -20,6 +20,9 @@ pub struct LlmConfig {
     pub api_key: String,
     pub model: String,
     pub temperature: f32,
+    pub request_max_retries: u64,
+    pub stream_max_retries: u64,
+    pub stream_idle_timeout_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -86,6 +89,9 @@ struct PartialLlmConfig {
     api_key: Option<String>,
     model: Option<String>,
     temperature: Option<f32>,
+    request_max_retries: Option<u64>,
+    stream_max_retries: Option<u64>,
+    stream_idle_timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -221,6 +227,9 @@ impl AgentConfig {
                 api_key: String::new(),
                 model: "gpt-4.1-mini".to_string(),
                 temperature: 0.2,
+                request_max_retries: 0,
+                stream_max_retries: 0,
+                stream_idle_timeout_ms: 30_000,
             },
             tools: ToolConfig {
                 default_shell_timeout_ms: 120_000,
@@ -248,6 +257,15 @@ impl AgentConfig {
             }
             if let Some(value) = llm.temperature {
                 self.llm.temperature = value;
+            }
+            if let Some(value) = llm.request_max_retries {
+                self.llm.request_max_retries = value;
+            }
+            if let Some(value) = llm.stream_max_retries {
+                self.llm.stream_max_retries = value;
+            }
+            if let Some(value) = llm.stream_idle_timeout_ms {
+                self.llm.stream_idle_timeout_ms = value.max(1_000);
             }
         }
 
@@ -412,6 +430,21 @@ impl AgentConfig {
             && let Ok(parsed) = value.parse::<f32>()
         {
             self.llm.temperature = parsed;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_LLM_REQUEST_MAX_RETRIES")
+            && let Ok(parsed) = value.parse::<u64>()
+        {
+            self.llm.request_max_retries = parsed;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_LLM_STREAM_MAX_RETRIES")
+            && let Ok(parsed) = value.parse::<u64>()
+        {
+            self.llm.stream_max_retries = parsed;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_LLM_STREAM_IDLE_TIMEOUT_MS")
+            && let Ok(parsed) = value.parse::<u64>()
+        {
+            self.llm.stream_idle_timeout_ms = parsed.max(1_000);
         }
         if let Ok(value) = env::var("CLOUDAGENT_SYSTEM_PROMPT") {
             self.runtime.system_prompt = value;

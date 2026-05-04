@@ -13,6 +13,4 @@ infra-http = { path = "../infra-http" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-
-[dev-dependencies]
 tokio.workspace = true

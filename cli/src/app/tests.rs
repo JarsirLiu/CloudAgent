@@ -1,4 +1,3 @@
-
 use super::TuiApp;
 use crate::agent_host::build_agent_host;
 use crate::app::commands::parse::ParsedInput;
@@ -1098,6 +1097,9 @@ fn test_config(
             api_key: "test-key".to_string(),
             model: "fake-model".to_string(),
             temperature: 0.0,
+            request_max_retries: 0,
+            stream_max_retries: 0,
+            stream_idle_timeout_ms: 30_000,
         },
         runtime: RuntimeConfig {
             system_prompt: "You are a test agent.".to_string(),

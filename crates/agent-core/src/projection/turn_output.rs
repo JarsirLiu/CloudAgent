@@ -72,6 +72,7 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
             EventMsg::TurnStarted { .. }
             | EventMsg::ModelRequestStarted { .. }
             | EventMsg::ModelResponseReceived { .. }
+            | EventMsg::ModelRetrying { .. }
             | EventMsg::TokenUsageUpdated { .. }
             | EventMsg::ContextCompacted { .. }
             | EventMsg::ContextCompactionStarted { .. }

@@ -99,6 +99,18 @@ impl ConversationNotificationProjector {
                 total_usage: total_usage.clone(),
                 model_context_window: *model_context_window,
             }],
+            EventMsg::ModelRetrying {
+                turn_id,
+                stage,
+                attempt,
+                next_delay_ms,
+            } => vec![AppServerNotification::ModelRetrying {
+                conversation_id: self.conversation_id.clone(),
+                turn_id: turn_id.clone(),
+                stage: stage.clone(),
+                attempt: *attempt,
+                next_delay_ms: *next_delay_ms,
+            }],
             EventMsg::ContextCompacted {
                 turn_id,
                 pre_context_tokens_estimate,
@@ -459,6 +471,34 @@ mod tests {
                 && last_usage.total_tokens == 140
                 && total_usage.cached_input_tokens == 25
                 && *model_context_window == Some(1000)
+        ));
+    }
+
+    #[test]
+    fn model_retrying_projects_to_conversation_notification() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        let notifications = projector.project_turn_event(&EventMsg::ModelRetrying {
+            turn_id: "turn-1".to_string(),
+            stage: agent_protocol::ModelRetryStage::Streaming,
+            attempt: 2,
+            next_delay_ms: 500,
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::ModelRetrying {
+                conversation_id,
+                turn_id,
+                stage,
+                attempt,
+                next_delay_ms,
+            } if conversation_id == "default"
+                && turn_id == "turn-1"
+                && *stage == agent_protocol::ModelRetryStage::Streaming
+                && *attempt == 2
+                && *next_delay_ms == 500
         ));
     }
 

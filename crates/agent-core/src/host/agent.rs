@@ -639,13 +639,13 @@ impl TurnHost for AgentHost {
         &self,
         cancellation_token: &CancellationToken,
         request: crate::ModelRequest,
-        on_text_delta: &mut (dyn FnMut(String) + Send),
+        observer: &mut dyn crate::ModelStreamObserver,
     ) -> Result<crate::ModelResponse> {
         complete_model_request_streaming(
             self.model.as_ref(),
             cancellation_token,
             request,
-            on_text_delta,
+            observer,
             TURN_INTERRUPTED_ERROR,
         )
         .await

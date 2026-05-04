@@ -136,6 +136,12 @@ pub enum EventMsg {
         has_content: bool,
         tool_call_count: usize,
     },
+    ModelRetrying {
+        turn_id: TurnId,
+        stage: ModelRetryStage,
+        attempt: u64,
+        next_delay_ms: u64,
+    },
     TokenUsageUpdated {
         turn_id: TurnId,
         last_usage: ModelUsage,
@@ -191,6 +197,13 @@ pub enum EventMsg {
         turn_id: TurnId,
         reason: String,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelRetryStage {
+    Request,
+    Streaming,
 }
 
 #[derive(Clone, Debug)]

@@ -2,7 +2,8 @@ use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
 use crate::context::{ContextFragment, MemoryBudgetSource};
 use crate::{
     ContextBudgetLogEntry, ContextCompactionConfig, ContextFacade, ContextManager, FilterPolicy,
-    ModelUsage, RolloutItem, append_context_budget_log, emit_assistant_message_item, emit_event,
+    ModelStreamObserver, ModelUsage, RolloutItem, append_context_budget_log,
+    emit_assistant_message_item, emit_event,
 };
 use crate::{EventMsg, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState};
 use anyhow::Result;
@@ -243,41 +244,78 @@ pub async fn execute_regular_turn<H: TurnHost>(
             tool_specs.len(),
         );
 
+        struct TurnStreamObserver<'a, E: FnMut(&EventMsg) + ?Sized> {
+            turn_id: &'a str,
+            assistant_item_seq: &'a mut usize,
+            streaming_assistant_item_id: &'a mut Option<String>,
+            events: &'a mut Vec<EventMsg>,
+            on_event: &'a mut E,
+        }
+
+        impl<E: FnMut(&EventMsg) + Send + ?Sized> ModelStreamObserver for TurnStreamObserver<'_, E> {
+            fn on_text_delta(&mut self, delta: String) {
+                if delta.is_empty() {
+                    return;
+                }
+                let item_id = self.streaming_assistant_item_id.get_or_insert_with(|| {
+                    let id = format!("assistant:{}:{}", self.turn_id, *self.assistant_item_seq);
+                    *self.assistant_item_seq += 1;
+                    emit_event(
+                        self.events,
+                        self.on_event,
+                        EventMsg::ItemStarted {
+                            turn_id: self.turn_id.to_string(),
+                            item_id: id.clone(),
+                            kind: TurnItemKind::AssistantMessage,
+                            title: Some("assistant_message".to_string()),
+                        },
+                    );
+                    id
+                });
+                emit_event(
+                    self.events,
+                    self.on_event,
+                    EventMsg::ItemDelta {
+                        turn_id: self.turn_id.to_string(),
+                        item_id: item_id.clone(),
+                        kind: TurnItemDeltaKind::Text,
+                        delta,
+                    },
+                );
+            }
+
+            fn on_retry(
+                &mut self,
+                stage: crate::ModelRetryStage,
+                attempt: u64,
+                delay: std::time::Duration,
+            ) {
+                emit_event(
+                    self.events,
+                    self.on_event,
+                    EventMsg::ModelRetrying {
+                        turn_id: self.turn_id.to_string(),
+                        stage,
+                        attempt,
+                        next_delay_ms: delay.as_millis().try_into().unwrap_or(u64::MAX),
+                    },
+                );
+            }
+        }
+
         let mut streaming_assistant_item_id: Option<String> = None;
+        let mut stream_observer = TurnStreamObserver {
+            turn_id,
+            assistant_item_seq: &mut assistant_item_seq,
+            streaming_assistant_item_id: &mut streaming_assistant_item_id,
+            events: &mut events,
+            on_event,
+        };
         let response = host
             .complete_model_request_streaming(
                 &cancellation_token,
                 model_request,
-                &mut |delta: String| {
-                    if delta.is_empty() {
-                        return;
-                    }
-                    let item_id = streaming_assistant_item_id.get_or_insert_with(|| {
-                        let id = format!("assistant:{turn_id}:{}", assistant_item_seq);
-                        assistant_item_seq += 1;
-                        emit_event(
-                            &mut events,
-                            on_event,
-                            EventMsg::ItemStarted {
-                                turn_id: turn_id.to_string(),
-                                item_id: id.clone(),
-                                kind: TurnItemKind::AssistantMessage,
-                                title: Some("assistant_message".to_string()),
-                            },
-                        );
-                        id
-                    });
-                    emit_event(
-                        &mut events,
-                        on_event,
-                        EventMsg::ItemDelta {
-                            turn_id: turn_id.to_string(),
-                            item_id: item_id.clone(),
-                            kind: TurnItemDeltaKind::Text,
-                            delta,
-                        },
-                    );
-                },
+                &mut stream_observer,
             )
             .await?;
 

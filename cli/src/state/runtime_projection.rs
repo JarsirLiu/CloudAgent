@@ -1,4 +1,4 @@
-use agent_protocol::FrontendMode;
+use agent_protocol::{FrontendMode, ModelRetryStage};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RuntimePhase {
@@ -63,6 +63,23 @@ impl RuntimeProjection {
         self.active_tool_title = None;
         self.phase = Some(RuntimePhase::Idle);
         self.live_label = None;
+    }
+
+    pub(crate) fn on_model_retrying(
+        &mut self,
+        stage: ModelRetryStage,
+        attempt: u64,
+        next_delay_ms: u64,
+    ) {
+        self.phase = Some(RuntimePhase::ModelStreaming);
+        let seconds = (next_delay_ms as f64) / 1000.0;
+        let stage_label = match stage {
+            ModelRetryStage::Request => "request",
+            ModelRetryStage::Streaming => "stream",
+        };
+        self.live_label = Some(format!(
+            "reconnecting ({stage_label} retry {attempt}, next in {seconds:.1}s)"
+        ));
     }
 
     pub(crate) fn on_assistant_activity(&mut self) {

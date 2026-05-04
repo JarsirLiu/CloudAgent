@@ -1,6 +1,6 @@
 use crate::context::{ContextManager, EnvironmentContext};
 use crate::conversation::ConversationHistory;
-use crate::model::{ModelRequest, ModelResponse};
+use crate::model::{ModelRequest, ModelResponse, ModelStreamObserver};
 use crate::rollout::RolloutItem;
 use crate::state::ActiveTurnHandle;
 use crate::tool::{ToolCall, ToolSpec};
@@ -105,7 +105,7 @@ pub trait TurnHost: Send + Sync {
         &self,
         cancellation_token: &CancellationToken,
         request: ModelRequest,
-        on_text_delta: &mut (dyn FnMut(String) + Send),
+        observer: &mut dyn ModelStreamObserver,
     ) -> Result<ModelResponse>;
 
     async fn run_tool_batch(

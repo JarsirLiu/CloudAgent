@@ -322,6 +322,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "turn/tokenUsageUpdated",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::ModelRetrying { .. } => (
+            "turn/modelRetrying",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ContextCompacted { .. } => (
             "turn/contextCompacted",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -425,6 +429,7 @@ fn parse_server_notification(
         | "item/tool/outputDelta"
         | "item/fileChange/outputDelta"
         | "turn/tokenUsageUpdated"
+        | "turn/modelRetrying"
         | "turn/contextCompacted"
         | "turn/contextCompactionStarted"
         | "item/jsonPatch/delta"

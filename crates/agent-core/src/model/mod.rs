@@ -1,8 +1,10 @@
+use crate::ModelRetryStage;
 use crate::conversation::ResponseItem;
 use crate::tool::{ToolCall, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 mod execution;
 
@@ -48,9 +50,50 @@ impl ModelUsage {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModelRetryDecision {
+    pub retryable: bool,
+    pub delay: Option<Duration>,
+}
+
+impl ModelRetryDecision {
+    pub fn no_retry() -> Self {
+        Self::default()
+    }
+
+    pub fn retry(delay: Option<Duration>) -> Self {
+        Self {
+            retryable: true,
+            delay,
+        }
+    }
+}
+
+pub trait ModelStreamObserver: Send {
+    fn on_text_delta(&mut self, delta: String);
+
+    fn on_retry(&mut self, _stage: ModelRetryStage, _attempt: u64, _delay: Duration) {}
+}
+
 #[async_trait]
 pub trait ChatModel: Send + Sync {
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse>;
+
+    fn request_max_retries(&self) -> u64 {
+        0
+    }
+
+    fn stream_max_retries(&self) -> u64 {
+        0
+    }
+
+    fn classify_request_error(&self, _err: &anyhow::Error) -> ModelRetryDecision {
+        ModelRetryDecision::no_retry()
+    }
+
+    fn classify_stream_error(&self, _err: &anyhow::Error) -> ModelRetryDecision {
+        ModelRetryDecision::no_retry()
+    }
 
     async fn complete_streaming(
         &self,

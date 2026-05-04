@@ -173,6 +173,7 @@ impl ConversationHistoryBuilder {
             }
             EventMsg::ModelRequestStarted { .. }
             | EventMsg::ModelResponseReceived { .. }
+            | EventMsg::ModelRetrying { .. }
             | EventMsg::TokenUsageUpdated { .. }
             | EventMsg::ContextCompacted { .. }
             | EventMsg::ContextCompactionStarted { .. }

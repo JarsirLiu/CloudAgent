@@ -89,6 +89,7 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
         | EventMsg::TokenUsageUpdated { .. }
         | EventMsg::ContextCompacted { .. }
         | EventMsg::ContextCompactionStarted { .. }
+        | EventMsg::ModelRetrying { .. }
         | EventMsg::ItemStarted { .. }
         | EventMsg::ServerRequestRequested { .. }
         | EventMsg::ServerRequestResolved { .. }
@@ -124,6 +125,7 @@ pub fn classify_event_msg(event: &EventMsg) -> (EventStream, EventDelivery) {
         EventMsg::ModelRequestStarted { .. }
         | EventMsg::ModelResponseReceived { .. }
         | EventMsg::TokenUsageUpdated { .. }
+        | EventMsg::ModelRetrying { .. }
         | EventMsg::ContextCompacted { .. } => (EventStream::Diagnostic, EventDelivery::BestEffort),
         EventMsg::ContextCompactionStarted { .. } => {
             (EventStream::Diagnostic, EventDelivery::BestEffort)

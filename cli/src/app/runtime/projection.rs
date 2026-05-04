@@ -6,6 +6,13 @@ pub(crate) fn apply_runtime_projection_update(app: &mut TuiApp, action: &ServerA
         ServerAction::SetMode(mode) => app.runtime_projection.on_mode_changed(*mode),
         ServerAction::ClearCurrentTurnUsage => app.runtime_projection.on_turn_started(),
         ServerAction::ClearLastToolName => app.runtime_projection.on_tool_finished(),
+        ServerAction::SetRetryStatus {
+            stage,
+            attempt,
+            next_delay_ms,
+        } => app
+            .runtime_projection
+            .on_model_retrying(stage.clone(), *attempt, *next_delay_ms),
         ServerAction::ItemDispatch(ItemDispatch::AssistantStarted { .. })
         | ServerAction::ItemDispatch(ItemDispatch::AssistantDelta { .. }) => {
             app.runtime_projection.on_assistant_activity();

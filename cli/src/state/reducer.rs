@@ -1,8 +1,8 @@
 use crate::state::NoticeLevel;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
-    FrontendMode, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind, TranscriptItem,
-    TurnItemKind,
+    FrontendMode, ModelRetryStage, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind,
+    TranscriptItem, TurnItemKind,
 };
 
 #[derive(Debug, Clone)]
@@ -97,6 +97,11 @@ pub(crate) enum ServerAction {
         total_usage: ModelUsage,
         model_context_window: Option<u64>,
     },
+    SetRetryStatus {
+        stage: ModelRetryStage,
+        attempt: u64,
+        next_delay_ms: u64,
+    },
     ClearServerRequestView,
     DismissServerRequestView(RequestId),
     ClearServerRequestStatus,
@@ -162,6 +167,18 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                         last_usage: last_usage.clone(),
                         total_usage: total_usage.clone(),
                         model_context_window: *model_context_window,
+                    });
+                }
+                AppServerNotification::ModelRetrying {
+                    stage,
+                    attempt,
+                    next_delay_ms,
+                    ..
+                } => {
+                    actions.push(ServerAction::SetRetryStatus {
+                        stage: stage.clone(),
+                        attempt: *attempt,
+                        next_delay_ms: *next_delay_ms,
                     });
                 }
                 AppServerNotification::ContextCompacted {
@@ -480,6 +497,32 @@ mod tests {
                 } if last_usage.total_tokens == 13
                     && total_usage.cached_input_tokens == 4
                     && *model_context_window == Some(100)
+            )
+        }));
+    }
+
+    #[test]
+    fn model_retrying_notification_sets_retry_status() {
+        let message = AppServerMessage::Notification(AppServerNotification::ModelRetrying {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            stage: agent_protocol::ModelRetryStage::Streaming,
+            attempt: 2,
+            next_delay_ms: 500,
+        });
+
+        let reduced = apply_server_message(&message);
+
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(
+                action,
+                ServerAction::SetRetryStatus {
+                    stage,
+                    attempt,
+                    next_delay_ms,
+                } if *stage == agent_protocol::ModelRetryStage::Streaming
+                    && *attempt == 2
+                    && *next_delay_ms == 500
             )
         }));
     }

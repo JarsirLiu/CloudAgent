@@ -344,6 +344,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.run_state.total_turn_usage = Some(total_usage);
             app.run_state.model_context_window = model_context_window;
         }
+        ServerAction::SetRetryStatus { .. } => {}
         ServerAction::ClearServerRequestView => {
             app.input_pane.clear_server_request();
         }

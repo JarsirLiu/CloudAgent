@@ -1,6 +1,6 @@
 use crate::types::{ConversationSnapshot, FrontendMode, NotificationDelivery, NotificationStream};
 use crate::{
-    ConversationSummary, ConversationTurn, ModelUsage, RequestId, ServerRequest,
+    ConversationSummary, ConversationTurn, ModelRetryStage, ModelUsage, RequestId, ServerRequest,
     ServerRequestDecision, TranscriptItem, TurnId, TurnItemKind, UserTurnInput,
 };
 use serde::{Deserialize, Serialize};
@@ -156,6 +156,13 @@ pub enum AppServerNotification {
         total_usage: ModelUsage,
         model_context_window: Option<u64>,
     },
+    ModelRetrying {
+        conversation_id: String,
+        turn_id: TurnId,
+        stage: ModelRetryStage,
+        attempt: u64,
+        next_delay_ms: u64,
+    },
     ContextCompacted {
         conversation_id: String,
         turn_id: TurnId,
@@ -275,6 +282,9 @@ impl AppServerNotification {
             | Self::TokenUsageUpdated {
                 conversation_id, ..
             }
+            | Self::ModelRetrying {
+                conversation_id, ..
+            }
             | Self::ContextCompacted {
                 conversation_id, ..
             }
@@ -387,6 +397,7 @@ pub fn classify_notification(
         | AppServerNotification::ServerRequestRequested { .. }
         | AppServerNotification::ServerRequestResolved { .. }
         | AppServerNotification::TokenUsageUpdated { .. }
+        | AppServerNotification::ModelRetrying { .. }
         | AppServerNotification::ContextCompacted { .. }
         | AppServerNotification::ContextCompactionStarted { .. }
         | AppServerNotification::TurnFailed { .. }
