@@ -95,8 +95,8 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &settings.workspace_root,
             )
         };
-        let compaction_estimated_total_tokens =
-            context_facade.estimate_history_tokens_for_canonical_compaction(
+        let compaction_estimated_total_tokens = context_facade
+            .estimate_history_tokens_for_canonical_compaction(
                 &context_manager.history().messages,
                 &settings.workspace_root,
             );

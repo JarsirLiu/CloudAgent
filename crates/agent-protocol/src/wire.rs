@@ -83,11 +83,11 @@ impl TryFrom<JsonRpcMessage> for AppServerMessageEnvelope {
             JsonRpcMessage::Request(request) => {
                 let (event_seq, params) = extract_event_seq(request.params);
                 Ok(AppServerMessageEnvelope {
-                message: AppServerMessage::Request(parse_server_request(
-                    request.id,
-                    &request.method,
-                    params,
-                )?),
+                    message: AppServerMessage::Request(parse_server_request(
+                        request.id,
+                        &request.method,
+                        params,
+                    )?),
                     event_seq,
                 })
             }
@@ -840,4 +840,3 @@ mod tests {
         }
     }
 }
-

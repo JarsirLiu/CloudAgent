@@ -21,13 +21,21 @@ pub enum SessionPickerMode {
 }
 
 impl SessionPicker {
-    pub fn new(mut sessions: Vec<ConversationSummary>, active_id: &str, mode: SessionPickerMode) -> Self {
+    pub fn new(
+        mut sessions: Vec<ConversationSummary>,
+        active_id: &str,
+        mode: SessionPickerMode,
+    ) -> Self {
         sessions.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
         let selected = sessions
             .iter()
             .position(|s| s.conversation_id == active_id)
             .unwrap_or(0);
-        Self { sessions, selected, mode }
+        Self {
+            sessions,
+            selected,
+            mode,
+        }
     }
 }
 
@@ -57,10 +65,12 @@ impl BottomPaneView for SessionPicker {
             }
             KeyCode::Enter => self
                 .select_current()
-                .map(|id| BottomPaneViewAction::Composer(match self.mode {
-                    SessionPickerMode::Switch => ComposerIntent::SessionSwitch(id),
-                    SessionPickerMode::Delete => ComposerIntent::DeleteConversation(id),
-                }))
+                .map(|id| {
+                    BottomPaneViewAction::Composer(match self.mode {
+                        SessionPickerMode::Switch => ComposerIntent::SessionSwitch(id),
+                        SessionPickerMode::Delete => ComposerIntent::DeleteConversation(id),
+                    })
+                })
                 .unwrap_or(BottomPaneViewAction::None),
             KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Close,
             _ => BottomPaneViewAction::None,
@@ -99,9 +109,10 @@ impl BottomPaneView for SessionPicker {
             } else {
                 Style::default().fg(Color::Rgb(135, 145, 175))
             };
-            lines.push(Line::from(vec![Span::raw(format!(
-                "  "
-            )), Span::styled(row, style)]));
+            lines.push(Line::from(vec![
+                Span::raw(format!("  ")),
+                Span::styled(row, style),
+            ]));
         }
         if end < self.sessions.len() {
             lines.push(Line::from("  ..."));

@@ -206,11 +206,7 @@ impl AgentState {
         entry.conversation.set_pending_request(request_id, request);
     }
 
-    pub async fn resolve_pending_request(
-        &self,
-        conversation_id: &str,
-        request_id: &RequestId,
-    ) {
+    pub async fn resolve_pending_request(&self, conversation_id: &str, request_id: &RequestId) {
         if let Ok(mut conversations) = self.conversations.lock()
             && let Some(entry) = conversations.get_mut(conversation_id)
         {

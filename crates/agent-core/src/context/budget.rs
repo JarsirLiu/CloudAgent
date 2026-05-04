@@ -88,7 +88,10 @@ pub fn build_memory_budgeted_fragments(
         remaining = remaining.saturating_sub(used);
     } else if let Some(memory) = fit_bucket(
         source.memory.as_deref(),
-        source.post_compact_memory_floor_tokens.min(remaining).max(32),
+        source
+            .post_compact_memory_floor_tokens
+            .min(remaining)
+            .max(32),
     ) {
         fragments.push(ResponseItem::User {
             content: format!("<long_term_memory>\n{}\n</long_term_memory>", memory.0),

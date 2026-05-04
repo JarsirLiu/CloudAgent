@@ -100,5 +100,4 @@ impl ConversationState {
     pub fn pending_requests(&self) -> &[PendingConversationRequest] {
         &self.pending_requests
     }
-
 }

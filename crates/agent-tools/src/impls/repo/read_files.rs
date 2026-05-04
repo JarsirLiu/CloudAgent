@@ -1,5 +1,7 @@
 use crate::impls::repo::text_read::{TextReadOptions, read_text_snippet};
-use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
+use crate::registry::shared::{
+    LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
+};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use agent_protocol::{ReadFileEntry, ReadFileStatus};

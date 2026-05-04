@@ -108,13 +108,19 @@ pub(crate) fn denied_transcript_item(
 
 pub(crate) fn tool_item_title(call: &ToolCall) -> String {
     if call.name == "exec_command"
-        && let Some(command) = call.arguments.get("command").and_then(|value| value.as_str())
+        && let Some(command) = call
+            .arguments
+            .get("command")
+            .and_then(|value| value.as_str())
         && !command.trim().is_empty()
     {
         return command.trim().to_string();
     }
     if call.name == "exec_command"
-        && let Some(session_id) = call.arguments.get("session_id").and_then(|value| value.as_str())
+        && let Some(session_id) = call
+            .arguments
+            .get("session_id")
+            .and_then(|value| value.as_str())
         && !session_id.trim().is_empty()
     {
         return format!("session {}", session_id.trim());
@@ -186,7 +192,11 @@ pub(crate) fn repeated_rejection_message(tool_name: &str) -> String {
 }
 
 pub(crate) fn tool_request_key(call: &ToolCall) -> String {
-    format!("{}:{}", call.identity.wire_name, canonical_json(&call.arguments))
+    format!(
+        "{}:{}",
+        call.identity.wire_name,
+        canonical_json(&call.arguments)
+    )
 }
 
 pub(crate) fn missing_tool_result(call: &ToolCall) -> ToolResult {

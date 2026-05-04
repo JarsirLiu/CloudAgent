@@ -25,10 +25,7 @@ pub fn load_cli_settings(store_root: &Path) -> Result<Option<PersistedCliSetting
     Ok(Some(parsed))
 }
 
-pub fn save_cli_settings(
-    store_root: &Path,
-    settings: &PersistedCliSettings,
-) -> Result<()> {
+pub fn save_cli_settings(store_root: &Path, settings: &PersistedCliSettings) -> Result<()> {
     let payload = serde_json::to_string(settings)?;
     infra_store::save_project_settings_snapshot_sync(store_root, &payload)
 }

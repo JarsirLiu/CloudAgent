@@ -1,12 +1,12 @@
-use crate::session::listener::ConversationListenerHandle;
-use crate::session::subscriptions::ConversationSubscriptions;
-use crate::session::service as session_service;
 use crate::server_request::coordinator::{ResolvedServerRequest, ServerRequestCoordinator};
 use crate::server_request::service as server_request_service;
+use crate::session::listener::ConversationListenerHandle;
+use crate::session::service as session_service;
+use crate::session::subscriptions::ConversationSubscriptions;
 use crate::turn::service as turn_service;
+use agent_core::AgentHost;
 use agent_core::ConversationTurn;
 use agent_protocol::{AppClientCommand, AppServerMessage, ServerRequestDecision};
-use agent_core::AgentHost;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -138,7 +138,8 @@ impl ServerState {
         &self,
         conversation_id: &str,
     ) -> Vec<(agent_protocol::RequestId, agent_protocol::ServerRequest)> {
-        self.server_requests.pending_for_conversation(conversation_id)
+        self.server_requests
+            .pending_for_conversation(conversation_id)
     }
 
     pub(crate) fn next_server_request_id(&self) -> agent_protocol::RequestId {
@@ -153,12 +154,18 @@ impl ServerState {
         request: agent_protocol::ServerRequest,
         reply_tx: oneshot::Sender<ServerRequestDecision>,
     ) {
-        self.server_requests
-            .insert_pending(request_id, conversation_id, turn_id, request, reply_tx);
+        self.server_requests.insert_pending(
+            request_id,
+            conversation_id,
+            turn_id,
+            request,
+            reply_tx,
+        );
     }
 
     pub(crate) fn try_start_title_job(&mut self, conversation_id: &str) -> bool {
-        self.title_jobs_in_flight.insert(conversation_id.to_string())
+        self.title_jobs_in_flight
+            .insert(conversation_id.to_string())
     }
 
     pub(crate) fn finish_title_job(&mut self, conversation_id: &str) {
@@ -248,13 +255,8 @@ pub(crate) async fn handle_command(
             session_service::list_conversations(&runtime, event_tx, &state).await?;
         }
         AppClientCommand::CreateConversation { conversation_id } => {
-            session_service::create_conversation(
-                &runtime,
-                event_tx,
-                &state,
-                conversation_id,
-            )
-            .await?;
+            session_service::create_conversation(&runtime, event_tx, &state, conversation_id)
+                .await?;
         }
         AppClientCommand::SetConversationTitle {
             conversation_id,
@@ -321,7 +323,10 @@ pub(crate) async fn handle_command(
     Ok(())
 }
 
-pub(crate) fn merge_active_turn(turns: &mut Vec<ConversationTurn>, active_turn: Option<ConversationTurn>) {
+pub(crate) fn merge_active_turn(
+    turns: &mut Vec<ConversationTurn>,
+    active_turn: Option<ConversationTurn>,
+) {
     let Some(active_turn) = active_turn else {
         return;
     };
@@ -374,6 +379,3 @@ mod tests {
         }
     }
 }
-
-
-

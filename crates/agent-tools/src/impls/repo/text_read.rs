@@ -1,4 +1,4 @@
-use crate::impls::text_codec::{decode_text_file, TextDecodeFailure};
+use crate::impls::text_codec::{TextDecodeFailure, decode_text_file};
 use anyhow::{Context, Result};
 use std::path::Path;
 

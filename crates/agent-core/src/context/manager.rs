@@ -166,10 +166,8 @@ impl ContextManager {
         tools: Vec<ToolSpec>,
         temperature: f32,
     ) -> ModelRequest {
-        let messages = insert_context_fragments_before_latest_user(
-            self.history.messages.clone(),
-            fragments,
-        );
+        let messages =
+            insert_context_fragments_before_latest_user(self.history.messages.clone(), fragments);
         ModelRequest {
             messages,
             tools,

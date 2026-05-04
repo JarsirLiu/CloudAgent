@@ -1,7 +1,7 @@
 use crate::app::TuiApp;
+use crate::state::reducer::ItemDispatch;
 use crate::ui::widgets::history_cell::render_history_entry;
 use agent_protocol::TranscriptItem;
-use crate::state::reducer::ItemDispatch;
 
 pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
     app.transcript_state = crate::state::TranscriptState::default();

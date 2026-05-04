@@ -61,7 +61,11 @@ fn live_area_height(app: &TuiApp, width: u16) -> Option<u16> {
     } else if has_live_status(app) {
         let status_lines = 1u16;
         let active_height = active_cell_height(app, width).unwrap_or(0);
-        Some(active_height.saturating_add(status_lines).saturating_add(ACTIVE_TOP_INSET))
+        Some(
+            active_height
+                .saturating_add(status_lines)
+                .saturating_add(ACTIVE_TOP_INSET),
+        )
     } else {
         active_cell_height(app, width).map(|height| height.saturating_add(ACTIVE_TOP_INSET))
     }

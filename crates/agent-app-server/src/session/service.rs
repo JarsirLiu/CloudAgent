@@ -1,8 +1,8 @@
-use crate::routing::command_router::{ServerState, merge_active_turn};
 use crate::app::notification::send_notification;
+use crate::routing::command_router::{ServerState, merge_active_turn};
 use crate::session::state as session_state;
-use agent_protocol::{AppServerMessage, AppServerNotification, ConversationStatus, FrontendMode};
 use agent_core::AgentHost;
+use agent_protocol::{AppServerMessage, AppServerNotification, ConversationStatus, FrontendMode};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -167,12 +167,9 @@ pub(crate) async fn archive_conversation(
 ) -> Result<()> {
     runtime.archive_conversation(&conversation_id).await?;
     let next_conversation_id = runtime.create_fresh_conversation().await?;
-    let transition = session_state::apply_archive_transition(
-        state,
-        &conversation_id,
-        &next_conversation_id,
-    )
-    .await;
+    let transition =
+        session_state::apply_archive_transition(state, &conversation_id, &next_conversation_id)
+            .await;
     let active_session_id = transition.active_session_id;
     let switched_active = transition.switched_active;
     if switched_active {
@@ -229,7 +226,9 @@ pub(crate) async fn set_conversation_title(
     conversation_id: String,
     title: String,
 ) -> Result<()> {
-    runtime.set_conversation_title(&conversation_id, &title).await?;
+    runtime
+        .set_conversation_title(&conversation_id, &title)
+        .await?;
     send_notification(
         event_tx,
         state,
@@ -257,7 +256,8 @@ pub(crate) async fn delete_conversation(
         let next_conversation_id = runtime.create_fresh_conversation().await?;
         session_state::apply_active_conversation(state, next_conversation_id.clone()).await;
         session_state::persist_active_conversation(runtime, &next_conversation_id).await;
-        publish_switched_conversation_state(runtime, event_tx, state, &next_conversation_id).await?;
+        publish_switched_conversation_state(runtime, event_tx, state, &next_conversation_id)
+            .await?;
     }
     let active_session_id = {
         let guard = state.lock().await;
@@ -463,5 +463,3 @@ async fn publish_switched_conversation_state(
     .await;
     Ok(())
 }
-
-

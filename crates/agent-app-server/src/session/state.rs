@@ -29,10 +29,7 @@ pub(crate) async fn apply_active_conversation(
     guard.subscribe(conversation_id);
 }
 
-pub(crate) async fn persist_active_conversation(
-    runtime: &Arc<AgentHost>,
-    conversation_id: &str,
-) {
+pub(crate) async fn persist_active_conversation(runtime: &Arc<AgentHost>, conversation_id: &str) {
     let _ = runtime.mark_active_conversation(conversation_id).await;
 }
 
@@ -91,5 +88,3 @@ mod tests {
         assert_eq!(transition.active_session_id, "session-a");
     }
 }
-
-

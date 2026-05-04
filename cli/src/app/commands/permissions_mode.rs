@@ -7,7 +7,10 @@ pub(crate) fn apply_permission_mode(app: &mut TuiApp, mode: &str) -> Result<(), 
     }
     app.run_state.permission_mode = mode.to_string();
     app.run_state.set_system_notice(
-        format!("Project permission mode: {mode} ({})", permission_mode_label(mode)),
+        format!(
+            "Project permission mode: {mode} ({})",
+            permission_mode_label(mode)
+        ),
         Some(std::time::Duration::from_secs(4)),
     );
     Ok(())

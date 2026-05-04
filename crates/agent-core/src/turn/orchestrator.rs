@@ -1,6 +1,8 @@
-use super::{ServerRequestHandler, TurnHost, TurnOutcome, conversation_busy_error, execute_regular_turn};
-use crate::{RolloutItem, ToolCall, emit_event, next_turn_id};
+use super::{
+    ServerRequestHandler, TurnHost, TurnOutcome, conversation_busy_error, execute_regular_turn,
+};
 use crate::{EventMsg, TurnState};
+use crate::{RolloutItem, ToolCall, emit_event, next_turn_id};
 use anyhow::{Result, bail};
 
 pub async fn run_turn_with_approval<H: TurnHost>(

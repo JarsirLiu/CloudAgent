@@ -9,4 +9,3 @@ pub(crate) fn status_meta_from_projection(projection: &RuntimeProjection) -> Opt
         _ => None,
     }
 }
-

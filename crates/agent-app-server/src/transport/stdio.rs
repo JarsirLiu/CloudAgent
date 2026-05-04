@@ -34,7 +34,8 @@ where
 {
     let mut last_seq_by_conversation: HashMap<String, u64> = HashMap::new();
     while let Some(event) = rx.recv().await {
-        if let (Some(conversation_id), Some(event_seq)) = (event.message.conversation_id(), event.event_seq)
+        if let (Some(conversation_id), Some(event_seq)) =
+            (event.message.conversation_id(), event.event_seq)
         {
             let last_seq = last_seq_by_conversation
                 .entry(conversation_id.to_string())

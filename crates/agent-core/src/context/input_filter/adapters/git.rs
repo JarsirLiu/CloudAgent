@@ -9,7 +9,10 @@ pub(crate) fn filter_git_output(cmd: &str, raw: &str) -> String {
             })
             .count();
         if files > 0 {
-            return format!("Git status: {files} changed files\n{}", filter_failure_tail(raw));
+            return format!(
+                "Git status: {files} changed files\n{}",
+                filter_failure_tail(raw)
+            );
         }
     }
     if cmd.starts_with("git diff") {
@@ -21,7 +24,10 @@ pub(crate) fn filter_git_output(cmd: &str, raw: &str) -> String {
             .lines()
             .filter(|l| l.starts_with('-') && !l.starts_with("---"))
             .count();
-        return format!("Git diff summary: +{adds} / -{dels}\n{}", filter_failure_tail(raw));
+        return format!(
+            "Git diff summary: +{adds} / -{dels}\n{}",
+            filter_failure_tail(raw)
+        );
     }
     filter_tool_output(raw)
 }

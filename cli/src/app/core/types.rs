@@ -2,8 +2,8 @@ use crate::state::runtime_projection::RuntimeProjection;
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
 use crate::ui::widgets::history_cell::HistoryCell;
 use crate::ui::widgets::input_pane::InputPane;
-use agent_protocol::ConversationSummary;
 use agent_core::AgentHost;
+use agent_protocol::ConversationSummary;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -23,8 +23,13 @@ pub struct ConsoleConfig {
 
 #[derive(Clone)]
 pub enum ConsoleConnection {
-    InProcess { runtime: Arc<AgentHost> },
-    Stdio { program: OsString, args: Vec<OsString> },
+    InProcess {
+        runtime: Arc<AgentHost>,
+    },
+    Stdio {
+        program: OsString,
+        args: Vec<OsString>,
+    },
 }
 
 impl ConsoleConnection {
@@ -55,5 +60,3 @@ pub(crate) struct TuiApp {
     pub(crate) workspace_root: PathBuf,
     pub(crate) conversation_store_dir: PathBuf,
 }
-
-

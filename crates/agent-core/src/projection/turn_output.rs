@@ -173,4 +173,3 @@ mod tests {
         assert!(!tool_events[0].is_error);
     }
 }
-

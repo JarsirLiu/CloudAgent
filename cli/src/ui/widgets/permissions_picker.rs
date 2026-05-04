@@ -3,8 +3,8 @@ use crate::app::commands::permission_profile::{
 };
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use crate::ui::widgets::textarea::display_width;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -21,7 +21,11 @@ impl PermissionsPicker {
         let selected = options
             .iter()
             .position(|m| m.mode == current)
-            .or_else(|| options.iter().position(|m| m.mode == DEFAULT_PERMISSION_MODE))
+            .or_else(|| {
+                options
+                    .iter()
+                    .position(|m| m.mode == DEFAULT_PERMISSION_MODE)
+            })
             .unwrap_or(0);
         Self { selected, options }
     }
@@ -79,10 +83,7 @@ impl BottomPaneView for PermissionsPicker {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(mode_text, style),
-                Span::styled(
-                    label,
-                    Style::default().fg(Color::Rgb(120, 130, 150)),
-                ),
+                Span::styled(label, Style::default().fg(Color::Rgb(120, 130, 150))),
             ]));
         }
         if end < self.options.len() {
@@ -93,7 +94,12 @@ impl BottomPaneView for PermissionsPicker {
 
     fn desired_height(&self, _area_width: u16) -> u16 {
         let visible = self.options.len().min(MAX_VISIBLE_OPTIONS) as u16;
-        4 + visible + if self.options.len() > MAX_VISIBLE_OPTIONS { 1 } else { 0 }
+        4 + visible
+            + if self.options.len() > MAX_VISIBLE_OPTIONS {
+                1
+            } else {
+                0
+            }
     }
 }
 

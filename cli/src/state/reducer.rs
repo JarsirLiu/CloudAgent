@@ -1,9 +1,9 @@
+use crate::state::NoticeLevel;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
     FrontendMode, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind, TranscriptItem,
     TurnItemKind,
 };
-use crate::state::NoticeLevel;
 
 #[derive(Debug, Clone)]
 pub(crate) enum ItemDispatch {
@@ -83,7 +83,10 @@ pub(crate) struct ServerMessageReduce {
 #[derive(Debug, Clone)]
 pub(crate) enum ServerAction {
     SetMode(FrontendMode),
-    SetSystemNotice { text: String, level: NoticeLevel },
+    SetSystemNotice {
+        text: String,
+        level: NoticeLevel,
+    },
     ClearSystemNotice,
     SetHistoryLoaded(bool),
     SetConversationList(Vec<agent_protocol::ConversationSummary>),
@@ -481,4 +484,3 @@ mod tests {
         }));
     }
 }
-

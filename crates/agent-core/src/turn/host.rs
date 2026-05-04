@@ -68,8 +68,10 @@ pub trait TurnHost: Send + Sync {
     fn environment_context(&self) -> EnvironmentContext;
     fn raw_memory_fragment(&self) -> Option<String>;
     fn all_tool_specs(&self) -> Vec<ToolSpec>;
-    fn resolve_regular_turn_tools(&self, permission_profile: &Self::PermissionProfile)
-    -> Vec<ToolSpec>;
+    fn resolve_regular_turn_tools(
+        &self,
+        permission_profile: &Self::PermissionProfile,
+    ) -> Vec<ToolSpec>;
 
     async fn start_turn(
         &self,
@@ -83,8 +85,11 @@ pub trait TurnHost: Send + Sync {
     async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory>;
     async fn history_from_rollout(&self, conversation_id: &str) -> Result<ConversationHistory>;
     async fn save_history(&self, history: ConversationHistory) -> Result<()>;
-    async fn persist_rollout_items(&self, conversation_id: &str, items: &[RolloutItem])
-    -> Result<()>;
+    async fn persist_rollout_items(
+        &self,
+        conversation_id: &str,
+        items: &[RolloutItem],
+    ) -> Result<()>;
     fn record_rollout_items(&self, conversation_id: &str, items: &[RolloutItem]) -> Result<()>;
     async fn flush_rollout(&self) -> Result<()>;
 

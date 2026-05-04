@@ -26,7 +26,8 @@ impl FileMemoryRepo {
 
     pub fn append_l2_fact(&self, line: &str) -> Result<()> {
         let path = self.root.join("l2").join("global_facts.md");
-        let mut content = read_optional_text(&path)?.unwrap_or_else(|| "# Global Facts\n\n".to_string());
+        let mut content =
+            read_optional_text(&path)?.unwrap_or_else(|| "# Global Facts\n\n".to_string());
         if content.lines().any(|l| l.trim() == line.trim()) {
             return Ok(());
         }
@@ -71,7 +72,10 @@ impl FileMemoryRepo {
         }
         let l1 = self.root.join("l1").join("insight.md");
         if !l1.exists() {
-            fs::write(l1, "# Insight Index\n\n- facts -> l2/global_facts.md\n- sop -> l3/auto_sop.md\n")?;
+            fs::write(
+                l1,
+                "# Insight Index\n\n- facts -> l2/global_facts.md\n- sop -> l3/auto_sop.md\n",
+            )?;
         }
         Ok(())
     }

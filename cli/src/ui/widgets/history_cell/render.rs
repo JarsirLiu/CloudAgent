@@ -46,9 +46,7 @@ pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
         ),
         TranscriptItem::FileChange {
             tool_name, summary, ..
-        } => {
-            HistoryCell::from_message(tool_name.clone(), summary.clone(), HistoryTone::Control)
-        }
+        } => HistoryCell::from_message(tool_name.clone(), summary.clone(), HistoryTone::Control),
         TranscriptItem::Reasoning { text, .. } => {
             HistoryCell::from_message("reasoning", text.clone(), HistoryTone::Reasoning)
         }
@@ -132,7 +130,11 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
         if *file_count == 1 {
             return format!(
                 "read {total_chars} chars{} @ {}",
-                if *truncated_count > 0 { " truncated" } else { "" },
+                if *truncated_count > 0 {
+                    " truncated"
+                } else {
+                    ""
+                },
                 target
             );
         }

@@ -889,4 +889,3 @@ mod tests {
         assert!(estimate_message_tokens(&messages[keep_start..]) <= 120);
     }
 }
-

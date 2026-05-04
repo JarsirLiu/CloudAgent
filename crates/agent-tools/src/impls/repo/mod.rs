@@ -14,7 +14,9 @@ pub use search_workspace::SearchWorkspaceTool;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::shared::{LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource};
+    use crate::registry::shared::{
+        LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource,
+    };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::fs;
@@ -72,7 +74,11 @@ mod tests {
                 ..
             }) if session_id == "search:test:1" && query == "service.rs"
         ));
-        assert!(lines.iter().any(|line| line == "Top 2 matches (showing 2 of 2):"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Top 2 matches (showing 2 of 2):")
+        );
         assert!(lines.iter().any(|line| line == "src/service.rs"));
     }
 
@@ -136,7 +142,11 @@ mod tests {
             .expect("search_workspace works");
 
         assert!(output.content.contains("Found 2 matches in 1 files"));
-        assert!(output.content.contains("src/lib.rs:1: fn render_active_cell() {}"));
+        assert!(
+            output
+                .content
+                .contains("src/lib.rs:1: fn render_active_cell() {}")
+        );
     }
 
     #[tokio::test]
@@ -167,10 +177,9 @@ mod tests {
             .await
             .expect("start search session");
         let session_id = match first.structured.as_ref() {
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace {
-                session_id,
-                ..
-            }) => session_id.clone(),
+            Some(agent_protocol::StructuredToolResult::SearchWorkspace { session_id, .. }) => {
+                session_id.clone()
+            }
             other => panic!("expected search session id, got {other:?}"),
         };
 

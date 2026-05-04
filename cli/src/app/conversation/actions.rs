@@ -1,19 +1,18 @@
 use crate::app::TuiApp;
 use crate::app::cli_settings::{PersistedCliSettings, save_cli_settings};
+use crate::app::commands::filter_toggle::apply_filter_toggle;
+use crate::app::commands::parse::ParsedInput;
+use crate::app::commands::permissions_mode::apply_permission_mode;
 use crate::app::conversation::facade as conversation_facade;
 use crate::app::effects::copy_text_to_clipboard;
-use crate::app::commands::filter_toggle::apply_filter_toggle;
-use crate::app::commands::permissions_mode::apply_permission_mode;
-use crate::app::commands::parse::ParsedInput;
 use crate::app::runtime::projection::apply_runtime_projection_update;
 use crate::input::slash_command::slash_command_help_text;
-use crate::state::reducer::ServerAction;
 use crate::state::NoticeLevel;
+use crate::state::reducer::ServerAction;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
-    AppClientCommand, FrontendMode, ServerRequestDecision, ServerRequestDecisionKind,
-    UserTurnInput,
+    AppClientCommand, FrontendMode, ServerRequestDecision, ServerRequestDecisionKind, UserTurnInput,
 };
 use anyhow::Result;
 use config::AgentConfig;
@@ -92,11 +91,8 @@ pub(crate) fn handle_tui_input(
         } => {
             if api_key.is_empty() && base_url.is_empty() && model.is_empty() {
                 let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
-                app.input_pane.set_config_panel(
-                    cfg.llm.api_key,
-                    cfg.llm.base_url,
-                    cfg.llm.model,
-                );
+                app.input_pane
+                    .set_config_panel(cfg.llm.api_key, cfg.llm.base_url, cfg.llm.model);
                 return Ok(false);
             }
             if base_url.trim().is_empty() || model.trim().is_empty() {
@@ -108,8 +104,10 @@ pub(crate) fn handle_tui_input(
                 return Ok(false);
             }
             save_user_llm_config(&api_key, &base_url, &model)?;
-            app.run_state
-                .set_system_notice_level("Config updated in ~/.cloudagent/config.toml", NoticeLevel::Info);
+            app.run_state.set_system_notice_level(
+                "Config updated in ~/.cloudagent/config.toml",
+                NoticeLevel::Info,
+            );
             app.push_cell(HistoryCell::from_message(
                 "config",
                 "Saved API Key / Base URL / Model.",
@@ -308,13 +306,19 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::SetConversationList(conversations) => {
             app.set_conversation_summaries(conversations.clone());
             if app.session_picker_requested {
-                app.input_pane
-                    .set_session_picker(conversations, &app.conversation_id, crate::ui::widgets::session_picker::SessionPickerMode::Switch);
+                app.input_pane.set_session_picker(
+                    conversations,
+                    &app.conversation_id,
+                    crate::ui::widgets::session_picker::SessionPickerMode::Switch,
+                );
                 app.session_picker_requested = false;
                 app.delete_picker_requested = false;
             } else if app.delete_picker_requested {
-                app.input_pane
-                    .set_session_picker(conversations, &app.conversation_id, crate::ui::widgets::session_picker::SessionPickerMode::Delete);
+                app.input_pane.set_session_picker(
+                    conversations,
+                    &app.conversation_id,
+                    crate::ui::widgets::session_picker::SessionPickerMode::Delete,
+                );
                 app.delete_picker_requested = false;
             }
         }
@@ -351,8 +355,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.server_request_state.active_request_id = None;
             app.server_request_state.action_required = false;
         }
-        ServerAction::ClearLastToolName => {
-        }
+        ServerAction::ClearLastToolName => {}
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
             conversation_facade::rebuild_transcript_from_history(app);
@@ -372,8 +375,12 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 HistoryTone::Control,
             ));
         }
-        ServerAction::ItemDispatch(dispatch) => conversation_facade::apply_item_dispatch(app, dispatch),
-        ServerAction::TurnDispatch(dispatch) => conversation_facade::apply_turn_dispatch(app, dispatch),
+        ServerAction::ItemDispatch(dispatch) => {
+            conversation_facade::apply_item_dispatch(app, dispatch)
+        }
+        ServerAction::TurnDispatch(dispatch) => {
+            conversation_facade::apply_turn_dispatch(app, dispatch)
+        }
         ServerAction::ShowServerRequestPrompt {
             request_id,
             title,

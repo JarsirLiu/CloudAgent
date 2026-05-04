@@ -1,6 +1,8 @@
 use super::common::{collect_repo_entries, sort_ranked_paths};
 use crate::impls::text_codec::decode_text_file;
-use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
+use crate::registry::shared::{
+    LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
+};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use agent_protocol::SearchWorkspaceHit;
@@ -74,7 +76,6 @@ impl SearchMode {
             _ => None,
         }
     }
-
 }
 
 #[derive(Clone, Debug)]
@@ -328,7 +329,12 @@ impl SearchWorkspaceLocalTool {
         };
 
         let mode = SearchMode::parse(args.mode.as_deref()).unwrap_or(existing.mode);
-        let query = resolve_query(mode, args.query.as_deref(), args.pattern.as_deref(), &existing)?;
+        let query = resolve_query(
+            mode,
+            args.query.as_deref(),
+            args.pattern.as_deref(),
+            &existing,
+        )?;
         let path_scope = args.path_scope.or(existing.path_scope.clone());
         let case_sensitive = args.case_sensitive.unwrap_or(existing.case_sensitive);
         let context_lines = args.context_lines.unwrap_or(existing.context_lines).min(8);
@@ -424,7 +430,10 @@ async fn run_file_search(
                 let score = pattern
                     .score(path_haystack, &mut matcher)
                     .or_else(|| pattern.score(name_haystack, &mut matcher))?;
-                Some((usize::try_from(score).unwrap_or(usize::MAX), entry.relative_path))
+                Some((
+                    usize::try_from(score).unwrap_or(usize::MAX),
+                    entry.relative_path,
+                ))
             })
             .collect::<Vec<_>>();
         sort_ranked_paths(&mut ranked);
@@ -503,12 +512,7 @@ async fn run_text_search(
                 if rendered.len() >= max_results {
                     continue;
                 }
-                let preview = render_match(
-                    &entry.relative_path,
-                    index,
-                    &lines,
-                    context_lines,
-                );
+                let preview = render_match(&entry.relative_path, index, &lines, context_lines);
                 rendered.push(preview.clone());
                 hits.push(SearchWorkspaceHit {
                     path: entry.relative_path.clone(),
@@ -599,7 +603,8 @@ fn line_matches(line: &str, query: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         line.contains(query)
     } else {
-        line.to_ascii_lowercase().contains(&query.to_ascii_lowercase())
+        line.to_ascii_lowercase()
+            .contains(&query.to_ascii_lowercase())
     }
 }
 

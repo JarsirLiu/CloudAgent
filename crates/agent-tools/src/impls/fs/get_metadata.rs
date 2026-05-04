@@ -1,4 +1,6 @@
-use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
+use crate::registry::shared::{
+    LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
+};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use anyhow::Result;

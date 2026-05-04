@@ -24,11 +24,8 @@ impl McpToolDescriptor {
         mut spec: ToolSpec,
         supports_parallel_calls: bool,
     ) -> Self {
-        spec.identity = agent_core::ToolIdentity::mcp(
-            server.clone(),
-            tool.clone(),
-            wire_name.clone(),
-        );
+        spec.identity =
+            agent_core::ToolIdentity::mcp(server.clone(), tool.clone(), wire_name.clone());
         Self {
             wire_name,
             server,
@@ -80,11 +77,7 @@ impl McpRegistry {
         self.client = Some(client);
     }
 
-    pub(crate) fn resolve(
-        &self,
-        wire_name: &str,
-        arguments: Value,
-    ) -> Option<RoutedMcpTool> {
+    pub(crate) fn resolve(&self, wire_name: &str, arguments: Value) -> Option<RoutedMcpTool> {
         let descriptor = self.descriptors.get(wire_name)?;
         Some(RoutedMcpTool {
             display_name: descriptor.spec.name.clone(),

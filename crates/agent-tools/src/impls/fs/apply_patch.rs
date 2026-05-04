@@ -1,5 +1,7 @@
 use crate::impls::text_codec::{LineEnding, decode_text_file, encode_text_file};
-use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path};
+use crate::registry::shared::{
+    LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path,
+};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use anyhow::Result;
@@ -98,13 +100,10 @@ impl LocalTool for ApplyPatchLocalTool {
                     }
                     let current_bytes = fs::read(&path).await?;
                     let decoded = decode_text_file(&current_bytes).map_err(|err| {
-                        anyhow::anyhow!(
-                            "failed to apply patch for {}: {}",
-                            new_path,
-                            err.render()
-                        )
+                        anyhow::anyhow!("failed to apply patch for {}: {}", new_path, err.render())
                     })?;
-                    let next = apply_hunks(&decoded.text, decoded.line_ending, &file_patch.hunks).map_err(|err| {
+                    let next = apply_hunks(&decoded.text, decoded.line_ending, &file_patch.hunks)
+                        .map_err(|err| {
                         anyhow::anyhow!("failed to apply patch for {}: {err}", new_path)
                     })?;
                     if next != decoded.text {
@@ -312,7 +311,11 @@ fn apply_hunks(original: &str, line_ending: LineEnding, hunks: &[Hunk]) -> anyho
     Ok(content)
 }
 
-fn apply_single_hunk(content: &str, line_ending: LineEnding, hunk: &Hunk) -> anyhow::Result<String> {
+fn apply_single_hunk(
+    content: &str,
+    line_ending: LineEnding,
+    hunk: &Hunk,
+) -> anyhow::Result<String> {
     let mut old_block: Vec<String> = Vec::new();
     let mut new_block: Vec<String> = Vec::new();
     for line in &hunk.lines {
@@ -382,7 +385,9 @@ fn block_matches(lines: &[String], start: usize, old_block: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::shared::{LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource};
+    use crate::registry::shared::{
+        LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource,
+    };
     use agent_core::ToolExecutionContext;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -493,8 +498,8 @@ mod tests {
             lines: vec!["-same".to_string(), "+changed".to_string()],
         };
 
-        let err =
-            apply_single_hunk(content, LineEnding::Lf, &hunk).expect_err("should reject missing position");
+        let err = apply_single_hunk(content, LineEnding::Lf, &hunk)
+            .expect_err("should reject missing position");
         assert!(err.to_string().contains("missing a source line position"));
     }
 
@@ -504,9 +509,12 @@ mod tests {
         fs::create_dir_all(base.join("src"))
             .await
             .expect("create src");
-        fs::write(base.join("src/lib.rs"), b"fn a() {\r\n    println!(\"same\");\r\n}\r\n")
-            .await
-            .expect("write file");
+        fs::write(
+            base.join("src/lib.rs"),
+            b"fn a() {\r\n    println!(\"same\");\r\n}\r\n",
+        )
+        .await
+        .expect("write file");
 
         let tool = ApplyPatchLocalTool;
         let ctx = tool_context(&base);
@@ -519,7 +527,9 @@ mod tests {
         .await
         .expect("apply patch");
 
-        let updated = fs::read(base.join("src/lib.rs")).await.expect("read updated file");
+        let updated = fs::read(base.join("src/lib.rs"))
+            .await
+            .expect("read updated file");
         assert_eq!(
             String::from_utf8(updated).expect("utf8"),
             "fn a() {\r\n    println!(\"changed\");\r\n}\r\n"
@@ -553,7 +563,9 @@ mod tests {
         .await
         .expect("apply patch");
 
-        let updated = fs::read(base.join("src/lib.rs")).await.expect("read updated file");
+        let updated = fs::read(base.join("src/lib.rs"))
+            .await
+            .expect("read updated file");
         assert!(updated.starts_with(&[0xEF, 0xBB, 0xBF]));
     }
 

@@ -83,7 +83,12 @@ fn filter_tool_output_for_item(
         ..
     }) = structured
     {
-        return filter_command_execution_output(command, stdout.as_deref(), stderr.as_deref(), *success);
+        return filter_command_execution_output(
+            command,
+            stdout.as_deref(),
+            stderr.as_deref(),
+            *success,
+        );
     }
     filter_tool_output(content)
 }
@@ -207,7 +212,9 @@ fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult)
             ..
         } => format!(
             "[rtk:search_workspace]\ntool: {tool_name}\nsession_id: {session_id}\noperation: {operation:?}\nmode: {mode:?}\nstatus: {status:?}\nquery: {query}\npath_scope: {}\ncase_sensitive: {case_sensitive}\ncontext_lines: {context_lines}\noffset: {offset}\nmax_results: {max_results}\nnext_offset: {}\nstatus_detail: superseded by newer search results\nfiles: {file_count}\nmatches: {match_count}\ntruncated: {truncated}",
-            next_offset.map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()),
+            next_offset
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_string()),
             path_scope.as_deref().unwrap_or(".")
         ),
         _ => "(no significant output)".to_string(),
@@ -234,9 +241,7 @@ fn filter_command_execution_output(
     if cmd.contains("pytest") || cmd.contains("npm test") || cmd.contains("pnpm test") {
         return wrap_summary("test", &filter_test_output(&merged), &merged);
     }
-    if cmd.contains("npm install")
-        || cmd.contains("pnpm install")
-        || cmd.contains("cargo install")
+    if cmd.contains("npm install") || cmd.contains("pnpm install") || cmd.contains("cargo install")
     {
         return wrap_summary("install", &filter_install_output(&merged), &merged);
     }
@@ -332,7 +337,12 @@ mod tests {
 
     #[test]
     fn passthrough_verbose_command() {
-        let out = run_filter("cargo test -- --nocapture", Some("full output"), None, Some(true));
+        let out = run_filter(
+            "cargo test -- --nocapture",
+            Some("full output"),
+            None,
+            Some(true),
+        );
         assert_eq!(out, "full output");
     }
 

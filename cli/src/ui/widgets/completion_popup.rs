@@ -29,11 +29,7 @@ pub(crate) fn completion_popup_lines(
             suggestion.name.to_string()
         };
         let name = format!("{:<width$}", label, width = COMMAND_COLUMN_WIDTH);
-        let marker = if selected {
-            "> "
-        } else {
-            "  "
-        };
+        let marker = if selected { "> " } else { "  " };
         let row_indent = content_indent.saturating_sub(marker.len());
         let description_width =
             width.saturating_sub(row_indent + marker.len() + COMMAND_COLUMN_WIDTH + 3);

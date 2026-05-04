@@ -41,9 +41,7 @@ impl TextDecodeFailure {
             Self::UnsupportedEncoding => {
                 "[file omitted: unsupported text encoding; safe UTF-8 editing is unavailable]"
             }
-            Self::InvalidUtf8 => {
-                "[file omitted: invalid UTF-8 text; safe editing is unavailable]"
-            }
+            Self::InvalidUtf8 => "[file omitted: invalid UTF-8 text; safe editing is unavailable]",
             Self::InvalidUtf16 => {
                 "[file omitted: invalid UTF-16 text; safe editing is unavailable]"
             }
@@ -156,12 +154,15 @@ mod tests {
 
     #[test]
     fn decodes_utf8_bom_and_preserves_metadata() {
-        let decoded = decode_text_file(&[0xEF, 0xBB, 0xBF, b'a', b'\r', b'\n'])
-            .expect("decode utf8 bom");
+        let decoded =
+            decode_text_file(&[0xEF, 0xBB, 0xBF, b'a', b'\r', b'\n']).expect("decode utf8 bom");
         assert_eq!(decoded.text, "a\r\n");
         assert_eq!(decoded.encoding, TextEncoding::Utf8Bom);
         assert_eq!(decoded.line_ending, LineEnding::CrLf);
-        assert_eq!(encode_text_file(&decoded, &decoded.text), vec![0xEF, 0xBB, 0xBF, b'a', b'\r', b'\n']);
+        assert_eq!(
+            encode_text_file(&decoded, &decoded.text),
+            vec![0xEF, 0xBB, 0xBF, b'a', b'\r', b'\n']
+        );
     }
 
     #[test]

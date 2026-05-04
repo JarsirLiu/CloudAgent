@@ -1,5 +1,7 @@
 use super::common::DEFAULT_IGNORED_DIRS;
-use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
+use crate::registry::shared::{
+    LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
+};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
 use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use anyhow::Result;
@@ -144,7 +146,11 @@ fn collect_shallow_entries(workspace_root: &Path, root: &Path) -> Result<Vec<Str
                 .ok()?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let suffix = if entry.file_type().ok()?.is_dir() { "/" } else { "" };
+            let suffix = if entry.file_type().ok()?.is_dir() {
+                "/"
+            } else {
+                ""
+            };
             Some(format!("{relative}{suffix}"))
         })
         .collect::<Vec<_>>();

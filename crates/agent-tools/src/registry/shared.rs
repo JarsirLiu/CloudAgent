@@ -16,7 +16,9 @@ pub(crate) enum LocalToolSource {
 
 #[derive(Clone, Debug)]
 pub(crate) enum LocalToolPayload {
-    Function { arguments: Value },
+    Function {
+        arguments: Value,
+    },
     Mcp {
         server: String,
         tool: String,
@@ -27,8 +29,12 @@ pub(crate) enum LocalToolPayload {
 impl LocalToolPayload {
     pub(crate) fn parse_arguments<T: DeserializeOwned>(&self) -> Result<T> {
         match self {
-            LocalToolPayload::Function { arguments } => Ok(serde_json::from_value(arguments.clone())?),
-            LocalToolPayload::Mcp { .. } => bail!("MCP payloads do not support local argument parsing"),
+            LocalToolPayload::Function { arguments } => {
+                Ok(serde_json::from_value(arguments.clone())?)
+            }
+            LocalToolPayload::Mcp { .. } => {
+                bail!("MCP payloads do not support local argument parsing")
+            }
         }
     }
 }
@@ -215,9 +221,11 @@ pub(crate) fn structured_failure_result(
             files_changed: 0,
             status: WriteFileStatus::Failed,
         }),
-        (LocalToolSource::BuiltIn, _) | (LocalToolSource::Mcp, _) => Some(StructuredToolResult::ToolError {
-            tool_name: invocation.identity.wire_name.clone(),
-            message: "tool execution failed".to_string(),
-        }),
+        (LocalToolSource::BuiltIn, _) | (LocalToolSource::Mcp, _) => {
+            Some(StructuredToolResult::ToolError {
+                tool_name: invocation.identity.wire_name.clone(),
+                message: "tool execution failed".to_string(),
+            })
+        }
     }
 }

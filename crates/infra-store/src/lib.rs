@@ -1,5 +1,5 @@
-use agent_core::{ResponseItem, RolloutItem, conversation_history_from_rollout_items};
 use agent_core::{ConversationStoreBackend, ConversationSummary};
+use agent_core::{ResponseItem, RolloutItem, conversation_history_from_rollout_items};
 use agent_protocol::EventMsg;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -8,9 +8,9 @@ use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-mod session_index;
 pub mod memory_repo;
 pub mod rollout_recorder;
+mod session_index;
 
 pub use rollout_recorder::RolloutRecorder;
 
@@ -160,7 +160,8 @@ impl JsonConversationStore {
         file.flush()
             .await
             .with_context(|| format!("failed to flush {}", path.display()))?;
-        self.refresh_session_summary_locked(conversation_id, false).await?;
+        self.refresh_session_summary_locked(conversation_id, false)
+            .await?;
         Ok(())
     }
 
@@ -412,7 +413,9 @@ impl JsonConversationStore {
         conversation_id: &str,
         archived: bool,
     ) -> Result<()> {
-        let rollout_items = self.load_rollout_items_from_path(&self.rollout_path(conversation_id)).await?;
+        let rollout_items = self
+            .load_rollout_items_from_path(&self.rollout_path(conversation_id))
+            .await?;
         let history = conversation_history_from_rollout_items(
             conversation_id.to_string(),
             String::new(),
@@ -451,10 +454,7 @@ pub fn save_project_settings_snapshot_sync(root: &Path, config_json: &str) -> Re
 }
 
 pub fn load_project_settings_snapshot_sync(root: &Path) -> Result<Option<String>> {
-    session_index::get_project_settings(
-        &session_index::db_path(root),
-        &root.to_string_lossy(),
-    )
+    session_index::get_project_settings(&session_index::db_path(root), &root.to_string_lossy())
 }
 
 fn now_ms() -> u64 {
@@ -540,12 +540,9 @@ mod tests {
             ("active", false, now),
         ];
         for (conversation_id, archived, updated_at_ms) in entries {
-            tokio::fs::write(
-                store.rollout_path(conversation_id),
-                "x".repeat(64 * 1024),
-            )
-            .await
-            .expect("write rollout");
+            tokio::fs::write(store.rollout_path(conversation_id), "x".repeat(64 * 1024))
+                .await
+                .expect("write rollout");
             session_index::upsert_session(
                 &session_index::db_path(&root),
                 &root.to_string_lossy(),

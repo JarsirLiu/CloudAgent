@@ -85,7 +85,11 @@ impl TuiApp {
             }
             TurnDispatch::Cancelled { reason } => {
                 self.flush_active_cell_to_transcript();
-                self.push_cell(HistoryCell::from_message("turn", reason, HistoryTone::Warning));
+                self.push_cell(HistoryCell::from_message(
+                    "turn",
+                    reason,
+                    HistoryTone::Warning,
+                ));
             }
         }
     }

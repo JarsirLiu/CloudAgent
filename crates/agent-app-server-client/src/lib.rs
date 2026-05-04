@@ -43,9 +43,11 @@ impl AppServerClient {
     }
 
     pub fn request_conversation_history(&self, conversation_id: impl Into<String>) -> Result<()> {
-        self.send_command(agent_protocol::AppClientCommand::RequestConversationHistory {
-            conversation_id: conversation_id.into(),
-        })
+        self.send_command(
+            agent_protocol::AppClientCommand::RequestConversationHistory {
+                conversation_id: conversation_id.into(),
+            },
+        )
     }
 
     pub fn request_conversation_history_page(
@@ -54,11 +56,13 @@ impl AppServerClient {
         before_turn_id: Option<String>,
         limit: usize,
     ) -> Result<()> {
-        self.send_command(agent_protocol::AppClientCommand::RequestConversationHistoryPage {
-            conversation_id: conversation_id.into(),
-            before_turn_id,
-            limit,
-        })
+        self.send_command(
+            agent_protocol::AppClientCommand::RequestConversationHistoryPage {
+                conversation_id: conversation_id.into(),
+                before_turn_id,
+                limit,
+            },
+        )
     }
 
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
@@ -310,4 +314,3 @@ mod tests {
         }));
     }
 }
-

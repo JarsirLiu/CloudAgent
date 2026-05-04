@@ -1,7 +1,7 @@
 use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, forward_event};
 use agent_app_server::{InProcessClientHandle, InProcessClientSender, start_in_process};
-use agent_protocol::AppClientCommand;
 use agent_core::AgentHost;
+use agent_protocol::AppClientCommand;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -96,5 +96,3 @@ async fn run_event_worker(
     }
     Ok(())
 }
-
-

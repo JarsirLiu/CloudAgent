@@ -4,8 +4,8 @@ use crate::host::{AgentHost, AgentHostExt};
 use crate::model::await_server_request_decision;
 use crate::rollout::RolloutItem;
 use crate::turn::{
-    EventMsg, ServerRequest, ServerRequestHandler, ToolApprovalRequest, ToolBatchOutcome,
-    TurnHost, TurnItemDeltaKind, TurnItemKind, TurnState,
+    EventMsg, ServerRequest, ServerRequestHandler, ToolApprovalRequest, ToolBatchOutcome, TurnHost,
+    TurnItemDeltaKind, TurnItemKind, TurnState,
 };
 use crate::{
     ApprovalPolicy, PermissionProfile, emit_event, execute_tool_call_streaming,
@@ -52,7 +52,14 @@ pub(crate) async fn run_host_tool_batch(
         tool_specs,
     };
     runner
-        .run(tool_calls, context_manager, events, on_event, approval, denied_requests)
+        .run(
+            tool_calls,
+            context_manager,
+            events,
+            on_event,
+            approval,
+            denied_requests,
+        )
         .await
 }
 
@@ -106,11 +113,8 @@ impl<'a> ToolBatchRunner<'a> {
                     title: Some(self.host.tools().tool_item_title(&call)),
                 },
             );
-            self.host.audit_turn_tool_started(
-                self.conversation_id,
-                self.turn_id,
-                &call,
-            );
+            self.host
+                .audit_turn_tool_started(self.conversation_id, self.turn_id, &call);
 
             let request_key = self.host.tools().tool_request_key(&call);
             if denied_requests_at_batch_start.contains(&request_key) {
@@ -134,7 +138,8 @@ impl<'a> ToolBatchRunner<'a> {
                 self.permission_profile,
                 self.approval_policy,
             );
-            if approval_requirement.requires_approval && !self.host.is_tool_approved_for_session(&call)
+            if approval_requirement.requires_approval
+                && !self.host.is_tool_approved_for_session(&call)
             {
                 let approved = self
                     .request_approval(
@@ -487,7 +492,10 @@ impl<'a> ToolBatchRunner<'a> {
     ) -> Result<()> {
         let tool_response_item = context_manager.record_tool_result(result);
         self.host
-            .persist_rollout_items(self.conversation_id, &[RolloutItem::from(tool_response_item)])
+            .persist_rollout_items(
+                self.conversation_id,
+                &[RolloutItem::from(tool_response_item)],
+            )
             .await?;
         self.host
             .state()
@@ -497,7 +505,8 @@ impl<'a> ToolBatchRunner<'a> {
     }
 
     async fn is_cancelled(&self) -> bool {
-        self.cancellation_token.is_cancelled() || self.host.is_turn_cancelled(self.conversation_id).await
+        self.cancellation_token.is_cancelled()
+            || self.host.is_turn_cancelled(self.conversation_id).await
     }
 
     fn emit_cancelled(
@@ -570,7 +579,10 @@ impl<'a> ToolBatchRunner<'a> {
         &self,
         ready_calls: &[ReadyToolCall<'_>],
     ) -> ToolBatchExecutionStrategy {
-        let calls = ready_calls.iter().map(|ready| ready.call.clone()).collect::<Vec<_>>();
+        let calls = ready_calls
+            .iter()
+            .map(|ready| ready.call.clone())
+            .collect::<Vec<_>>();
         self.host.tools().batch_execution_strategy(&calls)
     }
 }

@@ -15,7 +15,13 @@ pub struct ConfigPanel {
 
 impl ConfigPanel {
     pub fn new(api_key: String, base_url: String, model: String) -> Self {
-        Self { selected: 0, api_key, base_url, model, replace_on_next_input: true }
+        Self {
+            selected: 0,
+            api_key,
+            base_url,
+            model,
+            replace_on_next_input: true,
+        }
     }
 
     fn field_mut(&mut self) -> Option<&mut String> {
@@ -28,7 +34,9 @@ impl ConfigPanel {
     }
 
     fn maybe_replace_field(&mut self) {
-        if self.replace_on_next_input && let Some(field) = self.field_mut() {
+        if self.replace_on_next_input
+            && let Some(field) = self.field_mut()
+        {
             field.clear();
             self.replace_on_next_input = false;
         }
@@ -116,7 +124,9 @@ impl BottomPaneView for ConfigPanel {
     fn render_lines(&self, _area_width: u16) -> Vec<Line<'static>> {
         let row_style = |selected: bool| {
             if selected {
-                Style::default().fg(Color::Rgb(190, 220, 255)).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Rgb(190, 220, 255))
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Rgb(140, 150, 180))
             }
@@ -126,7 +136,14 @@ impl BottomPaneView for ConfigPanel {
             Line::from("  Type values, Tab/Up/Down switch fields, paste directly, Enter on Save"),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled(if self.selected == 0 { "> API Key  : " } else { "  API Key  : " }, row_style(self.selected == 0)),
+                Span::styled(
+                    if self.selected == 0 {
+                        "> API Key  : "
+                    } else {
+                        "  API Key  : "
+                    },
+                    row_style(self.selected == 0),
+                ),
                 Span::styled(
                     if self.api_key.is_empty() {
                         "(empty)".to_string()
@@ -138,16 +155,48 @@ impl BottomPaneView for ConfigPanel {
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled(if self.selected == 1 { "> Base URL : " } else { "  Base URL : " }, row_style(self.selected == 1)),
-                Span::styled(if self.base_url.is_empty() { "(empty)".to_string() } else { self.base_url.clone() }, Style::default().fg(Color::Rgb(210, 215, 225))),
+                Span::styled(
+                    if self.selected == 1 {
+                        "> Base URL : "
+                    } else {
+                        "  Base URL : "
+                    },
+                    row_style(self.selected == 1),
+                ),
+                Span::styled(
+                    if self.base_url.is_empty() {
+                        "(empty)".to_string()
+                    } else {
+                        self.base_url.clone()
+                    },
+                    Style::default().fg(Color::Rgb(210, 215, 225)),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled(if self.selected == 2 { "> Model    : " } else { "  Model    : " }, row_style(self.selected == 2)),
-                Span::styled(if self.model.is_empty() { "(empty)".to_string() } else { self.model.clone() }, Style::default().fg(Color::Rgb(210, 215, 225))),
+                Span::styled(
+                    if self.selected == 2 {
+                        "> Model    : "
+                    } else {
+                        "  Model    : "
+                    },
+                    row_style(self.selected == 2),
+                ),
+                Span::styled(
+                    if self.model.is_empty() {
+                        "(empty)".to_string()
+                    } else {
+                        self.model.clone()
+                    },
+                    Style::default().fg(Color::Rgb(210, 215, 225)),
+                ),
             ]),
             Line::from(Span::styled(
-                if self.selected == 3 { "  > [ Save ]" } else { "    [ Save ]" },
+                if self.selected == 3 {
+                    "  > [ Save ]"
+                } else {
+                    "    [ Save ]"
+                },
                 row_style(self.selected == 3),
             )),
         ]

@@ -1,8 +1,8 @@
 use crate::context::{
-    BudgetedFragments, MemoryBudgetSource, build_memory_budgeted_fragments,
-    CompactionSummary, ContextCompactionConfig, ContextCompactionPlan, ContextCompactionResult,
-    ContextInputFilterService, ContextManager, FilterPolicy, apply_history_compaction,
-    build_compaction_summary_request, plan_manual_history_compaction,
+    BudgetedFragments, CompactionSummary, ContextCompactionConfig, ContextCompactionPlan,
+    ContextCompactionResult, ContextInputFilterService, ContextManager, FilterPolicy,
+    MemoryBudgetSource, apply_history_compaction, build_compaction_summary_request,
+    build_memory_budgeted_fragments, plan_manual_history_compaction,
 };
 use crate::conversation::{ConversationHistory, ResponseItem};
 use crate::model::ModelRequest;
@@ -87,7 +87,9 @@ impl ContextFacade {
         policy: FilterPolicy,
         _workspace_root: &Path,
     ) -> usize {
-        let filtered = self.input_filter.filter_for_model(messages.to_vec(), policy);
+        let filtered = self
+            .input_filter
+            .filter_for_model(messages.to_vec(), policy);
         estimate_history_tokens(&filtered)
     }
 
@@ -190,9 +192,8 @@ impl ContextFacade {
         F: FnOnce(ModelRequest) -> Fut,
         Fut: std::future::Future<Output = Result<Option<String>>>,
     {
-        let trigger_tokens =
-            ((compaction_config.model_context_window as f32) * compaction_config.trigger_ratio)
-                as usize;
+        let trigger_tokens = ((compaction_config.model_context_window as f32)
+            * compaction_config.trigger_ratio) as usize;
         let available_history_tokens = trigger_tokens
             .saturating_sub(compaction_config.request_overhead_tokens)
             .saturating_sub(memory_floor_tokens)
@@ -207,8 +208,7 @@ impl ContextFacade {
             let filtered_plan =
                 self.plan_manual_compaction(&filtered_messages, compaction_config, 1);
             let raw_plan = self.plan_manual_compaction(raw_messages, compaction_config, 1);
-            if let (Some(filtered_plan), Some(raw_plan)) = (filtered_plan, raw_plan)
-            {
+            if let (Some(filtered_plan), Some(raw_plan)) = (filtered_plan, raw_plan) {
                 let pre_message_count = context_manager.history().messages.len();
                 let pre_context_tokens_estimate =
                     estimate_history_tokens(&context_manager.history().messages) as u64;
@@ -220,8 +220,7 @@ impl ContextFacade {
                 let summary_text = summarize_compaction(summary_request)
                     .await?
                     .unwrap_or_default();
-                let summary = CompactionSummary::from_model_output(&summary_text)
-                    .ensure_defaults();
+                let summary = CompactionSummary::from_model_output(&summary_text).ensure_defaults();
                 if filter_policy.enabled {
                     let mut filtered_history = filtered_messages.clone();
                     let compacted =
@@ -320,12 +319,19 @@ fn estimate_history_tokens(messages: &[ResponseItem]) -> usize {
     messages
         .iter()
         .map(|item| match item {
-            ResponseItem::System { content } | ResponseItem::User { content } => content.chars().count(),
-            ResponseItem::Assistant { content, tool_calls } => {
+            ResponseItem::System { content } | ResponseItem::User { content } => {
+                content.chars().count()
+            }
+            ResponseItem::Assistant {
+                content,
+                tool_calls,
+            } => {
                 let text_len = content.as_ref().map_or(0, |text| text.chars().count());
                 let tool_len: usize = tool_calls
                     .iter()
-                    .map(|call| call.name.chars().count() + call.arguments.to_string().chars().count())
+                    .map(|call| {
+                        call.name.chars().count() + call.arguments.to_string().chars().count()
+                    })
                     .sum();
                 text_len + tool_len
             }

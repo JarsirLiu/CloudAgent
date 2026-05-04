@@ -1,9 +1,9 @@
-use crate::routing::command_router::ServerState;
 use crate::app::notification::{send_notification, send_request};
+use crate::routing::command_router::ServerState;
+use agent_core::AgentHost;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, AppServerRequest, RequestId, ServerRequestDecision,
 };
-use agent_core::AgentHost;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 
@@ -119,5 +119,3 @@ pub(crate) async fn replay_pending_for_conversation(
         .await;
     }
 }
-
-

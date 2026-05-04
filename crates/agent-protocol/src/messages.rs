@@ -412,4 +412,3 @@ pub fn classify_notification(
         ),
     }
 }
-

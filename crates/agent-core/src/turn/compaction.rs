@@ -1,6 +1,6 @@
 use crate::context::{
-    CompactionSummary, ContextCompactionConfig, ContextFacade, apply_history_compaction,
-    build_compaction_summary_request, plan_manual_history_compaction, ContextFragment,
+    CompactionSummary, ContextCompactionConfig, ContextFacade, ContextFragment,
+    apply_history_compaction, build_compaction_summary_request, plan_manual_history_compaction,
 };
 use crate::rollout::RolloutItem;
 use crate::turn::TurnHost;
@@ -70,9 +70,11 @@ where
             estimated_history_tokens,
         });
     };
-    let Some(raw_plan) =
-        plan_manual_history_compaction(&history.messages, compaction_config, minimum_history_tokens)
-    else {
+    let Some(raw_plan) = plan_manual_history_compaction(
+        &history.messages,
+        compaction_config,
+        minimum_history_tokens,
+    ) else {
         return Ok(ManualCompactionOutcome::Skipped {
             estimated_history_tokens,
         });
@@ -93,7 +95,8 @@ where
         .unwrap_or_else(|| CompactionSummary::fallback_from_plan(&filtered_plan));
 
     let pre_message_count = history.messages.len();
-    let pre_context_tokens_estimate = context_facade.estimate_history_tokens(&history.messages) as u64;
+    let pre_context_tokens_estimate =
+        context_facade.estimate_history_tokens(&history.messages) as u64;
     let compacted = apply_history_compaction(&mut history.messages, &raw_plan, summary);
     let post_message_count = compacted.replacement_history.len();
     let post_context_tokens_estimate =

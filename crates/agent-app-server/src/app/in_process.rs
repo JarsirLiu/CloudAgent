@@ -1,7 +1,7 @@
 use crate::routing::command_router::{ServerState, handle_command};
 use crate::session::state as session_state;
-use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
 use agent_core::AgentHost;
+use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -121,5 +121,3 @@ pub fn start_in_process(
         event_rx,
     }
 }
-
-

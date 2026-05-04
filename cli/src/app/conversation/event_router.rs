@@ -1,7 +1,7 @@
 use crate::app::TuiApp;
 use crate::app::conversation::actions::execute_server_action;
-use crate::state::reducer::apply_server_message;
 use crate::state::NoticeLevel;
+use crate::state::reducer::apply_server_message;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerEvent;
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};

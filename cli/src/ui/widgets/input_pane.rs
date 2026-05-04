@@ -4,8 +4,8 @@ use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction}
 use crate::ui::widgets::chat_composer::ChatComposer;
 use crate::ui::widgets::config_panel::ConfigPanel;
 use crate::ui::widgets::filter_picker::FilterPicker;
-use crate::ui::widgets::permissions_picker::PermissionsPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
+use crate::ui::widgets::permissions_picker::PermissionsPicker;
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
@@ -320,8 +320,11 @@ impl InputPane {
         mode: SessionPickerMode,
     ) {
         self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(SessionPicker::new(sessions, active_conversation_id, mode)));
+        self.view_stack.push(Box::new(SessionPicker::new(
+            sessions,
+            active_conversation_id,
+            mode,
+        )));
     }
 
     pub fn clear_session_picker(&mut self) {
@@ -341,7 +344,8 @@ impl InputPane {
 
     pub fn set_permissions_picker(&mut self, current: &str) {
         self.view_stack.clear();
-        self.view_stack.push(Box::new(PermissionsPicker::new(current)));
+        self.view_stack
+            .push(Box::new(PermissionsPicker::new(current)));
     }
 
     pub fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {

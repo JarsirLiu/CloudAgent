@@ -1,13 +1,13 @@
-use crate::routing::command_router::{ServerState, TurnSpawnDependencies};
 use crate::app::notification::{send_notification, send_request};
+use crate::routing::command_router::{ServerState, TurnSpawnDependencies};
 use crate::server_request::service as server_request_service;
 use crate::session::listener::start_conversation_listener;
 use crate::session::service as session_service;
+use agent_core::AgentHost;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, AppServerRequest, ApprovalPolicy, PermissionProfile,
     ServerRequest, ServerRequestDecision,
 };
-use agent_core::AgentHost;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -179,13 +179,24 @@ fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
     messages
         .iter()
         .map(|item| match item {
-            agent_core::ResponseItem::System { content } | agent_core::ResponseItem::User { content } => content.chars().count(),
-            agent_core::ResponseItem::Assistant { content, tool_calls } => {
+            agent_core::ResponseItem::System { content }
+            | agent_core::ResponseItem::User { content } => content.chars().count(),
+            agent_core::ResponseItem::Assistant {
+                content,
+                tool_calls,
+            } => {
                 let text_len = content.as_ref().map_or(0, |text| text.chars().count());
-                let tool_len: usize = tool_calls.iter().map(|call| call.name.chars().count() + call.arguments.to_string().chars().count()).sum();
+                let tool_len: usize = tool_calls
+                    .iter()
+                    .map(|call| {
+                        call.name.chars().count() + call.arguments.to_string().chars().count()
+                    })
+                    .sum();
                 text_len + tool_len
             }
-            agent_core::ResponseItem::Tool { name, content, .. } => name.chars().count() + content.chars().count(),
+            agent_core::ResponseItem::Tool { name, content, .. } => {
+                name.chars().count() + content.chars().count()
+            }
         })
         .sum::<usize>()
         .saturating_div(3)
@@ -207,8 +218,11 @@ fn spawn_turn(
         let active_turn_id = Arc::new(StdMutex::new(None::<String>));
         let active_turn_id_for_events = active_turn_id.clone();
         let runtime_for_requests = runtime.clone();
-        let (listener, listener_task) =
-            start_conversation_listener(conversation_id.clone(), deps.event_tx.clone(), deps.state.clone());
+        let (listener, listener_task) = start_conversation_listener(
+            conversation_id.clone(),
+            deps.event_tx.clone(),
+            deps.state.clone(),
+        );
         {
             let mut state = deps.state.lock().await;
             state.set_active_listener(conversation_id.clone(), listener.clone());
@@ -239,12 +253,16 @@ fn spawn_turn(
                     async move {
                         if deps.auto_approve {
                             return Ok(ServerRequestDecision::accept(
-                                auto_approve_reason.clone().or_else(|| Some("auto-approved by app server".to_string())),
+                                auto_approve_reason
+                                    .clone()
+                                    .or_else(|| Some("auto-approved by app server".to_string())),
                             ));
                         }
                         let request_id = { state.lock().await.next_server_request_id() };
                         let (reply_tx, reply_rx) = oneshot::channel();
-                        let turn_id = match &request { ServerRequest::ToolApproval { request } => request.turn_id.clone() };
+                        let turn_id = match &request {
+                            ServerRequest::ToolApproval { request } => request.turn_id.clone(),
+                        };
                         {
                             state.lock().await.insert_pending_server_request(
                                 request_id.clone(),
@@ -254,19 +272,46 @@ fn spawn_turn(
                                 reply_tx,
                             );
                         }
-                        runtime.register_pending_request(&conversation_id, request_id.clone(), request.clone()).await;
-                        send_request(&event_tx, &state, AppServerRequest::ServerRequest { request_id, conversation_id, request }).await;
-                        reply_rx.await.map_err(|_| anyhow!("server request response channel closed"))
+                        runtime
+                            .register_pending_request(
+                                &conversation_id,
+                                request_id.clone(),
+                                request.clone(),
+                            )
+                            .await;
+                        send_request(
+                            &event_tx,
+                            &state,
+                            AppServerRequest::ServerRequest {
+                                request_id,
+                                conversation_id,
+                                request,
+                            },
+                        )
+                        .await;
+                        reply_rx
+                            .await
+                            .map_err(|_| anyhow!("server request response channel closed"))
                     }
                 },
             )
             .await;
         {
-            state_for_finish.lock().await.clear_active_listener(&conversation_id);
+            state_for_finish
+                .lock()
+                .await
+                .clear_active_listener(&conversation_id);
         }
         match result {
             Ok(output) => {
-                server_request_service::resolve_pending_for_finished_turn(&finish_events, &state_for_finish, &conversation_id, &output.turn_id, "turn finished before request was answered").await;
+                server_request_service::resolve_pending_for_finished_turn(
+                    &finish_events,
+                    &state_for_finish,
+                    &conversation_id,
+                    &output.turn_id,
+                    "turn finished before request was answered",
+                )
+                .await;
                 listener.finish_turn(output.state).await;
             }
             Err(error) => {
@@ -274,22 +319,55 @@ fn spawn_turn(
                 let error_text = format!("{error:#}");
                 let busy_error = error_text.starts_with("ERR_CONVERSATION_BUSY:");
                 if let Some(turn_id) = maybe_turn_id {
-                    server_request_service::resolve_pending_for_finished_turn(&finish_events, &state_for_finish, &conversation_id, &turn_id, "turn failed before request was answered").await;
-                    send_notification(&finish_events, &state_for_finish, AppServerNotification::TurnFailed { conversation_id: conversation_id.clone(), turn_id, error: error_text }).await;
+                    server_request_service::resolve_pending_for_finished_turn(
+                        &finish_events,
+                        &state_for_finish,
+                        &conversation_id,
+                        &turn_id,
+                        "turn failed before request was answered",
+                    )
+                    .await;
+                    send_notification(
+                        &finish_events,
+                        &state_for_finish,
+                        AppServerNotification::TurnFailed {
+                            conversation_id: conversation_id.clone(),
+                            turn_id,
+                            error: error_text,
+                        },
+                    )
+                    .await;
                 } else {
                     let message = if busy_error {
-                        "conversation is busy; wait for the active turn to finish or interrupt it".to_string()
+                        "conversation is busy; wait for the active turn to finish or interrupt it"
+                            .to_string()
                     } else {
                         format!("turn failed before start: {error:#}")
                     };
-                    send_notification(&finish_events, &state_for_finish, AppServerNotification::Error { conversation_id: conversation_id.clone(), message }).await;
+                    send_notification(
+                        &finish_events,
+                        &state_for_finish,
+                        AppServerNotification::Error {
+                            conversation_id: conversation_id.clone(),
+                            message,
+                        },
+                    )
+                    .await;
                 }
-                send_notification(&finish_events, &state_for_finish, AppServerNotification::FrontendStateChanged { conversation_id: conversation_id.clone(), mode: agent_protocol::FrontendMode::Idle }).await;
-                listener.finish_turn(agent_protocol::TurnState::Failed).await;
+                send_notification(
+                    &finish_events,
+                    &state_for_finish,
+                    AppServerNotification::FrontendStateChanged {
+                        conversation_id: conversation_id.clone(),
+                        mode: agent_protocol::FrontendMode::Idle,
+                    },
+                )
+                .await;
+                listener
+                    .finish_turn(agent_protocol::TurnState::Failed)
+                    .await;
             }
         }
         let _ = listener_task.await;
     })
 }
-
-

@@ -7,24 +7,24 @@ pub(crate) mod shared;
 use crate::selection::ToolSelector;
 use crate::spec::ToolDescriptor;
 use agent_core::{
-    ApprovalPolicy, ApprovalRequirement, PermissionProfile, ResolvedToolSet, TaskKind,
-    ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext, ToolExecutor,
-    ToolMode, ToolResult, ToolSpec, ToolSurface,
+    ApprovalPolicy, ApprovalRequirement, PermissionProfile, ResolvedToolSet, TaskKind, ToolBackend,
+    ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext, ToolExecutor, ToolMode, ToolResult,
+    ToolSpec, ToolSurface,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 
+use crate::policy::approval_requirement_for_tool;
+use agent_protocol::TranscriptItem;
 use catalog::{LocalToolMap, build_descriptors, build_selector, build_tools};
 use mcp::McpRegistry;
 pub use mcp::{McpToolClient, McpToolDescriptor, McpToolInvocation, McpToolResponse};
-use crate::policy::approval_requirement_for_tool;
 use presentation::{
     default_rejection_message, denied_transcript_item, missing_tool_result,
     repeated_rejection_message, tool_item_title, tool_request_key,
     transcript_item_from_tool_result,
 };
 use shared::{LocalToolInvocation, LocalToolPayload, LocalToolSource, structured_failure_result};
-use agent_protocol::TranscriptItem;
 use std::path::Path;
 
 #[derive(Clone)]
@@ -59,8 +59,11 @@ impl ToolRegistry {
     }
 
     pub fn specs_for_mode(&self, mode: ToolMode, task_kind: TaskKind) -> Vec<ToolSpec> {
-        let mut specs =
-            resolution::specs_for_surface(self.selector.select(&mode, &task_kind, &self.descriptors));
+        let mut specs = resolution::specs_for_surface(self.selector.select(
+            &mode,
+            &task_kind,
+            &self.descriptors,
+        ));
         specs.extend(self.mcp.descriptor_specs());
         specs
     }
@@ -83,8 +86,11 @@ impl ToolRegistry {
         permission_profile: &PermissionProfile,
     ) -> ResolvedToolSet {
         let mut resolved = resolution::resolve_surface(
-            self.selector
-                .select(&tool_surface.mode, &tool_surface.task_kind, &self.descriptors),
+            self.selector.select(
+                &tool_surface.mode,
+                &tool_surface.task_kind,
+                &self.descriptors,
+            ),
             permission_profile,
         );
         for spec in self.mcp.descriptor_specs() {
@@ -115,7 +121,9 @@ impl ToolRegistry {
             && calls.iter().all(|call| {
                 self.descriptors
                     .iter()
-                    .find(|descriptor| descriptor.spec.identity.wire_name == call.identity.wire_name)
+                    .find(|descriptor| {
+                        descriptor.spec.identity.wire_name == call.identity.wire_name
+                    })
                     .is_some_and(|descriptor| {
                         !descriptor.spec.mutating && descriptor.supports_parallel_calls
                     })
@@ -241,12 +249,24 @@ mod tests {
         let workspace_write =
             registry.resolve_surface(&surface, &PermissionProfile::WorkspaceWrite);
 
-        assert!(read_only.specs.iter().all(|spec| spec.name != "apply_patch"));
-        assert!(workspace_write
-            .specs
-            .iter()
-            .any(|spec| spec.name == "apply_patch"));
-        assert!(read_only.specs.iter().any(|spec| spec.name == "exec_command"));
+        assert!(
+            read_only
+                .specs
+                .iter()
+                .all(|spec| spec.name != "apply_patch")
+        );
+        assert!(
+            workspace_write
+                .specs
+                .iter()
+                .any(|spec| spec.name == "apply_patch")
+        );
+        assert!(
+            read_only
+                .specs
+                .iter()
+                .any(|spec| spec.name == "exec_command")
+        );
     }
 
     #[test]
@@ -265,32 +285,32 @@ mod tests {
     fn batch_execution_strategy_prefers_parallel_only_for_safe_batches() {
         let registry = ToolRegistry::new(4_096);
         let parallel_calls = vec![
-                ToolCall {
-                    id: "call-1".to_string(),
-                    name: "search_workspace".to_string(),
-                    identity: agent_core::ToolIdentity::built_in("search_workspace"),
-                    arguments: serde_json::json!({"mode": "text", "query": "foo"}),
-                },
-                ToolCall {
-                    id: "call-2".to_string(),
-                    name: "read_files".to_string(),
-                    identity: agent_core::ToolIdentity::built_in("read_files"),
-                    arguments: serde_json::json!({"path": "src/main.rs"}),
-                },
+            ToolCall {
+                id: "call-1".to_string(),
+                name: "search_workspace".to_string(),
+                identity: agent_core::ToolIdentity::built_in("search_workspace"),
+                arguments: serde_json::json!({"mode": "text", "query": "foo"}),
+            },
+            ToolCall {
+                id: "call-2".to_string(),
+                name: "read_files".to_string(),
+                identity: agent_core::ToolIdentity::built_in("read_files"),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+            },
         ];
         let sequential_calls = vec![
-                ToolCall {
-                    id: "call-1".to_string(),
-                    name: "search_workspace".to_string(),
-                    identity: agent_core::ToolIdentity::built_in("search_workspace"),
-                    arguments: serde_json::json!({"mode": "text", "query": "foo"}),
-                },
-                ToolCall {
-                    id: "call-2".to_string(),
-                    name: "exec_command".to_string(),
-                    identity: agent_core::ToolIdentity::built_in("exec_command"),
-                    arguments: serde_json::json!({"command": "git status"}),
-                },
+            ToolCall {
+                id: "call-1".to_string(),
+                name: "search_workspace".to_string(),
+                identity: agent_core::ToolIdentity::built_in("search_workspace"),
+                arguments: serde_json::json!({"mode": "text", "query": "foo"}),
+            },
+            ToolCall {
+                id: "call-2".to_string(),
+                name: "exec_command".to_string(),
+                identity: agent_core::ToolIdentity::built_in("exec_command"),
+                arguments: serde_json::json!({"command": "git status"}),
+            },
         ];
 
         assert_eq!(

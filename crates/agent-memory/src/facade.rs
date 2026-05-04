@@ -27,9 +27,9 @@ impl LongTermMemoryFacade {
 
     pub fn persist_from_history(&self, history: &ConversationHistory) -> Result<()> {
         let summary = history.messages.iter().rev().find_map(|m| match m {
-            ResponseItem::Assistant { content: Some(c), .. } if !c.trim().is_empty() => {
-                Some(c.trim().to_string())
-            }
+            ResponseItem::Assistant {
+                content: Some(c), ..
+            } if !c.trim().is_empty() => Some(c.trim().to_string()),
             _ => None,
         });
         if let Some(summary) = summary {

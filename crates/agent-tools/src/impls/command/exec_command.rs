@@ -188,7 +188,13 @@ impl LocalTool for ExecCommandLocalTool {
         }
         if args.start_new_session.unwrap_or(false) {
             return self
-                .start_session(command, workdir, timeout_ms, args.wait_for_exit.unwrap_or(false), ctx)
+                .start_session(
+                    command,
+                    workdir,
+                    timeout_ms,
+                    args.wait_for_exit.unwrap_or(false),
+                    ctx,
+                )
                 .await;
         }
         if args.stdin.is_some() || args.close_stdin.unwrap_or(false) {
@@ -251,7 +257,9 @@ impl ExecCommandLocalTool {
             stderr_cursor: Mutex::new(0),
         });
         let session_id = self.sessions.allocate_id(&ctx.conversation_id);
-        self.sessions.insert(session_id.clone(), session.clone()).await;
+        self.sessions
+            .insert(session_id.clone(), session.clone())
+            .await;
 
         sleep(Duration::from_millis(50)).await;
         let output = self
@@ -370,8 +378,7 @@ async fn run_one_shot_command(
     ctx: &ToolExecutionContext,
 ) -> Result<ToolInvocationOutput> {
     let started_at = Instant::now();
-    let rendered_command =
-        translate_search_command(command).unwrap_or_else(|| command.to_string());
+    let rendered_command = translate_search_command(command).unwrap_or_else(|| command.to_string());
     let mut child = build_command_process(&rendered_command, &workdir).spawn()?;
     let stdout = child
         .stdout
@@ -940,7 +947,9 @@ fn windows_utf8_command(command: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::shared::{LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource};
+    use crate::registry::shared::{
+        LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource,
+    };
     use agent_core::ToolExecutionContext;
     use tokio_util::sync::CancellationToken;
 
@@ -1029,9 +1038,11 @@ mod tests {
         match output.structured {
             Some(StructuredToolResult::CommandExecution { status, stderr, .. }) => {
                 assert_eq!(status, CommandExecutionStatus::Failed);
-                assert!(stderr
-                    .unwrap_or_default()
-                    .contains("Use the apply_patch tool instead"));
+                assert!(
+                    stderr
+                        .unwrap_or_default()
+                        .contains("Use the apply_patch tool instead")
+                );
             }
             other => panic!("expected structured command rejection, got {other:?}"),
         }

@@ -18,12 +18,17 @@ impl TuiApp {
         for cell in &mut cells {
             if matches!(
                 cell.tone,
-                HistoryTone::Tool | HistoryTone::Control | HistoryTone::Warning | HistoryTone::Error
+                HistoryTone::Tool
+                    | HistoryTone::Control
+                    | HistoryTone::Warning
+                    | HistoryTone::Error
             ) {
                 cell.expanded = self.run_state.expand_tool_details;
             }
         }
-        self.transcript_state.transcript.replace_cells(cells.clone());
+        self.transcript_state
+            .transcript
+            .replace_cells(cells.clone());
         self.transcript_state
             .transcript
             .set_tool_cells_expanded(self.run_state.expand_tool_details);

@@ -1,6 +1,4 @@
-use agent_core::{
-    ApprovalPolicy, ApprovalRequirement, PermissionProfile, ToolCall, ToolSpec,
-};
+use agent_core::{ApprovalPolicy, ApprovalRequirement, PermissionProfile, ToolCall, ToolSpec};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -56,9 +54,7 @@ fn exec_command_requirement(
         );
     }
     if args.start_new_session.unwrap_or(false) {
-        return ApprovalRequirement::required(
-            "Long-running command sessions require approval.",
-        );
+        return ApprovalRequirement::required("Long-running command sessions require approval.");
     }
     if command.is_empty() {
         return ApprovalRequirement::required("Empty command executions require approval.");
@@ -257,7 +253,9 @@ fn contains_network_indicator(command: &str) -> bool {
         "go get",
         "pip install",
     ];
-    network_markers.iter().any(|marker| command.contains(marker))
+    network_markers
+        .iter()
+        .any(|marker| command.contains(marker))
 }
 
 fn is_safe_git_command(command: &str) -> bool {

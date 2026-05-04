@@ -1,17 +1,17 @@
-use super::{AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend, MemoryBackend,
-    RolloutRecorderBackend};
+use super::{
+    AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend, MemoryBackend,
+    RolloutRecorderBackend,
+};
 use crate::context::EnvironmentContext;
 use crate::conversation::{
     ConversationHistory, ConversationSnapshot, ConversationState, ConversationStatus,
     ConversationSummary,
 };
 use crate::observability::{AuditEventEntry, append_audit_event_safe, verify_audit_chain};
-use crate::projection::flatten_conversation_turns;
 use crate::projection::conversation_history_from_rollout_items;
+use crate::projection::flatten_conversation_turns;
 use crate::rollout::RolloutItem;
-use crate::tool::{
-    summarize_arguments, ToolBackend, ToolCall, ToolResult, ToolSpec,
-};
+use crate::tool::{ToolBackend, ToolCall, ToolResult, ToolSpec, summarize_arguments};
 use crate::turn::{
     AgentTurnOutput, EventMsg, ManualCompactionOutcome, RequestId, ServerRequest,
     ServerRequestDecision, ServerRequestHandler, TurnHost, chat as core_chat,
@@ -44,8 +44,9 @@ pub struct AgentHost {
     regular_turn_settings: RegularTurnSettings,
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
-    tools:
-        Arc<dyn ToolBackend<PermissionProfile = PermissionProfile, ApprovalPolicy = ApprovalPolicy>>,
+    tools: Arc<
+        dyn ToolBackend<PermissionProfile = PermissionProfile, ApprovalPolicy = ApprovalPolicy>,
+    >,
     state: AgentState,
     store: Arc<dyn ConversationStoreBackend>,
     rollout_recorder: Arc<dyn RolloutRecorderBackend>,
@@ -139,7 +140,9 @@ impl AgentHost {
     }
 
     pub async fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()> {
-        self.store.set_conversation_title(conversation_id, title).await
+        self.store
+            .set_conversation_title(conversation_id, title)
+            .await
     }
 
     pub async fn suggest_conversation_title(&self, user_input: &str) -> Result<String> {
@@ -345,12 +348,7 @@ impl AgentHost {
         append_audit_event_safe(&self.context.workspace_root, &entry);
     }
 
-    pub(crate) fn audit_turn_tool_started(
-        &self,
-        session_id: &str,
-        turn_id: &str,
-        call: &ToolCall,
-    ) {
+    pub(crate) fn audit_turn_tool_started(&self, session_id: &str, turn_id: &str, call: &ToolCall) {
         self.append_audit(
             session_id,
             Some(turn_id),
@@ -374,7 +372,11 @@ impl AgentHost {
         self.append_audit(
             session_id,
             Some(turn_id),
-            if result.is_error { "tool.failed" } else { "tool.completed" },
+            if result.is_error {
+                "tool.failed"
+            } else {
+                "tool.completed"
+            },
             if result.is_error { "error" } else { "info" },
             json!({
                 "tool_call_id": call.id,
@@ -513,16 +515,39 @@ impl AgentHost {
 }
 
 impl AgentHostExt for AgentHost {
-    fn metadata(&self) -> &AgentMetadata { &self.metadata }
-    fn context(&self) -> &AgentContext { &self.context }
-    fn regular_turn_settings(&self) -> &RegularTurnSettings { &self.regular_turn_settings }
-    fn policy(&self) -> &ExecutionPolicy { &self.policy }
-    fn model(&self) -> &Arc<dyn ChatModel> { &self.model }
-    fn tools(&self) -> &Arc<dyn ToolBackend<PermissionProfile = PermissionProfile, ApprovalPolicy = ApprovalPolicy>> { &self.tools }
-    fn state(&self) -> &AgentState { &self.state }
-    fn store(&self) -> &Arc<dyn ConversationStoreBackend> { &self.store }
-    fn rollout_recorder(&self) -> &Arc<dyn RolloutRecorderBackend> { &self.rollout_recorder }
-    fn memory(&self) -> &Arc<dyn MemoryBackend> { &self.memory }
+    fn metadata(&self) -> &AgentMetadata {
+        &self.metadata
+    }
+    fn context(&self) -> &AgentContext {
+        &self.context
+    }
+    fn regular_turn_settings(&self) -> &RegularTurnSettings {
+        &self.regular_turn_settings
+    }
+    fn policy(&self) -> &ExecutionPolicy {
+        &self.policy
+    }
+    fn model(&self) -> &Arc<dyn ChatModel> {
+        &self.model
+    }
+    fn tools(
+        &self,
+    ) -> &Arc<dyn ToolBackend<PermissionProfile = PermissionProfile, ApprovalPolicy = ApprovalPolicy>>
+    {
+        &self.tools
+    }
+    fn state(&self) -> &AgentState {
+        &self.state
+    }
+    fn store(&self) -> &Arc<dyn ConversationStoreBackend> {
+        &self.store
+    }
+    fn rollout_recorder(&self) -> &Arc<dyn RolloutRecorderBackend> {
+        &self.rollout_recorder
+    }
+    fn memory(&self) -> &Arc<dyn MemoryBackend> {
+        &self.memory
+    }
 }
 
 #[async_trait]
@@ -530,36 +555,84 @@ impl TurnHost for AgentHost {
     type PermissionProfile = PermissionProfile;
     type ApprovalPolicy = ApprovalPolicy;
 
-    fn turn_interrupted_error(&self) -> &'static str { TURN_INTERRUPTED_ERROR }
-    fn regular_turn_settings(&self) -> RegularTurnSettings { self.regular_turn_settings.clone() }
-    fn environment_context(&self) -> EnvironmentContext { self.environment_context() }
-    fn raw_memory_fragment(&self) -> Option<String> { self.memory.raw_memory_fragment() }
-    fn all_tool_specs(&self) -> Vec<ToolSpec> { self.tools.specs() }
+    fn turn_interrupted_error(&self) -> &'static str {
+        TURN_INTERRUPTED_ERROR
+    }
+    fn regular_turn_settings(&self) -> RegularTurnSettings {
+        self.regular_turn_settings.clone()
+    }
+    fn environment_context(&self) -> EnvironmentContext {
+        self.environment_context()
+    }
+    fn raw_memory_fragment(&self) -> Option<String> {
+        self.memory.raw_memory_fragment()
+    }
+    fn all_tool_specs(&self) -> Vec<ToolSpec> {
+        self.tools.specs()
+    }
     fn resolve_regular_turn_tools(&self, permission_profile: &PermissionProfile) -> Vec<ToolSpec> {
-        self.tools.resolve_surface(&ToolSurface::regular_turn(), permission_profile).specs
+        self.tools
+            .resolve_surface(&ToolSurface::regular_turn(), permission_profile)
+            .specs
     }
 
-    async fn start_turn(&self, conversation_id: String, turn_id: String) -> Option<ActiveTurnHandle> {
+    async fn start_turn(
+        &self,
+        conversation_id: String,
+        turn_id: String,
+    ) -> Option<ActiveTurnHandle> {
         self.state.start_turn(conversation_id, turn_id).await
     }
-    async fn finish_turn(&self, conversation_id: &str) { self.state.finish_turn(conversation_id).await; }
-    async fn is_turn_cancelled(&self, conversation_id: &str) -> bool { self.is_turn_cancelled(conversation_id).await }
-    fn append_conversation_event(&self, conversation_id: &str, event: EventMsg) { self.state.append_conversation_event(conversation_id, event); }
-    async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory> { self.load_history(conversation_id).await }
-    async fn history_from_rollout(&self, conversation_id: &str) -> Result<ConversationHistory> { self.history_from_rollout(conversation_id).await }
-    async fn save_history(&self, history: ConversationHistory) -> Result<()> { self.save_history(history).await }
-    async fn persist_rollout_items(&self, conversation_id: &str, items: &[RolloutItem]) -> Result<()> { self.persist_rollout_items(conversation_id, items).await }
-    fn record_rollout_items(&self, conversation_id: &str, items: &[RolloutItem]) -> Result<()> { self.record_rollout_items(conversation_id, items) }
-    async fn flush_rollout(&self) -> Result<()> { self.rollout_recorder.flush().await }
-    fn should_persist_memory(&self, history: &ConversationHistory) -> bool { self.memory.should_persist(history) }
-    fn persist_memory_from_history(&self, history: &ConversationHistory) { let _ = self.memory.persist_from_history(history); }
+    async fn finish_turn(&self, conversation_id: &str) {
+        self.state.finish_turn(conversation_id).await;
+    }
+    async fn is_turn_cancelled(&self, conversation_id: &str) -> bool {
+        self.is_turn_cancelled(conversation_id).await
+    }
+    fn append_conversation_event(&self, conversation_id: &str, event: EventMsg) {
+        self.state.append_conversation_event(conversation_id, event);
+    }
+    async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory> {
+        self.load_history(conversation_id).await
+    }
+    async fn history_from_rollout(&self, conversation_id: &str) -> Result<ConversationHistory> {
+        self.history_from_rollout(conversation_id).await
+    }
+    async fn save_history(&self, history: ConversationHistory) -> Result<()> {
+        self.save_history(history).await
+    }
+    async fn persist_rollout_items(
+        &self,
+        conversation_id: &str,
+        items: &[RolloutItem],
+    ) -> Result<()> {
+        self.persist_rollout_items(conversation_id, items).await
+    }
+    fn record_rollout_items(&self, conversation_id: &str, items: &[RolloutItem]) -> Result<()> {
+        self.record_rollout_items(conversation_id, items)
+    }
+    async fn flush_rollout(&self) -> Result<()> {
+        self.rollout_recorder.flush().await
+    }
+    fn should_persist_memory(&self, history: &ConversationHistory) -> bool {
+        self.memory.should_persist(history)
+    }
+    fn persist_memory_from_history(&self, history: &ConversationHistory) {
+        let _ = self.memory.persist_from_history(history);
+    }
 
     async fn complete_model_request(
         &self,
         cancellation_token: &CancellationToken,
         request: crate::ModelRequest,
     ) -> Result<crate::ModelResponse> {
-        complete_model_request(self.model.as_ref(), cancellation_token, request, TURN_INTERRUPTED_ERROR).await
+        complete_model_request(
+            self.model.as_ref(),
+            cancellation_token,
+            request,
+            TURN_INTERRUPTED_ERROR,
+        )
+        .await
     }
 
     async fn complete_model_request_streaming(
@@ -574,7 +647,8 @@ impl TurnHost for AgentHost {
             request,
             on_text_delta,
             TURN_INTERRUPTED_ERROR,
-        ).await
+        )
+        .await
     }
 
     async fn run_tool_batch(
@@ -606,7 +680,8 @@ impl TurnHost for AgentHost {
             on_event,
             approval,
             denied_requests,
-        ).await
+        )
+        .await
     }
 
     fn audit_turn_started(&self, conversation_id: &str, user_input: &str) {
@@ -618,19 +693,63 @@ impl TurnHost for AgentHost {
             json!({ "input_preview": user_input.chars().take(300).collect::<String>() }),
         );
     }
-    fn audit_turn_completed(&self, conversation_id: &str, turn_id: &str, state: &str, events_count: usize, model_name: Option<&str>) {
-        self.append_audit(conversation_id, Some(turn_id), "turn.completed", "info", json!({ "state": state, "events_count": events_count, "model": model_name }));
+    fn audit_turn_completed(
+        &self,
+        conversation_id: &str,
+        turn_id: &str,
+        state: &str,
+        events_count: usize,
+        model_name: Option<&str>,
+    ) {
+        self.append_audit(
+            conversation_id,
+            Some(turn_id),
+            "turn.completed",
+            "info",
+            json!({ "state": state, "events_count": events_count, "model": model_name }),
+        );
     }
     fn audit_turn_cancelled(&self, conversation_id: &str, turn_id: &str, reason: &str) {
-        self.append_audit(conversation_id, Some(turn_id), "turn.cancelled", "warn", json!({ "reason": reason }));
+        self.append_audit(
+            conversation_id,
+            Some(turn_id),
+            "turn.cancelled",
+            "warn",
+            json!({ "reason": reason }),
+        );
     }
     fn audit_turn_failed(&self, conversation_id: &str, turn_id: &str, error: &str) {
-        self.append_audit(conversation_id, Some(turn_id), "turn.failed", "error", json!({ "error": error.chars().take(1200).collect::<String>() }));
+        self.append_audit(
+            conversation_id,
+            Some(turn_id),
+            "turn.failed",
+            "error",
+            json!({ "error": error.chars().take(1200).collect::<String>() }),
+        );
     }
-    fn audit_model_request_started(&self, conversation_id: &str, turn_id: &str, message_count: usize, tool_count: usize) {
-        self.append_audit(conversation_id, Some(turn_id), "model.requested", "info", json!({ "message_count": message_count, "tool_count": tool_count }));
+    fn audit_model_request_started(
+        &self,
+        conversation_id: &str,
+        turn_id: &str,
+        message_count: usize,
+        tool_count: usize,
+    ) {
+        self.append_audit(
+            conversation_id,
+            Some(turn_id),
+            "model.requested",
+            "info",
+            json!({ "message_count": message_count, "tool_count": tool_count }),
+        );
     }
-    fn audit_model_response_received(&self, conversation_id: &str, turn_id: &str, model_name: Option<&str>, has_content: bool, tool_call_count: usize) {
+    fn audit_model_response_received(
+        &self,
+        conversation_id: &str,
+        turn_id: &str,
+        model_name: Option<&str>,
+        has_content: bool,
+        tool_call_count: usize,
+    ) {
         self.append_audit(conversation_id, Some(turn_id), "model.responded", "info", json!({ "model_name": model_name, "has_content": has_content, "tool_call_count": tool_call_count }));
     }
 }
@@ -642,6 +761,5 @@ fn tool_approval_key(call: &ToolCall) -> String {
 }
 
 fn is_placeholder_history(history: &ConversationHistory) -> bool {
-    history.turn_count == 0
-        && matches!(history.messages.as_slice(), [ResponseItem::System { .. }])
+    history.turn_count == 0 && matches!(history.messages.as_slice(), [ResponseItem::System { .. }])
 }

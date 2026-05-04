@@ -7,9 +7,7 @@ pub use history::{ConversationHistory, ResponseItem};
 pub use items::{ConversationTurn, TranscriptItem};
 pub use metrics::visible_message_count;
 use serde::{Deserialize, Serialize};
-pub use state::{
-    ActiveConversationTurn, ConversationState, PendingConversationRequest,
-};
+pub use state::{ActiveConversationTurn, ConversationState, PendingConversationRequest};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ConversationStatus {

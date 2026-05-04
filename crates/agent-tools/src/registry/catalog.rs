@@ -1,5 +1,7 @@
 use crate::impls::command::{ExecCommandLocalTool, ExecCommandTool as ExecCommandDescriptorTool};
-use crate::impls::fs::{ApplyPatchLocalTool, ApplyPatchTool, GetMetadataLocalTool, GetMetadataTool};
+use crate::impls::fs::{
+    ApplyPatchLocalTool, ApplyPatchTool, GetMetadataLocalTool, GetMetadataTool,
+};
 use crate::impls::repo::{
     ListDirectoryLocalTool, ListDirectoryTool, ReadFilesLocalTool, ReadFilesTool,
     SearchWorkspaceLocalTool, SearchWorkspaceTool,

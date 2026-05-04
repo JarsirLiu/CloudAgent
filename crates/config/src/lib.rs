@@ -174,9 +174,7 @@ impl AgentConfig {
             bail!("llm.model cannot be empty");
         }
         if self.llm.api_key.trim().is_empty() {
-            bail!(
-                "missing LLM api key; set CLOUDAGENT_LLM_API_KEY or config.toml -> llm.api_key"
-            );
+            bail!("missing LLM api key; set CLOUDAGENT_LLM_API_KEY or config.toml -> llm.api_key");
         }
         let mut seen_mcp_servers = std::collections::BTreeSet::new();
         for server in &self.tools.mcp_servers {
@@ -559,10 +557,8 @@ impl AgentConfig {
         let workspace_root = workspace_root.into();
         let mut config = Self::defaults(workspace_root.clone());
         if let Some(home) = user_home_dir() {
-            config.runtime.conversation_store_dir = home
-                .join(".cloudagent")
-                .join("data")
-                .join("conversations");
+            config.runtime.conversation_store_dir =
+                home.join(".cloudagent").join("data").join("conversations");
         }
         if let Some(home) = user_home_dir() {
             let config_path = home.join(".cloudagent").join("config.toml");

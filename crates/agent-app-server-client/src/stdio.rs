@@ -183,9 +183,8 @@ where
 mod tests {
     use super::*;
     use agent_protocol::{
-        AppClientCommand, AppServerMessage, AppServerNotification, ApprovalPolicy,
-        JsonRpcMessage, PermissionProfile, ServerRequest, ToolApprovalRequest, TurnPolicy,
-        UserTurnInput,
+        AppClientCommand, AppServerMessage, AppServerNotification, ApprovalPolicy, JsonRpcMessage,
+        PermissionProfile, ServerRequest, ToolApprovalRequest, TurnPolicy, UserTurnInput,
     };
     use tokio::io::duplex;
 
@@ -355,4 +354,3 @@ mod tests {
         assert_eq!(messages, vec!["first".to_string(), "second".to_string()]);
     }
 }
-

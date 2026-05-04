@@ -1,6 +1,6 @@
-mod concurrency;
 mod api;
 mod compaction;
+mod concurrency;
 mod events;
 mod host;
 mod lifecycle;
@@ -12,20 +12,16 @@ mod regular;
 mod request_id;
 mod utils;
 
+pub use api::{chat, chat_with_approval, chat_with_approval_and_events, compact_conversation};
+pub use compaction::{ManualCompactionOutcome, run_manual_compaction};
 pub use concurrency::{
     CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE, conversation_busy_error,
-};
-pub use compaction::{ManualCompactionOutcome, run_manual_compaction};
-pub use api::{
-    chat, chat_with_approval, chat_with_approval_and_events, compact_conversation,
 };
 pub use events::{
     EventMsg, PendingTurnRequest, ServerRequest, ServerRequestDecision, ServerRequestDecisionKind,
     ToolApprovalRequest, TurnId, TurnItemDeltaKind, TurnItemKind, TurnState,
 };
-pub use host::{
-    RegularTurnSettings, ServerRequestHandler, ToolBatchOutcome, TurnHost,
-};
+pub use host::{RegularTurnSettings, ServerRequestHandler, ToolBatchOutcome, TurnHost};
 pub use lifecycle::{TurnLifecycleClass, TurnLifecyclePhase};
 pub use orchestrator::run_turn_with_approval;
 pub use outcome::{TurnOutcome, emit_assistant_message_item};

@@ -22,8 +22,8 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some("app-server-stdio") => {
-            let conversation_id = parse_conversation_id(&args)
-                .unwrap_or(runtime.ensure_active_conversation().await?);
+            let conversation_id =
+                parse_conversation_id(&args).unwrap_or(runtime.ensure_active_conversation().await?);
             run_stdio_server(runtime, conversation_id, false, None).await?;
             return Ok(());
         }
@@ -60,5 +60,3 @@ fn parse_conversation_id(args: &[String]) -> Option<String> {
         .find(|pair| pair[0] == "--conversation")
         .map(|pair| pair[1].clone())
 }
-
-

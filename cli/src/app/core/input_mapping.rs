@@ -1,6 +1,6 @@
+use crate::app::TuiApp;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permission_profile::turn_policy_for_mode;
-use crate::app::TuiApp;
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::history_cell::HistoryTone;
 use crate::ui::widgets::input_pane::InputPaneAction;
@@ -17,7 +17,10 @@ impl TuiApp {
             if let Some(cell) = self.transcript_state.active_cell.as_mut()
                 && matches!(
                     cell.tone,
-                    HistoryTone::Tool | HistoryTone::Control | HistoryTone::Warning | HistoryTone::Error
+                    HistoryTone::Tool
+                        | HistoryTone::Control
+                        | HistoryTone::Warning
+                        | HistoryTone::Error
                 )
             {
                 cell.expanded = self.run_state.expand_tool_details;
@@ -33,15 +36,13 @@ impl TuiApp {
             return None;
         }
         match self.input_pane.handle_key(key)? {
-            InputPaneAction::Composer(ComposerIntent::Submit(text)) => {
-                Some(ParsedInput::Command(AppClientCommand::SubmitTurn(
-                    agent_protocol::UserTurnInput {
-                        conversation_id: self.conversation_id.clone(),
-                        content: text,
-                        turn_policy: turn_policy_for_mode(&self.run_state.permission_mode),
-                    },
-                )))
-            }
+            InputPaneAction::Composer(ComposerIntent::Submit(text)) => Some(ParsedInput::Command(
+                AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
+                    conversation_id: self.conversation_id.clone(),
+                    content: text,
+                    turn_policy: turn_policy_for_mode(&self.run_state.permission_mode),
+                }),
+            )),
             InputPaneAction::Composer(ComposerIntent::Interrupt) => {
                 if self.console_state.mode == FrontendMode::Idle {
                     self.run_state.should_exit = true;

@@ -8,8 +8,8 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-mod execution;
 mod batch;
+mod execution;
 
 pub(crate) use batch::run_host_tool_batch;
 pub use execution::{
