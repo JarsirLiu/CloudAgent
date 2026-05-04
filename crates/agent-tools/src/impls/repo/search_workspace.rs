@@ -28,10 +28,13 @@ impl SearchWorkspaceTool {
             true,
             vec!["explore", "edit", "verify", "repo"],
             ToolUsageGuidance {
+                selection_priority: 30,
                 preferred_for: vec![
                     "first step of bug investigation",
                     "finding likely files before reading code",
                 ],
+                preferred_task_kinds: vec![agent_core::TaskKind::RepositoryAnalysis],
+                preferred_modes: vec![agent_core::ToolMode::Explore],
                 follow_up_hint: Some("open the strongest hits with `read_files` before editing"),
                 ..ToolUsageGuidance::default()
             },

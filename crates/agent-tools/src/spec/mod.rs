@@ -1,4 +1,4 @@
-use agent_core::{PermissionProfile, ToolSpec};
+use agent_core::{PermissionProfile, TaskKind, ToolMode, ToolSpec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolCategory {
@@ -47,8 +47,13 @@ pub struct ToolDescriptor {
 
 #[derive(Clone, Debug, Default)]
 pub struct ToolUsageGuidance {
+    pub selection_priority: i32,
     pub preferred_for: Vec<&'static str>,
     pub avoid_for: Vec<&'static str>,
+    pub preferred_task_kinds: Vec<TaskKind>,
+    pub avoid_task_kinds: Vec<TaskKind>,
+    pub preferred_modes: Vec<ToolMode>,
+    pub avoid_modes: Vec<ToolMode>,
     pub follow_up_hint: Option<&'static str>,
     pub if_truncated_hint: Option<&'static str>,
 }
@@ -93,6 +98,25 @@ impl ToolDescriptor {
             spec,
         }
     }
+
+    pub fn selection_score(&self, mode: &ToolMode, task_kind: &TaskKind) -> i32 {
+        let mut score = self.usage.selection_priority;
+
+        if self.usage.preferred_modes.contains(mode) {
+            score += 4;
+        }
+        if self.usage.avoid_modes.contains(mode) {
+            score -= 4;
+        }
+        if self.usage.preferred_task_kinds.contains(task_kind) {
+            score += 8;
+        }
+        if self.usage.avoid_task_kinds.contains(task_kind) {
+            score -= 8;
+        }
+
+        score
+    }
 }
 
 fn render_tool_description(base: &str, usage: &ToolUsageGuidance) -> String {
@@ -134,8 +158,10 @@ mod tests {
             ToolUsageGuidance {
                 preferred_for: vec!["first-step discovery"],
                 avoid_for: vec!["editing files"],
+                preferred_task_kinds: vec![TaskKind::RepositoryAnalysis],
                 follow_up_hint: Some("open the strongest hit next"),
                 if_truncated_hint: Some("narrow the line range"),
+                ..ToolUsageGuidance::default()
             },
             ToolSpec {
                 name: "demo".to_string(),
@@ -175,5 +201,37 @@ mod tests {
                 .description
                 .contains("If output is truncated: narrow the line range.")
         );
+    }
+
+    #[test]
+    fn selection_score_prefers_matching_task_kinds_and_modes() {
+        let descriptor = ToolDescriptor::new_with_guidance(
+            ToolCategory::RepositoryExploration,
+            ToolRisk::Low,
+            ToolPermissionTier::ReadOnly,
+            true,
+            vec!["explore"],
+            ToolUsageGuidance {
+                preferred_task_kinds: vec![TaskKind::RepositoryAnalysis],
+                avoid_task_kinds: vec![TaskKind::CodeEdit],
+                preferred_modes: vec![ToolMode::Explore],
+                avoid_modes: vec![ToolMode::Edit],
+                ..ToolUsageGuidance::default()
+            },
+            ToolSpec {
+                name: "demo".to_string(),
+                identity: ToolIdentity::built_in("demo"),
+                description: "Base description.".to_string(),
+                parameters: json!({"type": "object"}),
+                mutating: false,
+                requires_approval: false,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
+                approval_reason: None,
+            },
+        );
+
+        assert!(descriptor.selection_score(&ToolMode::Explore, &TaskKind::RepositoryAnalysis) > 0);
+        assert!(descriptor.selection_score(&ToolMode::Edit, &TaskKind::CodeEdit) < 0);
     }
 }

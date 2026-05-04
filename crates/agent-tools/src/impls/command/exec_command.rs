@@ -31,11 +31,17 @@ impl ExecCommandTool {
             false,
             vec!["edit", "verify"],
             ToolUsageGuidance {
+                selection_priority: 15,
                 preferred_for: vec![
                     "build, test, git, and runtime verification",
                     "interactive command sessions",
                 ],
                 avoid_for: vec!["workspace file edits", "repository search when structured tools are available"],
+                preferred_task_kinds: vec![
+                    agent_core::TaskKind::Verification,
+                    agent_core::TaskKind::CodeEdit,
+                ],
+                preferred_modes: vec![agent_core::ToolMode::Verify, agent_core::ToolMode::Edit],
                 follow_up_hint: Some("prefer `workdir` over inline `cd`; on Windows use PowerShell syntax"),
                 ..ToolUsageGuidance::default()
             },

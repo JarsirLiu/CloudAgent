@@ -270,6 +270,25 @@ mod tests {
     }
 
     #[test]
+    fn resolve_surface_orders_tools_by_task_guidance() {
+        let registry = ToolRegistry::new(4_096);
+        let surface = ToolSurface::new(ToolMode::Explore, TaskKind::RepositoryAnalysis);
+        let resolved = registry.resolve_surface(&surface, &PermissionProfile::ReadOnly);
+
+        let ordered_names = resolved
+            .specs
+            .iter()
+            .map(|spec| spec.name.as_str())
+            .take(3)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ordered_names,
+            vec!["search_workspace", "read_files", "list_directory"]
+        );
+    }
+
+    #[test]
     fn resolve_surface_tracks_parallel_safe_tools() {
         let registry = ToolRegistry::new(4_096);
         let surface = ToolSurface::regular_turn();

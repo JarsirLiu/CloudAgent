@@ -33,11 +33,19 @@ impl ReadFilesTool {
             true,
             vec!["explore", "edit", "verify", "repo", "fs"],
             ToolUsageGuidance {
+                selection_priority: 25,
                 preferred_for: vec![
                     "confirming code facts in known files",
                     "inspecting exact lines before editing",
                 ],
                 avoid_for: vec!["broad repository discovery"],
+                preferred_task_kinds: vec![
+                    agent_core::TaskKind::RepositoryAnalysis,
+                    agent_core::TaskKind::CodeEdit,
+                    agent_core::TaskKind::Verification,
+                    agent_core::TaskKind::WorkspaceFileOperation,
+                ],
+                preferred_modes: vec![agent_core::ToolMode::Explore],
                 if_truncated_hint: Some(
                     "rerun with narrower `start_line` / `max_lines` slices before drawing conclusions",
                 ),

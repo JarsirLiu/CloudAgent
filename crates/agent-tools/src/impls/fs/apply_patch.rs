@@ -54,6 +54,7 @@ impl ApplyPatchTool {
             false,
             vec!["edit", "fs"],
             ToolUsageGuidance {
+                selection_priority: 20,
                 preferred_for: vec![
                     "focused workspace file edits",
                     "minimal code changes instead of whole-file rewrites",
@@ -62,6 +63,15 @@ impl ApplyPatchTool {
                     "raw git unified diffs",
                     "directory discovery",
                     "build or runtime verification",
+                ],
+                preferred_task_kinds: vec![
+                    agent_core::TaskKind::CodeEdit,
+                    agent_core::TaskKind::WorkspaceFileOperation,
+                ],
+                preferred_modes: vec![agent_core::ToolMode::Edit],
+                avoid_task_kinds: vec![
+                    agent_core::TaskKind::RepositoryAnalysis,
+                    agent_core::TaskKind::Verification,
                 ],
                 follow_up_hint: Some(
                     "after editing, inspect the diff and run the narrowest relevant verification",

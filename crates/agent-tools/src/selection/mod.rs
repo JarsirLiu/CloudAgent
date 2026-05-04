@@ -15,11 +15,18 @@ impl ToolSelector {
         task_kind: &TaskKind,
         tools: &'a [ToolDescriptor],
     ) -> Vec<&'a ToolDescriptor> {
-        tools
+        let mut selected = tools
             .iter()
             .filter(|tool| matches_mode(mode, tool))
             .filter(|tool| matches_task_kind(task_kind, tool))
-            .collect()
+            .collect::<Vec<_>>();
+        selected.sort_by(|left, right| {
+            right
+                .selection_score(mode, task_kind)
+                .cmp(&left.selection_score(mode, task_kind))
+                .then_with(|| left.spec.name.cmp(&right.spec.name))
+        });
+        selected
     }
 }
 

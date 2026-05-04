@@ -34,10 +34,15 @@ impl ListDirectoryTool {
             true,
             vec!["explore", "repo", "fs"],
             ToolUsageGuidance {
+                selection_priority: 10,
                 preferred_for: vec!["lightweight path discovery", "small tree inspection"],
                 avoid_for: vec![
                     "root-cause analysis when target files are not yet known",
                     "repeated broad repo wandering",
+                ],
+                preferred_task_kinds: vec![
+                    agent_core::TaskKind::RepositoryAnalysis,
+                    agent_core::TaskKind::WorkspaceFileOperation,
                 ],
                 follow_up_hint: Some(
                     "switch to `search_workspace` for bug investigation or `read_files` once paths are known",
