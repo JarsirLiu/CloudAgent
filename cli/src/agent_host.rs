@@ -16,6 +16,7 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     config.validate()?;
     let context = AgentContext {
         workspace_root: config.workspace_root.clone(),
+        conversation_store_dir: config.runtime.conversation_store_dir.clone(),
         default_shell_timeout_ms: config.tools.default_shell_timeout_ms,
     };
     let policy = ExecutionPolicy::new(config.runtime.max_tool_roundtrips);

@@ -450,7 +450,7 @@ fn transcript_item_from_item_start(
         }),
         TurnItemKind::FileChange => Some(TranscriptItem::FileChange {
             id: item_id.to_string(),
-            tool_name: "apply_patch".to_string(),
+            tool_name: "edit_file".to_string(),
             path: title,
             status: crate::tool::WriteFileStatus::InProgress,
             files_changed: 0,
@@ -648,6 +648,7 @@ fn transcript_item_from_tool_response(
             changed_paths,
             files_changed,
             status,
+            ..
         }) => TranscriptItem::FileChange {
             id: tool_call_id.to_string(),
             tool_name: name.to_string(),

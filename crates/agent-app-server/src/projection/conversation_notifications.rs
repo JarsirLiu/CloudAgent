@@ -372,7 +372,7 @@ mod tests {
             turn_id: "turn-1".to_string(),
             item_id: "tool:write".to_string(),
             kind: TurnItemKind::FileChange,
-            title: Some("apply_patch".to_string()),
+            title: Some("edit_file".to_string()),
         });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),

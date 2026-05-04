@@ -42,6 +42,7 @@ mod tests {
         let ctx = agent_core::ToolExecutionContext {
             conversation_id: "test".to_string(),
             workspace_root: base.clone(),
+            conversation_store_dir: base.clone(),
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
             output_tx: None,
@@ -94,6 +95,7 @@ mod tests {
 
         let tool = ReadFilesLocalTool {
             max_read_chars: 10_000,
+            read_state: crate::impls::file_read_state::FileReadStateStore::new(),
         };
         let ctx = tool_context(&base);
         let output = tool
@@ -229,6 +231,7 @@ mod tests {
 
         let tool = ReadFilesLocalTool {
             max_read_chars: 10_000,
+            read_state: crate::impls::file_read_state::FileReadStateStore::new(),
         };
         let ctx = tool_context(&base);
         let output = tool
@@ -262,6 +265,7 @@ mod tests {
 
         let tool = ReadFilesLocalTool {
             max_read_chars: 10_000,
+            read_state: crate::impls::file_read_state::FileReadStateStore::new(),
         };
         let ctx = tool_context(&base);
         let output = tool
@@ -301,6 +305,7 @@ mod tests {
         agent_core::ToolExecutionContext {
             conversation_id: "test".to_string(),
             workspace_root: workspace_root.to_path_buf(),
+            conversation_store_dir: workspace_root.to_path_buf(),
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
             output_tx: None,

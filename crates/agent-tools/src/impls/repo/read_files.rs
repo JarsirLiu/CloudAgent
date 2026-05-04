@@ -1,3 +1,5 @@
+use crate::impls::file_read_state::FileReadStateStore;
+use crate::impls::file_version::version_token_for_bytes;
 use crate::impls::repo::text_read::{TextReadOptions, read_text_snippet};
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
@@ -86,6 +88,7 @@ impl ReadFilesTool {
 
 pub(crate) struct ReadFilesLocalTool {
     pub(crate) max_read_chars: usize,
+    pub(crate) read_state: FileReadStateStore,
 }
 
 #[async_trait]
@@ -130,8 +133,28 @@ impl LocalTool for ReadFilesLocalTool {
             .await?;
             let content = match read_result {
                 Ok(text) => {
+                    let mut version_token = None;
                     if text.truncated {
                         truncated_count += 1;
+                        self.read_state
+                            .record_partial(&ctx.conversation_id, &path)
+                            .await;
+                    } else if args.start_line.unwrap_or(1) == 1 {
+                        if let Ok(bytes) = tokio::fs::read(&path).await {
+                            let token = version_token_for_bytes(&bytes);
+                            version_token = Some(token.clone());
+                            self.read_state
+                                .record_full(&ctx.conversation_id, &path, token)
+                                .await;
+                        } else {
+                            self.read_state
+                                .record_partial(&ctx.conversation_id, &path)
+                                .await;
+                        }
+                    } else {
+                        self.read_state
+                            .record_partial(&ctx.conversation_id, &path)
+                            .await;
                     }
                     total_chars += text.source_char_count;
                     reads.push(ReadFileEntry {
@@ -141,6 +164,7 @@ impl LocalTool for ReadFilesLocalTool {
                         truncated: text.truncated,
                         char_count: text.source_char_count,
                         status: ReadFileStatus::Ok,
+                        version_token,
                     });
                     text.rendered
                 }
@@ -164,6 +188,7 @@ impl LocalTool for ReadFilesLocalTool {
                         truncated: false,
                         char_count: 0,
                         status,
+                        version_token: None,
                     });
                     failure.render()
                 }

@@ -16,3 +16,4 @@ serde_json.workspace = true
 shared = { path = "../shared" }
 tokio.workspace = true
 tokio-util.workspace = true
+blake3 = "1"

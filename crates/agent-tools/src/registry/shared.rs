@@ -216,11 +216,14 @@ pub(crate) fn structured_failure_result(
     invocation: &LocalToolInvocation,
 ) -> Option<StructuredToolResult> {
     match (&invocation.source, invocation.identity.wire_name.as_str()) {
-        (LocalToolSource::BuiltIn, "apply_patch") => Some(StructuredToolResult::EditFile {
-            changed_paths: Vec::new(),
-            files_changed: 0,
-            status: WriteFileStatus::Failed,
-        }),
+        (LocalToolSource::BuiltIn, "apply_patch" | "edit_file") => {
+            Some(StructuredToolResult::EditFile {
+                changed_paths: Vec::new(),
+                files_changed: 0,
+                status: WriteFileStatus::Failed,
+                version_token: None,
+            })
+        }
         (LocalToolSource::BuiltIn, _) | (LocalToolSource::Mcp, _) => {
             Some(StructuredToolResult::ToolError {
                 tool_name: invocation.identity.wire_name.clone(),

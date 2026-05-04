@@ -557,7 +557,7 @@ fn looks_like_apply_patch_command(command: &str) -> bool {
 
 fn reject_patch_via_exec_command(command: &str, workdir: &std::path::Path) -> ToolInvocationOutput {
     let current_directory = workdir.display().to_string();
-    let message = "Use the apply_patch tool instead of exec_command for workspace file edits. `apply_patch` only accepts the CloudAgent patch format (`*** Begin Patch` / `*** Update File:` / `@@`).".to_string();
+    let message = "Use the dedicated file editing tool instead of exec_command for workspace file edits. Prefer `edit_file` for structured replacements in known files.".to_string();
     let content = format_exec_result_content(
         "edit",
         command,
@@ -1028,6 +1028,7 @@ mod tests {
         let ctx = ToolExecutionContext {
             conversation_id: "test".to_string(),
             workspace_root: std::env::temp_dir(),
+            conversation_store_dir: std::env::temp_dir(),
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
             output_tx: None,
@@ -1055,7 +1056,7 @@ mod tests {
                 assert!(
                     stderr
                         .unwrap_or_default()
-                        .contains("Use the apply_patch tool instead")
+                        .contains("Use the dedicated file editing tool instead")
                 );
             }
             other => panic!("expected structured command rejection, got {other:?}"),

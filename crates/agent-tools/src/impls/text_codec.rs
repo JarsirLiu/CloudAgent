@@ -13,6 +13,7 @@ pub(crate) enum LineEnding {
 }
 
 impl LineEnding {
+    #[cfg(test)]
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Lf => "\n",

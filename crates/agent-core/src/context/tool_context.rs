@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Debug)]
 pub struct AgentContext {
     pub workspace_root: PathBuf,
+    pub conversation_store_dir: PathBuf,
     pub default_shell_timeout_ms: u64,
 }
 
@@ -18,6 +19,7 @@ impl AgentContext {
         ToolExecutionContext {
             conversation_id: conversation_id.into(),
             workspace_root: self.workspace_root.clone(),
+            conversation_store_dir: self.conversation_store_dir.clone(),
             default_shell_timeout_ms: self.default_shell_timeout_ms,
             cancellation_token,
             output_tx: None,
@@ -29,6 +31,7 @@ impl AgentContext {
 pub struct ToolExecutionContext {
     pub conversation_id: String,
     pub workspace_root: PathBuf,
+    pub conversation_store_dir: PathBuf,
     pub default_shell_timeout_ms: u64,
     pub cancellation_token: CancellationToken,
     pub output_tx: Option<mpsc::UnboundedSender<ToolOutputDelta>>,

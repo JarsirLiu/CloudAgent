@@ -249,17 +249,12 @@ mod tests {
         let workspace_write =
             registry.resolve_surface(&surface, &PermissionProfile::WorkspaceWrite);
 
-        assert!(
-            read_only
-                .specs
-                .iter()
-                .all(|spec| spec.name != "apply_patch")
-        );
+        assert!(read_only.specs.iter().all(|spec| spec.name != "edit_file"));
         assert!(
             workspace_write
                 .specs
                 .iter()
-                .any(|spec| spec.name == "apply_patch")
+                .any(|spec| spec.name == "edit_file")
         );
         assert!(
             read_only
@@ -297,7 +292,7 @@ mod tests {
         assert!(resolved.supports_parallel_tool("search_workspace"));
         assert!(resolved.supports_parallel_tool("read_files"));
         assert!(!resolved.supports_parallel_tool("exec_command"));
-        assert!(!resolved.supports_parallel_tool("apply_patch"));
+        assert!(!resolved.supports_parallel_tool("edit_file"));
     }
 
     #[test]
@@ -398,6 +393,7 @@ mod tests {
                 &ToolExecutionContext {
                     conversation_id: "test".to_string(),
                     workspace_root: std::env::temp_dir(),
+                    conversation_store_dir: std::env::temp_dir(),
                     default_shell_timeout_ms: 5_000,
                     cancellation_token: CancellationToken::new(),
                     output_tx: None,

@@ -197,6 +197,8 @@ pub struct ReadFileEntry {
     pub truncated: bool,
     pub char_count: usize,
     pub status: ReadFileStatus,
+    #[serde(default)]
+    pub version_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -272,6 +274,8 @@ pub enum StructuredToolResult {
         changed_paths: Vec<String>,
         files_changed: usize,
         status: WriteFileStatus,
+        #[serde(default)]
+        version_token: Option<String>,
     },
     McpToolCall {
         server: String,

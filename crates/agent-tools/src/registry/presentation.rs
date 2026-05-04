@@ -36,6 +36,7 @@ pub(crate) fn transcript_item_from_tool_result(
             changed_paths,
             files_changed,
             status,
+            ..
         }) => TranscriptItem::FileChange {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
@@ -88,6 +89,7 @@ pub(crate) fn denied_transcript_item(
             changed_paths,
             files_changed,
             status,
+            ..
         }) => TranscriptItem::FileChange {
             id: item_id.to_string(),
             tool_name: tool_name.to_string(),
@@ -158,10 +160,11 @@ pub(crate) fn denied_tool_result(
                 duration_ms: None,
             })
         }
-        "apply_patch" => Some(StructuredToolResult::EditFile {
+        "apply_patch" | "edit_file" => Some(StructuredToolResult::EditFile {
             changed_paths: Vec::new(),
             files_changed: 0,
             status: WriteFileStatus::Declined,
+            version_token: None,
         }),
         _ => Some(StructuredToolResult::ToolError {
             tool_name: tool_name.to_string(),
@@ -175,7 +178,7 @@ pub(crate) fn default_rejection_message(tool_name: &str) -> String {
         "exec_command" => {
             "exec command rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
         }
-        "apply_patch" => {
+        "apply_patch" | "edit_file" => {
             "edit rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
         }
         _ => {

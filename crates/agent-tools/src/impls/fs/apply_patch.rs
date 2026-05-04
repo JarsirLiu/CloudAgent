@@ -186,6 +186,7 @@ impl LocalTool for ApplyPatchLocalTool {
                 changed_paths,
                 files_changed,
                 status: agent_protocol::WriteFileStatus::Completed,
+                version_token: None,
             }),
         })
     }
@@ -657,6 +658,7 @@ mod tests {
         ToolExecutionContext {
             conversation_id: "test".to_string(),
             workspace_root: workspace_root.to_path_buf(),
+            conversation_store_dir: workspace_root.to_path_buf(),
             default_shell_timeout_ms: 5_000,
             cancellation_token: CancellationToken::new(),
             output_tx: None,
