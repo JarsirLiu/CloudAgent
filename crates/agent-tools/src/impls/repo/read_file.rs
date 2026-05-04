@@ -31,18 +31,22 @@ impl ReadFileTool {
             ToolCategory::RepositoryExploration,
             ToolRisk::Low,
             ToolPermissionTier::ReadOnly,
-            vec!["explore", "edit", "verify", "repo", "fs"],
+            vec!["explore", "edit", "verify", "repo"],
             ToolUsageGuidance {
                 selection_priority: 26,
                 preferred_for: vec![
-                    "confirming code facts in one known file",
-                    "inspecting exact lines before editing",
-                    "precise follow-up after search results",
+                    "confirming repository code facts in one known text file",
+                    "inspecting exact source lines before editing",
+                    "precise repository follow-up after search results",
                 ],
                 avoid_for: vec![
                     "broad repository discovery",
                     "batch previews across many files",
+                    "raw filesystem byte reads",
                 ],
+                follow_up_hint: Some(
+                    "use `read_file_bytes` only when raw bytes matter; otherwise keep code and text inspection on `read_file`",
+                ),
                 if_truncated_hint: Some(
                     "rerun the same file with the returned `next_start_line` or a narrower `start_line` / `max_lines` slice",
                 ),
@@ -52,7 +56,7 @@ impl ReadFileTool {
                 name: "read_file".to_string(),
                 identity: ToolIdentity::built_in("read_file"),
                 description: format!(
-                    "Read one known file in a structured tool call. Use one call per file. When several files need inspection, issue multiple `read_file` calls and let the runtime parallelize them. Output is capped at about {max_read_chars} characters."
+                    "Read one known repository text file in a structured code-reading tool call. This is the main repo inspection tool, not a raw filesystem byte reader. Use one call per file. When several files need inspection, issue multiple `read_file` calls and let the runtime parallelize them. Output is capped at about {max_read_chars} characters."
                 ),
                 parameters: json!({
                     "type": "object",

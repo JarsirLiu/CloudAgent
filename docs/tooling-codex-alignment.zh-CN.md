@@ -146,8 +146,8 @@
 - 已完成：补充基础 fs 原语层，包括 `read_directory`、`create_directory`、`copy_path`、`remove_path`。
 - 已完成：`get_metadata` 补充 `is_symlink`、`created_at_ms`、`modified_at_ms`，向 Codex 的 fs metadata 对齐。
 - 已完成：补充更底层的原始字节读写原语 `read_file_bytes`、`write_file_bytes`，并删除重叠的文本整文件写工具 `write_file`。
+- 已完成：补充低频 fs 观察原语 `watch`、`unwatch`，默认通过 deferred discovery 暴露。
 - 待完成：真实对话抽查，确认模型默认走 `search_workspace -> read_file -> edit_file / exec_command`。
-- 待完成：决定是否继续补 watch/unwatch 一类能力。
 
 ## 备注
 

@@ -283,6 +283,14 @@ mod tests {
             .deferred_tools
             .iter()
             .any(|spec| spec.name == "write_file_bytes"));
+        assert!(read_only
+            .default_tools
+            .iter()
+            .all(|spec| spec.name != "watch"));
+        assert!(read_only
+            .deferred_tools
+            .iter()
+            .any(|spec| spec.name == "watch"));
     }
 
     #[test]

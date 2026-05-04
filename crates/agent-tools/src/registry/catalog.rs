@@ -5,7 +5,8 @@ use crate::impls::fs::{
     CopyPathLocalTool, CopyPathTool, CreateDirectoryLocalTool, CreateDirectoryTool,
     EditFileLocalTool, EditFileTool, GetMetadataLocalTool, GetMetadataTool, ReadDirectoryLocalTool,
     ReadDirectoryTool, ReadFileBytesLocalTool, ReadFileBytesTool, RemovePathLocalTool,
-    RemovePathTool, WriteFileBytesLocalTool, WriteFileBytesTool,
+    RemovePathTool, UnwatchLocalTool, UnwatchTool, WatchLocalTool, WatchManager, WatchTool,
+    WriteFileBytesLocalTool, WriteFileBytesTool,
 };
 use crate::impls::repo::{
     ReadFileLocalTool, ReadFileTool, SearchWorkspaceLocalTool, SearchWorkspaceTool,
@@ -31,12 +32,15 @@ pub(super) fn build_descriptors(max_read_chars: usize) -> Vec<ToolDescriptor> {
         RemovePathTool::descriptor(),
         ReadFileBytesTool::descriptor(),
         WriteFileBytesTool::descriptor(),
+        WatchTool::descriptor(),
+        UnwatchTool::descriptor(),
     ]
 }
 
 pub(super) fn build_tools(max_read_chars: usize) -> LocalToolMap {
     let mut tools: LocalToolMap = BTreeMap::new();
     let read_state = FileReadStateStore::new();
+    let watch_manager = WatchManager::new();
     register(&mut tools, SearchWorkspaceLocalTool::new());
     register(
         &mut tools,
@@ -55,5 +59,17 @@ pub(super) fn build_tools(max_read_chars: usize) -> LocalToolMap {
     register(&mut tools, RemovePathLocalTool);
     register(&mut tools, ReadFileBytesLocalTool);
     register(&mut tools, WriteFileBytesLocalTool);
+    register(
+        &mut tools,
+        WatchLocalTool {
+            manager: watch_manager.clone(),
+        },
+    );
+    register(
+        &mut tools,
+        UnwatchLocalTool {
+            manager: watch_manager,
+        },
+    );
     tools
 }

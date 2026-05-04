@@ -300,6 +300,18 @@ pub enum StructuredToolResult {
         total_chars: usize,
         read: ReadFileEntry,
     },
+    Watch {
+        watch_id: String,
+        path: String,
+        recursive: bool,
+        active: bool,
+    },
+    Unwatch {
+        watch_id: String,
+        removed: bool,
+        changed_path_count: usize,
+        changed_paths: Vec<String>,
+    },
     GetMetadata {
         path: String,
         exists: bool,

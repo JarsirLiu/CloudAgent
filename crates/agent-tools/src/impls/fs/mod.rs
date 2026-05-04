@@ -7,6 +7,7 @@ mod get_metadata;
 mod read_directory;
 mod read_file_bytes;
 mod remove_path;
+mod watch;
 mod write_file_bytes;
 
 pub(crate) use copy_path::CopyPathLocalTool;
@@ -23,5 +24,7 @@ pub(crate) use read_file_bytes::ReadFileBytesLocalTool;
 pub use read_file_bytes::ReadFileBytesTool;
 pub(crate) use remove_path::RemovePathLocalTool;
 pub use remove_path::RemovePathTool;
+pub(crate) use watch::{UnwatchLocalTool, WatchLocalTool, WatchManager};
+pub use watch::{UnwatchTool, WatchTool};
 pub(crate) use write_file_bytes::WriteFileBytesLocalTool;
 pub use write_file_bytes::WriteFileBytesTool;
