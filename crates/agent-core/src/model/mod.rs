@@ -4,6 +4,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+mod execution;
+
+pub use execution::{
+    await_server_request_decision, complete_model_request, complete_model_request_streaming,
+};
+
 #[derive(Clone, Debug)]
 pub struct ModelRequest {
     pub messages: Vec<ResponseItem>,

@@ -261,7 +261,7 @@ mod tests {
 
     fn tool_invocation(arguments: serde_json::Value) -> LocalToolInvocation {
         LocalToolInvocation {
-            tool_name: "test_tool".to_string(),
+            identity: agent_core::ToolIdentity::built_in("test_tool"),
             source: LocalToolSource::BuiltIn,
             payload: LocalToolPayload::Function { arguments },
         }

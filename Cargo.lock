@@ -14,7 +14,6 @@ version = "0.1.0"
 dependencies = [
  "agent-core",
  "agent-protocol",
- "agent-runtime",
  "anyhow",
  "serde",
  "serde_json",
@@ -26,8 +25,8 @@ name = "agent-app-server-client"
 version = "0.1.0"
 dependencies = [
  "agent-app-server",
+ "agent-core",
  "agent-protocol",
- "agent-runtime",
  "anyhow",
  "serde_json",
  "tokio",
@@ -39,11 +38,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
+ "rusqlite",
  "serde",
  "serde_json",
  "shared",
  "tokio",
  "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -60,9 +63,9 @@ version = "0.1.0"
 dependencies = [
  "agent-core",
  "anyhow",
+ "infra-store",
  "serde",
  "shared",
- "storage",
 ]
 
 [[package]]
@@ -73,30 +76,6 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "agent-runtime"
-version = "0.1.0"
-dependencies = [
- "agent-core",
- "agent-memory",
- "agent-protocol",
- "agent-tools",
- "anyhow",
- "async-trait",
- "chrono",
- "config",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "shared",
- "storage",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -130,7 +109,7 @@ name = "agentd"
 version = "0.1.0"
 dependencies = [
  "agent-app-server",
- "agent-runtime",
+ "agent-core",
  "anyhow",
  "cli",
  "config",
@@ -325,19 +304,22 @@ name = "cli"
 version = "0.1.0"
 dependencies = [
  "agent-app-server-client",
+ "agent-core",
+ "agent-memory",
  "agent-protocol",
- "agent-runtime",
+ "agent-tools",
  "anyhow",
  "arboard",
  "config",
  "crossterm",
  "futures",
+ "infra-http",
+ "infra-store",
  "pulldown-cmark",
  "ratatui",
  "rusqlite",
  "serde",
  "serde_json",
- "storage",
  "textwrap",
  "tokio",
  "tracing",
@@ -373,7 +355,6 @@ dependencies = [
 name = "config"
 version = "0.1.0"
 dependencies = [
- "agent-memory",
  "anyhow",
  "serde",
  "shared",
@@ -1098,6 +1079,13 @@ dependencies = [
 name = "infra-http"
 version = "0.1.0"
 dependencies = [
+ "agent-core",
+ "anyhow",
+ "async-trait",
+ "config",
+ "reqwest",
+ "serde",
+ "serde_json",
  "shared",
 ]
 
@@ -1119,7 +1107,16 @@ dependencies = [
 name = "infra-store"
 version = "0.1.0"
 dependencies = [
+ "agent-core",
+ "agent-protocol",
+ "anyhow",
+ "async-trait",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "shared",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2038,20 +2035,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "storage"
-version = "0.1.0"
-dependencies = [
- "agent-core",
- "agent-protocol",
- "anyhow",
- "rusqlite",
- "serde",
- "serde_json",
- "shared",
- "tokio",
-]
 
 [[package]]
 name = "strsim"

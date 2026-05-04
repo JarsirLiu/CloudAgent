@@ -8,7 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 cli = { path = "../../cli" }
 agent-app-server = { path = "../../crates/agent-app-server" }
-agent-runtime = { path = "../../crates/agent-runtime" }
+agent-core = { path = "../../crates/agent-core" }
 config = { path = "../../crates/config" }
 tokio.workspace = true
 tracing.workspace = true

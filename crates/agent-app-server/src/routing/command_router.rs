@@ -6,7 +6,7 @@ use crate::server_request::service as server_request_service;
 use crate::turn::service as turn_service;
 use agent_core::ConversationTurn;
 use agent_protocol::{AppClientCommand, AppServerMessage, ServerRequestDecision};
-use agent_runtime::AgentRuntime;
+use agent_core::AgentHost;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -175,7 +175,7 @@ pub(crate) struct TurnSpawnDependencies {
 }
 
 pub(crate) async fn handle_command(
-    runtime: Arc<AgentRuntime>,
+    runtime: Arc<AgentHost>,
     command: AppClientCommand,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: Arc<Mutex<ServerState>>,
@@ -374,4 +374,6 @@ mod tests {
         }
     }
 }
+
+
 

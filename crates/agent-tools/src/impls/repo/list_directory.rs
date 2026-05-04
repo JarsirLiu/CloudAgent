@@ -1,8 +1,7 @@
 use super::common::DEFAULT_IGNORED_DIRS;
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
-use agent_core::ToolExecutionContext;
-use agent_core::ToolSpec;
+use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
 use ignore::WalkBuilder;
@@ -34,6 +33,7 @@ impl ListDirectoryTool {
             vec!["explore", "repo", "fs"],
             ToolSpec {
                 name: "list_directory".to_string(),
+                identity: ToolIdentity::built_in("list_directory"),
                 description: "List workspace directory entries without dropping to the shell. Use this for path discovery and lightweight tree inspection.".to_string(),
                 parameters: json!({
                     "type": "object",

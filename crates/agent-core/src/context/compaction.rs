@@ -740,6 +740,7 @@ mod tests {
                 tool_calls: vec![ToolCall {
                     id: format!("call-{i}"),
                     name: "exec_command".to_string(),
+                    identity: crate::tool::ToolIdentity::built_in("exec_command"),
                     arguments: json!({"command":"echo test"}),
                 }],
             });
@@ -809,6 +810,7 @@ mod tests {
                 tool_calls: vec![ToolCall {
                     id: "call-1".to_string(),
                     name: "exec_command".to_string(),
+                    identity: crate::tool::ToolIdentity::built_in("exec_command"),
                     arguments: json!({"command":"pwd"}),
                 }],
             },

@@ -18,7 +18,7 @@ impl PersistedCliSettings {
 }
 
 pub fn load_cli_settings(store_root: &Path) -> Result<Option<PersistedCliSettings>> {
-    let Some(snapshot) = storage::load_project_settings_snapshot_sync(store_root)? else {
+    let Some(snapshot) = infra_store::load_project_settings_snapshot_sync(store_root)? else {
         return Ok(None);
     };
     let parsed = serde_json::from_str::<PersistedCliSettings>(&snapshot)?;
@@ -30,5 +30,5 @@ pub fn save_cli_settings(
     settings: &PersistedCliSettings,
 ) -> Result<()> {
     let payload = serde_json::to_string(settings)?;
-    storage::save_project_settings_snapshot_sync(store_root, &payload)
+    infra_store::save_project_settings_snapshot_sync(store_root, &payload)
 }

@@ -186,7 +186,7 @@ pub(crate) fn repeated_rejection_message(tool_name: &str) -> String {
 }
 
 pub(crate) fn tool_request_key(call: &ToolCall) -> String {
-    format!("{}:{}", call.name, canonical_json(&call.arguments))
+    format!("{}:{}", call.identity.wire_name, canonical_json(&call.arguments))
 }
 
 pub(crate) fn missing_tool_result(call: &ToolCall) -> ToolResult {

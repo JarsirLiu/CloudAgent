@@ -2,14 +2,14 @@ use crate::routing::command_router::{ServerState, merge_active_turn};
 use crate::app::notification::send_notification;
 use crate::session::state as session_state;
 use agent_protocol::{AppServerMessage, AppServerNotification, ConversationStatus, FrontendMode};
-use agent_runtime::AgentRuntime;
+use agent_core::AgentHost;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task;
 
 pub(crate) async fn list_conversations(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
 ) -> Result<()> {
@@ -31,7 +31,7 @@ pub(crate) async fn list_conversations(
 }
 
 pub(crate) async fn request_conversation_history(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -61,7 +61,7 @@ pub(crate) async fn request_conversation_history(
 }
 
 pub(crate) async fn request_conversation_status(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -80,7 +80,7 @@ pub(crate) async fn request_conversation_status(
 }
 
 pub(crate) async fn request_conversation_history_page(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -105,7 +105,7 @@ pub(crate) async fn request_conversation_history_page(
 }
 
 pub(crate) async fn replay_frontend_state(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: &str,
@@ -128,7 +128,7 @@ pub(crate) async fn replay_frontend_state(
 }
 
 pub(crate) async fn create_conversation(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     _event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     _state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -138,7 +138,7 @@ pub(crate) async fn create_conversation(
 }
 
 pub(crate) async fn switch_conversation(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -160,7 +160,7 @@ pub(crate) async fn switch_conversation(
 }
 
 pub(crate) async fn archive_conversation(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -204,7 +204,7 @@ pub(crate) async fn archive_conversation(
 }
 
 pub(crate) async fn reset_conversation(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -223,7 +223,7 @@ pub(crate) async fn reset_conversation(
 }
 
 pub(crate) async fn set_conversation_title(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -243,7 +243,7 @@ pub(crate) async fn set_conversation_title(
 }
 
 pub(crate) async fn delete_conversation(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -286,7 +286,7 @@ pub(crate) async fn delete_conversation(
 }
 
 pub(crate) async fn maybe_spawn_auto_title_job(
-    runtime: Arc<AgentRuntime>,
+    runtime: Arc<AgentHost>,
     event_tx: mpsc::UnboundedSender<AppServerMessage>,
     state: Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -428,7 +428,7 @@ pub(crate) async fn unsubscribe_conversation(
 }
 
 async fn publish_switched_conversation_state(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: &str,
@@ -463,3 +463,5 @@ async fn publish_switched_conversation_state(
     .await;
     Ok(())
 }
+
+

@@ -1,7 +1,6 @@
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
-use agent_core::ToolExecutionContext;
-use agent_core::ToolSpec;
+use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -20,6 +19,7 @@ impl GetMetadataTool {
             vec!["explore", "verify", "repo", "fs"],
             ToolSpec {
                 name: "get_metadata".to_string(),
+                identity: ToolIdentity::built_in("get_metadata"),
                 description:
                     "Read focused path metadata such as existence, file type, size, and readonly status."
                         .to_string(),

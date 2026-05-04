@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ContextBudgetLogEntry {
+pub struct ContextBudgetLogEntry {
     pub conversation_id: String,
     pub turn_id: String,
     pub model_context_window: u64,
@@ -33,7 +33,7 @@ pub(crate) struct ContextBudgetLogEntry {
     pub mcp_after: usize,
 }
 
-pub(crate) fn append_context_budget_log(
+pub fn append_context_budget_log(
     workspace_root: &Path,
     entry: &ContextBudgetLogEntry,
 ) -> Result<()> {
@@ -48,7 +48,7 @@ pub(crate) fn append_context_budget_log(
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct AuditEventEntry<'a> {
+pub struct AuditEventEntry<'a> {
     pub session_id: &'a str,
     pub turn_id: Option<&'a str>,
     pub event_type: &'a str,
@@ -62,7 +62,7 @@ static AUDIT_WRITE_FAILURES: AtomicU64 = AtomicU64::new(0);
 static AUDIT_LAST_ERROR_LOG_MS: AtomicU64 = AtomicU64::new(0);
 static RETENTION_LAST_RUN_MS: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
 
-pub(crate) fn append_audit_event_safe(workspace_root: &Path, entry: &AuditEventEntry<'_>) {
+pub fn append_audit_event_safe(workspace_root: &Path, entry: &AuditEventEntry<'_>) {
     if let Err(err) = append_audit_event(workspace_root, entry) {
         AUDIT_WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
@@ -77,7 +77,7 @@ pub(crate) fn append_audit_event_safe(workspace_root: &Path, entry: &AuditEventE
     }
 }
 
-pub(crate) fn append_audit_event(workspace_root: &Path, entry: &AuditEventEntry<'_>) -> Result<()> {
+pub fn append_audit_event(workspace_root: &Path, entry: &AuditEventEntry<'_>) -> Result<()> {
     let dir = workspace_root.join("data").join("logs");
     create_dir_all(&dir)?;
     let db_path = dir.join("audit.db");
@@ -154,7 +154,7 @@ pub(crate) fn append_audit_event(workspace_root: &Path, entry: &AuditEventEntry<
     Ok(())
 }
 
-pub(crate) fn verify_audit_chain(workspace_root: &Path) -> Result<()> {
+pub fn verify_audit_chain(workspace_root: &Path) -> Result<()> {
     let db_path = workspace_root.join("data").join("logs").join("audit.db");
     if !db_path.exists() {
         return Ok(());
@@ -296,9 +296,6 @@ mod tests {
             chrono::Utc::now().timestamp_millis() + 4_000_000,
         )
         .expect("run retention");
-        let _count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM audit_events", [], |r| r.get(0))
-            .expect("count");
         let old_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM audit_events WHERE ts_ms < (strftime('%s','now')*1000 - 30*24*60*60*1000)",

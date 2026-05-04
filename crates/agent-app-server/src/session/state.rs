@@ -1,5 +1,5 @@
 use crate::routing::command_router::ServerState;
-use agent_runtime::AgentRuntime;
+use agent_core::AgentHost;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -9,7 +9,7 @@ pub(crate) struct ArchiveTransition {
 }
 
 pub(crate) async fn hydrate_active_conversation(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     state: &Arc<Mutex<ServerState>>,
 ) {
     if let Ok(Some(conversation_id)) = runtime.load_active_conversation().await {
@@ -30,7 +30,7 @@ pub(crate) async fn apply_active_conversation(
 }
 
 pub(crate) async fn persist_active_conversation(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     conversation_id: &str,
 ) {
     let _ = runtime.mark_active_conversation(conversation_id).await;
@@ -91,3 +91,5 @@ mod tests {
         assert_eq!(transition.active_session_id, "session-a");
     }
 }
+
+

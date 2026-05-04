@@ -1,5 +1,5 @@
-use agent_runtime::AgentRuntime;
 use anyhow::{Result, bail};
+use cli::agent_host::build_agent_host;
 use cli::app::cli_settings::load_cli_settings;
 use cli::{ConsoleConfig, ConsoleConnection, run_console};
 use config::AgentConfig;
@@ -7,7 +7,6 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,8 +25,8 @@ async fn main() -> Result<()> {
         config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
         config.cli.permission_mode = settings.permission_mode;
     }
-    let runtime = match AgentRuntime::from_config(config) {
-        Ok(runtime) => Arc::new(runtime),
+    let runtime = match build_agent_host(config) {
+        Ok(runtime) => runtime,
         Err(err) => {
             if err.to_string().contains("missing LLM api key") {
                 let path = default_user_config_path()?;

@@ -1,9 +1,21 @@
 use crate::context::ToolExecutionContext;
+use crate::conversation::TranscriptItem;
 use crate::turn::{TurnItemDeltaKind, TurnItemKind};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
+use std::path::Path;
+
+mod execution;
+mod batch;
+
+pub(crate) use batch::run_host_tool_batch;
+pub use execution::{
+    ParallelToolInvocation, ParallelToolResult, execute_tool_call_streaming,
+    run_parallel_tool_invocations,
+};
 
 #[derive(Clone, Debug)]
 pub struct ToolOutputDelta {
@@ -17,9 +29,47 @@ pub enum ToolOutputStream {
     Stderr,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSource {
+    BuiltIn,
+    Mcp,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIdentity {
+    pub source: ToolSource,
+    pub namespace: Option<String>,
+    pub wire_name: String,
+}
+
+impl ToolIdentity {
+    pub fn built_in(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            source: ToolSource::BuiltIn,
+            namespace: None,
+            wire_name: name,
+        }
+    }
+
+    pub fn mcp(
+        namespace: impl Into<String>,
+        _tool: impl Into<String>,
+        wire_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: ToolSource::Mcp,
+            namespace: Some(namespace.into()),
+            wire_name: wire_name.into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,
+    pub identity: ToolIdentity,
     pub description: String,
     pub parameters: Value,
     pub mutating: bool,
@@ -29,10 +79,62 @@ pub struct ToolSpec {
     pub approval_reason: Option<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ResolvedToolSet {
+    pub specs: Vec<ToolSpec>,
+    parallel_tool_names: BTreeSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolBatchExecutionStrategy {
+    Sequential,
+    Parallel,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApprovalRequirement {
+    pub requires_approval: bool,
+    pub reason: Option<String>,
+}
+
+impl ApprovalRequirement {
+    pub fn not_required() -> Self {
+        Self {
+            requires_approval: false,
+            reason: None,
+        }
+    }
+
+    pub fn required(reason: impl Into<String>) -> Self {
+        Self {
+            requires_approval: true,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+impl ResolvedToolSet {
+    pub fn new(specs: Vec<ToolSpec>) -> Self {
+        Self {
+            specs,
+            parallel_tool_names: BTreeSet::new(),
+        }
+    }
+
+    pub fn supports_parallel_tool(&self, tool_name: &str) -> bool {
+        self.parallel_tool_names.contains(tool_name)
+    }
+
+    pub fn mark_parallel_tool(&mut self, tool_name: String) {
+        self.parallel_tool_names.insert(tool_name);
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
+    pub identity: ToolIdentity,
     pub arguments: Value,
 }
 
@@ -95,6 +197,13 @@ pub struct ReadFileEntry {
     pub truncated: bool,
     pub char_count: usize,
     pub status: ReadFileStatus,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct McpCallResult {
+    pub content: Value,
+    pub structured_content: Option<Value>,
+    pub is_error: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -164,6 +273,11 @@ pub enum StructuredToolResult {
         files_changed: usize,
         status: WriteFileStatus,
     },
+    McpToolCall {
+        server: String,
+        tool: String,
+        result: McpCallResult,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -230,4 +344,68 @@ pub trait ToolExecutor: Send + Sync {
     }
 
     async fn execute(&self, call: ToolCall, ctx: &ToolExecutionContext) -> Result<ToolResult>;
+}
+
+pub trait ToolBackend: ToolExecutor {
+    type PermissionProfile: Send + Sync;
+    type ApprovalPolicy: Send + Sync;
+
+    fn resolve_surface(
+        &self,
+        tool_surface: &ToolSurface,
+        permission_profile: &Self::PermissionProfile,
+    ) -> ResolvedToolSet;
+
+    fn batch_execution_strategy(&self, calls: &[ToolCall]) -> ToolBatchExecutionStrategy;
+
+    fn approval_requirement_for_call(
+        &self,
+        spec: &ToolSpec,
+        call: &ToolCall,
+        workspace_root: &Path,
+        permission_profile: &Self::PermissionProfile,
+        approval_policy: &Self::ApprovalPolicy,
+    ) -> ApprovalRequirement;
+
+    fn tool_item_title(&self, call: &ToolCall) -> String;
+
+    fn transcript_item_from_result(
+        &self,
+        item_id: &str,
+        call: &ToolCall,
+        result: &ToolResult,
+    ) -> TranscriptItem;
+
+    fn denied_transcript_item(
+        &self,
+        item_id: &str,
+        call: &ToolCall,
+        reason: &str,
+    ) -> TranscriptItem;
+
+    fn default_rejection_message(&self, tool_name: &str) -> String;
+
+    fn repeated_rejection_message(&self, tool_name: &str) -> String;
+
+    fn denied_structured_result(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        reason: String,
+    ) -> Option<StructuredToolResult>;
+
+    fn tool_request_key(&self, call: &ToolCall) -> String;
+
+    fn missing_tool_result(&self, call: &ToolCall) -> ToolResult;
+}
+
+pub fn summarize_arguments(arguments: &Value) -> String {
+    let rendered =
+        serde_json::to_string(arguments).unwrap_or_else(|_| "<invalid-json>".to_string());
+    if rendered.chars().count() > 240 {
+        let truncated = rendered.chars().take(240).collect::<String>();
+        format!("{truncated}...")
+    } else {
+        rendered
+    }
 }

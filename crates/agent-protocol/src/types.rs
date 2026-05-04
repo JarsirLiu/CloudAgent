@@ -1,4 +1,7 @@
-use crate::{TurnId, TurnState};
+pub use agent_core::{
+    ApprovalPolicy, ConversationSnapshot, ConversationStatus, ConversationSummary,
+    PermissionProfile,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -6,21 +9,6 @@ pub enum FrontendMode {
     Idle,
     Running,
     WaitingForServerRequest,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PermissionProfile {
-    ReadOnly,
-    WorkspaceWrite,
-    FullAccess,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalPolicy {
-    OnRequest,
-    Never,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,29 +40,6 @@ fn default_turn_policy() -> TurnPolicy {
         permission_profile: default_permission_profile(),
         approval_policy: default_approval_policy(),
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum ConversationStatus {
-    Idle,
-    Busy,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConversationSnapshot {
-    pub conversation_id: String,
-    pub conversation_status: ConversationStatus,
-    pub active_turn: Option<TurnId>,
-    pub turn_state: Option<TurnState>,
-    pub message_count: usize,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConversationSummary {
-    pub conversation_id: String,
-    pub title: Option<String>,
-    pub message_count: usize,
-    pub updated_at_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

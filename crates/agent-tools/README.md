@@ -41,6 +41,7 @@ of creating separate systems for each new capability family.
 In practice, that means the tool system is designed around one backbone:
 
 - one catalog of model-visible tools
+- one tool identity model that separates internal meaning from model wire naming
 - one invocation model for calling tools
 - one routing layer that decides where a call goes
 - one execution model per capability family
@@ -48,6 +49,25 @@ In practice, that means the tool system is designed around one backbone:
 
 New capability families should join this backbone. They should not create parallel tool systems,
 shadow registries, or one-off result formats.
+
+### Tool Identity
+
+Every callable tool should have one explicit identity made of:
+
+- source:
+  built-in or external
+- namespace:
+  empty for built-in tools and set for namespaced external sources such as MCP servers
+- wire name:
+  the exact model-visible function name used at the protocol boundary
+
+This identity exists so the system can keep a clean separation between:
+
+- routing and execution semantics inside the backend
+- flattened function naming required by model APIs
+
+The wire name is a boundary representation. It should not become the hidden source of truth for the
+rest of the tool system.
 
 ## Tool Design Philosophy
 
@@ -214,8 +234,11 @@ The crate is split into a few focused modules:
 
 - `agent-core` defines the stable shared contracts such as `ToolSpec`, `ToolCall`, `ToolResult`,
   and `ToolSurface`.
+- `agent-core` owns the agent execution backbone and the concrete `AgentHost`, and should call
+  into this crate through stable tool contracts rather than through a separate runtime layer.
 - `agent-tools` builds the concrete tool catalog and execution model on top of those contracts.
-- `agent-runtime` resolves a tool surface from this crate and orchestrates turns around it.
+- product adapters should assemble a concrete tool backend from this crate and inject it into the
+  host-construction entry exposed by `agent-core`.
 
 If you are extending the tool system, start in this crate and keep new capability work inside the
 existing descriptor, invocation, execution, and result flow.

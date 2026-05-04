@@ -1,7 +1,7 @@
 use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, forward_event};
 use agent_app_server::{InProcessClientHandle, InProcessClientSender, start_in_process};
 use agent_protocol::AppClientCommand;
-use agent_runtime::AgentRuntime;
+use agent_core::AgentHost;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 
 #[derive(Clone)]
 pub struct InProcessClientConfig {
-    pub runtime: Arc<AgentRuntime>,
+    pub runtime: Arc<AgentHost>,
     pub conversation_id: String,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
@@ -96,3 +96,5 @@ async fn run_event_worker(
     }
     Ok(())
 }
+
+

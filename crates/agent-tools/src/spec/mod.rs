@@ -1,5 +1,4 @@
-use agent_core::ToolSpec;
-use agent_protocol::PermissionProfile;
+use agent_core::{PermissionProfile, ToolSpec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolCategory {

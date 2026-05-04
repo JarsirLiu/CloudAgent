@@ -1,8 +1,7 @@
 use super::common::{collect_repo_entries, sort_ranked_paths};
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
-use agent_core::ToolExecutionContext;
-use agent_core::ToolSpec;
+use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use agent_protocol::SearchWorkspaceHit;
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -27,6 +26,7 @@ impl SearchWorkspaceTool {
             vec!["explore", "edit", "verify", "repo"],
             ToolSpec {
                 name: "search_workspace".to_string(),
+                identity: ToolIdentity::built_in("search_workspace"),
                 description: "Search repository files or text through one structured entry point. Use mode=`files` for likely path matches and mode=`text` for symbol or string matches. Reuse `session_id` to refine an existing search instead of restarting from scratch.".to_string(),
                 parameters: json!({
                     "type": "object",

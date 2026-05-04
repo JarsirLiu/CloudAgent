@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
-use agent_memory::{MemoryConfig, MemoryMode};
 use serde::{Deserialize, Serialize};
+use shared::{MemoryConfig, MemoryMode};
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -50,6 +51,19 @@ pub struct RuntimeConfig {
 pub struct ToolConfig {
     pub default_shell_timeout_ms: u64,
     pub max_read_chars: usize,
+    pub mcp_servers: Vec<McpServerConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub cwd: Option<PathBuf>,
+    pub startup_timeout_ms: u64,
+    pub supports_parallel_tool_calls: bool,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -113,6 +127,19 @@ struct PartialMemoryConfig {
 struct PartialToolConfig {
     default_shell_timeout_ms: Option<u64>,
     max_read_chars: Option<usize>,
+    mcp_servers: Option<Vec<PartialMcpServerConfig>>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct PartialMcpServerConfig {
+    name: Option<String>,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    env: Option<BTreeMap<String, String>>,
+    cwd: Option<Option<PathBuf>>,
+    startup_timeout_ms: Option<u64>,
+    supports_parallel_tool_calls: Option<bool>,
+    enabled: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -151,6 +178,18 @@ impl AgentConfig {
                 "missing LLM api key; set CLOUDAGENT_LLM_API_KEY or config.toml -> llm.api_key"
             );
         }
+        let mut seen_mcp_servers = std::collections::BTreeSet::new();
+        for server in &self.tools.mcp_servers {
+            if server.name.trim().is_empty() {
+                bail!("tools.mcp_servers[*].name cannot be empty");
+            }
+            if server.command.trim().is_empty() {
+                bail!("tools.mcp_servers[{}].command cannot be empty", server.name);
+            }
+            if !seen_mcp_servers.insert(server.name.clone()) {
+                bail!("duplicate MCP server name `{}`", server.name);
+            }
+        }
         Ok(())
     }
 
@@ -188,6 +227,7 @@ impl AgentConfig {
             tools: ToolConfig {
                 default_shell_timeout_ms: 120_000,
                 max_read_chars: 20_000,
+                mcp_servers: Vec::new(),
             },
             cli: CliConfig {
                 pre_llm_filter_enabled: false,
@@ -338,6 +378,12 @@ impl AgentConfig {
             }
             if let Some(value) = tools.max_read_chars {
                 self.tools.max_read_chars = value.max(1_024);
+            }
+            if let Some(servers) = tools.mcp_servers {
+                self.tools.mcp_servers = servers
+                    .into_iter()
+                    .filter_map(|server| build_mcp_server_config(&self.workspace_root, server))
+                    .collect();
             }
         }
 
@@ -547,6 +593,31 @@ fn user_home_dir() -> Option<PathBuf> {
     env::var_os("HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("USERPROFILE").map(PathBuf::from))
+}
+
+fn build_mcp_server_config(
+    workspace_root: &Path,
+    partial: PartialMcpServerConfig,
+) -> Option<McpServerConfig> {
+    let name = partial.name?.trim().to_string();
+    let command = partial.command?.trim().to_string();
+    if name.is_empty() || command.is_empty() {
+        return None;
+    }
+
+    Some(McpServerConfig {
+        name,
+        command,
+        args: partial.args.unwrap_or_default(),
+        env: partial.env.unwrap_or_default(),
+        cwd: partial
+            .cwd
+            .flatten()
+            .map(|path| absolutize_path(workspace_root, path)),
+        startup_timeout_ms: partial.startup_timeout_ms.unwrap_or(15_000).max(1_000),
+        supports_parallel_tool_calls: partial.supports_parallel_tool_calls.unwrap_or(false),
+        enabled: partial.enabled.unwrap_or(true),
+    })
 }
 
 fn parse_memory_mode(value: &str) -> MemoryMode {

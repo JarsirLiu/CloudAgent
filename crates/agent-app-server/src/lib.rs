@@ -7,7 +7,7 @@ mod turn;
 pub mod transport;
 
 use agent_protocol::{AppClientCommandEnvelope, AppServerMessageEnvelope};
-use agent_runtime::AgentRuntime;
+use agent_core::AgentHost;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ pub use app::in_process::{
 };
 
 pub async fn run_stdio_server(
-    runtime: Arc<AgentRuntime>,
+    runtime: Arc<AgentHost>,
     conversation_id: String,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
@@ -62,3 +62,5 @@ pub async fn run_stdio_server(
     write_task.await??;
     Ok(())
 }
+
+

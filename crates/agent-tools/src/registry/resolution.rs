@@ -1,25 +1,8 @@
 use crate::spec::ToolDescriptor;
-use agent_core::{ToolCall, ToolSpec};
-use agent_protocol::PermissionProfile;
+use agent_core::{
+    PermissionProfile, ResolvedToolSet, ToolBatchExecutionStrategy, ToolCall, ToolSpec,
+};
 use std::collections::BTreeSet;
-
-#[derive(Clone, Debug, Default)]
-pub struct ResolvedToolSet {
-    pub specs: Vec<ToolSpec>,
-    parallel_tool_names: BTreeSet<String>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ToolBatchExecutionStrategy {
-    Sequential,
-    Parallel,
-}
-
-impl ResolvedToolSet {
-    pub fn supports_parallel_tool(&self, tool_name: &str) -> bool {
-        self.parallel_tool_names.contains(tool_name)
-    }
-}
 
 pub(super) fn resolve_surface<'a>(
     descriptors: impl IntoIterator<Item = &'a ToolDescriptor>,
@@ -33,15 +16,16 @@ pub(super) fn resolve_surface<'a>(
             continue;
         }
         if descriptor.supports_parallel_calls {
-            parallel_tool_names.insert(descriptor.spec.name.clone());
+            parallel_tool_names.insert(descriptor.spec.identity.wire_name.clone());
         }
         specs.push(descriptor.spec.clone());
     }
 
-    ResolvedToolSet {
-        specs,
-        parallel_tool_names,
+    let mut resolved = ResolvedToolSet::new(specs);
+    for tool_name in parallel_tool_names {
+        resolved.mark_parallel_tool(tool_name);
     }
+    resolved
 }
 
 pub(super) fn specs_for_surface<'a>(
@@ -64,7 +48,7 @@ pub(super) fn batch_execution_strategy(
     let all_parallel_safe = calls.iter().all(|call| {
         descriptors
             .iter()
-            .find(|descriptor| descriptor.spec.name == call.name)
+            .find(|descriptor| descriptor.spec.identity.wire_name == call.identity.wire_name)
             .is_some_and(|descriptor| {
                 !descriptor.spec.mutating && descriptor.supports_parallel_calls
             })

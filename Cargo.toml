@@ -9,7 +9,6 @@ members = [
     "crates/agent-gateway",
     "crates/agent-memory",
     "crates/agent-protocol",
-    "crates/agent-runtime",
     "crates/agent-scheduler",
     "crates/agent-tools",
     "crates/config",
@@ -18,7 +17,6 @@ members = [
     "crates/infra-ssh",
     "crates/infra-store",
     "crates/shared",
-    "crates/storage",
 ]
 resolver = "2"
 

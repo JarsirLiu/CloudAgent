@@ -2,6 +2,7 @@
     use crate::app::commands::parse::ParsedInput;
     use crate::app::conversation::actions::{execute_server_action, handle_tui_input};
     use crate::app::conversation::event_router;
+    use crate::agent_host::build_agent_host;
     use crate::state::reducer::{ServerAction, TurnDispatch};
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
     use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
@@ -10,7 +11,6 @@
         ConversationStatus, ConversationTurn, ServerRequestDecisionKind, StructuredToolResult,
         FrontendMode, TranscriptItem, TurnItemKind,
     };
-    use agent_runtime::AgentRuntime;
     use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use serde_json::json;
@@ -79,7 +79,7 @@ mod ui_state;
             base_url,
         ));
 
-        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let runtime = build_agent_host((*config).clone()).expect("runtime");
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime.clone(),
             conversation_id: "default".to_string(),
@@ -234,7 +234,7 @@ mod ui_state;
         )));
 
         let runtime_after_restart =
-            Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
+            build_agent_host((*config).clone()).expect("restart runtime");
         let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime_after_restart,
             conversation_id: "default".to_string(),
@@ -327,7 +327,7 @@ mod ui_state;
             fixture.store.clone(),
             base_url,
         ));
-        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let runtime = build_agent_host((*config).clone()).expect("runtime");
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime,
             conversation_id: "default".to_string(),
@@ -434,7 +434,7 @@ mod ui_state;
         )));
 
         let runtime_after_restart =
-            Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
+            build_agent_host((*config).clone()).expect("restart runtime");
         let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime_after_restart,
             conversation_id: "default".to_string(),
@@ -569,7 +569,7 @@ mod ui_state;
             fixture.store.clone(),
             base_url,
         ));
-        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let runtime = build_agent_host((*config).clone()).expect("runtime");
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime,
             conversation_id: "default".to_string(),
@@ -649,7 +649,7 @@ mod ui_state;
         client.shutdown().await.expect("shutdown client");
 
         let runtime_after_restart =
-            Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
+            build_agent_host((*config).clone()).expect("restart runtime");
         let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime_after_restart,
             conversation_id: "default".to_string(),
@@ -732,7 +732,7 @@ mod ui_state;
             base_url,
         ));
 
-        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let runtime = build_agent_host((*config).clone()).expect("runtime");
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime.clone(),
             conversation_id: "default".to_string(),
@@ -774,7 +774,7 @@ mod ui_state;
         client.shutdown().await.expect("shutdown first client");
 
         let runtime_after_restart =
-            Arc::new(AgentRuntime::from_config((*config).clone()).expect("restart runtime"));
+            build_agent_host((*config).clone()).expect("restart runtime");
         let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
             runtime: runtime_after_restart,
             conversation_id: "default".to_string(),
@@ -837,7 +837,7 @@ mod ui_state;
             fixture.store.clone(),
             "http://127.0.0.1:9".to_string(),
         ));
-        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let runtime = build_agent_host((*config).clone()).expect("runtime");
         let client = AppServerClient::in_process(InProcessClientConfig {
             runtime,
             conversation_id: "default".to_string(),
@@ -914,7 +914,7 @@ mod ui_state;
             fixture.store.clone(),
             base_url,
         ));
-        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let runtime = build_agent_host((*config).clone()).expect("runtime");
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime,
             conversation_id: "default".to_string(),
@@ -1028,7 +1028,7 @@ mod ui_state;
             fixture.store.clone(),
             base_url,
         ));
-        let runtime = Arc::new(AgentRuntime::from_config((*config).clone()).expect("runtime"));
+        let runtime = build_agent_host((*config).clone()).expect("runtime");
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime,
             conversation_id: "default".to_string(),
@@ -1133,6 +1133,7 @@ mod ui_state;
             tools: ToolConfig {
                 default_shell_timeout_ms: 5_000,
                 max_read_chars: 8_192,
+                mcp_servers: Vec::new(),
             },
             cli: config::CliConfig {
                 pre_llm_filter_enabled: false,
@@ -1253,5 +1254,8 @@ mod ui_state;
             .lock()
             .await
     }
+
+
+
 
 

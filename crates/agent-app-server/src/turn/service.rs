@@ -7,7 +7,7 @@ use agent_protocol::{
     AppServerMessage, AppServerNotification, AppServerRequest, ApprovalPolicy, PermissionProfile,
     ServerRequest, ServerRequestDecision,
 };
-use agent_runtime::AgentRuntime;
+use agent_core::AgentHost;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 pub(crate) async fn submit_turn(
-    runtime: Arc<AgentRuntime>,
+    runtime: Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -60,7 +60,7 @@ pub(crate) async fn submit_turn(
 }
 
 pub(crate) async fn interrupt_turn(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -91,7 +91,7 @@ pub(crate) async fn interrupt_turn(
 }
 
 pub(crate) async fn compact_conversation(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
@@ -113,7 +113,7 @@ pub(crate) async fn compact_conversation(
     )
     .await;
     match runtime.compact_conversation(&conversation_id).await? {
-        agent_runtime::ManualCompactionOutcome::Compacted {
+        agent_core::ManualCompactionOutcome::Compacted {
             pre_context_tokens_estimate,
             post_context_tokens_estimate,
             pre_message_count: _,
@@ -143,7 +143,7 @@ pub(crate) async fn compact_conversation(
             )
             .await;
         }
-        agent_runtime::ManualCompactionOutcome::Skipped {
+        agent_core::ManualCompactionOutcome::Skipped {
             estimated_history_tokens,
         } => {
             send_notification(
@@ -193,7 +193,7 @@ fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
 }
 
 fn spawn_turn(
-    runtime: Arc<AgentRuntime>,
+    runtime: Arc<AgentHost>,
     conversation_id: String,
     user_input: String,
     permission_profile: PermissionProfile,
@@ -291,3 +291,5 @@ fn spawn_turn(
         let _ = listener_task.await;
     })
 }
+
+

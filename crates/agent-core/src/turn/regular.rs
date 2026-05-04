@@ -1,113 +1,51 @@
-use super::{RuntimeTask, TaskContext, TaskKind};
-use crate::tools::ToolBatchRunner;
-use crate::{AgentRuntime, emit_event};
-use crate::observability::{ContextBudgetLogEntry, append_context_budget_log};
-use agent_tools::selection::ToolSurface;
-use agent_core::{
-    ContextCompactionConfig, ContextFragment, ContextManager, ContextFacade, ConversationHistory,
-    FilterPolicy, ModelUsage, RolloutItem,
+use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
+use crate::context::{ContextFragment, MemoryBudgetSource};
+use crate::{
+    ContextBudgetLogEntry, ContextCompactionConfig, ContextFacade, ContextManager, FilterPolicy,
+    ModelUsage, RolloutItem, append_context_budget_log, emit_assistant_message_item, emit_event,
 };
-use agent_core::context::MemoryBudgetSource;
-use agent_protocol::{
-    ApprovalPolicy, EventMsg, PermissionProfile, ServerRequest, ServerRequestDecision, TranscriptItem, TurnItemDeltaKind,
-    TurnItemKind, TurnState,
-};
+use crate::{EventMsg, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState};
 use anyhow::Result;
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
 
-#[derive(Clone, Debug)]
-pub(crate) struct TurnOutcome {
-    pub(crate) turn_id: String,
-    pub(crate) events: Vec<EventMsg>,
-    pub(crate) history: ConversationHistory,
-    pub(crate) model_name: Option<String>,
-    pub(crate) state: TurnState,
-}
-
-pub(crate) struct RegularTurnTask;
-
-impl<E, F, Fut> RuntimeTask<E, F, Fut> for RegularTurnTask
-where
-    E: FnMut(&EventMsg) + Send,
-    F: Fn(ServerRequest) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
-{
-    fn kind(&self) -> TaskKind {
-        TaskKind::Regular
-    }
-
-    async fn run(
-        self,
-        ctx: TaskContext<'_, E>,
-        history: ConversationHistory,
-        approval: F,
-    ) -> Result<TurnOutcome> {
-        execute_regular_turn(
-            ctx.runtime,
-            ctx.conversation_id,
-            ctx.turn_id,
-            ctx.permission_profile,
-            ctx.approval_policy,
-            ctx.cancellation_token,
-            history,
-            ctx.on_event,
-            approval,
-        )
-        .await
-    }
-}
-
-pub(crate) async fn execute_regular_turn<E, F, Fut>(
-    runtime: &AgentRuntime,
+pub async fn execute_regular_turn<H: TurnHost>(
+    host: &H,
     conversation_id: &str,
     turn_id: &str,
-    permission_profile: &PermissionProfile,
-    approval_policy: &ApprovalPolicy,
+    permission_profile: &H::PermissionProfile,
+    approval_policy: &H::ApprovalPolicy,
     cancellation_token: CancellationToken,
-    history: ConversationHistory,
-    on_event: &mut E,
-    approval: F,
-) -> Result<TurnOutcome>
-where
-    E: FnMut(&EventMsg) + Send,
-    F: Fn(ServerRequest) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = Result<ServerRequestDecision>> + Send,
-{
+    history: crate::ConversationHistory,
+    on_event: &mut (dyn for<'a> FnMut(&'a EventMsg) + Send + '_),
+    approval: &dyn ServerRequestHandler,
+) -> Result<TurnOutcome> {
+    let settings = host.regular_turn_settings();
     let mut context_manager = ContextManager::from_history(history);
     let mut events = Vec::new();
     let mut last_model_name = None;
     let mut assistant_item_seq: usize = 0;
-    let tool_surface = ToolSurface::regular_turn();
-    let resolved_tools = runtime
-        .tools
-        .resolve_surface(&tool_surface, permission_profile);
-    let tool_specs = resolved_tools.specs;
+    let tool_specs = host.resolve_regular_turn_tools(permission_profile);
     let mut denied_requests = HashSet::new();
-    let environment_context = runtime.environment_context();
-    let raw_memory_fragment = runtime
-        .memory
-        .build_load_plan()
-        .ok()
-        .and_then(|p| p.inject_prefix)
-        .filter(|s| !s.trim().is_empty());
+    let environment_context = host.environment_context();
+    let raw_memory_fragment = host.raw_memory_fragment();
     let mut turn_total_usage = ModelUsage::default();
     let context_facade = ContextFacade::new();
     let filter_policy = FilterPolicy {
-        enabled: runtime.config.cli.pre_llm_filter_enabled,
+        enabled: settings.pre_llm_filter_enabled,
     };
     let mut last_sdk_context_tokens: Option<usize> = None;
     let mut history_len_at_last_sdk_usage: Option<usize> = None;
 
     let mut roundtrip_count = 0usize;
     loop {
-        if let Some(limit) = runtime.policy.max_tool_roundtrips
+        if let Some(limit) = settings.max_tool_roundtrips
             && roundtrip_count >= limit
         {
             break;
         }
         roundtrip_count += 1;
-        if cancellation_token.is_cancelled() || runtime.is_turn_cancelled(conversation_id).await {
+        if cancellation_token.is_cancelled() || host.is_turn_cancelled(conversation_id).await {
             emit_event(
                 &mut events,
                 on_event,
@@ -126,30 +64,18 @@ where
         }
 
         let compaction_config = ContextCompactionConfig {
-            model_context_window: runtime.config.runtime.model_context_window,
-            trigger_ratio: runtime.config.runtime.context_compaction_trigger_ratio,
+            model_context_window: settings.model_context_window,
+            trigger_ratio: settings.context_compaction_trigger_ratio,
             request_overhead_tokens: context_facade.estimate_request_overhead_tokens(
                 &context_manager.history().messages,
                 &environment_context.render(),
                 &tool_specs,
-                runtime
-                    .config
-                    .runtime
-                    .context_compaction_request_overhead_tokens,
+                settings.context_compaction_request_overhead_tokens,
             ),
-            compacted_target_tokens: runtime.config.runtime.context_compaction_target_tokens,
-            preserved_user_turns: runtime
-                .config
-                .runtime
-                .context_compaction_preserved_user_turns,
-            preserved_tail_tokens: runtime
-                .config
-                .runtime
-                .context_compaction_preserved_tail_tokens,
-            summary_source_max_tokens: runtime
-                .config
-                .runtime
-                .context_compaction_summary_source_tokens,
+            compacted_target_tokens: settings.context_compaction_target_tokens,
+            preserved_user_turns: settings.context_compaction_preserved_user_turns,
+            preserved_tail_tokens: settings.context_compaction_preserved_tail_tokens,
+            summary_source_max_tokens: settings.context_compaction_summary_source_tokens,
         };
 
         let estimated_total_tokens = if let Some(sdk_tokens) = last_sdk_context_tokens {
@@ -159,20 +85,20 @@ where
             let local_delta_tokens = context_facade.estimate_history_tokens_for_compaction(
                 &context_manager.history().messages[delta_start..],
                 filter_policy,
-                &runtime.config.workspace_root,
+                &settings.workspace_root,
             );
             sdk_tokens.saturating_add(local_delta_tokens)
         } else {
             context_facade.estimate_history_tokens_for_compaction(
                 &context_manager.history().messages,
                 filter_policy,
-                &runtime.config.workspace_root,
+                &settings.workspace_root,
             )
         };
         let compaction_estimated_total_tokens =
             context_facade.estimate_history_tokens_for_canonical_compaction(
                 &context_manager.history().messages,
-                &runtime.config.workspace_root,
+                &settings.workspace_root,
             );
 
         let budgeted = context_facade.build_memory_budgeted_fragments(
@@ -180,62 +106,41 @@ where
             filter_policy,
             environment_context.render(),
             &tool_specs,
-            &runtime.config.workspace_root,
-            runtime.config.runtime.model_context_window,
-            runtime.config.runtime.context_compaction_trigger_ratio,
-            runtime
-                .config
-                .runtime
-                .context_compaction_request_overhead_tokens,
+            &settings.workspace_root,
+            settings.model_context_window,
+            settings.context_compaction_trigger_ratio,
+            settings.context_compaction_request_overhead_tokens,
             MemoryBudgetSource {
                 memory: raw_memory_fragment.clone(),
                 skills: None,
                 mcp: None,
-                enable_skills_bucket: runtime.config.runtime.enable_skill_bucket,
-                enable_mcp_bucket: runtime.config.runtime.enable_mcp_bucket,
-                post_compact_budget_tokens: runtime.config.runtime.post_compact_token_budget,
-                post_compact_memory_floor_tokens: runtime
-                    .config
-                    .runtime
-                    .post_compact_memory_floor_tokens,
-                post_compact_skills_budget_tokens: runtime
-                    .config
-                    .runtime
-                    .post_compact_skills_token_budget,
-                post_compact_mcp_budget_tokens: runtime.config.runtime.post_compact_mcp_token_budget,
-                post_compact_max_tokens_per_memory: runtime
-                    .config
-                    .runtime
-                    .post_compact_max_tokens_per_memory,
-                post_compact_max_tokens_per_skill: runtime
-                    .config
-                    .runtime
-                    .post_compact_max_tokens_per_skill,
-                post_compact_max_tokens_per_mcp: runtime
-                    .config
-                    .runtime
-                    .post_compact_max_tokens_per_mcp,
-                safety_buffer_tokens: runtime
-                    .config
-                    .runtime
-                    .context_budget_safety_buffer_tokens,
+                enable_skills_bucket: settings.enable_skill_bucket,
+                enable_mcp_bucket: settings.enable_mcp_bucket,
+                post_compact_budget_tokens: settings.post_compact_token_budget,
+                post_compact_memory_floor_tokens: settings.post_compact_memory_floor_tokens,
+                post_compact_skills_budget_tokens: settings.post_compact_skills_token_budget,
+                post_compact_mcp_budget_tokens: settings.post_compact_mcp_token_budget,
+                post_compact_max_tokens_per_memory: settings.post_compact_max_tokens_per_memory,
+                post_compact_max_tokens_per_skill: settings.post_compact_max_tokens_per_skill,
+                post_compact_max_tokens_per_mcp: settings.post_compact_max_tokens_per_mcp,
+                safety_buffer_tokens: settings.context_budget_safety_buffer_tokens,
             },
         );
 
         let prepared = context_facade
             .prepare_model_request(
                 &mut context_manager,
-                &runtime.config.workspace_root,
+                &settings.workspace_root,
                 filter_policy,
                 budgeted.fragments,
                 tool_specs.clone(),
-                runtime.config.llm.temperature,
+                settings.llm_temperature,
                 compaction_config,
                 estimated_total_tokens.max(compaction_estimated_total_tokens),
-                runtime.config.runtime.post_compact_memory_floor_tokens,
-                runtime.config.runtime.context_budget_safety_buffer_tokens,
+                settings.post_compact_memory_floor_tokens,
+                settings.context_budget_safety_buffer_tokens,
                 |summary_request| async {
-                    let response = runtime
+                    let response = host
                         .complete_model_request(&cancellation_token, summary_request)
                         .await?;
                     Ok(response.content)
@@ -245,33 +150,32 @@ where
         let history_tokens_now = context_facade.estimate_history_tokens_for_compaction(
             &context_manager.history().messages,
             filter_policy,
-            &runtime.config.workspace_root,
+            &settings.workspace_root,
         );
-        let trigger_tokens = ((runtime.config.runtime.model_context_window as f32)
-            * runtime.config.runtime.context_compaction_trigger_ratio)
-            as usize;
+        let trigger_tokens = ((settings.model_context_window as f32)
+            * settings.context_compaction_trigger_ratio) as usize;
         let overhead_now = compaction_config.request_overhead_tokens;
         let available_history_tokens = trigger_tokens
             .saturating_sub(overhead_now)
-            .saturating_sub(runtime.config.runtime.post_compact_memory_floor_tokens)
-            .saturating_sub(runtime.config.runtime.context_budget_safety_buffer_tokens)
+            .saturating_sub(settings.post_compact_memory_floor_tokens)
+            .saturating_sub(settings.context_budget_safety_buffer_tokens)
             .max(1);
         let compaction_triggered_now = estimated_total_tokens > available_history_tokens;
         let _ = append_context_budget_log(
-            &runtime.config.workspace_root,
+            &settings.workspace_root,
             &ContextBudgetLogEntry {
                 conversation_id: conversation_id.to_string(),
                 turn_id: turn_id.to_string(),
-                model_context_window: runtime.config.runtime.model_context_window,
-                trigger_ratio: runtime.config.runtime.context_compaction_trigger_ratio,
+                model_context_window: settings.model_context_window,
+                trigger_ratio: settings.context_compaction_trigger_ratio,
                 trigger_tokens,
                 estimated_total_tokens,
-                filter_enabled: runtime.config.cli.pre_llm_filter_enabled,
+                filter_enabled: settings.pre_llm_filter_enabled,
                 sdk_total_tokens: last_sdk_context_tokens,
                 history_tokens: history_tokens_now,
                 overhead_tokens: overhead_now,
-                memory_floor_tokens: runtime.config.runtime.post_compact_memory_floor_tokens,
-                safety_buffer_tokens: runtime.config.runtime.context_budget_safety_buffer_tokens,
+                memory_floor_tokens: settings.post_compact_memory_floor_tokens,
+                safety_buffer_tokens: settings.context_budget_safety_buffer_tokens,
                 compaction_triggered: compaction_triggered_now,
                 hard_cap_triggered: budgeted.audit.hard_cap_triggered,
                 memory_before: budgeted.audit.memory_before,
@@ -297,20 +201,16 @@ where
             );
         }
         if let Some(compacted) = persistent_compaction {
-            runtime
-                .persist_rollout_items(
-                    conversation_id,
-                    &[RolloutItem::Compacted {
-                        summary: compacted.summary.clone(),
-                        rendered_summary: compacted.rendered_summary.clone(),
-                        replacement_history: compacted.replacement_history.clone(),
-                    }],
-                )
-                .await?;
-            runtime
-                .state
-                .save_history(context_manager.history().clone())
-                .await;
+            host.persist_rollout_items(
+                conversation_id,
+                &[RolloutItem::Compacted {
+                    summary: compacted.summary.clone(),
+                    rendered_summary: compacted.rendered_summary.clone(),
+                    replacement_history: compacted.replacement_history.clone(),
+                }],
+            )
+            .await?;
+            host.save_history(context_manager.history().clone()).await?;
             emit_event(
                 &mut events,
                 on_event,
@@ -336,7 +236,7 @@ where
                 tool_count: tool_specs.len(),
             },
         );
-        runtime.audit().model_request_started(
+        host.audit_model_request_started(
             conversation_id,
             turn_id,
             model_request.messages.len(),
@@ -344,7 +244,7 @@ where
         );
 
         let mut streaming_assistant_item_id: Option<String> = None;
-        let response = runtime
+        let response = host
             .complete_model_request_streaming(
                 &cancellation_token,
                 model_request,
@@ -403,7 +303,7 @@ where
             && let Some(content) = response.content.clone()
             && !content.trim().is_empty()
         {
-            emit_assistant_item(
+            emit_assistant_message_item(
                 &mut events,
                 on_event,
                 turn_id,
@@ -421,7 +321,7 @@ where
                 tool_call_count: tool_calls.len(),
             },
         );
-        runtime.audit().model_response_received(
+        host.audit_model_response_received(
             conversation_id,
             turn_id,
             response.model_name.as_deref(),
@@ -438,7 +338,7 @@ where
                     turn_id: turn_id.to_string(),
                     last_usage: usage,
                     total_usage: turn_total_usage.clone(),
-                    model_context_window: Some(runtime.config.runtime.model_context_window),
+                    model_context_window: Some(settings.model_context_window),
                 },
             );
         }
@@ -446,20 +346,16 @@ where
         let assistant_response_item =
             context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());
         history_len_at_last_sdk_usage = Some(context_manager.history().messages.len());
-        runtime
-            .persist_rollout_items(
-                conversation_id,
-                &[RolloutItem::from(assistant_response_item)],
-            )
-            .await?;
-        runtime
-            .state
-            .save_history(context_manager.history().clone())
-            .await;
+        host.persist_rollout_items(
+            conversation_id,
+            &[RolloutItem::from(assistant_response_item)],
+        )
+        .await?;
+        host.save_history(context_manager.history().clone()).await?;
 
         if tool_calls.is_empty() {
             if !had_streaming_assistant_item && response.content.is_none() {
-                emit_assistant_item(
+                emit_assistant_message_item(
                     &mut events,
                     on_event,
                     turn_id,
@@ -483,24 +379,22 @@ where
             });
         }
 
-        let tool_batch = ToolBatchRunner::new(
-            runtime,
-            conversation_id,
-            turn_id,
-            permission_profile,
-            approval_policy,
-            cancellation_token.clone(),
-            &tool_specs,
-        )
-        .run(
-            tool_calls,
-            &mut context_manager,
-            &mut events,
-            on_event,
-            &approval,
-            &mut denied_requests,
-        )
-        .await?;
+        let tool_batch: ToolBatchOutcome = host
+            .run_tool_batch(
+                conversation_id,
+                turn_id,
+                permission_profile,
+                approval_policy,
+                cancellation_token.clone(),
+                tool_calls,
+                &tool_specs,
+                &mut context_manager,
+                &mut events,
+                on_event,
+                approval,
+                &mut denied_requests,
+            )
+            .await?;
         if tool_batch.cancelled {
             return Ok(TurnOutcome {
                 turn_id: turn_id.to_string(),
@@ -515,7 +409,7 @@ where
     let roundtrip_limit_message =
         "Reached the configured tool roundtrip limit before the model produced a final answer."
             .to_string();
-    emit_assistant_item(
+    emit_assistant_message_item(
         &mut events,
         on_event,
         turn_id,
@@ -524,13 +418,9 @@ where
     );
     let roundtrip_limit_item =
         context_manager.record_assistant_message(Some(roundtrip_limit_message), Vec::new());
-    runtime
-        .persist_rollout_items(conversation_id, &[RolloutItem::from(roundtrip_limit_item)])
+    host.persist_rollout_items(conversation_id, &[RolloutItem::from(roundtrip_limit_item)])
         .await?;
-    runtime
-        .state
-        .save_history(context_manager.history().clone())
-        .await;
+    host.save_history(context_manager.history().clone()).await?;
     emit_event(
         &mut events,
         on_event,
@@ -545,47 +435,4 @@ where
         model_name: last_model_name,
         state: TurnState::Completed,
     })
-}
-
-fn emit_assistant_item(
-    events: &mut Vec<EventMsg>,
-    on_event: &mut impl FnMut(&EventMsg),
-    turn_id: &str,
-    content: &str,
-    assistant_item_seq: &mut usize,
-) {
-    let assistant_item_id = format!("assistant:{turn_id}:{}", *assistant_item_seq);
-    *assistant_item_seq += 1;
-    emit_event(
-        events,
-        on_event,
-        EventMsg::ItemStarted {
-            turn_id: turn_id.to_string(),
-            item_id: assistant_item_id.clone(),
-            kind: TurnItemKind::AssistantMessage,
-            title: Some("assistant_message".to_string()),
-        },
-    );
-    emit_event(
-        events,
-        on_event,
-        EventMsg::ItemDelta {
-            turn_id: turn_id.to_string(),
-            item_id: assistant_item_id.clone(),
-            kind: TurnItemDeltaKind::Text,
-            delta: content.to_string(),
-        },
-    );
-    emit_event(
-        events,
-        on_event,
-        EventMsg::ItemCompleted {
-            turn_id: turn_id.to_string(),
-            item_id: assistant_item_id.clone(),
-            item: TranscriptItem::AgentMessage {
-                id: assistant_item_id,
-                text: content.to_string(),
-            },
-        },
-    );
 }

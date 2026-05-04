@@ -1,29 +1,8 @@
-use agent_core::{ToolCall, ToolSpec};
-use agent_protocol::{ApprovalPolicy, PermissionProfile};
+use agent_core::{
+    ApprovalPolicy, ApprovalRequirement, PermissionProfile, ToolCall, ToolSpec,
+};
 use serde::Deserialize;
 use std::path::Path;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ApprovalRequirement {
-    pub requires_approval: bool,
-    pub reason: Option<String>,
-}
-
-impl ApprovalRequirement {
-    pub fn not_required() -> Self {
-        Self {
-            requires_approval: false,
-            reason: None,
-        }
-    }
-
-    pub fn required(reason: impl Into<String>) -> Self {
-        Self {
-            requires_approval: true,
-            reason: Some(reason.into()),
-        }
-    }
-}
 
 pub fn approval_requirement_for_tool(
     spec: &ToolSpec,

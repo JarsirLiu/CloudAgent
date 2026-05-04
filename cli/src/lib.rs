@@ -1,4 +1,5 @@
 pub mod app;
+pub mod agent_host;
 pub mod input;
 pub mod state;
 pub mod terminal;

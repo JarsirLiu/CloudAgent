@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::path::PathBuf;
-use storage::memory_repo::FileMemoryRepo;
+use infra_store::memory_repo::FileMemoryRepo;
 
 pub struct MemoryService {
     repo: FileMemoryRepo,

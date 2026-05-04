@@ -1,4 +1,4 @@
-use agent_core::{ToolExecutionContext, ToolOutputDelta, ToolOutputStream, ToolSpec};
+use agent_core::{ToolExecutionContext, ToolIdentity, ToolOutputDelta, ToolOutputStream, ToolSpec};
 use agent_protocol::{StructuredToolResult, WriteFileStatus};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -11,24 +11,31 @@ use tokio::io::AsyncReadExt;
 #[derive(Clone, Debug)]
 pub(crate) enum LocalToolSource {
     BuiltIn,
+    Mcp,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum LocalToolPayload {
     Function { arguments: Value },
+    Mcp {
+        server: String,
+        tool: String,
+        arguments: Value,
+    },
 }
 
 impl LocalToolPayload {
     pub(crate) fn parse_arguments<T: DeserializeOwned>(&self) -> Result<T> {
         match self {
             LocalToolPayload::Function { arguments } => Ok(serde_json::from_value(arguments.clone())?),
+            LocalToolPayload::Mcp { .. } => bail!("MCP payloads do not support local argument parsing"),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct LocalToolInvocation {
-    pub(crate) tool_name: String,
+    pub(crate) identity: ToolIdentity,
     pub(crate) source: LocalToolSource,
     pub(crate) payload: LocalToolPayload,
 }
@@ -55,7 +62,8 @@ pub(crate) fn register<T>(
 ) where
     T: LocalTool + 'static,
 {
-    tools.insert(tool.spec().name.clone(), Arc::new(tool));
+    let spec = tool.spec();
+    tools.insert(spec.identity.wire_name.clone(), Arc::new(tool));
 }
 
 pub(crate) async fn read_streaming_pipe<R>(
@@ -201,14 +209,14 @@ pub(crate) fn resolve_write_path(workspace_root: &Path, value: Option<&str>) -> 
 pub(crate) fn structured_failure_result(
     invocation: &LocalToolInvocation,
 ) -> Option<StructuredToolResult> {
-    match (&invocation.source, invocation.tool_name.as_str()) {
+    match (&invocation.source, invocation.identity.wire_name.as_str()) {
         (LocalToolSource::BuiltIn, "apply_patch") => Some(StructuredToolResult::EditFile {
             changed_paths: Vec::new(),
             files_changed: 0,
             status: WriteFileStatus::Failed,
         }),
-        (LocalToolSource::BuiltIn, _) => Some(StructuredToolResult::ToolError {
-            tool_name: invocation.tool_name.clone(),
+        (LocalToolSource::BuiltIn, _) | (LocalToolSource::Mcp, _) => Some(StructuredToolResult::ToolError {
+            tool_name: invocation.identity.wire_name.clone(),
             message: "tool execution failed".to_string(),
         }),
     }

@@ -2,7 +2,7 @@ use crate::load_plan::build_load_plan;
 use crate::model::{LoadPlan, MemoryConfig};
 use crate::service::MemoryService;
 use crate::trigger::should_persist;
-use agent_core::{ConversationHistory, ResponseItem};
+use agent_core::{ConversationHistory, MemoryBackend, ResponseItem};
 use anyhow::Result;
 
 pub struct LongTermMemoryFacade {
@@ -39,5 +39,22 @@ impl LongTermMemoryFacade {
                 .archive_session_line(&format!("turn={} summary={summary}", history.turn_count))?;
         }
         Ok(())
+    }
+}
+
+impl MemoryBackend for LongTermMemoryFacade {
+    fn raw_memory_fragment(&self) -> Option<String> {
+        self.build_load_plan()
+            .ok()
+            .and_then(|plan| plan.inject_prefix)
+            .filter(|text| !text.trim().is_empty())
+    }
+
+    fn should_persist(&self, history: &ConversationHistory) -> bool {
+        LongTermMemoryFacade::should_persist(self, history)
+    }
+
+    fn persist_from_history(&self, history: &ConversationHistory) -> Result<()> {
+        LongTermMemoryFacade::persist_from_history(self, history)
     }
 }

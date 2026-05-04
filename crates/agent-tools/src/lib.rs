@@ -4,7 +4,7 @@ pub mod registry;
 pub mod selection;
 pub mod spec;
 
-pub use registry::ToolRegistry;
+pub use registry::{McpToolClient, McpToolDescriptor, McpToolInvocation, McpToolResponse, ToolRegistry};
 
 pub fn crate_name() -> &'static str {
     "agent-tools"

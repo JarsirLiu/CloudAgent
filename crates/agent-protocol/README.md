@@ -24,4 +24,4 @@ catalog policy, runtime orchestration, or storage logic.
 
 - `agent-core` owns stable domain types.
 - `agent-protocol` adapts and re-exports the parts of that domain that belong on the wire.
-- `agent-runtime` emits and consumes these protocol types during live execution.
+- `agent-core` emits and consumes these protocol types during live execution.

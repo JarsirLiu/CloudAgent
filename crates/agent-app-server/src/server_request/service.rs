@@ -3,12 +3,12 @@ use crate::app::notification::{send_notification, send_request};
 use agent_protocol::{
     AppServerMessage, AppServerNotification, AppServerRequest, RequestId, ServerRequestDecision,
 };
-use agent_runtime::AgentRuntime;
+use agent_core::AgentHost;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 
 pub(crate) async fn resolve_command(
-    runtime: &Arc<AgentRuntime>,
+    runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     _conversation_id: String,
@@ -119,3 +119,5 @@ pub(crate) async fn replay_pending_for_conversation(
         .await;
     }
 }
+
+

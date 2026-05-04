@@ -3,8 +3,7 @@ use crate::registry::shared::{
     resolve_write_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
-use agent_core::ToolSpec;
-use agent_core::{ToolExecutionContext, ToolOutputStream};
+use agent_core::{ToolExecutionContext, ToolIdentity, ToolOutputStream, ToolSpec};
 use agent_protocol::{CommandExecutionStatus, StructuredToolResult};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -33,6 +32,7 @@ impl ExecCommandTool {
             vec!["edit", "verify"],
             ToolSpec {
                 name: "exec_command".to_string(),
+                identity: ToolIdentity::built_in("exec_command"),
                 description: "Run local commands for build, test, git, and runtime verification. Prefer structured repository tools for search and file inspection. Reuse `session_id` for interactive or long-running command sessions.".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -1013,7 +1013,7 @@ mod tests {
         let output = tool
             .invoke(
                 LocalToolInvocation {
-                    tool_name: "exec_command".to_string(),
+                    identity: agent_core::ToolIdentity::built_in("exec_command"),
                     source: LocalToolSource::BuiltIn,
                     payload: LocalToolPayload::Function {
                         arguments: serde_json::json!({

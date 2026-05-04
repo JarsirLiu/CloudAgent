@@ -1,8 +1,7 @@
 use crate::impls::repo::text_read::{TextReadOptions, read_text_snippet};
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
-use agent_core::ToolExecutionContext;
-use agent_core::ToolSpec;
+use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use agent_protocol::{ReadFileEntry, ReadFileStatus};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -33,6 +32,7 @@ impl ReadFilesTool {
             vec!["explore", "edit", "verify", "repo", "fs"],
             ToolSpec {
                 name: "read_files".to_string(),
+                identity: ToolIdentity::built_in("read_files"),
                 description: format!(
                     "Read one or more known files in one structured tool call. Use this after search or file discovery when you need to confirm code facts or compare related files. Total characters per request are capped at about {max_read_chars}."
                 ),

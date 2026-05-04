@@ -7,6 +7,6 @@ license.workspace = true
 [dependencies]
 agent-core = { path = "../agent-core" }
 anyhow.workspace = true
+infra-store = { path = "../infra-store" }
 serde.workspace = true
 shared = { path = "../shared" }
-storage = { path = "../storage" }

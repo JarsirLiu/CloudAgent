@@ -1,7 +1,6 @@
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path};
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk};
-use agent_core::ToolExecutionContext;
-use agent_core::ToolSpec;
+use agent_core::{ToolExecutionContext, ToolIdentity, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -21,6 +20,7 @@ impl ApplyPatchTool {
             vec!["edit", "fs"],
             ToolSpec {
                 name: "apply_patch".to_string(),
+                identity: ToolIdentity::built_in("apply_patch"),
                 description: "Apply a focused unified patch to one or more workspace files. Prefer this over whole-file rewrites for code changes.".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -512,7 +512,7 @@ mod tests {
 
     fn tool_invocation(arguments: serde_json::Value) -> LocalToolInvocation {
         LocalToolInvocation {
-            tool_name: "apply_patch".to_string(),
+            identity: agent_core::ToolIdentity::built_in("apply_patch"),
             source: LocalToolSource::BuiltIn,
             payload: LocalToolPayload::Function { arguments },
         }

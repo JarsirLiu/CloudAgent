@@ -1,8 +1,11 @@
 pub mod context;
 pub mod conversation;
+pub mod host;
 pub mod model;
+pub mod observability;
 pub mod projection;
 pub mod rollout;
+pub mod state;
 pub mod tool;
 pub mod turn;
 
@@ -13,10 +16,22 @@ pub use context::{
     build_compaction_summary_request, plan_history_compaction, plan_manual_history_compaction,
 };
 pub use conversation::{
-    ActiveConversationTurn, ConversationHistory, ConversationState, ConversationTurn,
-    PendingConversationRequest, ResponseItem, TranscriptItem,
+    ActiveConversationTurn, ConversationHistory, ConversationSnapshot, ConversationState,
+    ConversationStatus, ConversationSummary, ConversationTurn, PendingConversationRequest,
+    ResponseItem, TranscriptItem, visible_message_count,
 };
-pub use model::{ChatModel, ModelRequest, ModelResponse, ModelUsage};
+pub use host::{
+    AgentHost, AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend,
+    MemoryBackend, RolloutRecorderBackend,
+};
+pub use model::{
+    ChatModel, ModelRequest, ModelResponse, ModelUsage, await_server_request_decision,
+    complete_model_request, complete_model_request_streaming,
+};
+pub use observability::{
+    AuditEventEntry, ContextBudgetLogEntry, append_audit_event, append_audit_event_safe,
+    append_context_budget_log, verify_audit_chain,
+};
 pub use projection::{
     ConversationHistoryBuilder, CoreTranscriptEvent, EventDelivery, EventStream, TranscriptBuilder,
     agent_turn_output_from_events, build_turns_from_rollout_items, classify_event_msg,
@@ -25,16 +40,27 @@ pub use projection::{
     transcript_items_from_response_items, transcript_items_from_rollout_items,
 };
 pub use rollout::RolloutItem;
+pub use state::{ActiveTurnHandle, AgentState};
 pub use tool::{
-    CommandExecutionStatus, ReadFileEntry, ReadFileStatus, SearchWorkspaceHit,
-    SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
-    TaskKind, ToolCall, ToolEvent, ToolExecutor, ToolMode, ToolOutputDelta, ToolOutputStream,
-    ToolResult, ToolSpec, ToolSurface, WriteFileStatus,
+    ApprovalRequirement, CommandExecutionStatus, McpCallResult, ParallelToolInvocation,
+    ParallelToolResult, ReadFileEntry, ReadFileStatus, ResolvedToolSet, SearchWorkspaceHit,
+    SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus,
+    StructuredToolResult, TaskKind, ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolEvent,
+    ToolExecutor, ToolIdentity, ToolMode, ToolOutputDelta, ToolOutputStream, ToolResult,
+    ToolSource, ToolSpec, ToolSurface, WriteFileStatus,
+    execute_tool_call_streaming, run_parallel_tool_invocations, summarize_arguments,
 };
 pub use turn::{
-    AgentTurnOutput, EventMsg, ExecutionPolicy, RequestId, ServerRequest, ServerRequestDecision,
+    AgentTurnOutput, ApprovalPolicy, CONVERSATION_BUSY_ERROR_CODE,
+    CONVERSATION_BUSY_ERROR_MESSAGE, EventMsg, ExecutionPolicy, ManualCompactionOutcome,
+    PermissionProfile, RegularTurnSettings, RequestId, ServerRequest, ServerRequestDecision,
+    ServerRequestHandler,
     ServerRequestDecisionKind, ToolApprovalRequest, TurnId, TurnItemDeltaKind, TurnItemKind,
-    TurnLifecycleClass, TurnLifecyclePhase, TurnState,
+    TurnHost, TurnLifecycleClass, TurnLifecyclePhase, TurnOutcome, TurnPolicy, TurnState,
+    UserTurnInput, ToolBatchOutcome, conversation_busy_error, emit_assistant_message_item,
+    emit_event, chat, chat_with_approval, chat_with_approval_and_events, compact_conversation,
+    next_turn_id, paginate_turns, run_manual_compaction, run_turn_with_approval,
+    execute_regular_turn,
 };
 
 pub fn crate_name() -> &'static str {

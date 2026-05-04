@@ -1,7 +1,8 @@
 mod approval;
 
 use super::selection::ToolMode;
-pub use approval::{ApprovalRequirement, approval_requirement_for_tool};
+pub use agent_core::ApprovalRequirement;
+pub use approval::approval_requirement_for_tool;
 
 #[derive(Clone, Debug)]
 pub struct SearchPolicy {

@@ -4,12 +4,12 @@ mod types;
 mod wire;
 
 pub use agent_core::{
-    CommandExecutionStatus, ConversationTurn, EventMsg, ModelUsage, ReadFileEntry,
+    CommandExecutionStatus, ConversationTurn, EventMsg, McpCallResult, ModelUsage, ReadFileEntry,
     ReadFileStatus, SearchWorkspaceHit, SearchWorkspaceMode, SearchWorkspaceOperation,
     SearchWorkspaceStatus, ServerRequest, ServerRequestDecision, ServerRequestDecisionKind,
-    StructuredToolResult, ToolApprovalRequest, ToolCall, ToolOutputDelta, ToolOutputStream,
-    ToolResult, ToolSpec, TranscriptItem, TurnId, TurnItemDeltaKind, TurnItemKind, TurnState,
-    WriteFileStatus,
+    StructuredToolResult, ToolApprovalRequest, ToolCall, ToolIdentity, ToolOutputDelta,
+    ToolOutputStream, ToolResult, ToolSource, ToolSpec, TranscriptItem, TurnId,
+    TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
 };
 pub use jsonrpc::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
