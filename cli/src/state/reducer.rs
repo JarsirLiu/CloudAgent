@@ -216,7 +216,10 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 AppServerNotification::ServerRequestRequested { request, .. } => {
                     let notice = match request {
-                        ServerRequest::ToolApproval { request } => {
+                        ServerRequest::CommandApproval { request } => {
+                            format!("Command approval required for {}", request.tool_name)
+                        }
+                        ServerRequest::FileChangeApproval { request } => {
                             format!("Action required for {}", request.tool_name)
                         }
                     };
@@ -285,18 +288,32 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             request,
             ..
         }) => match request {
-            ServerRequest::ToolApproval { request } => {
-                let args_hint = summarize_args_preview(&request.arguments_preview);
+            ServerRequest::CommandApproval { request } => {
+                let args_hint = summarize_args_preview(&request.command_preview);
                 actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
                 actions.push(ServerAction::ShowServerRequestPrompt {
                     request_id: request_id.clone(),
                     title: format!(
-                        "[{}] tool `{}` wants to run",
+                        "[{}] command tool `{}` wants approval",
                         message.conversation_id().unwrap_or("conversation"),
                         request.tool_name
                     ),
                     detail: format!("reason: {}\nargs: {args_hint}", request.reason),
-                    notice: format!("Action required for {}", request.tool_name),
+                    notice: format!("Command approval required for {}", request.tool_name),
+                });
+            }
+            ServerRequest::FileChangeApproval { request } => {
+                let change_hint = summarize_args_preview(&request.change_preview);
+                actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
+                actions.push(ServerAction::ShowServerRequestPrompt {
+                    request_id: request_id.clone(),
+                    title: format!(
+                        "[{}] file change tool `{}` wants approval",
+                        message.conversation_id().unwrap_or("conversation"),
+                        request.tool_name
+                    ),
+                    detail: format!("reason: {}\nchange: {change_hint}", request.reason),
+                    notice: format!("File change approval required for {}", request.tool_name),
                 });
             }
         },

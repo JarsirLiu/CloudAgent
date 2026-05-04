@@ -5,7 +5,8 @@ use std::path::Path;
 const SCHEMA_V1: i32 = 1;
 const SCHEMA_V2: i32 = 2;
 const SCHEMA_V3: i32 = 3;
-const LATEST_SCHEMA_VERSION: i32 = SCHEMA_V3;
+const SCHEMA_V4: i32 = 4;
+const LATEST_SCHEMA_VERSION: i32 = SCHEMA_V4;
 
 #[derive(Clone, Debug)]
 pub struct SessionIndexRow {
@@ -80,6 +81,23 @@ CREATE TABLE IF NOT EXISTS project_settings(
         )?;
         conn.pragma_update(None, "user_version", SCHEMA_V3)?;
         current_version = SCHEMA_V3;
+    }
+
+    if current_version < SCHEMA_V4 {
+        conn.execute_batch(
+            r#"
+CREATE TABLE IF NOT EXISTS approval_grants(
+  conversation_id TEXT NOT NULL,
+  grant_key_json TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  PRIMARY KEY(conversation_id, grant_key_json)
+);
+CREATE INDEX IF NOT EXISTS idx_approval_grants_conversation
+  ON approval_grants(conversation_id);
+"#,
+        )?;
+        conn.pragma_update(None, "user_version", SCHEMA_V4)?;
+        current_version = SCHEMA_V4;
     }
 
     if current_version > LATEST_SCHEMA_VERSION {
@@ -238,6 +256,35 @@ pub fn delete_session(db_path: &Path, conversation_id: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM session_events WHERE conversation_id=?1",
         params![conversation_id],
+    )?;
+    conn.execute(
+        "DELETE FROM approval_grants WHERE conversation_id=?1",
+        params![conversation_id],
+    )?;
+    Ok(())
+}
+
+pub fn has_approval_grant(db_path: &Path, conversation_id: &str, grant_key_json: &str) -> Result<bool> {
+    let conn = open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT 1 FROM approval_grants WHERE conversation_id=?1 AND grant_key_json=?2 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![conversation_id, grant_key_json])?;
+    Ok(rows.next()?.is_some())
+}
+
+pub fn upsert_approval_grant(
+    db_path: &Path,
+    conversation_id: &str,
+    grant_key_json: &str,
+    created_at_ms: u64,
+) -> Result<()> {
+    let conn = open(db_path)?;
+    conn.execute(
+        r#"INSERT INTO approval_grants(conversation_id, grant_key_json, created_at_ms)
+VALUES(?1, ?2, ?3)
+ON CONFLICT(conversation_id, grant_key_json) DO UPDATE SET created_at_ms=excluded.created_at_ms"#,
+        params![conversation_id, grant_key_json, created_at_ms as i64],
     )?;
     Ok(())
 }

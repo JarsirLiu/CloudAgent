@@ -1,6 +1,6 @@
 use super::{
-    AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend, MemoryBackend,
-    RolloutRecorderBackend,
+    AgentHostExt, AgentHostParts, AgentMetadata, ApprovalGrantStoreBackend,
+    ConversationStoreBackend, MemoryBackend, RolloutRecorderBackend,
 };
 use crate::context::EnvironmentContext;
 use crate::conversation::{
@@ -31,7 +31,6 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -49,9 +48,9 @@ pub struct AgentHost {
     >,
     state: AgentState,
     store: Arc<dyn ConversationStoreBackend>,
+    approval_grants: Arc<dyn ApprovalGrantStoreBackend>,
     rollout_recorder: Arc<dyn RolloutRecorderBackend>,
     memory: Arc<dyn MemoryBackend>,
-    session_approvals: StdMutex<HashSet<String>>,
 }
 
 impl AgentHost {
@@ -65,9 +64,9 @@ impl AgentHost {
             tools: parts.tools,
             state: parts.state,
             store: parts.store,
+            approval_grants: parts.approval_grants,
             rollout_recorder: parts.rollout_recorder,
             memory: parts.memory,
-            session_approvals: StdMutex::new(HashSet::new()),
         }
     }
 
@@ -441,16 +440,26 @@ impl AgentHost {
         )
     }
 
-    pub(crate) fn is_tool_approved_for_session(&self, call: &ToolCall) -> bool {
-        self.session_approvals
-            .lock()
-            .is_ok_and(|approvals| approvals.contains(&tool_approval_key(call)))
+    pub(crate) async fn is_tool_approved_for_session(
+        &self,
+        conversation_id: &str,
+        key: &crate::ApprovalGrantKey,
+    ) -> bool {
+        self.approval_grants
+            .has_approval_grant(conversation_id, key)
+            .await
+            .unwrap_or(false)
     }
 
-    pub(crate) fn approve_tool_for_session(&self, call: &ToolCall) {
-        if let Ok(mut approvals) = self.session_approvals.lock() {
-            approvals.insert(tool_approval_key(call));
-        }
+    pub(crate) async fn approve_tool_for_session(
+        &self,
+        conversation_id: &str,
+        key: &crate::ApprovalGrantKey,
+    ) {
+        let _ = self
+            .approval_grants
+            .save_approval_grant(conversation_id, key)
+            .await;
     }
 
     async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory> {
@@ -541,6 +550,9 @@ impl AgentHostExt for AgentHost {
     }
     fn store(&self) -> &Arc<dyn ConversationStoreBackend> {
         &self.store
+    }
+    fn approval_grants(&self) -> &Arc<dyn ApprovalGrantStoreBackend> {
+        &self.approval_grants
     }
     fn rollout_recorder(&self) -> &Arc<dyn RolloutRecorderBackend> {
         &self.rollout_recorder
@@ -752,10 +764,6 @@ impl TurnHost for AgentHost {
     ) {
         self.append_audit(conversation_id, Some(turn_id), "model.responded", "info", json!({ "model_name": model_name, "has_content": has_content, "tool_call_count": tool_call_count }));
     }
-}
-
-fn tool_approval_key(call: &ToolCall) -> String {
-    call.identity.wire_name.clone()
 }
 
 fn is_placeholder_history(history: &ConversationHistory) -> bool {

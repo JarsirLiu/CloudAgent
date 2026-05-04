@@ -183,8 +183,9 @@ where
 mod tests {
     use super::*;
     use agent_protocol::{
-        AppClientCommand, AppServerMessage, AppServerNotification, ApprovalPolicy, JsonRpcMessage,
-        PermissionProfile, ServerRequest, ToolApprovalRequest, TurnPolicy, UserTurnInput,
+        AppClientCommand, AppServerMessage, AppServerNotification, ApprovalPolicy,
+        CommandApprovalRequest, JsonRpcMessage, PermissionProfile, ServerRequest, TurnPolicy,
+        UserTurnInput,
     };
     use tokio::io::duplex;
 
@@ -240,13 +241,13 @@ mod tests {
             message: AppServerMessage::Request(agent_protocol::AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(11),
                 conversation_id: "default".to_string(),
-                request: ServerRequest::ToolApproval {
-                    request: ToolApprovalRequest {
+                request: ServerRequest::CommandApproval {
+                    request: CommandApprovalRequest {
                         turn_id: "turn-1".to_string(),
                         tool_call_id: "call-1".to_string(),
                         tool_name: "exec_command".to_string(),
                         reason: "need approval".to_string(),
-                        arguments_preview: "{\"command\":\"pwd\"}".to_string(),
+                        command_preview: "{\"command\":\"pwd\"}".to_string(),
                     },
                 },
             }),
@@ -282,7 +283,7 @@ mod tests {
             AppServerEvent::Message(AppServerMessage::Request(
                 agent_protocol::AppServerRequest::ServerRequest {
                     request_id,
-                    request: ServerRequest::ToolApproval { request },
+                    request: ServerRequest::CommandApproval { request },
                     ..
                 },
             )) => {

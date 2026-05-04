@@ -14,7 +14,7 @@ use agent_core::{
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 
-use crate::policy::approval_requirement_for_tool;
+use crate::policy::{approval_grant_key_for_tool, approval_requirement_for_tool};
 use agent_protocol::TranscriptItem;
 use catalog::{LocalToolMap, build_descriptors, build_selector, build_tools};
 use mcp::McpRegistry;
@@ -145,6 +145,23 @@ impl ToolRegistry {
         approval_policy: &ApprovalPolicy,
     ) -> ApprovalRequirement {
         approval_requirement_for_tool(
+            spec,
+            call,
+            workspace_root,
+            permission_profile,
+            approval_policy,
+        )
+    }
+
+    pub fn approval_grant_key_for_call(
+        &self,
+        spec: &ToolSpec,
+        call: &ToolCall,
+        workspace_root: &Path,
+        permission_profile: &PermissionProfile,
+        approval_policy: &ApprovalPolicy,
+    ) -> Option<agent_core::ApprovalGrantKey> {
+        approval_grant_key_for_tool(
             spec,
             call,
             workspace_root,
@@ -497,6 +514,24 @@ impl ToolBackend for ToolRegistry {
         approval_policy: &Self::ApprovalPolicy,
     ) -> ApprovalRequirement {
         ToolRegistry::approval_requirement_for_call(
+            self,
+            spec,
+            call,
+            workspace_root,
+            permission_profile,
+            approval_policy,
+        )
+    }
+
+    fn approval_grant_key_for_call(
+        &self,
+        spec: &ToolSpec,
+        call: &ToolCall,
+        workspace_root: &Path,
+        permission_profile: &Self::PermissionProfile,
+        approval_policy: &Self::ApprovalPolicy,
+    ) -> Option<agent_core::ApprovalGrantKey> {
+        ToolRegistry::approval_grant_key_for_call(
             self,
             spec,
             call,

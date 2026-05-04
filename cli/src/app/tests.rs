@@ -92,7 +92,7 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
         fixture.workspace.clone(),
         fixture.store.clone(),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     handle_tui_input(
@@ -246,7 +246,7 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
         fixture.workspace.clone(),
         fixture.store.clone(),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
     restarted_client
         .send_command(AppClientCommand::RequestConversationHistory {
@@ -339,7 +339,7 @@ async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
         fixture.workspace.clone(),
         fixture.store.clone(),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     handle_tui_input(
@@ -444,7 +444,7 @@ async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
         fixture.workspace.clone(),
         fixture.store.clone(),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
     restarted_client
         .send_command(AppClientCommand::RequestConversationHistory {
@@ -577,7 +577,7 @@ async fn consecutive_tool_turns_preserve_history_across_restart() {
         fixture.workspace.clone(),
         fixture.store.clone(),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     for content in ["第一轮看看目录", "第二轮再看一次目录"] {
@@ -739,7 +739,7 @@ async fn restarted_turn_uses_rollout_history_in_model_request() {
         fixture.workspace.clone(),
         fixture.store.clone(),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     handle_tui_input(
@@ -780,7 +780,7 @@ async fn restarted_turn_uses_rollout_history_in_model_request() {
         fixture.workspace.clone(),
         fixture.store.clone(),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     handle_tui_input(
@@ -843,7 +843,7 @@ async fn cli_settings_persist_in_sqlite_and_reload() {
         fixture.workspace.clone(),
         fixture.store.clone(),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     handle_tui_input(
@@ -855,7 +855,7 @@ async fn cli_settings_persist_in_sqlite_and_reload() {
     handle_tui_input(
         &mut app,
         &client,
-        ParsedInput::LocalPermissionMode("danger".to_string()),
+        ParsedInput::LocalPermissionMode("FullAccess".to_string()),
     )
     .expect("set permission mode");
 
@@ -863,7 +863,7 @@ async fn cli_settings_persist_in_sqlite_and_reload() {
         .expect("load cli settings")
         .expect("persisted settings");
     assert!(settings.pre_llm_filter_enabled);
-    assert_eq!(settings.permission_mode, "danger");
+    assert_eq!(settings.permission_mode, "FullAccess");
 }
 
 #[tokio::test]
@@ -1131,7 +1131,7 @@ fn test_config(
         },
         cli: config::CliConfig {
             pre_llm_filter_enabled: false,
-            permission_mode: "safe".to_string(),
+            permission_mode: "ReadOnly".to_string(),
         },
     }
 }

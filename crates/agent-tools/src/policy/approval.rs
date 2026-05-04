@@ -1,5 +1,8 @@
-use agent_core::{ApprovalPolicy, ApprovalRequirement, PermissionProfile, ToolCall, ToolSpec};
+use agent_core::{
+    ApprovalGrantKey, ApprovalPolicy, ApprovalRequirement, PermissionProfile, ToolCall, ToolSpec,
+};
 use serde::Deserialize;
+use serde_json::json;
 use std::path::Path;
 
 pub fn approval_requirement_for_tool(
@@ -27,6 +30,25 @@ pub fn approval_requirement_for_tool(
             }
         },
         _ => ApprovalRequirement::not_required(),
+    }
+}
+
+pub fn approval_grant_key_for_tool(
+    spec: &ToolSpec,
+    call: &ToolCall,
+    _workspace_root: &Path,
+    _permission_profile: &PermissionProfile,
+    _approval_policy: &ApprovalPolicy,
+) -> Option<ApprovalGrantKey> {
+    match call.name.as_str() {
+        "exec_command" => exec_command_grant_key(call),
+        _ if spec.requires_approval => Some(ApprovalGrantKey::new(
+            "tool_session",
+            json!({
+                "identity": call.identity,
+            }),
+        )),
+        _ => None,
     }
 }
 
@@ -121,6 +143,26 @@ fn exec_command_requirement(
             }
         }
     }
+}
+
+fn exec_command_grant_key(call: &ToolCall) -> Option<ApprovalGrantKey> {
+    let args = serde_json::from_value::<ExecCommandArgs>(call.arguments.clone()).ok()?;
+    let command = args.command.as_deref().unwrap_or("").trim();
+    if command.is_empty() {
+        return None;
+    }
+
+    Some(ApprovalGrantKey::new(
+        "exec_command",
+        json!({
+            "identity": call.identity,
+            "command": normalize_command(command),
+            "workdir": args.workdir.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+            "session_id_present": args.session_id.is_some(),
+            "stdin_present": args.stdin.as_deref().is_some_and(|value| !value.is_empty()),
+            "start_new_session": args.start_new_session.unwrap_or(false),
+        }),
+    ))
 }
 
 fn workdir_mentions_parent_escape(workdir: Option<&str>) -> bool {

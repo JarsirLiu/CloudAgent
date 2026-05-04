@@ -1,6 +1,6 @@
 use agent_core::{
-    AgentContext, AgentHost, AgentHostParts, AgentMetadata, AgentState, ExecutionPolicy,
-    RegularTurnSettings,
+    AgentContext, AgentHost, AgentHostParts, AgentMetadata, AgentState, ApprovalGrantStoreBackend,
+    ExecutionPolicy, RegularTurnSettings,
 };
 use agent_memory::LongTermMemoryFacade;
 use agent_model_provider::OpenAiCompatibleModel;
@@ -64,6 +64,7 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     let store = Arc::new(JsonConversationStore::new(
         config.runtime.conversation_store_dir.clone(),
     ));
+    let approval_grants: Arc<dyn ApprovalGrantStoreBackend> = store.clone();
     let rollout_recorder = Arc::new(RolloutRecorder::new(store.as_ref().clone()));
     let memory = Arc::new(LongTermMemoryFacade::new(config.runtime.memory.clone())?);
     let state = AgentState::new(metadata.system_prompt.clone());
@@ -77,6 +78,7 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         tools,
         state,
         store,
+        approval_grants,
         rollout_recorder,
         memory,
     })))

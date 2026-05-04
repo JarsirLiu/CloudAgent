@@ -164,7 +164,9 @@ fn request_id_order(left: &RequestId, right: &RequestId) -> CmpOrdering {
 #[cfg(test)]
 mod tests {
     use super::ServerRequestCoordinator;
-    use agent_protocol::{RequestId, ServerRequest, ServerRequestDecision, ToolApprovalRequest};
+    use agent_protocol::{
+        CommandApprovalRequest, RequestId, ServerRequest, ServerRequestDecision,
+    };
     use tokio::sync::oneshot;
 
     #[test]
@@ -177,13 +179,13 @@ mod tests {
             request_id.clone(),
             "conv-a".to_string(),
             "turn-1".to_string(),
-            ServerRequest::ToolApproval {
-                request: ToolApprovalRequest {
+            ServerRequest::CommandApproval {
+                request: CommandApprovalRequest {
                     turn_id: "turn-1".to_string(),
                     tool_call_id: "call-1".to_string(),
                     tool_name: "exec_command".to_string(),
                     reason: "test".to_string(),
-                    arguments_preview: "{}".to_string(),
+                    command_preview: "{}".to_string(),
                 },
             },
             tx,
@@ -216,13 +218,13 @@ mod tests {
                 request_id,
                 "conv-a".to_string(),
                 "turn-1".to_string(),
-                ServerRequest::ToolApproval {
-                    request: ToolApprovalRequest {
+                ServerRequest::CommandApproval {
+                    request: CommandApprovalRequest {
                         turn_id: "turn-1".to_string(),
                         tool_call_id: "call-1".to_string(),
                         tool_name: "exec_command".to_string(),
                         reason: "test".to_string(),
-                        arguments_preview: "{}".to_string(),
+                        command_preview: "{}".to_string(),
                     },
                 },
                 tx,

@@ -238,7 +238,7 @@ impl AgentConfig {
             },
             cli: CliConfig {
                 pre_llm_filter_enabled: false,
-                permission_mode: "safe".to_string(),
+                permission_mode: "ReadOnly".to_string(),
             },
             workspace_root,
         }
@@ -408,9 +408,8 @@ impl AgentConfig {
                 self.cli.pre_llm_filter_enabled = value;
             }
             if let Some(value) = cli.permission_mode {
-                let value = value.trim().to_ascii_lowercase();
-                if matches!(value.as_str(), "safe" | "balanced" | "danger") {
-                    self.cli.permission_mode = value;
+                if let Some(canonical) = normalize_permission_mode(&value) {
+                    self.cli.permission_mode = canonical.to_string();
                 }
             }
         }
@@ -655,6 +654,20 @@ fn parse_memory_mode(value: &str) -> MemoryMode {
         "evolve" => MemoryMode::Evolve,
         _ => MemoryMode::Off,
     }
+}
+
+fn normalize_permission_mode(value: &str) -> Option<&'static str> {
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case("readonly") || trimmed.eq_ignore_ascii_case("safe") {
+        return Some("ReadOnly");
+    }
+    if trimmed.eq_ignore_ascii_case("workspacewrite") || trimmed.eq_ignore_ascii_case("balanced") {
+        return Some("WorkspaceWrite");
+    }
+    if trimmed.eq_ignore_ascii_case("fullaccess") || trimmed.eq_ignore_ascii_case("danger") {
+        return Some("FullAccess");
+    }
+    None
 }
 
 fn absolutize_path(workspace_root: &Path, value: PathBuf) -> PathBuf {

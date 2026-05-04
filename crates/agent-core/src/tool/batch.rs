@@ -4,8 +4,8 @@ use crate::host::{AgentHost, AgentHostExt};
 use crate::model::await_server_request_decision;
 use crate::rollout::RolloutItem;
 use crate::turn::{
-    EventMsg, ServerRequest, ServerRequestHandler, ToolApprovalRequest, ToolBatchOutcome, TurnHost,
-    TurnItemDeltaKind, TurnItemKind, TurnState,
+    CommandApprovalRequest, EventMsg, FileChangeApprovalRequest, ServerRequest,
+    ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnItemDeltaKind, TurnItemKind, TurnState,
 };
 use crate::{
     ApprovalPolicy, PermissionProfile, emit_event, execute_tool_call_streaming,
@@ -138,13 +138,26 @@ impl<'a> ToolBatchRunner<'a> {
                 self.permission_profile,
                 self.approval_policy,
             );
-            if approval_requirement.requires_approval
-                && !self.host.is_tool_approved_for_session(&call)
-            {
+            let approval_grant_key = self.host.tools().approval_grant_key_for_call(
+                spec,
+                &call,
+                &self.host.context().workspace_root,
+                self.permission_profile,
+                self.approval_policy,
+            );
+            let approved_for_session = if let Some(key) = approval_grant_key.as_ref() {
+                self.host
+                    .is_tool_approved_for_session(self.conversation_id, key)
+                    .await
+            } else {
+                false
+            };
+            if approval_requirement.requires_approval && !approved_for_session {
                 let approved = self
                     .request_approval(
                         &call,
                         spec,
+                        approval_grant_key.as_ref(),
                         approval_requirement.reason.as_deref(),
                         &tool_item_id,
                         context_manager,
@@ -341,6 +354,7 @@ impl<'a> ToolBatchRunner<'a> {
         &self,
         call: &ToolCall,
         spec: &ToolSpec,
+        approval_grant_key: Option<&crate::ApprovalGrantKey>,
         approval_reason: Option<&str>,
         tool_item_id: &str,
         context_manager: &mut ContextManager,
@@ -358,17 +372,14 @@ impl<'a> ToolBatchRunner<'a> {
                 TurnState::WaitingForServerRequest,
             )
             .await;
-        let request = ServerRequest::ToolApproval {
-            request: ToolApprovalRequest {
-                turn_id: self.turn_id.to_string(),
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                reason: approval_reason
-                    .map(ToOwned::to_owned)
-                    .unwrap_or_else(|| format!("Tool `{}` requires approval.", call.name)),
-                arguments_preview: super::summarize_arguments(&call.arguments),
-            },
-        };
+        let request = approval_request_for_call(
+            self.turn_id,
+            call,
+            spec,
+            approval_reason
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| format!("Tool `{}` requires approval.", call.name)),
+        );
         emit_event(
             events,
             on_event,
@@ -408,8 +419,11 @@ impl<'a> ToolBatchRunner<'a> {
             if matches!(
                 decision.decision,
                 crate::ServerRequestDecisionKind::AcceptForSession
-            ) {
-                self.host.approve_tool_for_session(call);
+            ) && let Some(key) = approval_grant_key
+            {
+                self.host
+                    .approve_tool_for_session(self.conversation_id, key)
+                    .await;
             }
             return Ok(ApprovalFlow::Approved);
         }
@@ -584,6 +598,44 @@ impl<'a> ToolBatchRunner<'a> {
             .map(|ready| ready.call.clone())
             .collect::<Vec<_>>();
         self.host.tools().batch_execution_strategy(&calls)
+    }
+}
+
+fn approval_request_for_call(
+    turn_id: &str,
+    call: &ToolCall,
+    spec: &ToolSpec,
+    reason: String,
+) -> ServerRequest {
+    let preview = super::summarize_arguments(&call.arguments);
+    match spec.item_kind {
+        TurnItemKind::CommandExecution => ServerRequest::CommandApproval {
+            request: CommandApprovalRequest {
+                turn_id: turn_id.to_string(),
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                reason,
+                command_preview: preview,
+            },
+        },
+        TurnItemKind::FileChange => ServerRequest::FileChangeApproval {
+            request: FileChangeApprovalRequest {
+                turn_id: turn_id.to_string(),
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                reason,
+                change_preview: preview,
+            },
+        },
+        _ => ServerRequest::FileChangeApproval {
+            request: FileChangeApprovalRequest {
+                turn_id: turn_id.to_string(),
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                reason,
+                change_preview: preview,
+            },
+        },
     }
 }
 

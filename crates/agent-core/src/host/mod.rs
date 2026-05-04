@@ -1,8 +1,9 @@
 mod agent;
 
 use crate::{
-    AgentContext, AgentState, ApprovalPolicy, ChatModel, ConversationHistory, ConversationSummary,
-    ExecutionPolicy, PermissionProfile, RegularTurnSettings, RolloutItem, ToolBackend,
+    AgentContext, AgentState, ApprovalGrantKey, ApprovalPolicy, ChatModel, ConversationHistory,
+    ConversationSummary, ExecutionPolicy, PermissionProfile, RegularTurnSettings, RolloutItem,
+    ToolBackend,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -32,6 +33,7 @@ pub struct AgentHostParts {
     >,
     pub state: AgentState,
     pub store: Arc<dyn ConversationStoreBackend>,
+    pub approval_grants: Arc<dyn ApprovalGrantStoreBackend>,
     pub rollout_recorder: Arc<dyn RolloutRecorderBackend>,
     pub memory: Arc<dyn MemoryBackend>,
 }
@@ -47,6 +49,7 @@ pub trait AgentHostExt {
     ) -> &Arc<dyn ToolBackend<PermissionProfile = PermissionProfile, ApprovalPolicy = ApprovalPolicy>>;
     fn state(&self) -> &AgentState;
     fn store(&self) -> &Arc<dyn ConversationStoreBackend>;
+    fn approval_grants(&self) -> &Arc<dyn ApprovalGrantStoreBackend>;
     fn rollout_recorder(&self) -> &Arc<dyn RolloutRecorderBackend>;
     fn memory(&self) -> &Arc<dyn MemoryBackend>;
 
@@ -80,6 +83,17 @@ pub trait ConversationStoreBackend: Send + Sync {
     async fn load_rollout_items(&self, conversation_id: &str) -> Result<Vec<RolloutItem>>;
     async fn prune_archived_conversations_if_needed(&self) -> Result<()>;
     fn root(&self) -> &Path;
+}
+
+#[async_trait]
+pub trait ApprovalGrantStoreBackend: Send + Sync {
+    async fn has_approval_grant(
+        &self,
+        conversation_id: &str,
+        key: &ApprovalGrantKey,
+    ) -> Result<bool>;
+    async fn save_approval_grant(&self, conversation_id: &str, key: &ApprovalGrantKey)
+    -> Result<()>;
 }
 
 #[async_trait]

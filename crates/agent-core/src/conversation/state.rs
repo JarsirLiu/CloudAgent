@@ -50,9 +50,7 @@ impl ConversationState {
         if let Some(active_turn) = &self.active_turn {
             let turn_id = active_turn.turn_id.clone();
             self.pending_requests
-                .retain(|pending| match &pending.request {
-                    ServerRequest::ToolApproval { request } => request.turn_id != turn_id,
-                });
+                .retain(|pending| request_turn_id(&pending.request) != turn_id);
         }
         self.active_turn = None;
     }
@@ -99,5 +97,12 @@ impl ConversationState {
 
     pub fn pending_requests(&self) -> &[PendingConversationRequest] {
         &self.pending_requests
+    }
+}
+
+fn request_turn_id(request: &ServerRequest) -> &str {
+    match request {
+        ServerRequest::CommandApproval { request } => &request.turn_id,
+        ServerRequest::FileChangeApproval { request } => &request.turn_id,
     }
 }

@@ -261,7 +261,10 @@ fn spawn_turn(
                         let request_id = { state.lock().await.next_server_request_id() };
                         let (reply_tx, reply_rx) = oneshot::channel();
                         let turn_id = match &request {
-                            ServerRequest::ToolApproval { request } => request.turn_id.clone(),
+                            ServerRequest::CommandApproval { request } => request.turn_id.clone(),
+                            ServerRequest::FileChangeApproval { request } => {
+                                request.turn_id.clone()
+                            }
                         };
                         {
                             state.lock().await.insert_pending_server_request(

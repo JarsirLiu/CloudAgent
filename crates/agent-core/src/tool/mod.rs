@@ -29,6 +29,21 @@ pub enum ToolOutputStream {
     Stderr,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub struct ApprovalGrantKey {
+    pub kind: String,
+    pub value: Value,
+}
+
+impl ApprovalGrantKey {
+    pub fn new(kind: impl Into<String>, value: Value) -> Self {
+        Self {
+            kind: kind.into(),
+            value,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolSource {
@@ -371,6 +386,15 @@ pub trait ToolBackend: ToolExecutor {
         permission_profile: &Self::PermissionProfile,
         approval_policy: &Self::ApprovalPolicy,
     ) -> ApprovalRequirement;
+
+    fn approval_grant_key_for_call(
+        &self,
+        spec: &ToolSpec,
+        call: &ToolCall,
+        workspace_root: &Path,
+        permission_profile: &Self::PermissionProfile,
+        approval_policy: &Self::ApprovalPolicy,
+    ) -> Option<ApprovalGrantKey>;
 
     fn tool_item_title(&self, call: &ToolCall) -> String;
 

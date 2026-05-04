@@ -1,4 +1,4 @@
-use agent_core::{ConversationStoreBackend, ConversationSummary};
+use agent_core::{ApprovalGrantKey, ApprovalGrantStoreBackend, ConversationStoreBackend, ConversationSummary};
 use agent_core::{ResponseItem, RolloutItem, conversation_history_from_rollout_items};
 use agent_protocol::EventMsg;
 use anyhow::{Context, Result};
@@ -82,6 +82,36 @@ impl ConversationStoreBackend for JsonConversationStore {
 
     fn root(&self) -> &Path {
         JsonConversationStore::root(self)
+    }
+}
+
+#[async_trait]
+impl ApprovalGrantStoreBackend for JsonConversationStore {
+    async fn has_approval_grant(
+        &self,
+        conversation_id: &str,
+        key: &ApprovalGrantKey,
+    ) -> Result<bool> {
+        let grant_key_json = serde_json::to_string(key)?;
+        session_index::has_approval_grant(
+            &session_index::db_path(&self.root),
+            conversation_id,
+            &grant_key_json,
+        )
+    }
+
+    async fn save_approval_grant(
+        &self,
+        conversation_id: &str,
+        key: &ApprovalGrantKey,
+    ) -> Result<()> {
+        let grant_key_json = serde_json::to_string(key)?;
+        session_index::upsert_approval_grant(
+            &session_index::db_path(&self.root),
+            conversation_id,
+            &grant_key_json,
+            now_ms(),
+        )
     }
 }
 
@@ -478,6 +508,8 @@ fn sanitize_conversation_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_core::ApprovalGrantKey;
+    use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[tokio::test]
@@ -563,6 +595,45 @@ mod tests {
         assert!(!store.rollout_path("archived-old").exists());
         assert!(!store.rollout_path("archived-new").exists());
         assert!(store.rollout_path("active").exists());
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn approval_grants_persist_across_store_restart() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cloudagent-approval-grants-{unique}"));
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "approval-session";
+        let key = ApprovalGrantKey::new(
+            "tool_session",
+            json!({
+                "identity": {
+                    "source": "built_in",
+                    "namespace": null,
+                    "wire_name": "edit_file"
+                }
+            }),
+        );
+
+        store.ensure_root_dir().await.expect("create root");
+
+        store
+            .save_approval_grant(conversation_id, &key)
+            .await
+            .expect("save approval grant");
+
+        let reopened = JsonConversationStore::new(&root);
+        assert!(
+            reopened
+                .has_approval_grant(conversation_id, &key)
+                .await
+                .expect("load approval grant"),
+            "approval grant should survive reopening the store"
+        );
 
         let _ = fs::remove_dir_all(root).await;
     }

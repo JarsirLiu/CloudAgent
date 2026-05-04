@@ -8,7 +8,7 @@ fn mode_changes_do_not_clear_active_approval_view() {
         PathBuf::from("."),
         PathBuf::from("."),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
     app.input_pane
         .set_server_request(crate::ui::widgets::input_pane::ServerRequestInlineState {
@@ -34,7 +34,7 @@ fn assistant_delta_requires_item_started_before_streaming() {
         PathBuf::from("."),
         PathBuf::from("."),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     app.handle_assistant_item_delta("assistant:1", "partial");
@@ -56,7 +56,7 @@ fn tool_delta_requires_item_started_before_streaming() {
         PathBuf::from("."),
         PathBuf::from("."),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     app.handle_control_item_delta("tool:1", "half");
@@ -92,7 +92,7 @@ fn ctrl_c_exits_when_idle() {
         PathBuf::from("."),
         PathBuf::from("."),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     let input = app
@@ -114,7 +114,7 @@ fn reasoning_and_control_cells_use_distinct_tones() {
         PathBuf::from("."),
         PathBuf::from("."),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     app.handle_reasoning_item_started("reasoning:1", "reasoning");
@@ -147,7 +147,7 @@ fn repeated_control_cells_coalesce_and_pending_queue_stays_consistent() {
         PathBuf::from("."),
         PathBuf::from("."),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     let first = HistoryCell::from_message("context", "workspace ready", HistoryTone::Control);
@@ -176,7 +176,7 @@ fn snapshot_history_replaces_transcript_without_event_replay() {
         PathBuf::from("."),
         PathBuf::from("."),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
 
     execute_server_action(
@@ -251,7 +251,7 @@ fn turn_dispatch_completed_flushes_active_assistant_cell() {
         PathBuf::from("."),
         PathBuf::from("."),
         false,
-        "safe".to_string(),
+        "ReadOnly".to_string(),
     );
     app.handle_assistant_item_started("turn-1", "assistant:flush");
     app.handle_assistant_item_delta("assistant:flush", "hello");

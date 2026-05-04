@@ -400,9 +400,17 @@ fn request_method_and_params(request: &AppServerRequest) -> (RequestId, &'static
             conversation_id,
             request,
         } => match request {
-            ServerRequest::ToolApproval { .. } => (
+            ServerRequest::CommandApproval { .. } => (
                 request_id.clone(),
-                "serverRequest/toolApproval",
+                "serverRequest/commandApproval",
+                serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "request": request,
+                }),
+            ),
+            ServerRequest::FileChangeApproval { .. } => (
+                request_id.clone(),
+                "serverRequest/fileChangeApproval",
                 serde_json::json!({
                     "conversation_id": conversation_id,
                     "request": request,
@@ -458,7 +466,7 @@ fn parse_server_request(
 ) -> anyhow::Result<AppServerRequest> {
     let params = params.unwrap_or(Value::Null);
     match method {
-        "serverRequest/toolApproval" => {
+        "serverRequest/commandApproval" | "serverRequest/fileChangeApproval" => {
             let object = params
                 .as_object()
                 .ok_or_else(|| anyhow::anyhow!("expected object params"))?;
@@ -723,13 +731,13 @@ mod tests {
             message: AppServerMessage::Request(AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(7),
                 conversation_id: "default".to_string(),
-                request: ServerRequest::ToolApproval {
-                    request: ToolApprovalRequest {
+                request: ServerRequest::CommandApproval {
+                    request: CommandApprovalRequest {
                         turn_id: "turn-1".to_string(),
                         tool_call_id: "call-1".to_string(),
                         tool_name: "exec_command".to_string(),
                         reason: "mutating tool".to_string(),
-                        arguments_preview: "{\"command\":\"echo hi\"}".to_string(),
+                        command_preview: "{\"command\":\"echo hi\"}".to_string(),
                     },
                 },
             }),
@@ -739,7 +747,7 @@ mod tests {
         let JsonRpcMessage::Request(request) = JsonRpcMessage::from(message) else {
             panic!("expected request");
         };
-        assert_eq!(request.method, "serverRequest/toolApproval");
+        assert_eq!(request.method, "serverRequest/commandApproval");
         assert_eq!(request.id, RequestId::Integer(7));
 
         let reparsed =
@@ -747,7 +755,7 @@ mod tests {
         match reparsed.message {
             AppServerMessage::Request(AppServerRequest::ServerRequest {
                 request_id,
-                request: ServerRequest::ToolApproval { request },
+                request: ServerRequest::CommandApproval { request },
                 ..
             }) => {
                 assert_eq!(request_id, RequestId::Integer(7));

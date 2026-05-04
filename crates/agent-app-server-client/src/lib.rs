@@ -149,8 +149,8 @@ pub(crate) async fn forward_event(
 mod tests {
     use super::*;
     use agent_protocol::{
-        AppServerNotification, CommandExecutionStatus, RequestId, ServerRequest,
-        ToolApprovalRequest, TranscriptItem, TurnItemKind,
+        AppServerNotification, CommandApprovalRequest, CommandExecutionStatus, RequestId,
+        ServerRequest, TranscriptItem, TurnItemKind,
     };
 
     fn info_event(message: &str) -> AppServerEvent {
@@ -223,13 +223,13 @@ mod tests {
             agent_protocol::AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(1),
                 conversation_id: "default".to_string(),
-                request: ServerRequest::ToolApproval {
-                    request: ToolApprovalRequest {
+                request: ServerRequest::CommandApproval {
+                    request: CommandApprovalRequest {
                         turn_id: "turn-1".to_string(),
                         tool_call_id: "call-1".to_string(),
                         tool_name: "exec_command".to_string(),
                         reason: "need approval".to_string(),
-                        arguments_preview: "{\"command\":\"pwd\"}".to_string(),
+                        command_preview: "{\"command\":\"pwd\"}".to_string(),
                     },
                 },
             },

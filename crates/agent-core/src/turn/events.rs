@@ -6,12 +6,21 @@ use serde::{Deserialize, Serialize};
 pub type TurnId = String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolApprovalRequest {
+pub struct CommandApprovalRequest {
     pub turn_id: TurnId,
     pub tool_call_id: String,
     pub tool_name: String,
     pub reason: String,
-    pub arguments_preview: String,
+    pub command_preview: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FileChangeApprovalRequest {
+    pub turn_id: TurnId,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub reason: String,
+    pub change_preview: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,7 +87,8 @@ pub enum ServerRequestDecisionKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type", rename_all = "snake_case")]
 pub enum ServerRequest {
-    ToolApproval { request: ToolApprovalRequest },
+    CommandApproval { request: CommandApprovalRequest },
+    FileChangeApproval { request: FileChangeApprovalRequest },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]

@@ -19,9 +19,9 @@ pub use concurrency::{
     CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE, conversation_busy_error,
 };
 pub use events::{
-    EventMsg, ModelRetryStage, PendingTurnRequest, ServerRequest, ServerRequestDecision,
-    ServerRequestDecisionKind, ToolApprovalRequest, TurnId, TurnItemDeltaKind, TurnItemKind,
-    TurnState,
+    CommandApprovalRequest, EventMsg, FileChangeApprovalRequest, ModelRetryStage,
+    PendingTurnRequest, ServerRequest, ServerRequestDecision, ServerRequestDecisionKind, TurnId,
+    TurnItemDeltaKind, TurnItemKind, TurnState,
 };
 pub use host::{RegularTurnSettings, ServerRequestHandler, ToolBatchOutcome, TurnHost};
 pub use lifecycle::{TurnLifecycleClass, TurnLifecyclePhase};

@@ -22,8 +22,8 @@ pub use conversation::{
     ResponseItem, TranscriptItem, visible_message_count,
 };
 pub use host::{
-    AgentHost, AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend,
-    MemoryBackend, RolloutRecorderBackend,
+    AgentHost, AgentHostExt, AgentHostParts, AgentMetadata, ApprovalGrantStoreBackend,
+    ConversationStoreBackend, MemoryBackend, RolloutRecorderBackend,
 };
 pub use model::{
     ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelStreamObserver, ModelUsage,
@@ -43,7 +43,7 @@ pub use projection::{
 pub use rollout::RolloutItem;
 pub use state::{ActiveTurnHandle, AgentState};
 pub use tool::{
-    ApprovalRequirement, CommandExecutionStatus, McpCallResult, ParallelToolInvocation,
+    ApprovalGrantKey, ApprovalRequirement, CommandExecutionStatus, McpCallResult, ParallelToolInvocation,
     ParallelToolResult, ReadFileEntry, ReadFileStatus, ResolvedToolSet, SearchWorkspaceHit,
     SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
     TaskKind, ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolEvent, ToolExecutor,
@@ -53,14 +53,14 @@ pub use tool::{
 };
 pub use turn::{
     AgentTurnOutput, ApprovalPolicy, CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE,
-    EventMsg, ExecutionPolicy, ManualCompactionOutcome, ModelRetryStage, PermissionProfile,
-    RegularTurnSettings, RequestId, ServerRequest, ServerRequestDecision,
-    ServerRequestDecisionKind, ServerRequestHandler, ToolApprovalRequest, ToolBatchOutcome,
-    TurnHost, TurnId, TurnItemDeltaKind, TurnItemKind, TurnLifecycleClass, TurnLifecyclePhase,
-    TurnOutcome, TurnPolicy, TurnState, UserTurnInput, chat, chat_with_approval,
-    chat_with_approval_and_events, compact_conversation, conversation_busy_error,
-    emit_assistant_message_item, emit_event, execute_regular_turn, next_turn_id, paginate_turns,
-    run_manual_compaction, run_turn_with_approval,
+    CommandApprovalRequest, EventMsg, ExecutionPolicy, FileChangeApprovalRequest,
+    ManualCompactionOutcome, ModelRetryStage, PermissionProfile, RegularTurnSettings, RequestId,
+    ServerRequest, ServerRequestDecision, ServerRequestDecisionKind, ServerRequestHandler,
+    ToolBatchOutcome, TurnHost, TurnId, TurnItemDeltaKind, TurnItemKind, TurnLifecycleClass,
+    TurnLifecyclePhase, TurnOutcome, TurnPolicy, TurnState, UserTurnInput, chat,
+    chat_with_approval, chat_with_approval_and_events, compact_conversation,
+    conversation_busy_error, emit_assistant_message_item, emit_event, execute_regular_turn,
+    next_turn_id, paginate_turns, run_manual_compaction, run_turn_with_approval,
 };
 
 pub fn crate_name() -> &'static str {

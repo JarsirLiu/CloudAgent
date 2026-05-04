@@ -1,5 +1,5 @@
 use crate::app::commands::permission_profile::{
-    DEFAULT_PERMISSION_MODE, PERMISSION_MODE_SPECS, PermissionModeSpec,
+    DEFAULT_PERMISSION_MODE, PERMISSION_MODE_SPECS, PermissionModeSpec, canonical_permission_mode,
 };
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
@@ -20,7 +20,7 @@ impl PermissionsPicker {
         let options = &PERMISSION_MODE_SPECS;
         let selected = options
             .iter()
-            .position(|m| m.mode == current)
+            .position(|m| m.mode == canonical_permission_mode(current))
             .or_else(|| {
                 options
                     .iter()
@@ -76,9 +76,9 @@ impl BottomPaneView for PermissionsPicker {
             } else {
                 Style::default().fg(Color::Rgb(135, 145, 175))
             };
-            let mode_col = format!("{marker}{:<9}", spec.mode);
-            let mode_text = pad_to_width(&mode_col, 12);
-            let available = area_width.saturating_sub(16) as usize;
+            let mode_col = format!("{marker}{:<14}", spec.mode);
+            let mode_text = pad_to_width(&mode_col, 17);
+            let available = area_width.saturating_sub(21) as usize;
             let label = truncate_to_width(spec.label, available);
             lines.push(Line::from(vec![
                 Span::raw("  "),
