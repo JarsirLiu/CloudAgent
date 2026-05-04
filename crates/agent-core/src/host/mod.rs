@@ -1,7 +1,8 @@
 mod agent;
 
 use crate::{
-    AgentContext, AgentState, ApprovalGrantKey, ApprovalPolicy, ChatModel, ConversationHistory,
+    AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy, ChatModel,
+    ConversationHistory,
     ConversationSummary, ExecutionPolicy, PermissionProfile, RegularTurnSettings, RolloutItem,
     ToolBackend,
 };
@@ -83,17 +84,6 @@ pub trait ConversationStoreBackend: Send + Sync {
     async fn load_rollout_items(&self, conversation_id: &str) -> Result<Vec<RolloutItem>>;
     async fn prune_archived_conversations_if_needed(&self) -> Result<()>;
     fn root(&self) -> &Path;
-}
-
-#[async_trait]
-pub trait ApprovalGrantStoreBackend: Send + Sync {
-    async fn has_approval_grant(
-        &self,
-        conversation_id: &str,
-        key: &ApprovalGrantKey,
-    ) -> Result<bool>;
-    async fn save_approval_grant(&self, conversation_id: &str, key: &ApprovalGrantKey)
-    -> Result<()>;
 }
 
 #[async_trait]

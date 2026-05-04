@@ -1,6 +1,6 @@
 use super::{
-    AgentHostExt, AgentHostParts, AgentMetadata, ApprovalGrantStoreBackend,
-    ConversationStoreBackend, MemoryBackend, RolloutRecorderBackend,
+    AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend, MemoryBackend,
+    RolloutRecorderBackend,
 };
 use crate::context::EnvironmentContext;
 use crate::conversation::{
@@ -20,9 +20,10 @@ use crate::turn::{
     compact_conversation as core_compact_conversation,
 };
 use crate::{
-    ActiveTurnHandle, AgentContext, AgentState, ApprovalPolicy, ChatModel, ContextManager,
-    ConversationTurn, ExecutionPolicy, PermissionProfile, RegularTurnSettings, ResponseItem,
-    ToolSurface, build_turns_from_rollout_items, complete_model_request,
+    ActiveTurnHandle, AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy,
+    ChatModel, ContextManager, ConversationTurn, ExecutionPolicy, PermissionProfile,
+    RegularTurnSettings, ResponseItem, ToolSurface, build_turns_from_rollout_items,
+    complete_model_request,
     complete_model_request_streaming, paginate_turns, visible_message_count,
 };
 use anyhow::Result;
@@ -438,28 +439,6 @@ impl AgentHost {
             now.to_rfc3339(),
             now.offset().to_string(),
         )
-    }
-
-    pub(crate) async fn is_tool_approved_for_session(
-        &self,
-        conversation_id: &str,
-        key: &crate::ApprovalGrantKey,
-    ) -> bool {
-        self.approval_grants
-            .has_approval_grant(conversation_id, key)
-            .await
-            .unwrap_or(false)
-    }
-
-    pub(crate) async fn approve_tool_for_session(
-        &self,
-        conversation_id: &str,
-        key: &crate::ApprovalGrantKey,
-    ) {
-        let _ = self
-            .approval_grants
-            .save_approval_grant(conversation_id, key)
-            .await;
     }
 
     async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory> {

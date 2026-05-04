@@ -1,25 +1,15 @@
+use crate::approval::{ApprovalFlow, ApprovalRuntime};
 use super::{ToolBatchExecutionStrategy, ToolCall, ToolResult, ToolSpec};
 use crate::context::{ContextManager, ToolExecutionContext};
 use crate::host::{AgentHost, AgentHostExt};
-use crate::model::await_server_request_decision;
 use crate::rollout::RolloutItem;
 use crate::turn::{
-    CommandApprovalRequest, EventMsg, FileChangeApprovalRequest, ServerRequest,
-    ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnItemDeltaKind, TurnItemKind, TurnState,
+    EventMsg, ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnItemDeltaKind, TurnItemKind,
 };
-use crate::{
-    ApprovalPolicy, PermissionProfile, emit_event, execute_tool_call_streaming,
-    run_parallel_tool_invocations,
-};
+use crate::{ApprovalPolicy, PermissionProfile, emit_event, execute_tool_call_streaming, run_parallel_tool_invocations};
 use anyhow::Result;
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
-
-enum ApprovalFlow {
-    Approved,
-    Denied,
-    Cancelled,
-}
 
 struct ReadyToolCall<'a> {
     call: ToolCall,
@@ -87,6 +77,15 @@ impl<'a> ToolBatchRunner<'a> {
             self.conversation_id.to_string(),
             self.cancellation_token.clone(),
         );
+        let approval_runtime = ApprovalRuntime::new(
+            self.host,
+            self.conversation_id,
+            self.turn_id,
+            self.permission_profile,
+            self.approval_policy,
+            &self.cancellation_token,
+            approval,
+        );
         let denied_requests_at_batch_start = denied_requests.clone();
         let mut ready_calls = Vec::new();
 
@@ -146,31 +145,40 @@ impl<'a> ToolBatchRunner<'a> {
                 self.approval_policy,
             );
             let approved_for_session = if let Some(key) = approval_grant_key.as_ref() {
-                self.host
-                    .is_tool_approved_for_session(self.conversation_id, key)
-                    .await
+                approval_runtime.has_session_grant(key).await
             } else {
                 false
             };
             if approval_requirement.requires_approval && !approved_for_session {
                 let approved = self
                     .request_approval(
+                        &approval_runtime,
                         &call,
                         spec,
                         approval_grant_key.as_ref(),
                         approval_requirement.reason.as_deref(),
-                        &tool_item_id,
-                        context_manager,
                         events,
                         on_event,
                         approval,
                         denied_requests,
-                        request_key,
                     )
                     .await?;
                 match approved {
                     ApprovalFlow::Approved => {}
-                    ApprovalFlow::Denied => continue,
+                    ApprovalFlow::Denied { reason } => {
+                        denied_requests.insert(request_key);
+                        self.record_denied_tool_result(
+                            &call,
+                            spec,
+                            &tool_item_id,
+                            context_manager,
+                            events,
+                            on_event,
+                            &reason,
+                        )
+                        .await?;
+                        continue;
+                    }
                     ApprovalFlow::Cancelled => {
                         self.emit_cancelled(events, on_event);
                         return Ok(ToolBatchOutcome { cancelled: true });
@@ -352,104 +360,25 @@ impl<'a> ToolBatchRunner<'a> {
 
     async fn request_approval(
         &self,
+        approval_runtime: &ApprovalRuntime<'_>,
         call: &ToolCall,
         spec: &ToolSpec,
         approval_grant_key: Option<&crate::ApprovalGrantKey>,
         approval_reason: Option<&str>,
-        tool_item_id: &str,
-        context_manager: &mut ContextManager,
         events: &mut Vec<EventMsg>,
         on_event: &mut (dyn for<'b> FnMut(&'b EventMsg) + Send + '_),
-        approval: &dyn ServerRequestHandler,
-        denied_requests: &mut HashSet<String>,
-        request_key: String,
+        _approval: &dyn ServerRequestHandler,
+        _denied_requests: &mut HashSet<String>,
     ) -> Result<ApprovalFlow> {
-        self.host
-            .state()
-            .update_turn_state(
-                self.conversation_id,
-                self.turn_id,
-                TurnState::WaitingForServerRequest,
-            )
-            .await;
-        let request = approval_request_for_call(
-            self.turn_id,
+        approval_runtime.authorize_tool_call(
             call,
             spec,
+            approval_grant_key,
             approval_reason
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("Tool `{}` requires approval.", call.name)),
-        );
-        emit_event(
+                .as_deref(),
             events,
             on_event,
-            EventMsg::ServerRequestRequested {
-                turn_id: self.turn_id.to_string(),
-                request: request.clone(),
-            },
-        );
-        self.host.audit_tool_approval_requested(
-            self.conversation_id,
-            self.turn_id,
-            call,
-            request_reason(approval_reason, &call.name),
-        );
-        let decision = await_server_request_decision(
-            &self.cancellation_token,
-            approval.decide(request.clone()),
-            self.host.turn_interrupted_error(),
-        )
-        .await?;
-        self.host
-            .state()
-            .update_turn_state(self.conversation_id, self.turn_id, TurnState::Running)
-            .await;
-        emit_event(
-            events,
-            on_event,
-            EventMsg::ServerRequestResolved {
-                turn_id: self.turn_id.to_string(),
-                request: request.clone(),
-                decision: decision.clone(),
-            },
-        );
-        self.host
-            .audit_tool_approval_decided(self.conversation_id, self.turn_id, call, &decision);
-        if decision.is_approved() {
-            if matches!(
-                decision.decision,
-                crate::ServerRequestDecisionKind::AcceptForSession
-            ) && let Some(key) = approval_grant_key
-            {
-                self.host
-                    .approve_tool_for_session(self.conversation_id, key)
-                    .await;
-            }
-            return Ok(ApprovalFlow::Approved);
-        }
-        if matches!(decision.decision, crate::ServerRequestDecisionKind::Cancel) {
-            return Ok(ApprovalFlow::Cancelled);
-        }
-
-        let reason = decision
-            .reason
-            .as_deref()
-            .map(str::trim)
-            .filter(|reason| !reason.is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| self.host.tools().default_rejection_message(&call.name));
-        denied_requests.insert(request_key);
-        self.record_denied_tool_result(
-            call,
-            spec,
-            tool_item_id,
-            context_manager,
-            events,
-            on_event,
-            &reason,
-        )
-        .await?;
-        Ok(ApprovalFlow::Denied)
+        ).await
     }
 
     async fn record_denied_tool_result(
@@ -599,48 +528,4 @@ impl<'a> ToolBatchRunner<'a> {
             .collect::<Vec<_>>();
         self.host.tools().batch_execution_strategy(&calls)
     }
-}
-
-fn approval_request_for_call(
-    turn_id: &str,
-    call: &ToolCall,
-    spec: &ToolSpec,
-    reason: String,
-) -> ServerRequest {
-    let preview = super::summarize_arguments(&call.arguments);
-    match spec.item_kind {
-        TurnItemKind::CommandExecution => ServerRequest::CommandApproval {
-            request: CommandApprovalRequest {
-                turn_id: turn_id.to_string(),
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                reason,
-                command_preview: preview,
-            },
-        },
-        TurnItemKind::FileChange => ServerRequest::FileChangeApproval {
-            request: FileChangeApprovalRequest {
-                turn_id: turn_id.to_string(),
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                reason,
-                change_preview: preview,
-            },
-        },
-        _ => ServerRequest::FileChangeApproval {
-            request: FileChangeApprovalRequest {
-                turn_id: turn_id.to_string(),
-                tool_call_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                reason,
-                change_preview: preview,
-            },
-        },
-    }
-}
-
-fn request_reason(approval_reason: Option<&str>, tool_name: &str) -> String {
-    approval_reason
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("Tool `{tool_name}` requires approval."))
 }

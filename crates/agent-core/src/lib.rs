@@ -1,3 +1,4 @@
+pub mod approval;
 pub mod context;
 pub mod conversation;
 pub mod host;
@@ -16,14 +17,15 @@ pub use context::{
     apply_history_compaction, build_compaction_summary_request, plan_history_compaction,
     plan_manual_history_compaction,
 };
+pub use approval::ApprovalGrantStoreBackend;
 pub use conversation::{
     ActiveConversationTurn, ConversationHistory, ConversationSnapshot, ConversationState,
     ConversationStatus, ConversationSummary, ConversationTurn, PendingConversationRequest,
     ResponseItem, TranscriptItem, visible_message_count,
 };
 pub use host::{
-    AgentHost, AgentHostExt, AgentHostParts, AgentMetadata, ApprovalGrantStoreBackend,
-    ConversationStoreBackend, MemoryBackend, RolloutRecorderBackend,
+    AgentHost, AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend,
+    MemoryBackend, RolloutRecorderBackend,
 };
 pub use model::{
     ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelStreamObserver, ModelUsage,
