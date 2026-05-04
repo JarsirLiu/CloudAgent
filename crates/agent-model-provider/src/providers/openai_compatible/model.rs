@@ -1,18 +1,20 @@
+use super::stream::{ProviderEventStream, parse_stream_frame};
+use super::wire::{
+    ChatApiMessage, ChatCompletionRequest, ChatCompletionResponse, ChatCompletionStreamOptions,
+    ChatToolSpec,
+};
 use crate::config::ProviderRuntimeConfig;
 use crate::error::{ProviderRequestError, ProviderStreamError};
-use crate::event::{
-    ProviderCompletion, ProviderMetadata, ProviderStreamEvent, ProviderToolCallDelta,
-};
+use crate::event::{ProviderCompletion, ProviderStreamEvent};
 use agent_core::{
-    ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelUsage, ResponseItem,
-    StructuredToolResult, ToolCall, ToolIdentity, ToolSpec,
+    ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelUsage, ToolCall, ToolIdentity,
+    ToolSpec,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use config::LlmConfig;
 use infra_http::{build_http_client, spawn_sse_frame_stream};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -29,16 +31,6 @@ struct StreamingToolCallAcc {
     id: String,
     name: String,
     arguments: String,
-}
-
-struct ProviderEventStream {
-    rx: mpsc::Receiver<Result<ProviderStreamEvent, ProviderStreamError>>,
-}
-
-impl ProviderEventStream {
-    async fn recv(&mut self) -> Option<Result<ProviderStreamEvent, ProviderStreamError>> {
-        self.rx.recv().await
-    }
 }
 
 impl OpenAiCompatibleModel {
@@ -152,7 +144,7 @@ impl OpenAiCompatibleModel {
             }
         });
 
-        Ok(ProviderEventStream { rx })
+        Ok(ProviderEventStream::new(rx))
     }
 }
 
@@ -385,77 +377,13 @@ impl ChatModel for OpenAiCompatibleModel {
     }
 }
 
-fn parse_stream_frame(data: &str) -> Result<Vec<ProviderStreamEvent>, ProviderStreamError> {
-    if data == "[DONE]" {
-        return Ok(vec![ProviderStreamEvent::Completed(
-            ProviderCompletion::default(),
-        )]);
-    }
-
-    let parsed: ChatCompletionStreamChunk =
-        serde_json::from_str(data).map_err(|err| ProviderStreamError::Protocol {
-            message: format!("failed to parse streaming chunk: {err}"),
-        })?;
-
-    let mut events = Vec::new();
-    if !parsed.model.is_empty() {
-        events.push(ProviderStreamEvent::Metadata(ProviderMetadata {
-            model_name: Some(parsed.model.clone()),
-        }));
-    }
-    if let Some(chunk_usage) = parsed.usage {
-        events.push(ProviderStreamEvent::Usage(ModelUsage::from(chunk_usage)));
-    }
-
-    let mut completion = ProviderCompletion::default();
-    let mut saw_completion = false;
-    for choice in parsed.choices {
-        if let Some(delta) = choice.delta.content
-            && !delta.is_empty()
-        {
-            events.push(ProviderStreamEvent::TextDelta(delta));
-        }
-        if let Some(delta_tool_calls) = choice.delta.tool_calls {
-            for delta_call in delta_tool_calls {
-                events.push(ProviderStreamEvent::ToolCallDelta(ProviderToolCallDelta {
-                    index: delta_call.index,
-                    id: delta_call.id,
-                    name: delta_call
-                        .function
-                        .as_ref()
-                        .and_then(|function| function.name.clone()),
-                    arguments_delta: delta_call.function.and_then(|function| function.arguments),
-                }));
-            }
-        }
-        if let Some(finish_reason) = choice.finish_reason {
-            completion.finish_reason = Some(finish_reason);
-            saw_completion = true;
-        }
-    }
-    if saw_completion {
-        events.push(ProviderStreamEvent::Completed(completion));
-    }
-
-    Ok(events)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_core::ResponseItem;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
-    use std::time::Duration;
-
-    #[test]
-    fn done_frame_maps_to_completed_event() {
-        let events = parse_stream_frame("[DONE]").expect("parse done frame");
-        assert_eq!(
-            events,
-            vec![ProviderStreamEvent::Completed(ProviderCompletion::default())]
-        );
-    }
 
     #[tokio::test]
     async fn streaming_returns_after_done_even_if_connection_stays_open() {
@@ -540,290 +468,5 @@ mod tests {
         assert_eq!(response.1, "hi");
 
         server.join().expect("server thread");
-    }
-}
-
-#[derive(Serialize)]
-struct ChatCompletionRequest {
-    model: String,
-    messages: Vec<ChatApiMessage>,
-    tools: Vec<ChatToolSpec>,
-    tool_choice: String,
-    parallel_tool_calls: bool,
-    temperature: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream_options: Option<ChatCompletionStreamOptions>,
-}
-
-#[derive(Serialize)]
-struct ChatCompletionStreamOptions {
-    include_usage: bool,
-}
-
-#[derive(Serialize)]
-struct ChatApiMessage {
-    role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<ChatToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-}
-
-impl ChatApiMessage {
-    fn from_message(message: &ResponseItem) -> Result<Self> {
-        match message {
-            ResponseItem::System { content } => Ok(Self {
-                role: "system".to_string(),
-                content: Some(content.clone()),
-                tool_calls: None,
-                tool_call_id: None,
-                name: None,
-            }),
-            ResponseItem::User { content } => Ok(Self {
-                role: "user".to_string(),
-                content: Some(content.clone()),
-                tool_calls: None,
-                tool_call_id: None,
-                name: None,
-            }),
-            ResponseItem::Assistant {
-                content,
-                tool_calls,
-            } => Ok(Self {
-                role: "assistant".to_string(),
-                content: content.clone(),
-                tool_calls: if tool_calls.is_empty() {
-                    None
-                } else {
-                    Some(
-                        tool_calls
-                            .iter()
-                            .map(ChatToolCall::from_tool_call)
-                            .collect(),
-                    )
-                },
-                tool_call_id: None,
-                name: None,
-            }),
-            ResponseItem::Tool {
-                tool_call_id,
-                name,
-                content,
-                structured,
-            } => Ok(Self {
-                role: "tool".to_string(),
-                content: Some(tool_message_content(name, content, structured.as_ref())),
-                tool_calls: None,
-                tool_call_id: Some(tool_call_id.clone()),
-                name: Some(name.clone()),
-            }),
-        }
-    }
-}
-
-fn tool_message_content(
-    name: &str,
-    content: &str,
-    structured: Option<&StructuredToolResult>,
-) -> String {
-    if let Some(StructuredToolResult::CommandExecution {
-        command,
-        current_directory,
-        success,
-        exit_code,
-        stdout,
-        stderr,
-        aggregated_output,
-        ..
-    }) = structured
-    {
-        let mut rendered = String::new();
-        rendered.push_str(&format!("tool `{name}` executed `{command}`"));
-        rendered.push_str(&format!(" in `{current_directory}`"));
-        if let Some(ok) = success {
-            rendered.push_str(if *ok {
-                " successfully."
-            } else {
-                " with failure."
-            });
-        } else {
-            rendered.push('.');
-        }
-        if let Some(code) = exit_code {
-            rendered.push_str(&format!(" exit_code={code}."));
-        }
-        if let Some(output) = aggregated_output
-            && !output.trim().is_empty()
-        {
-            rendered.push_str("\noutput:\n");
-            rendered.push_str(output);
-        } else {
-            if let Some(out) = stdout
-                && !out.trim().is_empty()
-            {
-                rendered.push_str("\nstdout:\n");
-                rendered.push_str(out);
-            }
-            if let Some(err) = stderr
-                && !err.trim().is_empty()
-            {
-                rendered.push_str("\nstderr:\n");
-                rendered.push_str(err);
-            }
-        }
-        return rendered;
-    }
-    content.to_string()
-}
-
-#[derive(Serialize)]
-struct ChatToolSpec {
-    #[serde(rename = "type")]
-    kind: String,
-    function: ChatToolFunctionSpec,
-}
-
-impl ChatToolSpec {
-    fn from_spec(spec: &ToolSpec) -> Self {
-        Self {
-            kind: "function".to_string(),
-            function: ChatToolFunctionSpec {
-                name: spec.identity.wire_name.clone(),
-                description: spec.description.clone(),
-                parameters: spec.parameters.clone(),
-            },
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct ChatToolFunctionSpec {
-    name: String,
-    description: String,
-    parameters: Value,
-}
-
-#[derive(Deserialize)]
-struct ChatCompletionResponse {
-    model: String,
-    choices: Vec<ChatCompletionChoice>,
-    usage: Option<ChatCompletionUsage>,
-}
-
-#[derive(Deserialize)]
-struct ChatCompletionChoice {
-    message: ChatCompletionMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatCompletionMessage {
-    content: Option<String>,
-    tool_calls: Option<Vec<ChatToolCall>>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct ChatToolCall {
-    id: String,
-    #[serde(rename = "type")]
-    kind: String,
-    function: ChatToolFunctionCall,
-}
-
-impl ChatToolCall {
-    fn from_tool_call(call: &ToolCall) -> Self {
-        Self {
-            id: call.id.clone(),
-            kind: "function".to_string(),
-            function: ChatToolFunctionCall {
-                name: call.identity.wire_name.clone(),
-                arguments: call.arguments.to_string(),
-            },
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct ChatToolFunctionCall {
-    name: String,
-    arguments: String,
-}
-
-#[derive(Deserialize)]
-struct ChatCompletionStreamChunk {
-    model: String,
-    choices: Vec<ChatCompletionStreamChoice>,
-    usage: Option<ChatCompletionUsage>,
-}
-
-#[derive(Deserialize)]
-struct ChatCompletionStreamChoice {
-    delta: ChatCompletionStreamDelta,
-    #[serde(default)]
-    finish_reason: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ChatCompletionStreamDelta {
-    content: Option<String>,
-    tool_calls: Option<Vec<ChatCompletionStreamToolCallDelta>>,
-}
-
-#[derive(Deserialize)]
-struct ChatCompletionStreamToolCallDelta {
-    index: usize,
-    id: Option<String>,
-    function: Option<ChatCompletionStreamFunctionDelta>,
-}
-
-#[derive(Deserialize)]
-struct ChatCompletionStreamFunctionDelta {
-    name: Option<String>,
-    arguments: Option<String>,
-}
-
-#[derive(Clone, Deserialize)]
-struct ChatCompletionUsage {
-    prompt_tokens: u64,
-    completion_tokens: u64,
-    total_tokens: u64,
-    #[serde(default)]
-    prompt_tokens_details: Option<PromptTokensDetails>,
-    #[serde(default)]
-    completion_tokens_details: Option<CompletionTokensDetails>,
-}
-
-#[derive(Clone, Deserialize, Default)]
-struct PromptTokensDetails {
-    #[serde(default)]
-    cached_tokens: u64,
-}
-
-#[derive(Clone, Deserialize, Default)]
-struct CompletionTokensDetails {
-    #[serde(default)]
-    reasoning_tokens: u64,
-}
-
-impl From<ChatCompletionUsage> for ModelUsage {
-    fn from(value: ChatCompletionUsage) -> Self {
-        Self {
-            input_tokens: value.prompt_tokens,
-            cached_input_tokens: value
-                .prompt_tokens_details
-                .map(|details| details.cached_tokens)
-                .unwrap_or(0),
-            output_tokens: value.completion_tokens,
-            reasoning_output_tokens: value
-                .completion_tokens_details
-                .map(|details| details.reasoning_tokens)
-                .unwrap_or(0),
-            total_tokens: value.total_tokens,
-        }
     }
 }
