@@ -755,9 +755,7 @@ impl TurnHost for AgentHost {
 }
 
 fn tool_approval_key(call: &ToolCall) -> String {
-    let arguments =
-        serde_json::to_string(&call.arguments).unwrap_or_else(|_| call.arguments.to_string());
-    format!("{}:{arguments}", call.identity.wire_name)
+    call.identity.wire_name.clone()
 }
 
 fn is_placeholder_history(history: &ConversationHistory) -> bool {
