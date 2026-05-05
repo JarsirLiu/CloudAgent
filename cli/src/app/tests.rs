@@ -30,6 +30,10 @@ fn flatten_turns(turns: Vec<ConversationTurn>) -> Vec<TranscriptItem> {
         .collect()
 }
 
+fn ends_with_workspace_path(text: &str) -> bool {
+    text.ends_with("/workspace") || text.ends_with("\\workspace")
+}
+
 mod ui_state;
 
 #[tokio::test]
@@ -167,7 +171,7 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
     assert!(live_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
             && cell.body.starts_with("current directory is ")
-            && cell.body.ends_with("\\workspace")
+            && ends_with_workspace_path(&cell.body)
     }));
 
     client
@@ -230,7 +234,7 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
     assert!(history.iter().any(|entry| matches!(
         entry,
         TranscriptItem::AgentMessage { text, .. }
-        if text.starts_with("current directory is ") && text.ends_with("\\workspace")
+        if text.starts_with("current directory is ") && ends_with_workspace_path(text)
     )));
 
     let runtime_after_restart = build_agent_host((*config).clone()).expect("restart runtime");
@@ -283,12 +287,12 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
             && cell.body.contains("inspect `pwd`")
             && cell.body.contains("exit 0")
-            && cell.body.ends_with("/workspace")
+            && ends_with_workspace_path(&cell.body)
     }));
     assert!(rebuilt_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
             && cell.body.starts_with("current directory is ")
-            && cell.body.ends_with("\\workspace")
+            && ends_with_workspace_path(&cell.body)
     }));
 
     let recorded_requests = server_thread
