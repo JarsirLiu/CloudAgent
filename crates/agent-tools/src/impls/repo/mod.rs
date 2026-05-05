@@ -78,9 +78,19 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line == "Top 2 matches (showing 2 of 2):")
+                .any(|line| line == "Summary: Found 2 file matches for `service.rs`; showing 2.")
         );
-        assert!(lines.iter().any(|line| line == "src/service.rs"));
+        assert!(lines.iter().any(|line| line == "Top hits:"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("- 1. src/service.rs [match_kind=file_name"))
+        );
+        assert!(
+            output
+                .content
+                .contains("Next step: open the strongest hit with `read_file`")
+        );
         assert!(matches!(
             output.structured.as_ref(),
             Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. })
@@ -152,7 +162,12 @@ mod tests {
             .await
             .expect("search_workspace works");
 
-        assert!(output.content.contains("Found 2 matches in 1 files"));
+        assert!(
+            output
+                .content
+                .contains("Summary: Found 2 text matches in 1 files for `render_`.")
+        );
+        assert!(output.content.contains("Matches:"));
         assert!(
             output
                 .content
@@ -298,8 +313,13 @@ mod tests {
             .await
             .expect("read_file works");
 
-        assert!(output.content.contains("[read_file note]"));
+        assert!(output.content.contains("Summary: Read 1 lines from"));
         assert!(output.content.contains("next_start_line"));
+        assert!(
+            output
+                .content
+                .contains("Next step: rerun `read_file` with `next_start_line: 2`")
+        );
         assert!(matches!(
             output.structured.as_ref(),
             Some(agent_protocol::StructuredToolResult::ReadFile {

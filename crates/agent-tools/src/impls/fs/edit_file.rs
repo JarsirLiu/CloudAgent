@@ -1,5 +1,6 @@
 use crate::impls::file_read_state::FileReadStateStore;
 use crate::impls::file_version::version_token_for_bytes;
+use crate::impls::result_format::{finalize, push_fact, push_list_section};
 use crate::impls::text_codec::{LineEnding, decode_text_file, encode_text_file};
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path,
@@ -299,8 +300,21 @@ impl EditFileLocalTool {
 }
 
 fn completed_edit_output(changed_path: String, version_token: String) -> ToolInvocationOutput {
+    let mut lines = Vec::new();
+    push_fact(&mut lines, "Status", "completed");
+    push_fact(&mut lines, "Files changed", "1");
+    push_list_section(
+        &mut lines,
+        "Changed paths",
+        std::slice::from_ref(&changed_path),
+    );
+    push_fact(&mut lines, "Version token", version_token.clone());
     ToolInvocationOutput {
-        content: "Edited file. files_changed=1".to_string(),
+        content: finalize(
+            format!("Edited {} successfully.", changed_path),
+            lines,
+            Some("inspect the diff and run the narrowest relevant verification"),
+        ),
         structured: Some(agent_protocol::StructuredToolResult::EditFile {
             changed_paths: vec![changed_path],
             files_changed: 1,

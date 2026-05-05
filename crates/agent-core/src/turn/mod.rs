@@ -23,7 +23,9 @@ pub use events::{
     PendingTurnRequest, ServerRequest, ServerRequestDecision, ServerRequestDecisionKind, TurnId,
     TurnItemDeltaKind, TurnItemKind, TurnState,
 };
-pub use host::{RegularTurnSettings, ServerRequestHandler, ToolBatchOutcome, TurnHost};
+pub use host::{
+    RegularTurnSettings, RestoredBudgetBaseline, ServerRequestHandler, ToolBatchOutcome, TurnHost,
+};
 pub use lifecycle::{TurnLifecycleClass, TurnLifecyclePhase};
 pub use orchestrator::run_turn_with_approval;
 pub use outcome::{TurnOutcome, emit_assistant_message_item};

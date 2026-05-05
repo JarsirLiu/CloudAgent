@@ -92,6 +92,7 @@ impl ConversationNotificationProjector {
                 last_usage,
                 total_usage,
                 model_context_window,
+                ..
             } => vec![AppServerNotification::TokenUsageUpdated {
                 conversation_id: self.conversation_id.clone(),
                 turn_id: turn_id.clone(),
@@ -454,6 +455,7 @@ mod tests {
             last_usage: usage.clone(),
             total_usage: usage.clone(),
             model_context_window: Some(1000),
+            request_estimated_tokens: 130,
         });
 
         assert_eq!(notifications.len(), 1);

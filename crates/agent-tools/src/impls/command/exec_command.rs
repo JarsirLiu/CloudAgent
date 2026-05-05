@@ -1,4 +1,5 @@
 use crate::impls::repo::DEFAULT_IGNORED_DIRS;
+use crate::impls::result_format::{finalize, push_fact, push_section};
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, decode_utf8_chunk, resolve_write_path,
 };
@@ -522,40 +523,97 @@ fn format_exec_result_content(
     kind: &str,
     command: &str,
     current_directory: &str,
-    _session_id: Option<&str>,
+    session_id: Option<&str>,
     status: CommandExecutionStatus,
     exit_code: Option<i32>,
     success: Option<bool>,
     stdout: &str,
     stderr: &str,
 ) -> String {
-    let mut lines = vec![
-        format!("kind: {kind}"),
-        format!("command: {command}"),
-        format!("current_directory: {current_directory}"),
-    ];
-    lines.push(format!("status: {}", render_command_status(&status)));
+    let summary = render_command_summary(command, &status, success, exit_code);
+    let mut lines = Vec::new();
+    push_fact(&mut lines, "Kind", kind.to_string());
+    push_fact(&mut lines, "Command", command.to_string());
+    push_fact(
+        &mut lines,
+        "Current directory",
+        current_directory.to_string(),
+    );
+    if let Some(session_id) = session_id {
+        push_fact(&mut lines, "Session", session_id.to_string());
+    }
+    push_fact(
+        &mut lines,
+        "Status",
+        render_command_status(&status).to_string(),
+    );
     if let Some(exit_code) = exit_code {
-        lines.push(format!("exit_code: {exit_code}"));
+        push_fact(&mut lines, "Exit code", exit_code.to_string());
     }
     if let Some(success) = success {
-        lines.push(format!("success: {success}"));
+        push_fact(&mut lines, "Success", success.to_string());
     }
-    lines.push(String::new());
-    lines.push("stdout:".to_string());
-    lines.push(if stdout.is_empty() {
-        "(empty)".to_string()
+    push_section(
+        &mut lines,
+        "Stdout",
+        if stdout.is_empty() {
+            "(empty)".to_string()
+        } else {
+            stdout.to_string()
+        },
+    );
+    push_section(
+        &mut lines,
+        "Stderr",
+        if stderr.is_empty() {
+            "(empty)".to_string()
+        } else {
+            stderr.to_string()
+        },
+    );
+    let next_step = if stdout.contains("output truncated") || stderr.contains("output truncated") {
+        Some(
+            "narrow the command or use `search_workspace` followed by `read_file` for repository discovery",
+        )
+    } else if matches!(status, CommandExecutionStatus::InProgress) {
+        Some("reuse the returned `session_id` to send more stdin or poll for additional output")
     } else {
-        stdout.to_string()
-    });
-    lines.push(String::new());
-    lines.push("stderr:".to_string());
-    lines.push(if stderr.is_empty() {
-        "(empty)".to_string()
-    } else {
-        stderr.to_string()
-    });
-    lines.join("\n")
+        None
+    };
+    finalize(summary, lines, next_step)
+}
+
+fn render_command_summary(
+    command: &str,
+    status: &CommandExecutionStatus,
+    success: Option<bool>,
+    exit_code: Option<i32>,
+) -> String {
+    match status {
+        CommandExecutionStatus::InProgress => {
+            format!("Command is still running: {command}")
+        }
+        CommandExecutionStatus::Completed => {
+            let exit_fragment = exit_code
+                .map(|value| format!(" (exit code {value})"))
+                .unwrap_or_default();
+            format!("Command completed successfully{exit_fragment}: {command}")
+        }
+        CommandExecutionStatus::Failed => {
+            let exit_fragment = exit_code
+                .map(|value| format!(" (exit code {value})"))
+                .unwrap_or_default();
+            let state = if success == Some(false) {
+                "failed"
+            } else {
+                "did not complete successfully"
+            };
+            format!("Command {state}{exit_fragment}: {command}")
+        }
+        CommandExecutionStatus::Declined => {
+            format!("Command was declined: {command}")
+        }
+    }
 }
 
 fn render_command_status(status: &CommandExecutionStatus) -> &'static str {

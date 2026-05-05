@@ -11,6 +11,28 @@ use anyhow::Result;
 use std::collections::{BTreeMap, HashSet};
 use tokio_util::sync::CancellationToken;
 
+fn apply_signed_delta(base: usize, current: usize, previous: usize) -> usize {
+    if current >= previous {
+        base.saturating_add(current - previous)
+    } else {
+        base.saturating_sub(previous - current)
+    }
+}
+
+async fn restore_budget_baseline_from_host<H: TurnHost>(
+    host: &H,
+    conversation_id: &str,
+) -> Result<(Option<usize>, Option<usize>)> {
+    let restored = host.restore_budget_baseline(conversation_id).await?;
+    Ok(match restored {
+        Some(baseline) => (
+            Some(baseline.sdk_total_tokens),
+            Some(baseline.request_estimated_tokens),
+        ),
+        None => (None, None),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_regular_turn<H: TurnHost>(
     host: &H,
@@ -45,8 +67,8 @@ pub async fn execute_regular_turn<H: TurnHost>(
     let filter_policy = FilterPolicy {
         enabled: settings.pre_llm_filter_enabled,
     };
-    let mut last_sdk_context_tokens: Option<usize> = None;
-    let mut history_len_at_last_sdk_usage: Option<usize> = None;
+    let (mut last_sdk_context_tokens, mut last_request_estimated_tokens) =
+        restore_budget_baseline_from_host(host, conversation_id).await?;
 
     let mut roundtrip_count = 0usize;
     loop {
@@ -96,29 +118,6 @@ pub async fn execute_regular_turn<H: TurnHost>(
             summary_source_max_tokens: settings.context_compaction_summary_source_tokens,
         };
 
-        let estimated_total_tokens = if let Some(sdk_tokens) = last_sdk_context_tokens {
-            let delta_start = history_len_at_last_sdk_usage
-                .unwrap_or_else(|| context_manager.history().messages.len())
-                .min(context_manager.history().messages.len());
-            let local_delta_tokens = context_facade.estimate_history_tokens_for_compaction(
-                &context_manager.history().messages[delta_start..],
-                filter_policy,
-                &settings.workspace_root,
-            );
-            sdk_tokens.saturating_add(local_delta_tokens)
-        } else {
-            context_facade.estimate_history_tokens_for_compaction(
-                &context_manager.history().messages,
-                filter_policy,
-                &settings.workspace_root,
-            )
-        };
-        let compaction_estimated_total_tokens = context_facade
-            .estimate_history_tokens_for_canonical_compaction(
-                &context_manager.history().messages,
-                &settings.workspace_root,
-            );
-
         let budgeted = context_facade.build_memory_budgeted_fragments(
             &context_manager.history().messages,
             filter_policy,
@@ -144,6 +143,33 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 safety_buffer_tokens: settings.context_budget_safety_buffer_tokens,
             },
         );
+        let mut candidate_request = context_manager
+            .build_current_model_request_with_rendered_fragments(
+                &budgeted.fragments,
+                tool_specs.clone(),
+                settings.llm_temperature,
+            );
+        candidate_request.messages = context_facade.apply_pre_llm_filter(
+            candidate_request.messages,
+            filter_policy,
+            &settings.workspace_root,
+        );
+        let candidate_request_tokens =
+            context_facade.estimate_model_request_tokens(&candidate_request);
+        let estimated_total_tokens = match (last_sdk_context_tokens, last_request_estimated_tokens)
+        {
+            (Some(sdk_tokens), Some(previous_request_tokens)) => apply_signed_delta(
+                sdk_tokens,
+                candidate_request_tokens,
+                previous_request_tokens,
+            ),
+            _ => candidate_request_tokens,
+        };
+        let compaction_estimated_total_tokens = context_facade
+            .estimate_history_tokens_for_canonical_compaction(
+                &context_manager.history().messages,
+                &settings.workspace_root,
+            );
 
         let prepared = context_facade
             .prepare_model_request(
@@ -165,6 +191,11 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 },
             )
             .await?;
+        let final_budget = context_facade.check_final_model_request_budget(
+            &prepared.model_request,
+            settings.model_context_window as usize,
+            settings.context_budget_safety_buffer_tokens,
+        );
         let history_tokens_now = context_facade.estimate_history_tokens_for_compaction(
             &context_manager.history().messages,
             filter_policy,
@@ -195,7 +226,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 memory_floor_tokens: settings.post_compact_memory_floor_tokens,
                 safety_buffer_tokens: settings.context_budget_safety_buffer_tokens,
                 compaction_triggered: compaction_triggered_now,
-                hard_cap_triggered: budgeted.audit.hard_cap_triggered,
+                hard_cap_triggered: budgeted.audit.hard_cap_triggered || final_budget.exceeded,
                 memory_before: budgeted.audit.memory_before,
                 memory_after: budgeted.audit.memory_after,
                 skills_before: budgeted.audit.skills_before,
@@ -204,6 +235,39 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 mcp_after: budgeted.audit.mcp_after,
             },
         );
+        if final_budget.exceeded {
+            let message = format!(
+                "Stopped before sending the model request because the final input context exceeded the budget (estimated {} tokens > limit {}). Narrow the request context or strengthen input filtering before retrying.",
+                final_budget.estimated_tokens, final_budget.limit_tokens
+            );
+            emit_assistant_message_item(
+                &mut events,
+                on_event,
+                turn_id,
+                &message,
+                &mut assistant_item_seq,
+            );
+            let failed_item =
+                context_manager.record_assistant_message(Some(message.clone()), Vec::new());
+            host.persist_rollout_items(conversation_id, &[RolloutItem::from(failed_item)])
+                .await?;
+            host.save_history(context_manager.history().clone()).await?;
+            emit_event(
+                &mut events,
+                on_event,
+                EventMsg::TurnFailed {
+                    turn_id: turn_id.to_string(),
+                    error: message,
+                },
+            );
+            return Ok(TurnOutcome {
+                turn_id: turn_id.to_string(),
+                events,
+                history: context_manager.history().clone(),
+                model_name: last_model_name,
+                state: TurnState::Failed,
+            });
+        }
         let persistent_compaction = prepared
             .compaction
             .as_ref()
@@ -386,6 +450,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
         if let Some(usage) = response.usage.clone() {
             turn_total_usage.add_assign(&usage);
             last_sdk_context_tokens = Some(usage.total_tokens as usize);
+            last_request_estimated_tokens = Some(final_budget.estimated_tokens);
             emit_event(
                 &mut events,
                 on_event,
@@ -394,13 +459,13 @@ pub async fn execute_regular_turn<H: TurnHost>(
                     last_usage: usage,
                     total_usage: turn_total_usage.clone(),
                     model_context_window: Some(settings.model_context_window),
+                    request_estimated_tokens: final_budget.estimated_tokens as u64,
                 },
             );
         }
 
         let assistant_response_item =
             context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());
-        history_len_at_last_sdk_usage = Some(context_manager.history().messages.len());
         host.persist_rollout_items(
             conversation_id,
             &[RolloutItem::from(assistant_response_item)],
@@ -565,7 +630,8 @@ fn collect_discoverable_tools(
 mod tests {
     use super::{collect_discoverable_tools, compose_visible_tool_specs};
     use crate::{
-        ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind,
+        EventMsg, ModelUsage, RolloutItem, ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec,
+        TurnItemDeltaKind, TurnItemKind,
     };
     use std::collections::BTreeMap;
 
@@ -625,5 +691,51 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["unwatch"]
         );
+    }
+
+    #[test]
+    fn latest_rollout_token_usage_event_carries_request_estimate() {
+        let items = vec![
+            RolloutItem::from(EventMsg::TokenUsageUpdated {
+                turn_id: "turn-1".to_string(),
+                last_usage: ModelUsage {
+                    total_tokens: 120,
+                    ..ModelUsage::default()
+                },
+                total_usage: ModelUsage {
+                    total_tokens: 120,
+                    ..ModelUsage::default()
+                },
+                model_context_window: Some(200_000),
+                request_estimated_tokens: 110,
+            }),
+            RolloutItem::from(EventMsg::TokenUsageUpdated {
+                turn_id: "turn-2".to_string(),
+                last_usage: ModelUsage {
+                    total_tokens: 240,
+                    ..ModelUsage::default()
+                },
+                total_usage: ModelUsage {
+                    total_tokens: 360,
+                    ..ModelUsage::default()
+                },
+                model_context_window: Some(200_000),
+                request_estimated_tokens: 222,
+            }),
+        ];
+
+        let restored = items.iter().rev().find_map(|item| match item {
+            RolloutItem::EventMsg {
+                event:
+                    EventMsg::TokenUsageUpdated {
+                        last_usage,
+                        request_estimated_tokens,
+                        ..
+                    },
+            } => Some((last_usage.total_tokens, *request_estimated_tokens)),
+            _ => None,
+        });
+
+        assert_eq!(restored, Some((240, 222)));
     }
 }

@@ -1,4 +1,5 @@
 use super::common::{collect_repo_entries, sort_ranked_paths};
+use crate::impls::result_format::{finalize, push_fact, push_list_section, push_section};
 use crate::impls::text_codec::decode_text_file;
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
@@ -673,67 +674,110 @@ async fn run_text_search(
 }
 
 fn build_file_search_output(
-    _session_id: &str,
-    _resolved: &ResolvedSearchRequest,
+    session_id: &str,
+    resolved: &ResolvedSearchRequest,
     search: &FileSearchResult,
 ) -> String {
-    let displayed = search
-        .hits
-        .iter()
-        .take(10)
-        .map(|hit| hit.path.clone())
-        .collect::<Vec<_>>();
-    let mut sections = Vec::new();
-    if displayed.is_empty() {
-        sections.push("No files found. Try a broader pattern or set path_scope.".to_string());
+    let displayed = search.hits.iter().take(10).collect::<Vec<_>>();
+    let summary = if displayed.is_empty() {
+        format!("Found no file matches for `{}`.", resolved.query)
     } else {
-        sections.push(format!(
-            "Top {} matches (showing {} of {}):",
-            displayed.len(),
-            displayed.len(),
-            search.total_matches
-        ));
-        sections.push(displayed.join("\n"));
-        if search.hits.len() > displayed.len() {
-            sections.push(format!(
-                "\n…and {} more",
-                search.hits.len().saturating_sub(displayed.len())
-            ));
-        }
+        format!(
+            "Found {} file matches for `{}`; showing {}.",
+            search.total_matches,
+            resolved.query,
+            displayed.len()
+        )
+    };
+    let mut sections = Vec::new();
+    push_fact(&mut sections, "Session", session_id.to_string());
+    push_fact(&mut sections, "Mode", "files");
+    push_fact(&mut sections, "Query", resolved.query.clone());
+    if let Some(path_scope) = resolved.path_scope.as_deref() {
+        push_fact(&mut sections, "Path scope", path_scope.to_string());
     }
-    sections.join("\n")
+    push_fact(
+        &mut sections,
+        "Showing",
+        format!("{} of {}", displayed.len(), search.total_matches),
+    );
+    let hits = displayed
+        .iter()
+        .map(|hit| {
+            let rank = hit.rank.unwrap_or_default();
+            let score = hit.score.unwrap_or_default();
+            let match_kind = hit.match_kind.as_deref().unwrap_or("path");
+            format!(
+                "{rank}. {} [match_kind={match_kind}, score={score}]",
+                hit.path
+            )
+        })
+        .collect::<Vec<_>>();
+    if hits.is_empty() {
+        push_section(
+            &mut sections,
+            "Guidance",
+            "Try a broader pattern or set `path_scope` before opening files.",
+        );
+    } else {
+        push_list_section(&mut sections, "Top hits", &hits);
+    }
+    let next_step = if hits.is_empty() {
+        Some("adjust the pattern or set `path_scope`, then rerun `search_workspace`")
+    } else {
+        Some(
+            "open the strongest hit with `read_file`; if several are plausible, issue multiple `read_file` calls in parallel",
+        )
+    };
+    finalize(summary, sections, next_step)
 }
 
 fn build_text_search_output(
-    _session_id: &str,
+    session_id: &str,
     resolved: &ResolvedSearchRequest,
     search: &TextSearchResult,
 ) -> String {
-    let mut sections = Vec::new();
-    if search.rendered.is_empty() {
-        sections.push(format!(
-            "No matches found for `{}`{}.",
-            resolved.query,
-            resolved
-                .path_scope
-                .as_deref()
-                .map(|scope| format!(" under {scope}"))
-                .unwrap_or_default()
-        ));
+    let summary = if search.rendered.is_empty() {
+        format!("Found no text matches for `{}`.", resolved.query)
     } else {
-        sections.push(format!(
-            "Found {} matches in {} files:",
-            search.match_count, search.file_count
-        ));
-        sections.push(search.rendered.join("\n\n"));
-        if search.truncated {
-            sections.push(format!(
-                "\n…and {} more matches",
-                search.match_count.saturating_sub(resolved.max_results)
-            ));
-        }
+        format!(
+            "Found {} text matches in {} files for `{}`.",
+            search.match_count, search.file_count, resolved.query
+        )
+    };
+    let mut sections = Vec::new();
+    push_fact(&mut sections, "Session", session_id.to_string());
+    push_fact(&mut sections, "Mode", "text");
+    push_fact(&mut sections, "Query", resolved.query.clone());
+    if let Some(path_scope) = resolved.path_scope.as_deref() {
+        push_fact(&mut sections, "Path scope", path_scope.to_string());
     }
-    sections.join("\n")
+    push_fact(
+        &mut sections,
+        "Showing",
+        format!("{} of {} matches", search.hits.len(), search.match_count),
+    );
+    if search.rendered.is_empty() {
+        push_section(
+            &mut sections,
+            "Guidance",
+            "Try a broader query or widen `path_scope` before reading files.",
+        );
+    } else {
+        push_section(&mut sections, "Matches", search.rendered.join("\n\n"));
+    }
+    let next_step = if search.rendered.is_empty() {
+        Some("adjust the query or widen `path_scope`, then rerun `search_workspace`")
+    } else if search.truncated {
+        Some(
+            "open the strongest hit with `read_file`, or continue this search with `next_offset` for more matches",
+        )
+    } else {
+        Some(
+            "open the strongest hit with `read_file`; if several hits look plausible, issue multiple `read_file` calls in parallel",
+        )
+    };
+    finalize(summary, sections, next_step)
 }
 
 fn line_matches(line: &str, query: &str, case_sensitive: bool) -> bool {

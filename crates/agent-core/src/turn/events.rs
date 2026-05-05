@@ -157,6 +157,7 @@ pub enum EventMsg {
         last_usage: ModelUsage,
         total_usage: ModelUsage,
         model_context_window: Option<u64>,
+        request_estimated_tokens: u64,
     },
     ContextCompacted {
         turn_id: TurnId,

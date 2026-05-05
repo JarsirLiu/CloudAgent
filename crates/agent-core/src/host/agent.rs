@@ -13,8 +13,8 @@ use crate::projection::flatten_conversation_turns;
 use crate::rollout::RolloutItem;
 use crate::tool::{ToolBackend, ToolCall, ToolResult, ToolSpec, summarize_arguments};
 use crate::turn::{
-    AgentTurnOutput, EventMsg, ManualCompactionOutcome, RequestId, ServerRequest,
-    ServerRequestDecision, ServerRequestHandler, TurnHost, chat as core_chat,
+    AgentTurnOutput, EventMsg, ManualCompactionOutcome, RequestId, RestoredBudgetBaseline,
+    ServerRequest, ServerRequestDecision, ServerRequestHandler, TurnHost, chat as core_chat,
     chat_with_approval as core_chat_with_approval,
     chat_with_approval_and_events as core_chat_with_approval_and_events,
     compact_conversation as core_compact_conversation,
@@ -587,6 +587,14 @@ impl TurnHost for AgentHost {
     async fn history_from_rollout(&self, conversation_id: &str) -> Result<ConversationHistory> {
         self.history_from_rollout(conversation_id).await
     }
+    async fn restore_budget_baseline(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<RestoredBudgetBaseline>> {
+        self.rollout_recorder.flush().await?;
+        let rollout_items = self.store.load_rollout_items(conversation_id).await?;
+        Ok(latest_budget_baseline_from_rollout_items(&rollout_items))
+    }
     async fn save_history(&self, history: ConversationHistory) -> Result<()> {
         self.save_history(history).await
     }
@@ -747,4 +755,23 @@ impl TurnHost for AgentHost {
 
 fn is_placeholder_history(history: &ConversationHistory) -> bool {
     history.turn_count == 0 && matches!(history.messages.as_slice(), [ResponseItem::System { .. }])
+}
+
+fn latest_budget_baseline_from_rollout_items(
+    rollout_items: &[RolloutItem],
+) -> Option<RestoredBudgetBaseline> {
+    rollout_items.iter().rev().find_map(|item| match item {
+        RolloutItem::EventMsg {
+            event:
+                EventMsg::TokenUsageUpdated {
+                    last_usage,
+                    request_estimated_tokens,
+                    ..
+                },
+        } => Some(RestoredBudgetBaseline {
+            sdk_total_tokens: last_usage.total_tokens as usize,
+            request_estimated_tokens: *request_estimated_tokens as usize,
+        }),
+        _ => None,
+    })
 }

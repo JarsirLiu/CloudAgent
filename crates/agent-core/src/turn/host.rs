@@ -12,6 +12,12 @@ use std::future::Future;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RestoredBudgetBaseline {
+    pub sdk_total_tokens: usize,
+    pub request_estimated_tokens: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct RegularTurnSettings {
     pub workspace_root: PathBuf,
@@ -85,6 +91,10 @@ pub trait TurnHost: Send + Sync {
 
     async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory>;
     async fn history_from_rollout(&self, conversation_id: &str) -> Result<ConversationHistory>;
+    async fn restore_budget_baseline(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<RestoredBudgetBaseline>>;
     async fn save_history(&self, history: ConversationHistory) -> Result<()>;
     async fn persist_rollout_items(
         &self,

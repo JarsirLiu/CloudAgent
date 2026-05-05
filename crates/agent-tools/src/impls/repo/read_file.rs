@@ -3,6 +3,7 @@ use crate::impls::file_version::version_token_for_bytes;
 use crate::impls::repo::text_read::{
     TextReadFailure, TextReadOptions, TextReadResult, read_text_snippet,
 };
+use crate::impls::result_format::{finalize, push_fact, push_section};
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
@@ -130,16 +131,72 @@ impl LocalTool for ReadFileLocalTool {
             }
         };
 
-        let mut rendered = vec![content];
-        if entry.truncated {
-            let next_start_line = entry.next_start_line.unwrap_or_default();
-            rendered.push(format!(
-                "[read_file note] file was truncated; continue with `next_start_line: {next_start_line}` or request a narrower `max_lines` slice before making edits."
-            ));
+        let summary = match entry.status {
+            ReadFileStatus::Ok => {
+                if entry.truncated {
+                    format!(
+                        "Read {} lines from {} and stopped early.",
+                        entry.returned_line_count, normalized_path
+                    )
+                } else {
+                    format!(
+                        "Read {} lines from {}.",
+                        entry.returned_line_count, normalized_path
+                    )
+                }
+            }
+            ReadFileStatus::Binary => format!("{normalized_path} is a binary file."),
+            ReadFileStatus::TooLarge => format!("{normalized_path} is too large to read directly."),
+            ReadFileStatus::UnsupportedEncoding => {
+                format!("{normalized_path} uses an unsupported encoding.")
+            }
+            ReadFileStatus::Failed => format!("Could not read {normalized_path}."),
+        };
+        let mut rendered = Vec::new();
+        push_fact(&mut rendered, "Path", normalized_path.clone());
+        push_fact(
+            &mut rendered,
+            "Status",
+            match entry.status {
+                ReadFileStatus::Ok => "ok",
+                ReadFileStatus::Binary => "binary",
+                ReadFileStatus::TooLarge => "too_large",
+                ReadFileStatus::UnsupportedEncoding => "unsupported_encoding",
+                ReadFileStatus::Failed => "failed",
+            },
+        );
+        if let Some(start_line) = entry.start_line {
+            push_fact(&mut rendered, "Start line", start_line.to_string());
         }
+        if let Some(end_line) = entry.end_line {
+            push_fact(&mut rendered, "End line", end_line.to_string());
+        }
+        if let Some(total_line_count) = entry.total_line_count {
+            push_fact(&mut rendered, "Total lines", total_line_count.to_string());
+        }
+        push_fact(
+            &mut rendered,
+            "Returned lines",
+            entry.returned_line_count.to_string(),
+        );
+        push_fact(
+            &mut rendered,
+            "Returned chars",
+            entry.returned_char_count.to_string(),
+        );
+        if let Some(version_token) = entry.version_token.as_deref() {
+            push_fact(&mut rendered, "Version token", version_token.to_string());
+        }
+        push_section(&mut rendered, "Content", content);
+        let next_step = entry.truncated.then(|| {
+            let next_start_line = entry.next_start_line.unwrap_or_default();
+            format!(
+                "rerun `read_file` with `next_start_line: {next_start_line}` or request a narrower `max_lines` slice before making edits"
+            )
+        });
 
         Ok(ToolInvocationOutput {
-            content: rendered.join("\n\n"),
+            content: finalize(summary, rendered, next_step.as_deref()),
             structured: Some(agent_protocol::StructuredToolResult::ReadFile {
                 path: normalized_path,
                 start_line: args.start_line,
