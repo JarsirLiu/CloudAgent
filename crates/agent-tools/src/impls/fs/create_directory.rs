@@ -2,7 +2,7 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_write_path,
 };
 use crate::spec::{
-    ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolPermissionTier, ToolRisk,
+    ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolLayer, ToolPermissionTier, ToolRisk,
     ToolUsageGuidance,
 };
 use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
@@ -55,6 +55,7 @@ impl CreateDirectoryTool {
                 approval_reason: None,
             },
         )
+        .with_layer(ToolLayer::PlatformFs)
         .with_default_visibility(ToolDefaultVisibility::Deferred)
     }
 }

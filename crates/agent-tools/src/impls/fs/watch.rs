@@ -2,7 +2,7 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
 use crate::spec::{
-    ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolPermissionTier, ToolRisk,
+    ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolLayer, ToolPermissionTier, ToolRisk,
     ToolUsageGuidance,
 };
 use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
@@ -62,6 +62,7 @@ impl WatchTool {
                 approval_reason: None,
             },
         )
+        .with_layer(ToolLayer::PlatformFs)
         .with_default_visibility(ToolDefaultVisibility::Deferred)
     }
 }
@@ -108,6 +109,7 @@ impl UnwatchTool {
                 approval_reason: None,
             },
         )
+        .with_layer(ToolLayer::PlatformFs)
         .with_default_visibility(ToolDefaultVisibility::Deferred)
     }
 }

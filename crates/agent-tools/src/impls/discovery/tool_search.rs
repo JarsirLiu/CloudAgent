@@ -1,6 +1,6 @@
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput};
 use crate::spec::{
-    ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolEnvironmentRequirement,
+    ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolEnvironmentRequirement, ToolLayer,
     ToolPermissionTier, ToolRisk, ToolUsageGuidance,
 };
 use agent_core::{
@@ -59,6 +59,7 @@ impl ToolSearchTool {
             },
         )
         .with_environment_requirement(ToolEnvironmentRequirement::RequiresDiscoverableTools)
+        .with_layer(ToolLayer::Coordination)
         .with_default_visibility(ToolDefaultVisibility::Default)
     }
 }

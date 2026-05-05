@@ -1,6 +1,13 @@
 use agent_core::{PermissionProfile, ToolSpec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolLayer {
+    MainChain,
+    PlatformFs,
+    Coordination,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolCategory {
     RepositoryExploration,
     CommandExecution,
@@ -48,6 +55,7 @@ pub enum ToolEnvironmentRequirement {
 
 #[derive(Clone, Debug)]
 pub struct ToolDescriptor {
+    pub layer: ToolLayer,
     pub category: ToolCategory,
     pub risk: ToolRisk,
     pub min_permission: ToolPermissionTier,
@@ -95,6 +103,7 @@ impl ToolDescriptor {
     ) -> Self {
         spec.description = render_tool_description(&spec.description, &usage);
         Self {
+            layer: ToolLayer::MainChain,
             category,
             risk,
             min_permission,
@@ -116,6 +125,11 @@ impl ToolDescriptor {
         environment_requirement: ToolEnvironmentRequirement,
     ) -> Self {
         self.environment_requirement = environment_requirement;
+        self
+    }
+
+    pub fn with_layer(mut self, layer: ToolLayer) -> Self {
+        self.layer = layer;
         self
     }
 }
