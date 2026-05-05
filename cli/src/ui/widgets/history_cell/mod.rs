@@ -656,7 +656,23 @@ fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     }
 
     if let Some(detail) = cell.detail() {
-        for meta in wrap_text(detail, width.saturating_sub(8).max(8)) {
+        let body_width = width.saturating_sub(8).max(8);
+        let raw_lines = detail
+            .lines()
+            .flat_map(|line| wrap_text(line, body_width))
+            .collect::<Vec<_>>();
+        let max_lines = if cell.expanded { 24usize } else { 5usize };
+        let display_lines = if raw_lines.len() <= max_lines {
+            raw_lines
+        } else {
+            let mut kept = raw_lines.into_iter().take(max_lines).collect::<Vec<_>>();
+            kept.push(format!(
+                "… +{} lines (ctrl+t to toggle details)",
+                detail.lines().count().saturating_sub(max_lines)
+            ));
+            kept
+        };
+        for meta in display_lines {
             lines.push(Line::from(vec![
                 Span::raw("    "),
                 Span::styled("↳ ", Style::default().fg(Color::Rgb(90, 96, 108))),

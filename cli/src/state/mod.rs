@@ -3,7 +3,7 @@ pub mod runtime_projection;
 pub mod selectors;
 pub mod status_view_model;
 
-use crate::ui::widgets::history_cell::{HistoryCell, Transcript};
+use crate::ui::widgets::history_cell::{ExplorationAggregate, HistoryCell, Transcript};
 use agent_protocol::{ConversationTurn, FrontendMode, ModelUsage, RequestId};
 use std::time::{Duration, Instant};
 
@@ -42,10 +42,127 @@ pub struct TranscriptState {
     pub active_item_id: Option<String>,
     pub active_item_kind: Option<agent_protocol::TurnItemKind>,
     pub active_cell: Option<HistoryCell>,
+    pub active_exec: Option<ActiveExecSession>,
     pub active_reasoning_item_id: Option<String>,
     pub active_reasoning_title: Option<String>,
     pub active_reasoning_text: String,
     pub last_copyable_output: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveExecSession {
+    pub mode: ActiveExecMode,
+    pub calls: Vec<ActiveExecCall>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ActiveExecMode {
+    Exploration { aggregate: ExplorationAggregate },
+    Command,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveExecCall {
+    pub route_key: ActiveExecRouteKey,
+    pub label: String,
+    pub summary: String,
+    pub detail: String,
+    pub completed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActiveExecRouteKey {
+    ItemId(String),
+}
+
+impl ActiveExecSession {
+    pub fn new_command(call: ActiveExecCall) -> Self {
+        Self {
+            mode: ActiveExecMode::Command,
+            calls: vec![call],
+        }
+    }
+
+    pub fn new_exploration(call: ActiveExecCall) -> Self {
+        Self {
+            mode: ActiveExecMode::Exploration {
+                aggregate: ExplorationAggregate::new(String::new()),
+            },
+            calls: vec![call],
+        }
+    }
+
+    pub fn is_exploration(&self) -> bool {
+        matches!(self.mode, ActiveExecMode::Exploration { .. })
+    }
+
+    pub fn has_pending_calls(&self) -> bool {
+        self.calls.iter().any(|call| !call.completed)
+    }
+
+    pub fn append_call(&mut self, call: ActiveExecCall) {
+        self.calls.push(call);
+    }
+
+    pub fn append_delta(&mut self, route_key: &ActiveExecRouteKey, delta: &str) -> bool {
+        let is_exploration = self.is_exploration();
+        let Some(call) = self
+            .calls
+            .iter_mut()
+            .rev()
+            .find(|call| &call.route_key == route_key)
+        else {
+            return false;
+        };
+        let chunk = if is_exploration {
+            delta.trim()
+        } else {
+            delta
+        };
+        if chunk.is_empty() {
+            return true;
+        }
+        if is_exploration && !call.detail.trim().is_empty() {
+            call.detail.push_str(" — ");
+        }
+        call.detail.push_str(chunk);
+        true
+    }
+
+    pub fn complete_call(&mut self, route_key: &ActiveExecRouteKey) -> bool {
+        let Some(call) = self
+            .calls
+            .iter_mut()
+            .rev()
+            .find(|call| &call.route_key == route_key)
+        else {
+            return false;
+        };
+        call.completed = true;
+        true
+    }
+
+    pub fn contains_call(&self, route_key: &ActiveExecRouteKey) -> bool {
+        self.calls.iter().any(|call| &call.route_key == route_key)
+    }
+
+    pub fn exploration_aggregate_mut(&mut self) -> Option<&mut ExplorationAggregate> {
+        match &mut self.mode {
+            ActiveExecMode::Exploration { aggregate } => Some(aggregate),
+            ActiveExecMode::Command => None,
+        }
+    }
+
+    pub fn exploration_aggregate(&self) -> Option<&ExplorationAggregate> {
+        match &self.mode {
+            ActiveExecMode::Exploration { aggregate } => Some(aggregate),
+            ActiveExecMode::Command => None,
+        }
+    }
+
+    pub fn last_call(&self) -> Option<&ActiveExecCall> {
+        self.calls.last()
+    }
 }
 
 #[derive(Clone, Debug)]

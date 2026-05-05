@@ -1,5 +1,5 @@
 use crate::app::TuiApp;
-use crate::state::reducer::ItemDispatch;
+use crate::state::reducer::{ControlDispatch, ItemDispatch};
 use crate::ui::widgets::history_cell::{RenderContext, render_history_entry};
 use agent_protocol::TranscriptItem;
 
@@ -38,6 +38,32 @@ pub(crate) fn complete_control_item(app: &mut TuiApp, item_id: &str, item: &Tran
     app.handle_control_item_completed(item_id, render_history_entry(item, &mut render_context));
 }
 
+fn apply_control_dispatch(app: &mut TuiApp, dispatch: ControlDispatch) {
+    match dispatch {
+        ControlDispatch::Started {
+            item_id,
+            kind,
+            title,
+        } => {
+            app.handle_control_item_started(&item_id, kind, &title);
+        }
+        ControlDispatch::Delta { item_id, delta } => {
+            app.handle_control_item_delta(&item_id, &delta);
+        }
+        ControlDispatch::Completed { item } => match item {
+            TranscriptItem::CommandExecution { ref id, .. }
+            | TranscriptItem::FileChange { ref id, .. }
+            | TranscriptItem::ToolResult { ref id, .. } => {
+                complete_control_item(app, id, &item);
+            }
+            TranscriptItem::UserMessage { .. }
+            | TranscriptItem::SystemMessage { .. }
+            | TranscriptItem::AgentMessage { .. }
+            | TranscriptItem::Reasoning { .. } => {}
+        },
+    }
+}
+
 pub(crate) fn apply_item_dispatch(app: &mut TuiApp, dispatch: ItemDispatch) {
     match dispatch {
         ItemDispatch::AssistantStarted { turn_id, item_id } => {
@@ -46,21 +72,11 @@ pub(crate) fn apply_item_dispatch(app: &mut TuiApp, dispatch: ItemDispatch) {
         ItemDispatch::ReasoningStarted { item_id, title } => {
             app.handle_reasoning_item_started(&item_id, &title);
         }
-        ItemDispatch::ControlStarted {
-            item_id,
-            kind,
-            title,
-        } => {
-            app.handle_control_item_started(&item_id, kind, &title);
-        }
         ItemDispatch::AssistantDelta { item_id, delta } => {
             app.handle_assistant_item_delta(&item_id, &delta);
         }
         ItemDispatch::ReasoningDelta { item_id, delta } => {
             app.handle_reasoning_item_delta(&item_id, &delta);
-        }
-        ItemDispatch::ControlDelta { item_id, delta } => {
-            app.handle_control_item_delta(&item_id, &delta);
         }
         ItemDispatch::AssistantCompleted { item } => {
             if let TranscriptItem::AgentMessage { id, text } = item {
@@ -80,17 +96,7 @@ pub(crate) fn apply_item_dispatch(app: &mut TuiApp, dispatch: ItemDispatch) {
             | TranscriptItem::FileChange { .. }
             | TranscriptItem::ToolResult { .. } => {}
         },
-        ItemDispatch::ControlCompleted { item } => match item {
-            TranscriptItem::CommandExecution { ref id, .. }
-            | TranscriptItem::FileChange { ref id, .. }
-            | TranscriptItem::ToolResult { ref id, .. } => {
-                complete_control_item(app, id, &item);
-            }
-            TranscriptItem::UserMessage { .. }
-            | TranscriptItem::SystemMessage { .. }
-            | TranscriptItem::AgentMessage { .. }
-            | TranscriptItem::Reasoning { .. } => {}
-        },
+        ItemDispatch::Control(dispatch) => apply_control_dispatch(app, dispatch),
     }
 }
 

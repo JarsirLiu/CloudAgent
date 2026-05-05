@@ -15,20 +15,11 @@ pub(crate) enum ItemDispatch {
         item_id: String,
         title: String,
     },
-    ControlStarted {
-        item_id: String,
-        kind: TurnItemKind,
-        title: String,
-    },
     AssistantDelta {
         item_id: String,
         delta: String,
     },
     ReasoningDelta {
-        item_id: String,
-        delta: String,
-    },
-    ControlDelta {
         item_id: String,
         delta: String,
     },
@@ -38,7 +29,21 @@ pub(crate) enum ItemDispatch {
     ReasoningCompleted {
         item: TranscriptItem,
     },
-    ControlCompleted {
+    Control(ControlDispatch),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ControlDispatch {
+    Started {
+        item_id: String,
+        kind: TurnItemKind,
+        title: String,
+    },
+    Delta {
+        item_id: String,
+        delta: String,
+    },
+    Completed {
         item: TranscriptItem,
     },
 }
@@ -368,11 +373,11 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
         } if (*kind == TurnItemKind::ToolCall || *kind == TurnItemKind::CommandExecution)
             && title.is_some() =>
         {
-            Some(ItemDispatch::ControlStarted {
+            Some(ItemDispatch::Control(ControlDispatch::Started {
                 item_id: item_id.clone(),
                 kind: kind.clone(),
                 title: title.clone().unwrap_or_default(),
-            })
+            }))
         }
         AppServerNotification::AgentMessageDelta { item_id, delta, .. } => {
             Some(ItemDispatch::AssistantDelta {
@@ -393,22 +398,22 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             })
         }
         AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::ControlDelta {
+            Some(ItemDispatch::Control(ControlDispatch::Delta {
                 item_id: item_id.clone(),
                 delta: delta.clone(),
-            })
+            }))
         }
         AppServerNotification::ToolOutputDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::ControlDelta {
+            Some(ItemDispatch::Control(ControlDispatch::Delta {
                 item_id: item_id.clone(),
                 delta: delta.clone(),
-            })
+            }))
         }
         AppServerNotification::FileChangeOutputDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::ControlDelta {
+            Some(ItemDispatch::Control(ControlDispatch::Delta {
                 item_id: item_id.clone(),
                 delta: delta.clone(),
-            })
+            }))
         }
         AppServerNotification::ItemCompleted { item, .. } => match item {
             TranscriptItem::AgentMessage { .. } => {
@@ -420,7 +425,9 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             TranscriptItem::CommandExecution { .. }
             | TranscriptItem::FileChange { .. }
             | TranscriptItem::ToolResult { .. } => {
-                Some(ItemDispatch::ControlCompleted { item: item.clone() })
+                Some(ItemDispatch::Control(ControlDispatch::Completed {
+                    item: item.clone(),
+                }))
             }
             TranscriptItem::UserMessage { .. } | TranscriptItem::SystemMessage { .. } => None,
         },

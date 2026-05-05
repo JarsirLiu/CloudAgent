@@ -115,6 +115,42 @@ fn control_start_shows_active_command_placeholder() {
 }
 
 #[test]
+fn command_delta_updates_live_command_preview() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "cargo test");
+    app.handle_control_item_delta("tool:1", "running test_a\n");
+    app.handle_control_item_delta("tool:1", "running test_b\n");
+
+    let active = app
+        .transcript_state
+        .active_cell
+        .as_ref()
+        .expect("command session should stay active");
+    assert_eq!(active.label(), "Run command");
+    let rendered = active
+        .to_lines_with_mode(80)
+        .into_iter()
+        .map(|line| {
+            line.spans
+                .into_iter()
+                .map(|span| span.content.into_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("running test_a"));
+    assert!(rendered.contains("running test_b"));
+}
+
+#[test]
 fn control_start_replaces_prior_control_placeholder_without_flushing_running_history() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -135,6 +171,36 @@ fn control_start_replaces_prior_control_placeholder_without_flushing_running_his
         .as_ref()
         .expect("second control should stay active");
     assert_eq!(active.body(), "cargo test");
+}
+
+#[test]
+fn completed_command_flushes_from_active_control_session() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "cargo test");
+    app.handle_control_item_delta("tool:1", "running test_a\n");
+    app.handle_control_item_completed(
+        "tool:1",
+        HistoryCell::exec(
+            "Run command",
+            "cargo test",
+            Some("completed (exit 0)".to_string()),
+            HistoryTone::Control,
+        ),
+    );
+
+    assert!(app.transcript_state.active_cell.is_none());
+    assert!(app.transcript_state.active_exec.is_none());
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cells[0].body(), "cargo test");
 }
 
 #[test]
@@ -431,7 +497,7 @@ fn repeated_control_cells_coalesce_and_pending_queue_stays_consistent() {
 }
 
 #[test]
-fn live_exploration_cells_stay_visible_until_history_rebuild() {
+fn completed_exploration_cells_accumulate_in_active_session_until_flush() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -479,6 +545,109 @@ fn live_exploration_cells_stay_visible_until_history_rebuild() {
 }
 
 #[test]
+fn exploration_completion_stays_live_until_non_exploration_boundary() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "rg reasoning");
+    app.handle_control_item_completed(
+        "tool:1",
+        HistoryCell::exploration(
+            "Explored workspace",
+            "searched 1 time",
+            {
+                let mut aggregate =
+                    crate::ui::widgets::history_cell::ExplorationAggregate::new(
+                        "text search `reasoning`".to_string(),
+                    );
+                aggregate.searches = 1;
+                aggregate
+            },
+            HistoryTone::Control,
+        ),
+    );
+
+    assert!(app.transcript_state.transcript.cells().is_empty());
+    let active = app
+        .transcript_state
+        .active_cell
+        .as_ref()
+        .expect("exploration should remain live");
+    assert!(active.body().contains("searched 1 time"));
+
+    app.handle_assistant_item_started("turn-1", "assistant:1");
+    assert_eq!(app.transcript_state.transcript.cells().len(), 1);
+}
+
+#[test]
+fn sequential_exploration_completions_share_one_live_cell() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "rg think");
+    app.handle_control_item_completed(
+        "tool:1",
+        HistoryCell::exploration(
+            "Explored workspace",
+            "searched 1 time",
+            {
+                let mut aggregate =
+                    crate::ui::widgets::history_cell::ExplorationAggregate::new(
+                        "text search `think`".to_string(),
+                    );
+                aggregate.searches = 1;
+                aggregate
+            },
+            HistoryTone::Control,
+        ),
+    );
+    app.handle_control_item_started("tool:2", TurnItemKind::ToolCall, "read_file");
+    app.handle_control_item_completed(
+        "tool:2",
+        HistoryCell::exploration(
+            "Explored workspace",
+            "read 1 file",
+            {
+                let mut aggregate =
+                    crate::ui::widgets::history_cell::ExplorationAggregate::new(
+                        "cli/src/app/conversation/items.rs:1-200".to_string(),
+                    );
+                aggregate.read_files = 1;
+                aggregate
+            },
+            HistoryTone::Control,
+        ),
+    );
+
+    assert!(app.transcript_state.transcript.cells().is_empty());
+    let active = app
+        .transcript_state
+        .active_cell
+        .as_ref()
+        .expect("coalesced exploration should stay active");
+    assert!(active.body().contains("searched 1 time"));
+    assert!(active.body().contains("read 1 file"));
+
+    app.apply_turn_dispatch(TurnDispatch::Completed);
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert!(cells[0].body().contains("searched 1 time"));
+    assert!(cells[0].body().contains("read 1 file"));
+}
+
+#[test]
 fn assistant_start_consolidates_prior_exploration_stage() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -518,6 +687,66 @@ fn assistant_start_consolidates_prior_exploration_stage() {
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
     assert!(cells[0].body().contains("searched 1 time"));
+    assert!(cells[0].body().contains("read 1 file"));
+}
+
+#[test]
+fn assistant_start_consolidates_flushed_active_exploration_placeholder() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let mut aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "text search `think`".to_string(),
+    );
+    aggregate.searches = 1;
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "searched 1 time",
+        aggregate,
+        HistoryTone::Control,
+    ));
+
+    app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "rg reasoning");
+    app.handle_assistant_item_started("turn-1", "assistant:1");
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert!(cells[0].body().contains("searched 1 time"));
+}
+
+#[test]
+fn reasoning_start_consolidates_flushed_active_exploration_placeholder() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let mut aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "cli/src/app/conversation/items.rs:1-200".to_string(),
+    );
+    aggregate.read_files = 1;
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "read 1 file",
+        aggregate,
+        HistoryTone::Control,
+    ));
+
+    app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "pwd");
+    app.handle_reasoning_item_started("reasoning:1", "reasoning");
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
     assert!(cells[0].body().contains("read 1 file"));
 }
 
@@ -610,6 +839,36 @@ fn turn_completion_consolidates_trailing_exploration_stage() {
     assert_eq!(cells.len(), 1);
     assert!(cells[0].body().contains("searched 1 time"));
     assert!(cells[0].body().contains("read 1 file"));
+}
+
+#[test]
+fn turn_completion_consolidates_flushed_active_exploration_placeholder() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let mut aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "text search `cloudagent`".to_string(),
+    );
+    aggregate.searches = 1;
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "searched 1 time",
+        aggregate,
+        HistoryTone::Control,
+    ));
+
+    app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "ls");
+    app.apply_turn_dispatch(TurnDispatch::Completed);
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert!(cells[0].body().contains("searched 1 time"));
 }
 
 #[test]
