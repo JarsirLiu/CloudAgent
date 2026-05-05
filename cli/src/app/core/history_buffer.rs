@@ -64,4 +64,20 @@ impl TuiApp {
             self.pending_history_rebuild = true;
         }
     }
+
+    pub(crate) fn insert_cell_before_trailing_agent(&mut self, cell: HistoryCell) -> bool {
+        let existing = self.transcript_state.transcript.cells();
+        let Some(last) = existing.last() else {
+            return false;
+        };
+        if last.tone != HistoryTone::Agent {
+            return false;
+        }
+
+        let insert_at = existing.len().saturating_sub(1);
+        let mut cells = existing.to_vec();
+        cells.insert(insert_at, cell);
+        self.replace_history_cells(cells);
+        true
+    }
 }

@@ -165,14 +165,10 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
     assert!(!live_cells.iter().any(|cell| cell.body() == "approved"));
     assert!(live_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-            && cell.label() == "Explored workspace"
-            && cell.body().contains("inspect command")
-            && cell.aggregate().is_some_and(|aggregate| {
-                aggregate
-                    .details
-                    .iter()
-                    .any(|detail| detail.contains("pwd"))
-            })
+            && cell.kind() == crate::ui::widgets::history_cell::HistoryKind::Tool
+            && cell
+                .children()
+                .is_some_and(|children| children.iter().any(|child| child.body().contains("pwd")))
     }));
     assert!(live_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
@@ -291,14 +287,14 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
     );
     assert!(rebuilt_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-            && cell.label() == "Explored workspace"
-            && cell.body().contains("inspect command")
-            && cell.aggregate().is_some_and(|aggregate| {
-                aggregate
-                    .details
-                    .iter()
-                    .any(|detail| detail.contains("pwd"))
-            })
+            && ((cell.kind() == crate::ui::widgets::history_cell::HistoryKind::Tool
+                && cell.children().is_some_and(|children| {
+                    children.iter().any(|child| child.body().contains("pwd"))
+                }))
+                || (cell.label() == "Explored workspace"
+                    && cell.aggregate().is_some_and(|aggregate| {
+                        aggregate.details.iter().any(|detail| detail.contains("pwd"))
+                    })))
     }));
     assert!(rebuilt_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent

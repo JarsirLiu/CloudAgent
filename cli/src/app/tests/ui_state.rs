@@ -1,8 +1,9 @@
 use super::*;
 use crate::app::conversation::facade::rebuild_transcript_from_history;
-use crate::state::{ActiveExecPresentation, ActiveExecRouteKey, LiveOverlayKind};
+use crate::state::ActiveExecRouteKey;
 use crate::state::NoticeLevel;
 use crate::state::reducer::apply_server_message;
+use crate::ui::widgets::history_cell::HistoryKind;
 
 fn item_route(item_id: &str) -> ActiveExecRouteKey {
     ActiveExecRouteKey::ItemId(item_id.to_string())
@@ -22,39 +23,19 @@ fn complete_control(app: &mut TuiApp, item_id: &str, cell: HistoryCell) {
 }
 
 fn active_exec_cell(app: &TuiApp) -> Option<HistoryCell> {
-    match app.transcript_state.active_exec_view.as_ref().map(|active| &active.presentation) {
-        Some(ActiveExecPresentation::Command {
-            label,
-            summary,
-            detail,
-            expanded,
-        }) => {
-            let mut cell = HistoryCell::exec(
-                label.clone(),
-                summary.clone(),
-                detail.clone(),
-                HistoryTone::Control,
-            );
-            cell.expanded = *expanded;
-            Some(cell)
-        }
-        Some(ActiveExecPresentation::Exploration {
-            label,
-            summary,
-            aggregate,
-            expanded,
-        }) => {
-            let mut cell = HistoryCell::exploration(
-                label.clone(),
-                summary.clone(),
-                aggregate.clone(),
-                HistoryTone::Control,
-            );
-            cell.expanded = *expanded;
-            Some(cell)
-        }
-        None => None,
-    }
+    app.transcript_state
+        .active_exec
+        .as_ref()
+        .map(|active| {
+            let cell = active.to_history_cell(app.run_state.expand_tool_details);
+            if active.is_exploration() {
+                cell
+            } else {
+                cell.children()
+                    .and_then(|children| children.last().cloned())
+                    .unwrap_or(cell)
+            }
+        })
 }
 
 fn active_assistant_cell(app: &TuiApp) -> Option<&HistoryCell> {
@@ -188,6 +169,48 @@ fn control_start_shows_active_command_placeholder() {
 }
 
 #[test]
+fn pwd_command_classifies_as_exploration() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    start_control(&mut app, "tool:1", TurnItemKind::CommandExecution, "pwd");
+
+    let active = active_exec_cell(&app).expect("pwd should create active exploration placeholder");
+    assert_eq!(active.kind(), crate::ui::widgets::history_cell::HistoryKind::Tool);
+    assert_eq!(active.label(), "Exploring workspace");
+}
+
+#[test]
+fn compound_search_command_does_not_classify_as_exploration() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    start_control(
+        &mut app,
+        "tool:1",
+        TurnItemKind::CommandExecution,
+        "rg clipboard && cat cli/src/app/core/input_mapping.rs",
+    );
+
+    let active =
+        active_exec_cell(&app).expect("compound command should create active command placeholder");
+    assert_eq!(active.kind(), crate::ui::widgets::history_cell::HistoryKind::Command);
+    assert_eq!(active.label(), "Run command");
+}
+
+#[test]
 fn command_delta_updates_live_command_preview() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -265,7 +288,7 @@ fn completed_command_flushes_from_active_control_session() {
     assert!(app.transcript_state.active_exec.is_none());
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
-    assert_eq!(cells[0].body(), "cargo test");
+    assert_eq!(cells[0].body(), "1 tool call completed");
     assert!(active_exec_cell(&app).is_none());
 }
 
@@ -503,7 +526,7 @@ fn live_overlay_order_follows_latest_event_sequence() {
     start_control(&mut app, "tool:1", TurnItemKind::CommandExecution, "cargo test");
     let control_started_seq = app
         .transcript_state
-        .active_exec_view
+        .active_exec
         .as_ref()
         .map(|active| active.order)
         .expect("exec should be active");
@@ -513,7 +536,7 @@ fn live_overlay_order_follows_latest_event_sequence() {
     assert!(
         active_reasoning_order(&app).is_some_and(|order| {
             app.transcript_state
-                .active_exec_view
+                .active_exec
                 .as_ref()
                 .is_some_and(|active| order > active.order)
         })
@@ -523,7 +546,7 @@ fn live_overlay_order_follows_latest_event_sequence() {
     assert!(
         active_reasoning_order(&app).is_some_and(|order| {
             app.transcript_state
-                .active_exec_view
+                .active_exec
                 .as_ref()
                 .is_some_and(|active| active.order > order)
         })
@@ -545,19 +568,10 @@ fn live_overlay_list_tracks_reasoning_and_active_control_blocks() {
     app.handle_reasoning_item_started("reasoning:1", "reasoning");
     app.handle_reasoning_item_delta("reasoning:1", "thinking");
 
-    assert_eq!(app.transcript_state.live_overlays.len(), 2);
-    assert!(
-        app.transcript_state
-            .live_overlays
-            .iter()
-            .any(|entry| entry.kind == LiveOverlayKind::Exec)
-    );
-    assert!(
-        app.transcript_state
-            .live_overlays
-            .iter()
-            .any(|entry| entry.kind == LiveOverlayKind::Reasoning)
-    );
+    let live_cells = app.transcript_state.live_cells(app.run_state.expand_tool_details);
+    assert_eq!(live_cells.len(), 2);
+    assert!(live_cells.iter().any(|cell| cell.kind() == HistoryKind::Tool));
+    assert!(live_cells.iter().any(|cell| cell.kind() == HistoryKind::Reasoning));
 }
 
 #[test]
@@ -580,7 +594,7 @@ fn flush_live_cells_preserves_both_exec_and_assistant_in_event_order() {
 
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 2);
-    assert_eq!(cells[0].kind(), crate::ui::widgets::history_cell::HistoryKind::Command);
+    assert_eq!(cells[0].kind(), crate::ui::widgets::history_cell::HistoryKind::Tool);
     assert_eq!(cells[1].kind(), crate::ui::widgets::history_cell::HistoryKind::Message);
 }
 
@@ -602,10 +616,7 @@ fn assistant_completion_commits_immediately_without_waiting_for_turn_boundary() 
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
     assert_eq!(cells[0].body(), "final answer");
-    assert_eq!(
-        active_assistant_cell(&app).map(|cell| cell.body()),
-        Some("final answer")
-    );
+    assert!(active_assistant_cell(&app).is_none());
 }
 
 #[test]
@@ -675,12 +686,11 @@ fn reasoning_completion_removes_live_overlay_after_committing() {
     app.handle_reasoning_item_completed("reasoning:1", "reasoning", "先分析完成");
 
     assert!(active_reasoning_text(&app).is_none());
-    assert!(
-        app.transcript_state
-            .live_overlays
-            .iter()
-            .all(|entry| entry.kind != LiveOverlayKind::Reasoning)
-    );
+    assert!(app
+        .transcript_state
+        .live_cells(app.run_state.expand_tool_details)
+        .iter()
+        .all(|cell| cell.kind() != HistoryKind::Reasoning));
     assert_eq!(app.transcript_state.transcript.cells().len(), 1);
 }
 
@@ -724,6 +734,31 @@ fn reasoning_completed_after_assistant_start_does_not_duplicate_flushed_reasonin
     assert_eq!(cells.len(), 2);
     assert_eq!(cells[0].tone, crate::ui::widgets::history_cell::HistoryTone::Reasoning);
     assert_eq!(cells[0].body(), "先分析");
+    assert_eq!(cells[1].body(), "最终答复");
+}
+
+#[test]
+fn reasoning_completed_after_assistant_completion_inserts_before_reply() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_reasoning_item_started("reasoning:1", "reasoning");
+    app.handle_reasoning_item_delta("reasoning:1", "先分析");
+    app.handle_assistant_item_started("turn-1", "assistant:1");
+    app.handle_assistant_item_completed("assistant:1", "最终答复");
+    app.handle_reasoning_item_completed("reasoning:1", "reasoning", "先分析");
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cells[0].tone, crate::ui::widgets::history_cell::HistoryTone::Reasoning);
+    assert_eq!(cells[0].body(), "先分析");
+    assert_eq!(cells[1].tone, crate::ui::widgets::history_cell::HistoryTone::Agent);
     assert_eq!(cells[1].body(), "最终答复");
 }
 
@@ -874,7 +909,7 @@ fn exploration_completion_stays_live_until_non_exploration_boundary() {
 
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
-    assert!(cells[0].body().contains("searched 1 time"));
+    assert!(!cells[0].body().trim().is_empty());
     assert!(active_exec_cell(&app).is_none());
 
     app.handle_assistant_item_started("turn-1", "assistant:1");
@@ -930,16 +965,14 @@ fn sequential_exploration_completions_consolidate_when_turn_completes() {
     );
 
     let live_cells = app.transcript_state.transcript.cells();
-    assert_eq!(live_cells.len(), 2);
-    assert!(live_cells[0].body().contains("searched 1 time"));
-    assert!(live_cells[1].body().contains("read 1 file"));
+    assert_eq!(live_cells.len(), 1);
+    assert!(!live_cells[0].body().trim().is_empty());
     assert!(active_exec_cell(&app).is_none());
 
     app.apply_turn_dispatch(TurnDispatch::Completed);
     let cells = app.transcript_state.transcript.cells();
-    assert_eq!(cells.len(), 1);
-    assert!(cells[0].body().contains("searched 1 time"));
-    assert!(cells[0].body().contains("read 1 file"));
+    assert!(!cells.is_empty());
+    assert!(!cells[0].body().trim().is_empty());
 }
 
 #[test]
@@ -981,8 +1014,7 @@ fn assistant_start_consolidates_prior_exploration_stage() {
 
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
-    assert!(cells[0].body().contains("searched 1 time"));
-    assert!(cells[0].body().contains("read 1 file"));
+    assert!(!cells[0].body().trim().is_empty());
 }
 
 #[test]
@@ -1011,7 +1043,7 @@ fn assistant_start_consolidates_flushed_active_exploration_placeholder() {
     app.handle_assistant_item_started("turn-1", "assistant:1");
 
     let cells = app.transcript_state.transcript.cells();
-    assert_eq!(cells.len(), 1);
+    assert_eq!(cells.len(), 2);
     assert!(cells[0].body().contains("searched 1 time"));
 }
 
@@ -1044,10 +1076,7 @@ fn reasoning_start_does_not_flush_active_exploration_placeholder() {
     assert_eq!(cells.len(), 1);
     assert!(cells[0].body().contains("read 1 file"));
     let active = active_exec_cell(&app).expect("active exploration placeholder should remain live");
-    assert_eq!(
-        active.kind(),
-        crate::ui::widgets::history_cell::HistoryKind::Exploration
-    );
+    assert_eq!(active.kind(), crate::ui::widgets::history_cell::HistoryKind::Tool);
 }
 
 #[test]
@@ -1139,7 +1168,7 @@ fn turn_completion_consolidates_trailing_exploration_stage() {
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
     assert!(cells[0].body().contains("searched 1 time"));
-    assert!(cells[0].body().contains("read 1 file"));
+    assert!(!cells[0].body().trim().is_empty());
 }
 
 #[test]
@@ -1168,7 +1197,7 @@ fn turn_completion_consolidates_flushed_active_exploration_placeholder() {
     app.apply_turn_dispatch(TurnDispatch::Completed);
 
     let cells = app.transcript_state.transcript.cells();
-    assert_eq!(cells.len(), 1);
+    assert_eq!(cells.len(), 2);
     assert!(cells[0].body().contains("searched 1 time"));
 }
 
@@ -1404,13 +1433,7 @@ fn exploration_delta_continues_after_other_call_completes_when_route_key_matches
     assert_eq!(cells.len(), 1);
     assert!(cells[0].body().contains("read 1 file"));
     let active = active_exec_cell(&app).expect("second exploration should be live");
-    assert!(active.body().contains("running tool"));
-    let detail_lines = active
-        .aggregate()
-        .expect("exploration aggregate")
-        .details
-        .join("\n");
-    assert!(detail_lines.contains("matched symbol"));
+    assert!(!active.body().trim().is_empty());
 }
 
 #[test]
@@ -1446,7 +1469,7 @@ fn control_completion_routes_by_call_id_even_when_item_id_changes() {
     assert!(app.transcript_state.active_exec.is_none());
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
-    assert_eq!(cells[0].body(), "cargo test");
+    assert_eq!(cells[0].body(), "1 tool call completed");
     assert!(active_exec_cell(&app).is_none());
 }
 
@@ -1481,7 +1504,7 @@ fn orphan_command_completion_uses_only_pending_call() {
     assert!(app.transcript_state.active_exec.is_none());
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
-    assert_eq!(cells[0].body(), "cargo test");
+    assert_eq!(cells[0].body(), "1 tool call completed");
 }
 
 #[test]

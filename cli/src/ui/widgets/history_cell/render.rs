@@ -1,4 +1,7 @@
 use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone};
+use crate::app::conversation::exploration::{
+    is_exploration_command, summarize_exploration_command,
+};
 use agent_protocol::{
     CommandExecutionStatus, StructuredToolResult, TranscriptItem, TurnItemKind, WriteFileStatus,
 };
@@ -400,31 +403,6 @@ fn compact_path(path: &str, max_chars: usize) -> String {
         .iter()
         .collect();
     format!("…{tail}")
-}
-
-fn is_exploration_command(command: &str) -> bool {
-    let normalized = command.trim().to_ascii_lowercase();
-    normalized.starts_with("ls ")
-        || normalized == "ls"
-        || normalized.starts_with("dir ")
-        || normalized == "dir"
-        || normalized == "pwd"
-        || normalized.starts_with("cat ")
-        || normalized.starts_with("type ")
-        || normalized.starts_with("rg ")
-        || normalized.starts_with("grep ")
-        || normalized.starts_with("findstr ")
-        || normalized.starts_with("select-string ")
-        || normalized.starts_with("git grep ")
-}
-
-fn summarize_exploration_command(command: &str) -> String {
-    let compact = compact_inline(command.trim(), 72);
-    if let Some((_, rhs)) = compact.rsplit_once("&&") {
-        compact_inline(rhs.trim(), 56)
-    } else {
-        compact
-    }
 }
 
 fn format_line_range(start_line: Option<usize>, end_line: Option<usize>) -> String {

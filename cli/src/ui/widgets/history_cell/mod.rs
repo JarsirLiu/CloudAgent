@@ -58,6 +58,13 @@ pub struct EditCell {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolGroupCell {
+    pub label: String,
+    pub summary: String,
+    pub children: Vec<HistoryCell>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InfoCell {
     pub label: String,
     pub text: String,
@@ -131,6 +138,7 @@ enum HistoryContent {
     Exploration(ExplorationCell),
     Exec(ExecCell),
     Edit(EditCell),
+    ToolGroup(ToolGroupCell),
     Info(InfoCell),
 }
 
@@ -242,6 +250,25 @@ impl HistoryCell {
         }
     }
 
+    pub fn tool_group(
+        label: impl Into<String>,
+        summary: impl Into<String>,
+        children: Vec<HistoryCell>,
+        tone: HistoryTone,
+    ) -> Self {
+        Self {
+            tone,
+            content: HistoryContent::ToolGroup(ToolGroupCell {
+                label: label.into(),
+                summary: summary.into(),
+                children,
+            }),
+            expanded: false,
+            repeat_count: 1,
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.body().trim().is_empty()
     }
@@ -255,6 +282,7 @@ impl HistoryCell {
             HistoryContent::Exploration(cell) => cell.summary.push_str(delta),
             HistoryContent::Exec(cell) => cell.summary.push_str(delta),
             HistoryContent::Edit(cell) => cell.summary.push_str(delta),
+            HistoryContent::ToolGroup(cell) => cell.summary.push_str(delta),
         }
         self.invalidate_cache();
     }
@@ -269,6 +297,7 @@ impl HistoryCell {
             HistoryContent::Exploration(cell) => cell.summary = body,
             HistoryContent::Exec(cell) => cell.summary = body,
             HistoryContent::Edit(cell) => cell.summary = body,
+            HistoryContent::ToolGroup(cell) => cell.summary = body,
         }
         self.invalidate_cache();
     }
@@ -281,6 +310,7 @@ impl HistoryCell {
             HistoryContent::Exploration(cell) => &cell.summary,
             HistoryContent::Exec(cell) => &cell.summary,
             HistoryContent::Edit(cell) => &cell.summary,
+            HistoryContent::ToolGroup(cell) => &cell.summary,
             HistoryContent::Info(cell) => &cell.text,
         }
     }
@@ -298,7 +328,7 @@ impl HistoryCell {
             HistoryContent::Reasoning(_) => HistoryKind::Reasoning,
             HistoryContent::Exploration(_) => HistoryKind::Exploration,
             HistoryContent::Exec(_) => HistoryKind::Command,
-            HistoryContent::Edit(_) => HistoryKind::Tool,
+            HistoryContent::Edit(_) | HistoryContent::ToolGroup(_) => HistoryKind::Tool,
             HistoryContent::Info(_) => default_kind_for_tone(self.tone),
         }
     }
@@ -318,6 +348,13 @@ impl HistoryCell {
         }
     }
 
+    pub fn children(&self) -> Option<&[HistoryCell]> {
+        match &self.content {
+            HistoryContent::ToolGroup(cell) => Some(&cell.children),
+            _ => None,
+        }
+    }
+
     pub fn set_aggregate(&mut self, aggregate: ExplorationAggregate) {
         if let HistoryContent::Exploration(cell) = &mut self.content {
             cell.aggregate = aggregate;
@@ -331,6 +368,7 @@ impl HistoryCell {
             HistoryContent::Exploration(cell) => cell.summary = summary,
             HistoryContent::Exec(cell) => cell.summary = summary,
             HistoryContent::Edit(cell) => cell.summary = summary,
+            HistoryContent::ToolGroup(cell) => cell.summary = summary,
             _ => {}
         }
         self.invalidate_cache();
@@ -344,6 +382,7 @@ impl HistoryCell {
             HistoryContent::Exploration(cell) => &cell.label,
             HistoryContent::Exec(cell) => &cell.label,
             HistoryContent::Edit(cell) => &cell.label,
+            HistoryContent::ToolGroup(cell) => &cell.label,
             HistoryContent::Info(cell) => &cell.label,
         }
     }
@@ -376,11 +415,22 @@ impl HistoryCell {
             HistoryKind::Reasoning => render_reasoning(self, width),
             HistoryKind::Exploration => render_exploration(self, width),
             HistoryKind::Command => render_command(self, width),
-            HistoryKind::Tool => render_tool_like(self, width, Color::Rgb(120, 170, 255), "•"),
+            HistoryKind::Tool => render_tool(self, width),
             HistoryKind::Notice => render_notice(self, width),
         }
     }
 }
+
+impl PartialEq for HistoryCell {
+    fn eq(&self, other: &Self) -> bool {
+        self.tone == other.tone
+            && self.content == other.content
+            && self.expanded == other.expanded
+            && self.repeat_count == other.repeat_count
+    }
+}
+
+impl Eq for HistoryCell {}
 
 #[derive(Default)]
 pub struct Transcript {
@@ -586,8 +636,11 @@ fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         );
         out.extend(lines);
         if index + 1 < paragraph_count && !out.is_empty() {
-            // Preserve explicit paragraph breaks without restarting the header prefix.
-            out.push(Line::default());
+            // Preserve paragraph spacing while keeping the same continuous reasoning gutter.
+            out.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+            ]));
         }
     }
     while out.last().is_some_and(|line| {
@@ -607,7 +660,7 @@ fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         Span::raw("    "),
         Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
         Span::styled(
-            format!("… +{} lines (ctrl+t to toggle details)", hidden_lines),
+            format!("… +{} lines (Ctrl+T toggles details)", hidden_lines),
             Style::default().fg(Color::Rgb(132, 138, 150)),
         ),
     ]));
@@ -651,30 +704,8 @@ fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         .map(|aggregate| aggregate.details.as_slice())
         .unwrap_or(&[]);
     let max_details = if cell.expanded { 8 } else { 2 };
-    let mut inline = details
-        .iter()
-        .take(max_details)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("; ");
-    if details.len() > max_details {
-        if !inline.is_empty() {
-            inline.push_str("; ");
-        }
-        inline.push_str(&format!(
-            "… +{} more",
-            details.len().saturating_sub(max_details)
-        ));
-    }
-
-    let mut text = cell.body().to_string();
-    if !inline.is_empty() {
-        text.push_str(" — ");
-        text.push_str(&inline);
-    }
-
-    word_wrap_text(
-        &text,
+    let mut lines = word_wrap_text(
+        cell.body(),
         WrapOptions::new(width)
             .initial_indent(Line::from(vec![
                 Span::raw("  "),
@@ -690,7 +721,33 @@ fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     )
     .into_iter()
     .map(tint_tail_rgb(190, 200, 216))
-    .collect()
+    .collect::<Vec<_>>();
+
+    for (index, detail) in details.iter().take(max_details).enumerate() {
+        let indent = if index == 0 { "  └ " } else { "    " };
+        lines.extend(
+            word_wrap_text(
+                detail,
+                WrapOptions::new(width)
+                    .initial_indent(Line::from(indent))
+                    .subsequent_indent(Line::from("    ")),
+            )
+            .into_iter()
+            .map(tint_all_rgb(190, 200, 216)),
+        );
+    }
+
+    if details.len() > max_details {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(
+                format!("… +{} more", details.len().saturating_sub(max_details)),
+                Style::default().fg(Color::Rgb(148, 152, 164)),
+            ),
+        ]));
+    }
+
+    lines
 }
 
 fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -747,9 +804,186 @@ fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
                 Span::styled("↳ ", Style::default().fg(Color::Rgb(90, 96, 108))),
                 Span::styled(
                     format!(
-                        "… +{} lines (ctrl+t to toggle details)",
+                        "… +{} lines (Ctrl+T toggles details)",
                         detail.lines().count().saturating_sub(max_lines)
                     ),
+                    Style::default().fg(Color::Rgb(132, 138, 150)),
+                ),
+            ]));
+            kept
+        };
+        lines.extend(display_lines.into_iter().map(tint_tail_rgb(132, 138, 150)));
+    }
+
+    lines
+}
+
+fn render_tool(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    match &cell.content {
+        HistoryContent::ToolGroup(group) => render_tool_group(cell, group, width),
+        _ => render_tool_like(cell, width, Color::Rgb(120, 170, 255), "•"),
+    }
+}
+
+fn render_tool_group(cell: &HistoryCell, group: &ToolGroupCell, width: usize) -> Vec<Line<'static>> {
+    let title = pretty_tool_title(&group.label);
+    let mut lines = vec![Line::from(vec![
+        Span::raw("  "),
+        Span::styled("• ", Style::default().fg(Color::Rgb(120, 170, 255))),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(210, 215, 225))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+
+    if !is_generic_tool_group_summary(&group.summary) {
+        lines.extend(
+            word_wrap_text(
+                &group.summary,
+                WrapOptions::new(width)
+                    .initial_indent(Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                    ]))
+                    .subsequent_indent(Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                    ])),
+            )
+            .into_iter()
+            .map(tint_tail_rgb(148, 152, 164)),
+        );
+    }
+
+    if !cell.expanded {
+        let preview_count = group.children.len().min(2);
+        for (index, child) in group.children.iter().take(preview_count).enumerate() {
+            let step_title = if child.label().is_empty() {
+                "Step".to_string()
+            } else {
+                child.label().to_string()
+            };
+            let preview_body = compact_inline_preview(child.body(), 72);
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                Span::styled(
+                    if index + 1 == preview_count && group.children.len() == 1 {
+                        "└ "
+                    } else {
+                        "├ "
+                    },
+                    Style::default().fg(Color::Rgb(90, 96, 108)),
+                ),
+                Span::styled(
+                    step_title,
+                    Style::default()
+                        .fg(Color::Rgb(215, 220, 232))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(preview_body, Style::default().fg(Color::Rgb(190, 200, 216))),
+            ]));
+        }
+        let hidden_count = group.children.len().saturating_sub(preview_count);
+        if hidden_count > 0 {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                Span::styled(
+                    format!(
+                        "{} more step{} hidden (Ctrl+T toggles details)",
+                        hidden_count,
+                        if hidden_count == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ),
+                    Style::default().fg(Color::Rgb(148, 152, 164)),
+                ),
+            ]));
+        }
+        return lines;
+    }
+
+    for (index, child) in group.children.iter().enumerate() {
+        let is_last = index + 1 == group.children.len();
+        lines.extend(render_tool_group_child(child, width, is_last));
+    }
+
+    lines
+}
+
+fn render_tool_group_child(cell: &HistoryCell, width: usize, is_last: bool) -> Vec<Line<'static>> {
+    let branch = if is_last { "└ " } else { "├ " };
+    let rail = if is_last { "  " } else { "│ " };
+    let title = if cell.label().is_empty() {
+        "Step".to_string()
+    } else {
+        cell.label().to_string()
+    };
+
+    let mut lines = vec![Line::from(vec![
+        Span::raw("    "),
+        Span::styled(branch, Style::default().fg(Color::Rgb(90, 96, 108))),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(215, 220, 232))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+
+    lines.extend(
+        word_wrap_text(
+            cell.body(),
+            WrapOptions::new(width)
+                .initial_indent(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(rail, Style::default().fg(Color::Rgb(90, 96, 108))),
+                ]))
+                .subsequent_indent(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(rail, Style::default().fg(Color::Rgb(90, 96, 108))),
+                ])),
+        )
+        .into_iter()
+        .map(tint_tail_rgb(190, 200, 216)),
+    );
+
+    if let Some(detail) = cell.detail() {
+        let raw_lines = detail
+            .lines()
+            .flat_map(|line| {
+                word_wrap_text(
+                    line,
+                    WrapOptions::new(width)
+                        .initial_indent(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled(rail, Style::default().fg(Color::Rgb(90, 96, 108))),
+                            Span::styled("↳ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                        ]))
+                        .subsequent_indent(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled(rail, Style::default().fg(Color::Rgb(90, 96, 108))),
+                            Span::raw("  "),
+                        ])),
+                )
+            })
+            .collect::<Vec<_>>();
+        let max_lines = if cell.expanded { 12usize } else { 3usize };
+        let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_lines {
+            raw_lines
+        } else {
+            let mut kept = raw_lines.into_iter().take(max_lines).collect::<Vec<_>>();
+            kept.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(rail, Style::default().fg(Color::Rgb(90, 96, 108))),
+                Span::styled(
+                    format!("… +{} more lines", detail.lines().count().saturating_sub(max_lines)),
                     Style::default().fg(Color::Rgb(132, 138, 150)),
                 ),
             ]));
@@ -806,7 +1040,7 @@ fn render_tool_like(
             Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
             Span::styled(
                 format!(
-                    "… +{} lines (ctrl+t to toggle details)",
+                    "… +{} lines (Ctrl+T toggles details)",
                     wrapped.len().saturating_sub(max_lines)
                 ),
                 Style::default().fg(Color::Rgb(148, 152, 164)),
@@ -860,6 +1094,26 @@ fn pretty_tool_title(label: &str) -> String {
     }
 }
 
+fn compact_inline_preview(input: &str, max_chars: usize) -> String {
+    let trimmed = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = String::new();
+    for (index, ch) in trimmed.chars().enumerate() {
+        if index >= max_chars {
+            out.push('…');
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn is_generic_tool_group_summary(summary: &str) -> bool {
+    matches!(
+        summary.trim().to_ascii_lowercase().as_str(),
+        "exploring workspace" | "running tool"
+    )
+}
+
 fn tint_all_rgb(r: u8, g: u8, b: u8) -> impl Fn(Line<'static>) -> Line<'static> {
     move |line| {
         let spans = line
@@ -900,7 +1154,7 @@ fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{HistoryCell, HistoryFormat};
+    use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone};
 
     fn joined(cell: &HistoryCell, width: usize) -> String {
         cell.to_lines_with_mode(width)
@@ -979,5 +1233,27 @@ mod tests {
         assert!(!rendered.contains("\n\n"));
         assert!(rendered.contains("方案：只修改 exec_command 的 workdir 处理逻辑。"));
         assert!(rendered.contains("但 resolve_read_path 允许绝对路径。"));
+    }
+
+    #[test]
+    fn exploration_cells_render_summary_with_nested_details() {
+        let mut aggregate = ExplorationAggregate::new("file search `cli`".to_string());
+        aggregate.searches = 8;
+        aggregate.read_files = 10;
+        aggregate.push_detail("text search `clipboard`".to_string());
+        aggregate.push_detail("Read input_mapping.rs".to_string());
+        aggregate.push_detail("Read textarea.rs".to_string());
+        let cell = HistoryCell::exploration(
+            "Explored workspace",
+            "searched 8 times, read 10 files",
+            aggregate,
+            HistoryTone::Control,
+        );
+
+        let rendered = joined(&cell, 120);
+        assert!(rendered.contains("Explored workspace"));
+        assert!(rendered.contains("searched 8 times, read 10 files"));
+        assert!(rendered.contains("└ file search `cli`"));
+        assert!(rendered.contains("text search `clipboard`"));
     }
 }

@@ -1,6 +1,6 @@
 pub mod cli_settings;
 pub(crate) mod commands;
-mod conversation;
+pub(crate) mod conversation;
 mod core;
 pub mod effects;
 mod facade;

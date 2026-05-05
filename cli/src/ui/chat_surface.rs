@@ -11,7 +11,6 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 const WELCOME_HEIGHT: u16 = 27;
 const MAX_CONTENT_WIDTH: u16 = 140;
 const ACTIVE_TOP_INSET: u16 = 1;
-
 pub(crate) struct ChatSurface;
 
 impl ChatSurface {
@@ -231,12 +230,17 @@ fn has_live_status(app: &TuiApp) -> bool {
 
 fn live_overlay_lines(app: &TuiApp, render_width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    for (index, entry) in app.transcript_state.live_overlays.iter().enumerate() {
+    for (index, cell) in app
+        .transcript_state
+        .live_cells(app.run_state.expand_tool_details)
+        .iter()
+        .enumerate()
+    {
         if index > 0 {
             lines.push(Line::from(""));
         }
-        if !entry.cell.body().trim().is_empty() {
-            lines.extend(entry.cell.to_lines_with_mode(render_width));
+        if !cell.body().trim().is_empty() {
+            lines.extend(cell.to_lines_with_mode(render_width));
         }
     }
     lines

@@ -40,11 +40,8 @@ pub struct ServerRequestState {
 pub struct TranscriptState {
     pub transcript: Transcript,
     pub active_assistant: Option<ActiveAssistantState>,
-    pub active_exec_view: Option<ActiveExecViewState>,
     pub active_exec: Option<ActiveExecSession>,
     pub active_reasoning: Option<ActiveReasoningState>,
-    pub next_overlay_order: u64,
-    pub live_overlays: Vec<LiveOverlayEntry>,
     pub next_live_block_id: u64,
     pub last_copyable_output: Option<String>,
 }
@@ -69,45 +66,9 @@ pub struct ActiveReasoningState {
 }
 
 #[derive(Clone, Debug)]
-pub struct ActiveExecViewState {
-    pub block_id: u64,
-    pub presentation: ActiveExecPresentation,
-    pub order: u64,
-    pub committed: bool,
-}
-
-#[derive(Clone, Debug)]
-pub enum ActiveExecPresentation {
-    Command {
-        label: String,
-        summary: String,
-        detail: Option<String>,
-        expanded: bool,
-    },
-    Exploration {
-        label: String,
-        summary: String,
-        aggregate: ExplorationAggregate,
-        expanded: bool,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LiveOverlayKind {
-    Assistant,
-    Exec,
-    Reasoning,
-}
-
-#[derive(Clone, Debug)]
-pub struct LiveOverlayEntry {
-    pub id: u64,
-    pub kind: LiveOverlayKind,
-    pub cell: HistoryCell,
-}
-
-#[derive(Clone, Debug)]
 pub struct ActiveExecSession {
+    pub block_id: u64,
+    pub order: u64,
     pub mode: ActiveExecMode,
     pub calls: Vec<ActiveExecCall>,
 }
@@ -147,59 +108,20 @@ impl ActiveReasoningState {
     }
 }
 
-impl ActiveExecViewState {
-    pub fn to_history_cell(&self) -> HistoryCell {
-        self.presentation.to_history_cell()
-    }
-}
-
-impl ActiveExecPresentation {
-    pub fn to_history_cell(&self) -> HistoryCell {
-        match self {
-            ActiveExecPresentation::Command {
-                label,
-                summary,
-                detail,
-                expanded,
-            } => {
-                let mut cell = HistoryCell::exec(
-                    label.clone(),
-                    summary.clone(),
-                    detail.clone(),
-                    HistoryTone::Control,
-                );
-                cell.expanded = *expanded;
-                cell
-            }
-            ActiveExecPresentation::Exploration {
-                label,
-                summary,
-                aggregate,
-                expanded,
-            } => {
-                let mut cell = HistoryCell::exploration(
-                    label.clone(),
-                    summary.clone(),
-                    aggregate.clone(),
-                    HistoryTone::Control,
-                );
-                cell.expanded = *expanded;
-                cell
-            }
-        }
-    }
-}
-
 impl ActiveExecSession {
-    pub fn new_command(call: ActiveExecCall) -> Self {
+    pub fn new_command(block_id: u64, order: u64, call: ActiveExecCall) -> Self {
         Self {
+            block_id,
+            order,
             mode: ActiveExecMode::Command,
             calls: vec![call],
         }
     }
 
-    pub fn new_exploration(call: ActiveExecCall) -> Self {
+    pub fn new_exploration(block_id: u64, order: u64, call: ActiveExecCall) -> Self {
         Self {
+            block_id,
+            order,
             mode: ActiveExecMode::Exploration {
                 aggregate: ExplorationAggregate::new(String::new()),
             },
@@ -296,6 +218,136 @@ impl ActiveExecSession {
 
     pub fn last_call(&self) -> Option<&ActiveExecCall> {
         self.calls.last()
+    }
+
+    pub fn to_history_cell(&self, expanded: bool) -> HistoryCell {
+        let has_pending = self.has_pending_calls();
+        let label = match self.mode {
+            ActiveExecMode::Exploration { .. } => {
+                if has_pending { "Exploring workspace" } else { "Explored workspace" }
+            }
+            ActiveExecMode::Command => "Tools",
+        };
+
+        let summary = match &self.mode {
+            ActiveExecMode::Exploration { aggregate } => {
+                format_active_exploration_summary(aggregate, has_pending)
+            }
+            ActiveExecMode::Command => format_tool_activity_summary(self.calls.len(), has_pending),
+        };
+
+        let children = self
+            .calls
+            .iter()
+            .map(|call| {
+                let mut cell = HistoryCell::exec(
+                    call.label.clone(),
+                    call.summary.clone(),
+                    (!call.detail.trim().is_empty()).then(|| call.detail.clone()),
+                    HistoryTone::Control,
+                );
+                cell.expanded = expanded;
+                cell
+            })
+            .collect();
+
+        let mut block = HistoryCell::tool_group(label, summary, children, HistoryTone::Control);
+        block.expanded = expanded;
+        block
+    }
+}
+
+impl TranscriptState {
+    pub fn live_cells(&self, expand_details: bool) -> Vec<HistoryCell> {
+        let mut ordered = Vec::new();
+        if let Some(active) = &self.active_reasoning
+            && !active.text.trim().is_empty()
+        {
+            ordered.push((active.order, active.to_history_cell()));
+        }
+        if let Some(active) = &self.active_exec {
+            let cell = active.to_history_cell(expand_details);
+            if !cell.body().trim().is_empty() {
+                ordered.push((active.order, cell));
+            }
+        }
+        if let Some(active) = &self.active_assistant
+            && !active.cell.body().trim().is_empty()
+        {
+            ordered.push((active.order, active.cell.clone()));
+        }
+        ordered.sort_by_key(|(order, _)| *order);
+        ordered.into_iter().map(|(_, cell)| cell).collect()
+    }
+}
+
+fn format_tool_activity_summary(call_count: usize, has_pending: bool) -> String {
+    if has_pending {
+        format!(
+            "{} tool call{} in progress",
+            call_count,
+            if call_count == 1 { "" } else { "s" }
+        )
+    } else {
+        format!(
+            "{} tool call{} completed",
+            call_count,
+            if call_count == 1 { "" } else { "s" }
+        )
+    }
+}
+
+fn format_active_exploration_summary(
+    aggregate: &ExplorationAggregate,
+    has_pending: bool,
+) -> String {
+    let mut parts = Vec::new();
+    if aggregate.searches > 0 {
+        parts.push(format!(
+            "searched {} time{}",
+            aggregate.searches,
+            if aggregate.searches == 1 { "" } else { "s" }
+        ));
+    }
+    if aggregate.read_files > 0 {
+        parts.push(format!(
+            "read {} file{}",
+            aggregate.read_files,
+            if aggregate.read_files == 1 { "" } else { "s" }
+        ));
+    }
+    if aggregate.listed_directories > 0 {
+        parts.push(format!(
+            "listed {} director{}",
+            aggregate.listed_directories,
+            if aggregate.listed_directories == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        ));
+    }
+    if aggregate.metadata_reads > 0 {
+        parts.push(format!(
+            "checked {} path{}",
+            aggregate.metadata_reads,
+            if aggregate.metadata_reads == 1 { "" } else { "s" }
+        ));
+    }
+    if aggregate.inspect_commands > 0 {
+        parts.push(format!(
+            "ran {} inspect command{}",
+            aggregate.inspect_commands,
+            if aggregate.inspect_commands == 1 { "" } else { "s" }
+        ));
+    }
+    if has_pending {
+        parts.push("running tool".to_string());
+    }
+    if parts.is_empty() {
+        "exploring workspace".to_string()
+    } else {
+        parts.join(", ")
     }
 }
 
