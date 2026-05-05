@@ -160,18 +160,19 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
     assert!(
         live_cells
             .iter()
-            .any(|cell| cell.body == "可以看到当前在哪个目录下吗")
+            .any(|cell| cell.body() == "可以看到当前在哪个目录下吗")
     );
-    assert!(!live_cells.iter().any(|cell| cell.body == "approved"));
+    assert!(!live_cells.iter().any(|cell| cell.body() == "approved"));
     assert!(live_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-            && cell.body.contains("inspect `pwd`")
-            && cell.body.contains("exit 0")
+            && cell.label == "Run command"
+            && cell.body().contains("pwd")
+            && cell.detail().is_some_and(|detail| detail.contains("exit 0"))
     }));
     assert!(live_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
-            && cell.body.starts_with("current directory is ")
-            && ends_with_workspace_path(&cell.body)
+            && cell.body().starts_with("current directory is ")
+            && ends_with_workspace_path(cell.body())
     }));
 
     client
@@ -281,18 +282,20 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
     assert!(
         rebuilt_cells
             .iter()
-            .any(|cell| cell.body == "可以看到当前在哪个目录下吗")
+            .any(|cell| cell.body() == "可以看到当前在哪个目录下吗")
     );
     assert!(rebuilt_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-            && cell.body.contains("inspect `pwd`")
-            && cell.body.contains("exit 0")
-            && ends_with_workspace_path(&cell.body)
+            && cell.label == "Run command"
+            && cell.body().contains("pwd")
+            && cell
+                .detail()
+                .is_some_and(|detail| detail.contains("exit 0") && ends_with_workspace_path(detail))
     }));
     assert!(rebuilt_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
-            && cell.body.starts_with("current directory is ")
-            && ends_with_workspace_path(&cell.body)
+            && cell.body().starts_with("current directory is ")
+            && ends_with_workspace_path(cell.body())
     }));
 
     let recorded_requests = server_thread
@@ -478,23 +481,23 @@ async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
     let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
     let debug_cells = rebuilt_cells
         .iter()
-        .map(|cell| (cell.label.as_str(), cell.body.as_str()))
+        .map(|cell| (cell.label.as_str(), cell.body()))
         .collect::<Vec<_>>();
     assert!(
         rebuilt_cells
             .iter()
-            .any(|cell| cell.body == "帮我看看当前目录")
+            .any(|cell| cell.body() == "帮我看看当前目录")
     );
     assert_eq!(
         rebuilt_cells
             .iter()
-            .filter(|cell| cell.body == "帮我看看当前目录")
+            .filter(|cell| cell.body() == "帮我看看当前目录")
             .count(),
         1
     );
     assert!(
-        rebuilt_cells.iter().any(|cell| cell.label == "exec_command"
-            && cell.body.contains("command `Set-Content out.txt hi`")),
+        rebuilt_cells.iter().any(|cell| cell.label == "Run command"
+            && cell.body().contains("Set-Content out.txt hi")),
         "rebuilt cells: {debug_cells:?}"
     );
     assert!(!rebuilt_cells.iter().any(|cell| cell.label == "request"));

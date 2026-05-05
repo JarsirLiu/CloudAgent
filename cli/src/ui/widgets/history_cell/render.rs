@@ -1,9 +1,29 @@
-use super::{HistoryCell, HistoryTone};
+use super::{HistoryCell, HistoryFormat, HistoryKind, HistoryTone};
 use agent_protocol::{
     CommandExecutionStatus, StructuredToolResult, TranscriptItem, WriteFileStatus,
 };
 
-pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
+#[derive(Default)]
+pub struct RenderContext {
+    response_index: usize,
+}
+
+impl RenderContext {
+    fn next_response_label(&mut self) -> String {
+        self.response_index = self.response_index.saturating_add(1);
+        format!("Response {}", self.response_index)
+    }
+
+    fn current_reasoning_label(&self) -> String {
+        if self.response_index == 0 {
+            "Reasoning".to_string()
+        } else {
+            format!("Reasoning {}", self.response_index)
+        }
+    }
+}
+
+pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContext) -> HistoryCell {
     match message {
         TranscriptItem::SystemMessage { .. } => {
             HistoryCell::from_message("", "", HistoryTone::Meta)
@@ -12,18 +32,21 @@ pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
             HistoryCell::from_message("you", text.clone(), HistoryTone::User)
         }
         TranscriptItem::AgentMessage { text, .. } => {
-            HistoryCell::from_message("cloudagent", text.clone(), HistoryTone::Agent)
+            HistoryCell::with_parts(
+                context.next_response_label(),
+                text.clone(),
+                HistoryTone::Agent,
+                HistoryKind::Message,
+                HistoryFormat::Markdown,
+                None,
+            )
         }
         TranscriptItem::ToolResult {
             tool_name,
             content,
             structured,
             ..
-        } => HistoryCell::from_message(
-            tool_name.clone(),
-            summarize_tool_content(content, structured.as_ref()),
-            HistoryTone::Control,
-        ),
+        } => render_tool_result(tool_name, content, structured.as_ref()),
         TranscriptItem::CommandExecution {
             tool_name,
             command,
@@ -33,57 +56,78 @@ pub fn render_history_entry(message: &TranscriptItem) -> HistoryCell {
             stderr,
             summary,
             ..
-        } => HistoryCell::from_message(
-            tool_name.clone(),
-            summarize_command_execution(
-                command,
-                current_directory,
-                status,
-                *exit_code,
-                stderr.as_deref().or(Some(summary.as_str())),
-            ),
-            HistoryTone::Control,
+        } => render_command_execution(
+            tool_name,
+            command,
+            current_directory,
+            status,
+            *exit_code,
+            stderr.as_deref().or(Some(summary.as_str())),
         ),
         TranscriptItem::FileChange {
             tool_name, summary, ..
-        } => HistoryCell::from_message(tool_name.clone(), summary.clone(), HistoryTone::Control),
-        TranscriptItem::Reasoning { text, .. } => {
-            HistoryCell::from_message("reasoning", text.clone(), HistoryTone::Reasoning)
-        }
+        } => HistoryCell::with_parts(
+            humanize_tool_label(tool_name),
+            summary.clone(),
+            HistoryTone::Control,
+            HistoryKind::Tool,
+            HistoryFormat::PlainText,
+            None,
+        ),
+        TranscriptItem::Reasoning { text, .. } => HistoryCell::with_parts(
+            context.current_reasoning_label(),
+            text.clone(),
+            HistoryTone::Reasoning,
+            HistoryKind::Reasoning,
+            HistoryFormat::PlainText,
+            None,
+        ),
     }
 }
 
-fn summarize_command_execution(
+fn render_command_execution(
+    tool_name: &str,
     command: &str,
     current_directory: &str,
     status: &CommandExecutionStatus,
     exit_code: Option<i32>,
     detail: Option<&str>,
-) -> String {
-    let kind = summarize_exec_command_kind(command);
-    let command = compact_inline(command, 56);
-    let cwd = compact_path(current_directory, 36);
-    match status {
-        CommandExecutionStatus::InProgress => format!("{kind} `{command}` @ {cwd}"),
-        CommandExecutionStatus::Completed => {
-            format!("{kind} `{command}`{} @ {cwd}", exit_suffix(exit_code))
-        }
-        CommandExecutionStatus::Declined => format!("{kind} `{command}` @ {cwd}"),
+) -> HistoryCell {
+    let summary = summarize_command_head(command);
+    let cwd = compact_path(current_directory, 42);
+    let state = match status {
+        CommandExecutionStatus::InProgress => "running".to_string(),
+        CommandExecutionStatus::Completed => format!("completed{}", exit_suffix(exit_code)),
+        CommandExecutionStatus::Declined => "declined".to_string(),
         CommandExecutionStatus::Failed => {
             let reason = detail
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(|value| compact_inline(value, 90))
+                .map(|value| compact_inline(value, 72))
                 .unwrap_or_else(|| "command failed".to_string());
-            format!(
-                "{kind} `{command}`{} @ {cwd}: {reason}",
-                exit_suffix(exit_code)
-            )
+            format!("failed{} • {reason}", exit_suffix(exit_code))
         }
-    }
+    };
+
+    HistoryCell::with_parts(
+        humanize_tool_label(tool_name),
+        summary,
+        match status {
+            CommandExecutionStatus::Failed => HistoryTone::Error,
+            CommandExecutionStatus::Declined => HistoryTone::Warning,
+            _ => HistoryTone::Control,
+        },
+        HistoryKind::Command,
+        HistoryFormat::PlainText,
+        Some(format!("{state} @ {cwd}")),
+    )
 }
 
-fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResult>) -> String {
+fn render_tool_result(
+    tool_name: &str,
+    content: &str,
+    structured: Option<&StructuredToolResult>,
+) -> HistoryCell {
     if let Some(StructuredToolResult::CommandExecution {
         command,
         current_directory,
@@ -93,7 +137,8 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
         ..
     }) = structured
     {
-        return summarize_command_execution(
+        return render_command_execution(
+            tool_name,
             command,
             current_directory,
             status,
@@ -108,10 +153,16 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
         ..
     }) = structured
     {
-        return format!(
-            "read {total_chars} chars{} @ {}",
-            if read.truncated { " truncated" } else { "" },
-            compact_path(path, 48)
+        return HistoryCell::with_parts(
+            humanize_tool_label(tool_name),
+            format!(
+                "read {total_chars} chars{}",
+                if read.truncated { " truncated" } else { "" }
+            ),
+            HistoryTone::Control,
+            HistoryKind::Tool,
+            HistoryFormat::PlainText,
+            Some(compact_path(path, 48)),
         );
     }
     if let Some(StructuredToolResult::SearchWorkspace {
@@ -129,16 +180,22 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
             agent_protocol::SearchWorkspaceStatus::NotFound => " missing",
         };
         let truncation = if *truncated { " truncated" } else { "" };
-        return match mode {
+        let summary = match mode {
             agent_protocol::SearchWorkspaceMode::Files => {
                 format!("found {file_count} files{truncation}{status_suffix}")
             }
             agent_protocol::SearchWorkspaceMode::Text => {
-                format!(
-                    "matched {match_count} hits in {file_count} files{truncation}{status_suffix}"
-                )
+                format!("matched {match_count} hits in {file_count} files{truncation}{status_suffix}")
             }
         };
+        return HistoryCell::with_parts(
+            humanize_tool_label(tool_name),
+            summary,
+            HistoryTone::Control,
+            HistoryKind::Tool,
+            HistoryFormat::PlainText,
+            None,
+        );
     }
     if let Some(StructuredToolResult::GetMetadata {
         path,
@@ -150,9 +207,23 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
     {
         if *exists {
             let kind = if *is_file { "file" } else { "directory" };
-            return format!("metadata {kind} {} ({size} bytes)", compact_path(path, 48));
+            return HistoryCell::with_parts(
+                humanize_tool_label(tool_name),
+                format!("metadata {kind} ({size} bytes)"),
+                HistoryTone::Control,
+                HistoryKind::Tool,
+                HistoryFormat::PlainText,
+                Some(compact_path(path, 48)),
+            );
         }
-        return format!("metadata missing {}", compact_path(path, 48));
+        return HistoryCell::with_parts(
+            humanize_tool_label(tool_name),
+            "metadata missing".to_string(),
+            HistoryTone::Warning,
+            HistoryKind::Tool,
+            HistoryFormat::PlainText,
+            Some(compact_path(path, 48)),
+        );
     }
     if let Some(StructuredToolResult::EditFile {
         changed_paths,
@@ -168,19 +239,47 @@ fn summarize_tool_content(content: &str, structured: Option<&StructuredToolResul
             WriteFileStatus::Failed => "failed",
         };
         if let Some(path) = changed_paths.first() {
-            return format!("{verb} {files_changed} files @ {}", compact_path(path, 48));
+            return HistoryCell::with_parts(
+                humanize_tool_label(tool_name),
+                format!("{verb} {files_changed} files"),
+                HistoryTone::Control,
+                HistoryKind::Tool,
+                HistoryFormat::PlainText,
+                Some(compact_path(path, 48)),
+            );
         }
-        return format!("{verb} {files_changed} files");
+        return HistoryCell::with_parts(
+            humanize_tool_label(tool_name),
+            format!("{verb} {files_changed} files"),
+            HistoryTone::Control,
+            HistoryKind::Tool,
+            HistoryFormat::PlainText,
+            None,
+        );
     }
     if let Some(StructuredToolResult::ToolError { message, .. }) = structured {
-        return compact_inline(message, 100);
+        return HistoryCell::with_parts(
+            humanize_tool_label(tool_name),
+            compact_inline(message, 100),
+            HistoryTone::Error,
+            HistoryKind::Tool,
+            HistoryFormat::PlainText,
+            None,
+        );
     }
 
     let first = content
         .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("tool completed");
-    compact_inline(first, 100)
+    HistoryCell::with_parts(
+        humanize_tool_label(tool_name),
+        compact_inline(first, 100),
+        HistoryTone::Control,
+        HistoryKind::Tool,
+        HistoryFormat::PlainText,
+        None,
+    )
 }
 
 fn exit_suffix(exit_code: Option<i32>) -> String {
@@ -189,35 +288,29 @@ fn exit_suffix(exit_code: Option<i32>) -> String {
         .unwrap_or_default()
 }
 
-fn summarize_exec_command_kind(command: &str) -> &'static str {
-    let normalized = command.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return "command";
+fn summarize_command_head(command: &str) -> String {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return "empty command".to_string();
     }
-    if normalized.starts_with("rg ")
-        || normalized.starts_with("grep ")
-        || normalized.starts_with("findstr ")
-        || normalized.starts_with("select-string ")
-        || normalized.starts_with("git grep ")
-    {
-        return "search";
+
+    let normalized = trimmed.replace('\n', " ");
+    if let Some((_, rhs)) = normalized.rsplit_once("&&") {
+        return compact_inline(rhs.trim(), 64);
     }
-    if normalized.starts_with("git ls-files") || normalized.starts_with("fd ") {
-        return "files";
+    compact_inline(normalized.trim(), 64)
+}
+
+fn humanize_tool_label(tool_name: &str) -> String {
+    match tool_name {
+        "exec_command" | "tool" => "Run command".to_string(),
+        "apply_patch" | "edit_file" => "Edit file".to_string(),
+        "read_file" => "Read file".to_string(),
+        "search_workspace" => "Search workspace".to_string(),
+        "get_metadata" => "File info".to_string(),
+        "write_file" => "Write file".to_string(),
+        other => other.replace('_', " "),
     }
-    if normalized.starts_with("git log")
-        || normalized.starts_with("git status")
-        || normalized.starts_with("git diff")
-        || normalized.starts_with("git show")
-        || normalized.starts_with("pwd")
-        || normalized.starts_with("ls ")
-        || normalized.starts_with("dir ")
-        || normalized.starts_with("cat ")
-        || normalized.starts_with("type ")
-    {
-        return "inspect";
-    }
-    "command"
 }
 
 fn compact_inline(input: &str, max_chars: usize) -> String {

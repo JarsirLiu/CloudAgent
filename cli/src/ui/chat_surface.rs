@@ -193,7 +193,7 @@ fn should_show_welcome(app: &TuiApp) -> bool {
 
 fn active_cell_height(app: &TuiApp, width: u16) -> Option<u16> {
     let active = app.transcript_state.active_cell.as_ref()?;
-    if active.body.trim().is_empty() {
+    if active.body().trim().is_empty() {
         return None;
     }
     let render_width = width.saturating_sub(4).max(40) as usize;
@@ -213,7 +213,7 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
     let render_width = inner.width.max(40) as usize;
     let mut lines = Vec::new();
     if let Some(active) = app.transcript_state.active_cell.as_ref()
-        && !active.body.trim().is_empty()
+        && !active.body().trim().is_empty()
     {
         lines.extend(active.to_lines_with_mode(render_width));
     }

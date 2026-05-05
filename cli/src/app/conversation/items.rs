@@ -1,5 +1,5 @@
 use crate::app::TuiApp;
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
+use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryKind, HistoryTone};
 use agent_protocol::TurnItemKind;
 
 impl TuiApp {
@@ -8,10 +8,13 @@ impl TuiApp {
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
         self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-        self.transcript_state.active_cell = Some(HistoryCell::from_message(
-            "cloudagent",
+        self.transcript_state.active_cell = Some(HistoryCell::with_parts(
+            next_response_label(self),
             String::new(),
             HistoryTone::Agent,
+            HistoryKind::Message,
+            HistoryFormat::Markdown,
+            None,
         ));
     }
 
@@ -33,10 +36,13 @@ impl TuiApp {
             self.flush_active_cell_to_transcript();
             self.transcript_state.active_item_id = Some(item_id.to_string());
             self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-            self.transcript_state.active_cell = Some(HistoryCell::from_message(
-                "cloudagent",
+            self.transcript_state.active_cell = Some(HistoryCell::with_parts(
+                next_response_label(self),
                 String::new(),
                 HistoryTone::Agent,
+                HistoryKind::Message,
+                HistoryFormat::Markdown,
+                None,
             ));
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
@@ -46,13 +52,13 @@ impl TuiApp {
             .transcript_state
             .active_cell
             .as_ref()
-            .is_some_and(|cell| !cell.body.trim().is_empty());
+            .is_some_and(|cell| !cell.body().trim().is_empty());
         if has_text {
             self.transcript_state.last_copyable_output = self
                 .transcript_state
                 .active_cell
                 .as_ref()
-                .map(|cell| cell.body.clone());
+                .map(|cell| cell.body().to_string());
             self.flush_active_cell_to_transcript();
         } else {
             self.clear_active_cell();
@@ -166,7 +172,7 @@ impl TuiApp {
             return;
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
-            if !cell.body.is_empty() {
+            if !cell.body().is_empty() {
                 cell.append_body("\n");
             }
             cell.append_body(delta);
@@ -184,7 +190,7 @@ impl TuiApp {
             self.clear_active_cell();
             return;
         };
-        if !cell.body.trim().is_empty() {
+        if !cell.body().trim().is_empty() {
             self.push_cell(cell);
         }
         self.clear_active_cell();
@@ -202,4 +208,13 @@ fn compact_activity(title: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+fn next_response_label(app: &TuiApp) -> String {
+    let completed = app
+        .history_cells()
+        .iter()
+        .filter(|cell| cell.tone == HistoryTone::Agent)
+        .count();
+    format!("Response {}", completed + 1)
 }

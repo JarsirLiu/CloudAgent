@@ -7,9 +7,24 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use textwrap::wrap;
 
-pub use render::render_history_entry;
+pub use render::{render_history_entry, RenderContext};
 
 type RenderCache = std::sync::Arc<std::sync::Mutex<Option<(usize, Vec<Line<'static>>)>>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryFormat {
+    PlainText,
+    Markdown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryKind {
+    Message,
+    Reasoning,
+    Command,
+    Tool,
+    Notice,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryTone {
@@ -26,8 +41,11 @@ pub enum HistoryTone {
 #[derive(Clone, Debug)]
 pub struct HistoryCell {
     pub label: String,
-    pub body: String,
     pub tone: HistoryTone,
+    kind: HistoryKind,
+    format: HistoryFormat,
+    source: String,
+    detail: Option<String>,
     pub expanded: bool,
     pub repeat_count: usize,
     cache: RenderCache,
@@ -35,10 +53,47 @@ pub struct HistoryCell {
 
 impl HistoryCell {
     pub fn new(label: impl Into<String>, body: impl Into<String>, tone: HistoryTone) -> Self {
+        Self::with_parts(
+            label,
+            body,
+            tone,
+            default_kind_for_tone(tone),
+            default_format_for_tone(tone),
+            None,
+        )
+    }
+
+    pub fn with_format(
+        label: impl Into<String>,
+        body: impl Into<String>,
+        tone: HistoryTone,
+        format: HistoryFormat,
+    ) -> Self {
+        Self::with_parts(
+            label,
+            body,
+            tone,
+            default_kind_for_tone(tone),
+            format,
+            None,
+        )
+    }
+
+    pub fn with_parts(
+        label: impl Into<String>,
+        body: impl Into<String>,
+        tone: HistoryTone,
+        kind: HistoryKind,
+        format: HistoryFormat,
+        detail: Option<String>,
+    ) -> Self {
         Self {
             label: label.into(),
-            body: body.into(),
             tone,
+            kind,
+            format,
+            source: body.into(),
+            detail,
             expanded: false,
             repeat_count: 1,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -54,17 +109,33 @@ impl HistoryCell {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.body.trim().is_empty()
+        self.source.trim().is_empty()
     }
 
     pub fn append_body(&mut self, delta: &str) {
-        self.body.push_str(delta);
+        self.source.push_str(delta);
         self.invalidate_cache();
     }
 
     pub fn replace_body(&mut self, body: impl Into<String>) {
-        self.body = body.into();
+        self.source = body.into();
         self.invalidate_cache();
+    }
+
+    pub fn body(&self) -> &str {
+        &self.source
+    }
+
+    pub fn format(&self) -> HistoryFormat {
+        self.format
+    }
+
+    pub fn kind(&self) -> HistoryKind {
+        self.kind
+    }
+
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
     }
 
     pub fn invalidate_cache(&mut self) {
@@ -89,15 +160,13 @@ impl HistoryCell {
     }
 
     fn render_now(&self, width: usize) -> Vec<Line<'static>> {
-        match self.tone {
-            HistoryTone::User => render_user(self, width),
-            HistoryTone::Agent => render_agent(self, width),
-            HistoryTone::Reasoning => render_tool_like(self, width, Color::Rgb(170, 140, 255), "≈"),
-            HistoryTone::Tool => render_tool_like(self, width, Color::Rgb(80, 200, 120), "◆"),
-            HistoryTone::Control => render_tool_like(self, width, Color::Rgb(120, 170, 255), "•"),
-            HistoryTone::Warning => render_tool_like(self, width, Color::Rgb(255, 180, 50), "◆"),
-            HistoryTone::Error => render_tool_like(self, width, Color::Rgb(255, 80, 80), "◆"),
-            HistoryTone::Meta => render_meta(self, width),
+        match self.kind {
+            HistoryKind::Message if self.tone == HistoryTone::User => render_user(self, width),
+            HistoryKind::Message => render_agent(self, width),
+            HistoryKind::Reasoning => render_reasoning(self, width),
+            HistoryKind::Command => render_command(self, width),
+            HistoryKind::Tool => render_tool_like(self, width, Color::Rgb(120, 170, 255), "•"),
+            HistoryKind::Notice => render_notice(self, width),
         }
     }
 }
@@ -110,8 +179,9 @@ pub struct Transcript {
 impl Transcript {
     pub fn replace_with_history(&mut self, messages: &[TranscriptItem]) {
         self.cells.clear();
+        let mut context = render::RenderContext::default();
         for message in messages {
-            let cell = render_history_entry(message);
+            let cell = render::render_history_entry(message, &mut context);
             if !cell.is_empty() {
                 self.cells.push(cell);
             }
@@ -120,9 +190,10 @@ impl Transcript {
 
     pub fn replace_with_turns(&mut self, turns: &[ConversationTurn]) {
         self.cells.clear();
+        let mut context = render::RenderContext::default();
         for turn in turns {
             for message in &turn.items {
-                let cell = render_history_entry(message);
+                let cell = render_history_entry(message, &mut context);
                 if !cell.is_empty() {
                     self.cells.push(cell);
                 }
@@ -177,7 +248,7 @@ impl Transcript {
 
 fn render_user(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     let content_width = width.saturating_sub(4).max(8);
-    let wrapped = wrap_text(&cell.body, content_width);
+    let wrapped = wrap_text(cell.body(), content_width);
     let mut lines = Vec::new();
     for (idx, text) in wrapped.into_iter().enumerate() {
         let prefix = if idx == 0 { "› " } else { "  " };
@@ -196,7 +267,10 @@ fn render_user(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
 
 fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     let inner = width.saturating_sub(6).max(8);
-    let md_lines = markdown::render_markdown(&cell.body, inner);
+    let md_lines = match cell.format() {
+        HistoryFormat::Markdown => markdown::render_markdown(cell.body(), inner),
+        HistoryFormat::PlainText => markdown::render_plaintext(cell.body(), inner),
+    };
     let mut out = Vec::new();
     for (i, line) in md_lines.into_iter().enumerate() {
         let prefix = if i == 0 {
@@ -205,10 +279,61 @@ fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
             Span::raw("   ")
         };
         let mut spans = vec![prefix];
+        if i == 0 && !cell.label.is_empty() {
+            spans.push(Span::styled(
+                format!("{}  ", cell.label),
+                Style::default()
+                    .fg(Color::Rgb(120, 150, 190))
+                    .add_modifier(Modifier::DIM),
+            ));
+        }
         spans.extend(line.spans);
         out.push(Line::from(spans));
     }
     out
+}
+
+fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    render_tool_like(cell, width, Color::Rgb(170, 140, 255), "≈")
+}
+
+fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let title = if cell.label.is_empty() {
+        "Command".to_string()
+    } else {
+        cell.label.clone()
+    };
+
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("› ", Style::default().fg(Color::Rgb(120, 170, 255))),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(215, 220, 232))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    for summary in wrap_text(cell.body(), width.saturating_sub(6).max(8)) {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(summary, Style::default().fg(Color::Rgb(190, 200, 216))),
+        ]));
+    }
+
+    if let Some(detail) = cell.detail() {
+        for meta in wrap_text(detail, width.saturating_sub(8).max(8)) {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("↳ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                Span::styled(meta, Style::default().fg(Color::Rgb(132, 138, 150))),
+            ]));
+        }
+    }
+
+    lines
 }
 
 fn render_tool_like(
@@ -235,7 +360,7 @@ fn render_tool_like(
         ),
     ]));
     let body_width = width.saturating_sub(8).max(8);
-    let wrapped = wrap_text(&cell.body, body_width);
+    let wrapped = wrap_text(cell.body(), body_width);
     let max_lines = if cell.expanded { 24usize } else { 2usize };
     let mut output_lines = Vec::new();
     if wrapped.len() <= max_lines {
@@ -260,7 +385,7 @@ fn render_tool_like(
 }
 
 fn render_meta(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let wrapped = wrap_text(&cell.body, width.saturating_sub(4).max(8));
+    let wrapped = wrap_text(cell.body(), width.saturating_sub(4).max(8));
     let mut lines = Vec::new();
     for (i, line) in wrapped.into_iter().enumerate() {
         let prefix = if i == 0 { "· " } else { "  " };
@@ -270,6 +395,15 @@ fn render_meta(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         ]));
     }
     lines
+}
+
+fn render_notice(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    match cell.tone {
+        HistoryTone::Warning => render_tool_like(cell, width, Color::Rgb(255, 180, 50), "◆"),
+        HistoryTone::Error => render_tool_like(cell, width, Color::Rgb(255, 80, 80), "◆"),
+        HistoryTone::Meta => render_meta(cell, width),
+        _ => render_tool_like(cell, width, Color::Rgb(120, 170, 255), "•"),
+    }
 }
 
 fn pretty_tool_title(label: &str) -> String {
@@ -299,4 +433,66 @@ fn wrap_text(input: &str, width: usize) -> Vec<String> {
         .into_iter()
         .map(|line| line.into_owned())
         .collect()
+}
+
+fn default_format_for_tone(tone: HistoryTone) -> HistoryFormat {
+    match tone {
+        HistoryTone::Agent => HistoryFormat::Markdown,
+        _ => HistoryFormat::PlainText,
+    }
+}
+
+fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
+    match tone {
+        HistoryTone::User | HistoryTone::Agent => HistoryKind::Message,
+        HistoryTone::Reasoning => HistoryKind::Reasoning,
+        HistoryTone::Tool | HistoryTone::Control => HistoryKind::Tool,
+        HistoryTone::Warning | HistoryTone::Error | HistoryTone::Meta => HistoryKind::Notice,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HistoryCell, HistoryFormat, HistoryTone};
+
+    fn joined(cell: &HistoryCell, width: usize) -> String {
+        cell.to_lines_with_mode(width)
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .into_iter()
+                    .map(|span| span.content.into_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn agent_cells_render_markdown_tables() {
+        let cell = HistoryCell::new(
+            "cloudagent",
+            "| 风险 | 根因 |\n| --- | --- |\n| budget | only log |",
+            HistoryTone::Agent,
+        );
+
+        let rendered = joined(&cell, 100);
+        assert!(rendered.contains("风险"));
+        assert!(rendered.contains("根因"));
+        assert!(rendered.contains(" | "));
+        assert!(rendered.contains("budget"));
+    }
+
+    #[test]
+    fn plaintext_cells_do_not_get_markdown_table_rendering() {
+        let cell = HistoryCell::with_format(
+            "tool",
+            "| raw | text |",
+            HistoryTone::Control,
+            HistoryFormat::PlainText,
+        );
+
+        let rendered = joined(&cell, 100);
+        assert!(rendered.contains("| raw | text |"));
+    }
 }

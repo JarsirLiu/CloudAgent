@@ -4,7 +4,10 @@ pub(super) fn coalesce_tool_like(prev: &mut HistoryCell, next: &HistoryCell) -> 
     if !matches_tool_like(prev.tone) || prev.tone != next.tone {
         return false;
     }
-    if prev.label != next.label || prev.body != next.body {
+    if prev.label != next.label
+        || prev.format() != next.format()
+        || prev.body() != next.body()
+    {
         return false;
     }
     prev.repeat_count = prev.repeat_count.saturating_add(next.repeat_count.max(1));

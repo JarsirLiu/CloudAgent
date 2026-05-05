@@ -47,7 +47,7 @@ fn assistant_delta_requires_item_started_before_streaming() {
 
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
-    assert_eq!(cells[0].body, "complete answer");
+    assert_eq!(cells[0].body(), "complete answer");
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn tool_delta_requires_item_started_before_streaming() {
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
     assert_eq!(
-        cells[0].body,
+        cells[0].body(),
         "current directory is D:\\learn\\gifti\\cloudagent"
     );
     assert_eq!(
@@ -162,12 +162,12 @@ fn repeated_control_cells_coalesce_and_pending_queue_stays_consistent() {
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
     assert_eq!(cells[0].repeat_count, 3);
-    assert_eq!(cells[0].body, "workspace ready");
+    assert_eq!(cells[0].body(), "workspace ready");
 
     let pending: Vec<_> = app.pending_history_cells.iter().collect();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].repeat_count, 3);
-    assert_eq!(pending[0].body, "workspace ready");
+    assert_eq!(pending[0].body(), "workspace ready");
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn snapshot_history_replaces_transcript_without_event_replay() {
     );
 
     let cells = app.transcript_state.transcript.cells();
-    let bodies: Vec<&str> = cells.iter().map(|cell| cell.body.as_str()).collect();
+    let bodies: Vec<&str> = cells.iter().map(|cell| cell.body()).collect();
     assert!(bodies.contains(&"old question"));
     assert!(bodies.contains(&"old answer"));
     assert!(bodies.contains(&"where am i"));
@@ -316,5 +316,5 @@ fn turn_dispatch_completed_flushes_active_assistant_cell() {
 
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
-    assert_eq!(cells[0].body, "hello");
+    assert_eq!(cells[0].body(), "hello");
 }

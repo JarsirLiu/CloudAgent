@@ -1,6 +1,6 @@
 use crate::app::TuiApp;
 use crate::state::reducer::ItemDispatch;
-use crate::ui::widgets::history_cell::render_history_entry;
+use crate::ui::widgets::history_cell::{render_history_entry, RenderContext};
 use agent_protocol::TranscriptItem;
 
 pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
@@ -9,10 +9,11 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
 
     let history_snapshot = app.run_state.history_snapshot.clone().unwrap_or_default();
     if !history_snapshot.is_empty() {
+        let mut render_context = RenderContext::default();
         let cells = history_snapshot
             .iter()
             .flat_map(|turn| turn.items.iter())
-            .map(render_history_entry)
+            .map(|item| render_history_entry(item, &mut render_context))
             .filter(|cell| !cell.is_empty())
             .collect::<Vec<_>>();
         app.replace_history_cells(cells);
@@ -32,7 +33,8 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
 }
 
 pub(crate) fn complete_control_item(app: &mut TuiApp, item_id: &str, item: &TranscriptItem) {
-    app.handle_control_item_completed(item_id, render_history_entry(item));
+    let mut render_context = RenderContext::default();
+    app.handle_control_item_completed(item_id, render_history_entry(item, &mut render_context));
 }
 
 pub(crate) fn apply_item_dispatch(app: &mut TuiApp, dispatch: ItemDispatch) {
