@@ -23,6 +23,7 @@ pub enum CoreTranscriptEvent {
     },
     ItemCompleted {
         turn_id: TurnId,
+        call_id: Option<String>,
         item: TranscriptItem,
     },
     AgentMessageDelta {
@@ -54,6 +55,7 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
             item_id,
             kind,
             delta,
+            ..
         } => match kind {
             TurnItemDeltaKind::Text => Some(CoreTranscriptEvent::AgentMessageDelta {
                 turn_id: turn_id.clone(),
@@ -77,8 +79,14 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
             | TurnItemDeltaKind::FileChangeOutput
             | TurnItemDeltaKind::JsonPatch => None,
         },
-        EventMsg::ItemCompleted { turn_id, item, .. } => Some(CoreTranscriptEvent::ItemCompleted {
+        EventMsg::ItemCompleted {
+            turn_id,
+            call_id,
+            item,
+            ..
+        } => Some(CoreTranscriptEvent::ItemCompleted {
             turn_id: turn_id.clone(),
+            call_id: call_id.clone(),
             item: item.clone(),
         }),
         EventMsg::TurnCompleted { turn_id, .. } => Some(CoreTranscriptEvent::TurnCompleted {

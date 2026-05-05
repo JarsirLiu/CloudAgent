@@ -25,6 +25,7 @@ pub fn emit_assistant_message_item(
         EventMsg::ItemStarted {
             turn_id: turn_id.to_string(),
             item_id: assistant_item_id.clone(),
+            call_id: None,
             kind: TurnItemKind::AssistantMessage,
             title: Some("assistant_message".to_string()),
         },
@@ -35,6 +36,7 @@ pub fn emit_assistant_message_item(
         EventMsg::ItemDelta {
             turn_id: turn_id.to_string(),
             item_id: assistant_item_id.clone(),
+            call_id: None,
             kind: TurnItemDeltaKind::Text,
             delta: content.to_string(),
         },
@@ -45,6 +47,7 @@ pub fn emit_assistant_message_item(
         EventMsg::ItemCompleted {
             turn_id: turn_id.to_string(),
             item_id: assistant_item_id.clone(),
+            call_id: None,
             item: TranscriptItem::AgentMessage {
                 id: assistant_item_id,
                 text: content.to_string(),

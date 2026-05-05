@@ -2,7 +2,7 @@ use crate::app::TuiApp;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permission_profile::turn_policy_for_mode;
 use crate::input::intent::ComposerIntent;
-use crate::ui::widgets::history_cell::HistoryTone;
+use crate::state::ActiveExecPresentation;
 use crate::ui::widgets::input_pane::InputPaneAction;
 use agent_protocol::{AppClientCommand, FrontendMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -42,16 +42,13 @@ impl TuiApp {
             self.transcript_state
                 .transcript
                 .set_tool_cells_expanded(self.run_state.expand_tool_details);
-            if let Some(cell) = self.transcript_state.active_cell.as_mut()
-                && matches!(
-                    cell.tone,
-                    HistoryTone::Tool
-                        | HistoryTone::Control
-                        | HistoryTone::Warning
-                        | HistoryTone::Error
-                )
-            {
-                cell.expanded = self.run_state.expand_tool_details;
+            if let Some(active) = self.transcript_state.active_exec_view.as_mut() {
+                match &mut active.presentation {
+                    ActiveExecPresentation::Command { expanded, .. }
+                    | ActiveExecPresentation::Exploration { expanded, .. } => {
+                        *expanded = self.run_state.expand_tool_details;
+                    }
+                }
             }
             self.run_state.set_system_notice(
                 if self.run_state.expand_tool_details {

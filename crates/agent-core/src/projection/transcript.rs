@@ -123,6 +123,7 @@ impl ConversationHistoryBuilder {
                 item_id,
                 kind,
                 title,
+                ..
             } => {
                 if let Some(item) = transcript_item_from_item_start(item_id, kind, title.as_deref())
                 {
@@ -134,6 +135,7 @@ impl ConversationHistoryBuilder {
                 item_id,
                 kind,
                 delta,
+                ..
             } => {
                 self.append_delta_to_item(turn_id, item_id, kind, delta);
             }
@@ -731,6 +733,7 @@ mod tests {
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant-1".to_string(),
+                call_id: None,
                 item: assistant.clone(),
             }),
             RolloutItem::from(ResponseItem::Assistant {
@@ -765,12 +768,14 @@ mod tests {
             RolloutItem::from(EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant:turn-1:0".to_string(),
+                call_id: None,
                 kind: TurnItemKind::AssistantMessage,
                 title: Some("assistant_message".to_string()),
             }),
             RolloutItem::from(EventMsg::ItemDelta {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant:turn-1:0".to_string(),
+                call_id: None,
                 kind: TurnItemDeltaKind::Text,
                 delta: "partial".to_string(),
             }),
@@ -800,18 +805,21 @@ mod tests {
             RolloutItem::from(EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant:turn-1:0".to_string(),
+                call_id: None,
                 kind: TurnItemKind::AssistantMessage,
                 title: Some("assistant_message".to_string()),
             }),
             RolloutItem::from(EventMsg::ItemDelta {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant:turn-1:0".to_string(),
+                call_id: None,
                 kind: TurnItemDeltaKind::Text,
                 delta: "partial".to_string(),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant:turn-1:0".to_string(),
+                call_id: None,
                 item: TranscriptItem::AgentMessage {
                     id: "assistant:turn-1:0".to_string(),
                     text: "final".to_string(),
@@ -988,6 +996,7 @@ mod tests {
             RolloutItem::from(EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
                 item_id: "item-1".to_string(),
+                call_id: None,
                 kind: TurnItemKind::AssistantMessage,
                 title: None,
             }),
@@ -1017,6 +1026,7 @@ mod tests {
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant-1".to_string(),
+                call_id: None,
                 item: TranscriptItem::AgentMessage {
                     id: "assistant-1".to_string(),
                     text: "one".to_string(),
@@ -1036,6 +1046,7 @@ mod tests {
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-2".to_string(),
                 item_id: "assistant-2".to_string(),
+                call_id: None,
                 item: TranscriptItem::AgentMessage {
                     id: "assistant-2".to_string(),
                     text: "two".to_string(),
@@ -1123,6 +1134,7 @@ mod tests {
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant-1".to_string(),
+                call_id: None,
                 item: TranscriptItem::AgentMessage {
                     id: "assistant-1".to_string(),
                     text: "same".to_string(),
@@ -1131,6 +1143,7 @@ mod tests {
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant-2".to_string(),
+                call_id: None,
                 item: TranscriptItem::AgentMessage {
                     id: "assistant-2".to_string(),
                     text: "same".to_string(),
@@ -1173,6 +1186,7 @@ mod tests {
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "assistant-late".to_string(),
+                call_id: None,
                 item: TranscriptItem::AgentMessage {
                     id: "assistant-late".to_string(),
                     text: "late answer".to_string(),
@@ -1223,11 +1237,13 @@ mod tests {
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
+                call_id: Some("call-1".to_string()),
                 item: command_item("tool-1"),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-2".to_string(),
+                call_id: Some("call-2".to_string()),
                 item: command_item("tool-2"),
             }),
             RolloutItem::from(EventMsg::TurnCompleted {

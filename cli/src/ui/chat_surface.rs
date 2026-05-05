@@ -100,7 +100,7 @@ fn render_live_area(app: &TuiApp, frame: &mut Frame, area: Rect) {
     if should_show_welcome(app) {
         render_welcome(app, frame, area);
     } else {
-        render_active_cell(app, frame, area);
+        render_live_overlays(app, frame, area);
     }
 }
 
@@ -192,15 +192,12 @@ fn should_show_welcome(app: &TuiApp) -> bool {
 }
 
 fn active_cell_height(app: &TuiApp, width: u16) -> Option<u16> {
-    let active = app.transcript_state.active_cell.as_ref()?;
-    if active.body().trim().is_empty() {
-        return None;
-    }
     let render_width = width.saturating_sub(4).max(40) as usize;
-    Some(active.to_lines_with_mode(render_width).len().max(1) as u16)
+    let lines = live_overlay_lines(app, render_width);
+    (!lines.is_empty()).then_some(lines.len().max(1) as u16)
 }
 
-fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
+fn render_live_overlays(app: &TuiApp, frame: &mut Frame, area: Rect) {
     let live_area = Rect {
         y: area.y.saturating_add(ACTIVE_TOP_INSET),
         height: area.height.saturating_sub(ACTIVE_TOP_INSET),
@@ -211,12 +208,7 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
         vertical: 0,
     });
     let render_width = inner.width.max(40) as usize;
-    let mut lines = Vec::new();
-    if let Some(active) = app.transcript_state.active_cell.as_ref()
-        && !active.body().trim().is_empty()
-    {
-        lines.extend(active.to_lines_with_mode(render_width));
-    }
+    let mut lines = live_overlay_lines(app, render_width);
     if let Some(line) = render_live_status_line(app) {
         lines.push(line);
     }
@@ -235,6 +227,19 @@ fn render_active_cell(app: &TuiApp, frame: &mut Frame, area: Rect) {
 
 fn has_live_status(app: &TuiApp) -> bool {
     render_live_status_line(app).is_some()
+}
+
+fn live_overlay_lines(app: &TuiApp, render_width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for (index, entry) in app.transcript_state.live_overlays.iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::from(""));
+        }
+        if !entry.cell.body().trim().is_empty() {
+            lines.extend(entry.cell.to_lines_with_mode(render_width));
+        }
+    }
+    lines
 }
 
 fn centered_column(area: Rect, max_width: u16) -> Rect {

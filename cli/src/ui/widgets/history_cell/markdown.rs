@@ -1,3 +1,4 @@
+use super::wrapping::{WrapOptions, word_wrap_spans, word_wrap_text};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -285,12 +286,24 @@ pub(super) fn render_plaintext(input: &str, width: usize) -> Vec<Line<'static>> 
             continue;
         }
 
-        for wrapped in textwrap::wrap(paragraph, width.max(8)) {
-            out.push(Line::from(vec![Span::styled(
-                wrapped.into_owned(),
-                Style::default().fg(Color::Rgb(200, 200, 210)),
-            )]));
-        }
+        out.extend(word_wrap_text(
+            paragraph,
+            WrapOptions::new(width).initial_indent(Line::default()),
+        )
+        .into_iter()
+        .map(|line| {
+            let spans = line
+                .spans
+                .into_iter()
+                .map(|span| {
+                    Span::styled(
+                        span.content.into_owned(),
+                        Style::default().fg(Color::Rgb(200, 200, 210)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            Line::from(spans)
+        }));
     }
 
     while out.last().is_some_and(|line| line.spans.is_empty()) {
@@ -436,20 +449,13 @@ fn push_wrapped_spans(
     width: usize,
     prefix: &str,
 ) {
-    let text: String = spans.iter().map(|span| span.content.as_ref()).collect();
-    let available = width.saturating_sub(display_width(prefix)).max(8);
-    let wrapped = textwrap::wrap(&text, available);
-    for (index, wrapped_line) in wrapped.into_iter().enumerate() {
-        let mut line_spans = Vec::new();
-        if index == 0 && !prefix.is_empty() {
-            line_spans.push(Span::raw(prefix.to_string()));
-        } else if !prefix.is_empty() {
-            line_spans.push(Span::raw(" ".repeat(display_width(prefix))));
-        }
-        let style = spans.first().map(|span| span.style).unwrap_or_default();
-        line_spans.push(Span::styled(wrapped_line.into_owned(), style));
-        out.push(Line::from(line_spans));
-    }
+    let wrapped = word_wrap_spans(
+        spans,
+        WrapOptions::new(width)
+            .initial_indent(Line::from(prefix.to_string()))
+            .subsequent_indent(Line::from(" ".repeat(display_width(prefix)))),
+    );
+    out.extend(wrapped);
 }
 
 fn highlight_code_line(line: &str, _lang: &str) -> Vec<Span<'static>> {

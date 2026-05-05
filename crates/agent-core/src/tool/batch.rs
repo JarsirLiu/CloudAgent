@@ -120,6 +120,7 @@ impl<'a> ToolBatchRunner<'a> {
                 EventMsg::ItemStarted {
                     turn_id: self.turn_id.to_string(),
                     item_id: tool_item_id.clone(),
+                    call_id: Some(call.id.clone()),
                     kind: spec.item_kind.clone(),
                     title: Some(self.host.tools().tool_item_title(&call)),
                 },
@@ -265,6 +266,7 @@ impl<'a> ToolBatchRunner<'a> {
                         EventMsg::ItemDelta {
                             turn_id: self.turn_id.to_string(),
                             item_id: ready.tool_item_id.clone(),
+                            call_id: Some(ready.call.id.clone()),
                             kind: ready.spec.delta_kind.clone(),
                             delta: rendered,
                         },
@@ -355,6 +357,7 @@ impl<'a> ToolBatchRunner<'a> {
                 EventMsg::ItemDelta {
                     turn_id: self.turn_id.to_string(),
                     item_id: tool_item_id.to_string(),
+                    call_id: Some(call.id.clone()),
                     kind: delta_kind,
                     delta: result.content.clone(),
                 },
@@ -366,6 +369,7 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
+                call_id: Some(call.id.clone()),
                 item: self
                     .host
                     .tools()
@@ -431,6 +435,7 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemDelta {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
+                call_id: Some(call.id.clone()),
                 kind: spec.delta_kind.clone(),
                 delta: content,
             },
@@ -441,6 +446,7 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
+                call_id: Some(call.id.clone()),
                 item: self
                     .host
                     .tools()
@@ -505,6 +511,7 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemStarted {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
+                call_id: Some(call.id.clone()),
                 kind: TurnItemKind::ToolCall,
                 title: Some(self.host.tools().tool_item_title(call)),
             },
@@ -515,6 +522,7 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemDelta {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
+                call_id: Some(call.id.clone()),
                 kind: TurnItemDeltaKind::ToolOutput,
                 delta: message,
             },
@@ -525,6 +533,7 @@ impl<'a> ToolBatchRunner<'a> {
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
                 item_id: tool_item_id.to_string(),
+                call_id: Some(call.id.clone()),
                 item: self
                     .host
                     .tools()

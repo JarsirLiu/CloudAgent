@@ -346,6 +346,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                         EventMsg::ItemStarted {
                             turn_id: self.turn_id.to_string(),
                             item_id: id.clone(),
+                            call_id: None,
                             kind: TurnItemKind::AssistantMessage,
                             title: Some("assistant_message".to_string()),
                         },
@@ -358,6 +359,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                     EventMsg::ItemDelta {
                         turn_id: self.turn_id.to_string(),
                         item_id: item_id.clone(),
+                        call_id: None,
                         kind: TurnItemDeltaKind::Text,
                         delta,
                     },
@@ -377,6 +379,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                         EventMsg::ItemStarted {
                             turn_id: self.turn_id.to_string(),
                             item_id: id.clone(),
+                            call_id: None,
                             kind: TurnItemKind::Reasoning,
                             title: Some("reasoning".to_string()),
                         },
@@ -390,6 +393,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                     EventMsg::ItemDelta {
                         turn_id: self.turn_id.to_string(),
                         item_id: item_id.clone(),
+                        call_id: None,
                         kind: TurnItemDeltaKind::ReasoningText,
                         delta,
                     },
@@ -445,6 +449,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 EventMsg::ItemCompleted {
                     turn_id: turn_id.to_string(),
                     item_id: item_id.clone(),
+                    call_id: None,
                     item: TranscriptItem::AgentMessage {
                         id: item_id,
                         text: response.content.clone().unwrap_or_default(),
@@ -459,6 +464,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 EventMsg::ItemCompleted {
                     turn_id: turn_id.to_string(),
                     item_id: item_id.clone(),
+                    call_id: None,
                     item: TranscriptItem::Reasoning {
                         id: item_id,
                         title: "reasoning".to_string(),

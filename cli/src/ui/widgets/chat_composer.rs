@@ -69,6 +69,14 @@ impl ChatComposer {
                 KeyCode::Char('c') => ComposerIntent::Interrupt,
                 KeyCode::Char('q') => ComposerIntent::Exit,
                 KeyCode::Char('j') => self.submit(),
+                KeyCode::Char('x') => {
+                    if let Some(cut) = self.textarea.cut_selection() {
+                        self.sync_completion();
+                        ComposerIntent::CopyText(cut)
+                    } else {
+                        ComposerIntent::None
+                    }
+                }
                 _ => {
                     self.textarea.handle_key(key);
                     self.sync_completion();

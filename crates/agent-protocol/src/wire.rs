@@ -551,6 +551,7 @@ mod tests {
         let item_completed = AppServerNotification::ItemCompleted {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
+            call_id: None,
             item: TranscriptItem::AgentMessage {
                 id: "assistant:1".to_string(),
                 text: "done".to_string(),
@@ -586,18 +587,21 @@ mod tests {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:1".to_string(),
+                call_id: None,
                 delta: "D:\\work".to_string(),
             },
             AppServerNotification::FileChangeOutputDelta {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:2".to_string(),
+                call_id: None,
                 delta: "wrote D:\\work\\note.txt".to_string(),
             },
             AppServerNotification::ToolOutputDelta {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:3".to_string(),
+                call_id: None,
                 delta: "generic tool output".to_string(),
             },
         ] {
@@ -618,6 +622,7 @@ mod tests {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:custom".to_string(),
+                call_id: Some("call-1".to_string()),
                 delta: "custom output".to_string(),
             }),
             event_seq: None,
@@ -634,10 +639,12 @@ mod tests {
         match reparsed.message {
             AppServerMessage::Notification(AppServerNotification::ToolOutputDelta {
                 item_id,
+                call_id,
                 delta,
                 ..
             }) => {
                 assert_eq!(item_id, "tool:custom");
+                assert_eq!(call_id.as_deref(), Some("call-1"));
                 assert_eq!(delta, "custom output");
             }
             other => panic!("unexpected notification: {other:?}"),
@@ -651,6 +658,7 @@ mod tests {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:write".to_string(),
+                call_id: Some("call-write".to_string()),
                 delta: "wrote note.txt".to_string(),
             }),
             event_seq: None,
@@ -667,11 +675,126 @@ mod tests {
         match reparsed.message {
             AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
                 item_id,
+                call_id,
                 delta,
                 ..
             }) => {
                 assert_eq!(item_id, "tool:write");
+                assert_eq!(call_id.as_deref(), Some("call-write"));
                 assert_eq!(delta, "wrote note.txt");
+            }
+            other => panic!("unexpected notification: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_started_roundtrips_with_call_id() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::ItemStarted {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:custom".to_string(),
+                call_id: Some("call-1".to_string()),
+                kind: TurnItemKind::ToolCall,
+                title: Some("read_file".to_string()),
+            }),
+            event_seq: None,
+        };
+
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+        assert_eq!(notification.method, "item/started");
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::ItemStarted {
+                item_id,
+                call_id,
+                kind,
+                title,
+                ..
+            }) => {
+                assert_eq!(item_id, "tool:custom");
+                assert_eq!(call_id.as_deref(), Some("call-1"));
+                assert_eq!(kind, TurnItemKind::ToolCall);
+                assert_eq!(title.as_deref(), Some("read_file"));
+            }
+            other => panic!("unexpected notification: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_completed_roundtrips_with_call_id() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::ItemCompleted {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                call_id: Some("call-1".to_string()),
+                item: TranscriptItem::ToolResult {
+                    id: "tool:custom".to_string(),
+                    tool_name: "read_file".to_string(),
+                    content: "ok".to_string(),
+                    summary: "ok".to_string(),
+                    structured: None,
+                },
+            }),
+            event_seq: None,
+        };
+
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+        assert_eq!(notification.method, "item/completed");
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::ItemCompleted {
+                call_id,
+                item,
+                ..
+            }) => {
+                assert_eq!(call_id.as_deref(), Some("call-1"));
+                assert!(matches!(
+                    item,
+                    TranscriptItem::ToolResult { ref tool_name, .. } if tool_name == "read_file"
+                ));
+            }
+            other => panic!("unexpected notification: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn notifications_allow_missing_call_id() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::ItemStarted {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:1".to_string(),
+                call_id: None,
+                kind: TurnItemKind::AssistantMessage,
+                title: Some("assistant_message".to_string()),
+            }),
+            event_seq: None,
+        };
+
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::ItemStarted {
+                call_id, item_id, ..
+            }) => {
+                assert!(call_id.is_none());
+                assert_eq!(item_id, "assistant:1");
             }
             other => panic!("unexpected notification: {other:?}"),
         }

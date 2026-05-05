@@ -76,12 +76,12 @@ impl TuiApp {
         match dispatch {
             TurnDispatch::Completed => {
                 self.flush_reasoning_buffer_to_transcript();
-                self.flush_active_cell_to_transcript();
+                self.flush_live_cells_to_transcript();
                 self.consolidate_exploration_stage();
             }
             TurnDispatch::Failed { error } => {
                 self.flush_reasoning_buffer_to_transcript();
-                self.flush_active_cell_to_transcript();
+                self.flush_live_cells_to_transcript();
                 self.consolidate_exploration_stage();
                 self.push_cell(HistoryCell::info(
                     "turn",
@@ -91,7 +91,7 @@ impl TuiApp {
             }
             TurnDispatch::Cancelled { reason } => {
                 self.flush_reasoning_buffer_to_transcript();
-                self.flush_active_cell_to_transcript();
+                self.flush_live_cells_to_transcript();
                 self.consolidate_exploration_stage();
                 self.push_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));
             }

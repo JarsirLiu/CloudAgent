@@ -18,6 +18,8 @@ impl TuiApp {
         for cell in &mut cells {
             if matches!(
                 cell.tone,
+                HistoryTone::Reasoning
+                    |
                 HistoryTone::Tool
                     | HistoryTone::Control
                     | HistoryTone::Warning

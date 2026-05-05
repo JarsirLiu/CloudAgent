@@ -2,10 +2,18 @@ use agent_core::{CoreTranscriptEvent, core_transcript_event_from_event_msg};
 use agent_protocol::{AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnState};
 use std::collections::HashMap;
 
+#[derive(Clone, Debug)]
+struct ActiveLifecycle {
+    turn_id: String,
+    item_id: String,
+    call_id: Option<String>,
+}
+
 pub(crate) struct ConversationNotificationProjector {
     conversation_id: String,
     deferred_terminal_notifications: Vec<AppServerNotification>,
-    active_items: HashMap<String, String>,
+    active_items_by_item_id: HashMap<String, ActiveLifecycle>,
+    active_item_id_by_call_id: HashMap<String, String>,
 }
 
 impl ConversationNotificationProjector {
@@ -13,7 +21,8 @@ impl ConversationNotificationProjector {
         Self {
             conversation_id: conversation_id.into(),
             deferred_terminal_notifications: Vec::new(),
-            active_items: HashMap::new(),
+            active_items_by_item_id: HashMap::new(),
+            active_item_id_by_call_id: HashMap::new(),
         }
     }
 
@@ -30,14 +39,21 @@ impl ConversationNotificationProjector {
             EventMsg::ItemStarted {
                 turn_id,
                 item_id,
+                call_id,
                 kind,
                 title,
             } => {
-                self.active_items.insert(item_id.clone(), turn_id.clone());
+                let lifecycle = ActiveLifecycle {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    call_id: call_id.clone(),
+                };
+                self.register_active_item(lifecycle);
                 vec![AppServerNotification::ItemStarted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id: turn_id.clone(),
                     item_id: item_id.clone(),
+                    call_id: call_id.clone(),
                     kind: kind.clone(),
                     title: title.clone(),
                 }]
@@ -45,6 +61,7 @@ impl ConversationNotificationProjector {
             EventMsg::ItemDelta {
                 turn_id,
                 item_id,
+                call_id,
                 kind,
                 delta,
             } => match kind {
@@ -52,35 +69,44 @@ impl ConversationNotificationProjector {
                 | TurnItemDeltaKind::ReasoningSummary
                 | TurnItemDeltaKind::ReasoningText => Vec::new(),
                 TurnItemDeltaKind::CommandExecutionOutput => {
-                    if let Some(error) = self.validate_active_item(turn_id, item_id) {
+                    if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
                         return vec![error];
                     }
                     vec![AppServerNotification::CommandExecutionOutputDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         item_id: item_id.clone(),
+                        call_id: call_id
+                            .clone()
+                            .or_else(|| self.call_id_for_item(item_id).map(str::to_owned)),
                         delta: delta.clone(),
                     }]
                 }
                 TurnItemDeltaKind::ToolOutput => {
-                    if let Some(error) = self.validate_active_item(turn_id, item_id) {
+                    if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
                         return vec![error];
                     }
                     vec![AppServerNotification::ToolOutputDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         item_id: item_id.clone(),
+                        call_id: call_id
+                            .clone()
+                            .or_else(|| self.call_id_for_item(item_id).map(str::to_owned)),
                         delta: delta.clone(),
                     }]
                 }
                 TurnItemDeltaKind::FileChangeOutput => {
-                    if let Some(error) = self.validate_active_item(turn_id, item_id) {
+                    if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
                         return vec![error];
                     }
                     vec![AppServerNotification::FileChangeOutputDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         item_id: item_id.clone(),
+                        call_id: call_id
+                            .clone()
+                            .or_else(|| self.call_id_for_item(item_id).map(str::to_owned)),
                         delta: delta.clone(),
                     }]
                 }
@@ -177,8 +203,7 @@ impl ConversationNotificationProjector {
                 if let Some(error) = self.active_items_not_closed_error(&turn_id) {
                     self.deferred_terminal_notifications.push(error);
                 }
-                self.active_items
-                    .retain(|_, active_turn_id| active_turn_id != &turn_id);
+                self.retain_active_items_for_other_turns(&turn_id);
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnCompleted {
                         conversation_id: self.conversation_id.clone(),
@@ -186,10 +211,15 @@ impl ConversationNotificationProjector {
                     });
                 Vec::new()
             }
-            CoreTranscriptEvent::ItemCompleted { turn_id, item } => {
+            CoreTranscriptEvent::ItemCompleted {
+                turn_id,
+                call_id,
+                item,
+            } => {
                 let item_id = item.id().to_string();
-                let lifecycle_error = self.validate_active_item(&turn_id, &item_id);
-                self.active_items.remove(&item_id);
+                let lifecycle_error =
+                    self.validate_active_lifecycle(&turn_id, &item_id, &call_id);
+                let lifecycle = self.remove_active_item(&item_id);
                 let mut notifications = Vec::new();
                 if let Some(error) = lifecycle_error {
                     notifications.push(error);
@@ -197,6 +227,7 @@ impl ConversationNotificationProjector {
                 notifications.push(AppServerNotification::ItemCompleted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id,
+                    call_id: call_id.or_else(|| lifecycle.and_then(|it| it.call_id)),
                     item,
                 });
                 notifications
@@ -284,10 +315,11 @@ impl ConversationNotificationProjector {
     }
 
     fn validate_active_item(&self, turn_id: &str, item_id: &str) -> Option<AppServerNotification> {
-        match self.active_items.get(item_id) {
-            Some(active_turn_id) if active_turn_id == turn_id => None,
-            Some(active_turn_id) => Some(self.lifecycle_error(format!(
-                "item `{item_id}` belongs to turn `{active_turn_id}` but received event for turn `{turn_id}`"
+        match self.active_items_by_item_id.get(item_id) {
+            Some(active) if active.turn_id == turn_id => None,
+            Some(active) => Some(self.lifecycle_error(format!(
+                "item `{item_id}` belongs to turn `{}` but received event for turn `{turn_id}`",
+                active.turn_id
             ))),
             None => Some(self.lifecycle_error(format!(
                 "item `{item_id}` received lifecycle event before item start"
@@ -295,12 +327,53 @@ impl ConversationNotificationProjector {
         }
     }
 
+    fn validate_active_call(&self, turn_id: &str, call_id: &str) -> Option<AppServerNotification> {
+        let Some(item_id) = self.active_item_id_by_call_id.get(call_id) else {
+            return Some(self.lifecycle_error(format!(
+                "call `{call_id}` received lifecycle event before item start"
+            )));
+        };
+        match self.active_items_by_item_id.get(item_id) {
+            Some(active) if active.turn_id == turn_id => None,
+            Some(active) => Some(self.lifecycle_error(format!(
+                "call `{call_id}` belongs to turn `{}` but received event for turn `{turn_id}`",
+                active.turn_id
+            ))),
+            None => Some(self.lifecycle_error(format!(
+                "call `{call_id}` points to missing active item `{item_id}`"
+            ))),
+        }
+    }
+
+    fn validate_active_lifecycle(
+        &self,
+        turn_id: &str,
+        item_id: &str,
+        call_id: &Option<String>,
+    ) -> Option<AppServerNotification> {
+        if let Some(call_id) = call_id.as_deref() {
+            if let Some(error) = self.validate_active_call(turn_id, call_id) {
+                return Some(error);
+            }
+            if let Some(active) = self.active_items_by_item_id.get(item_id)
+                && active.call_id.as_deref() != Some(call_id)
+            {
+                return Some(self.lifecycle_error(format!(
+                    "item `{item_id}` is associated with call `{}` but received lifecycle event for call `{call_id}`",
+                    active.call_id.as_deref().unwrap_or("<missing>")
+                )));
+            }
+            return None;
+        }
+        self.validate_active_item(turn_id, item_id)
+    }
+
     fn active_items_not_closed_error(&self, turn_id: &str) -> Option<AppServerNotification> {
         let dangling = self
-            .active_items
+            .active_items_by_item_id
             .iter()
-            .filter(|(_, active_turn_id)| *active_turn_id == turn_id)
-            .map(|(item_id, _)| item_id.as_str())
+            .filter(|(_, active)| active.turn_id == turn_id)
+            .map(|(_, active)| active.item_id.as_str())
             .collect::<Vec<_>>();
         (!dangling.is_empty()).then(|| {
             self.lifecycle_error(format!(
@@ -314,6 +387,41 @@ impl ConversationNotificationProjector {
         AppServerNotification::Error {
             conversation_id: self.conversation_id.clone(),
             message,
+        }
+    }
+
+    fn register_active_item(&mut self, lifecycle: ActiveLifecycle) {
+        if let Some(call_id) = lifecycle.call_id.as_ref() {
+            self.active_item_id_by_call_id
+                .insert(call_id.clone(), lifecycle.item_id.clone());
+        }
+        self.active_items_by_item_id
+            .insert(lifecycle.item_id.clone(), lifecycle);
+    }
+
+    fn remove_active_item(&mut self, item_id: &str) -> Option<ActiveLifecycle> {
+        let lifecycle = self.active_items_by_item_id.remove(item_id)?;
+        if let Some(call_id) = lifecycle.call_id.as_ref() {
+            self.active_item_id_by_call_id.remove(call_id);
+        }
+        Some(lifecycle)
+    }
+
+    fn call_id_for_item(&self, item_id: &str) -> Option<&str> {
+        self.active_items_by_item_id
+            .get(item_id)
+            .and_then(|lifecycle| lifecycle.call_id.as_deref())
+    }
+
+    fn retain_active_items_for_other_turns(&mut self, turn_id: &str) {
+        let stale_item_ids = self
+            .active_items_by_item_id
+            .iter()
+            .filter(|(_, active)| active.turn_id == turn_id)
+            .map(|(item_id, _)| item_id.clone())
+            .collect::<Vec<_>>();
+        for item_id in stale_item_ids {
+            let _ = self.remove_active_item(&item_id);
         }
     }
 
@@ -371,12 +479,14 @@ mod tests {
         projector.project_turn_event(&EventMsg::ItemStarted {
             turn_id: "turn-1".to_string(),
             item_id: "tool:write".to_string(),
+            call_id: Some("call-write".to_string()),
             kind: TurnItemKind::FileChange,
             title: Some("edit_file".to_string()),
         });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "tool:write".to_string(),
+            call_id: Some("call-write".to_string()),
             kind: TurnItemDeltaKind::FileChangeOutput,
             delta: "wrote note.txt".to_string(),
         });
@@ -384,8 +494,15 @@ mod tests {
         assert_eq!(notifications.len(), 1);
         assert!(matches!(
             &notifications[0],
-            AppServerNotification::FileChangeOutputDelta { item_id, delta, .. }
-                if item_id == "tool:write" && delta == "wrote note.txt"
+            AppServerNotification::FileChangeOutputDelta {
+                item_id,
+                call_id,
+                delta,
+                ..
+            }
+                if item_id == "tool:write"
+                    && call_id.as_deref() == Some("call-write")
+                    && delta == "wrote note.txt"
         ));
     }
 
@@ -396,12 +513,14 @@ mod tests {
         projector.project_turn_event(&EventMsg::ItemStarted {
             turn_id: "turn-1".to_string(),
             item_id: "tool:shell".to_string(),
+            call_id: Some("call-shell".to_string()),
             kind: TurnItemKind::CommandExecution,
             title: Some("exec_command".to_string()),
         });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "tool:shell".to_string(),
+            call_id: Some("call-shell".to_string()),
             kind: TurnItemDeltaKind::CommandExecutionOutput,
             delta: "D:\\work".to_string(),
         });
@@ -409,8 +528,15 @@ mod tests {
         assert_eq!(notifications.len(), 1);
         assert!(matches!(
             &notifications[0],
-            AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. }
-                if item_id == "tool:shell" && delta == "D:\\work"
+            AppServerNotification::CommandExecutionOutputDelta {
+                item_id,
+                call_id,
+                delta,
+                ..
+            }
+                if item_id == "tool:shell"
+                    && call_id.as_deref() == Some("call-shell")
+                    && delta == "D:\\work"
         ));
     }
 
@@ -421,12 +547,14 @@ mod tests {
         projector.project_turn_event(&EventMsg::ItemStarted {
             turn_id: "turn-1".to_string(),
             item_id: "tool:custom".to_string(),
+            call_id: Some("call-custom".to_string()),
             kind: TurnItemKind::ToolCall,
             title: Some("custom_tool".to_string()),
         });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "tool:custom".to_string(),
+            call_id: Some("call-custom".to_string()),
             kind: TurnItemDeltaKind::ToolOutput,
             delta: "custom output".to_string(),
         });
@@ -434,8 +562,15 @@ mod tests {
         assert_eq!(notifications.len(), 1);
         assert!(matches!(
             &notifications[0],
-            AppServerNotification::ToolOutputDelta { item_id, delta, .. }
-                if item_id == "tool:custom" && delta == "custom output"
+            AppServerNotification::ToolOutputDelta {
+                item_id,
+                call_id,
+                delta,
+                ..
+            }
+                if item_id == "tool:custom"
+                    && call_id.as_deref() == Some("call-custom")
+                    && delta == "custom output"
         ));
     }
 
@@ -510,6 +645,7 @@ mod tests {
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:missing".to_string(),
+            call_id: None,
             kind: TurnItemDeltaKind::Text,
             delta: "hello".to_string(),
         });
@@ -529,12 +665,14 @@ mod tests {
         projector.project_turn_event(&EventMsg::ItemStarted {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:1".to_string(),
+            call_id: None,
             kind: TurnItemKind::AssistantMessage,
             title: Some("assistant_message".to_string()),
         });
         let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:1".to_string(),
+            call_id: None,
             item: TranscriptItem::AgentMessage {
                 id: "assistant:1".to_string(),
                 text: "done".to_string(),
@@ -556,12 +694,162 @@ mod tests {
     }
 
     #[test]
+    fn item_completed_notification_includes_call_id_field_for_compat() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::AssistantMessage,
+            title: Some("assistant_message".to_string()),
+        });
+        let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            call_id: None,
+            item: TranscriptItem::AgentMessage {
+                id: "assistant:1".to_string(),
+                text: "done".to_string(),
+            },
+        });
+
+        assert!(matches!(
+            &completed[0],
+            AppServerNotification::ItemCompleted { call_id, .. } if call_id.is_none()
+        ));
+    }
+
+    #[test]
+    fn mismatched_call_id_reports_lifecycle_error() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:shell".to_string(),
+            call_id: Some("call-shell".to_string()),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("exec_command".to_string()),
+        });
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:shell".to_string(),
+            call_id: Some("call-other".to_string()),
+            kind: TurnItemDeltaKind::CommandExecutionOutput,
+            delta: "D:\\work".to_string(),
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::Error { message, .. }
+                if message.contains("call `call-other` received lifecycle event before item start")
+        ));
+    }
+
+    #[test]
+    fn item_completed_prefers_event_call_id_when_lifecycle_is_missing() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:shell".to_string(),
+            call_id: Some("call-shell".to_string()),
+            item: TranscriptItem::ToolResult {
+                id: "tool:shell".to_string(),
+                tool_name: "exec_command".to_string(),
+                content: "done".to_string(),
+                summary: "done".to_string(),
+                structured: None,
+            },
+        });
+
+        assert!(matches!(
+            completed.last(),
+            Some(AppServerNotification::ItemCompleted { call_id, .. })
+                if call_id.as_deref() == Some("call-shell")
+        ));
+    }
+
+    #[test]
+    fn completed_item_removes_call_id_index() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:shell".to_string(),
+            call_id: Some("call-shell".to_string()),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("exec_command".to_string()),
+        });
+        let _ = projector.project_turn_event(&EventMsg::ItemCompleted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:shell".to_string(),
+            call_id: Some("call-shell".to_string()),
+            item: TranscriptItem::CommandExecution {
+                id: "tool:shell".to_string(),
+                tool_name: "exec_command".to_string(),
+                command: "pwd".to_string(),
+                current_directory: "D:\\work".to_string(),
+                status: agent_protocol::CommandExecutionStatus::Completed,
+                exit_code: Some(0),
+                stdout: Some("D:\\work".to_string()),
+                stderr: None,
+                aggregated_output: Some("D:\\work".to_string()),
+                duration_ms: Some(1),
+                summary: "D:\\work".to_string(),
+            },
+        });
+
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:other".to_string(),
+            call_id: Some("call-shell".to_string()),
+            kind: TurnItemDeltaKind::CommandExecutionOutput,
+            delta: "should fail".to_string(),
+        });
+
+        assert!(matches!(
+            notifications.first(),
+            Some(AppServerNotification::Error { message, .. })
+                if message.contains("call `call-shell` received lifecycle event before item start")
+        ));
+    }
+
+    #[test]
+    fn call_id_turn_mismatch_reports_lifecycle_error() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:shell".to_string(),
+            call_id: Some("call-shell".to_string()),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("exec_command".to_string()),
+        });
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-2".to_string(),
+            item_id: "tool:shell".to_string(),
+            call_id: Some("call-shell".to_string()),
+            kind: TurnItemDeltaKind::CommandExecutionOutput,
+            delta: "D:\\other".to_string(),
+        });
+
+        assert!(matches!(
+            notifications.first(),
+            Some(AppServerNotification::Error { message, .. })
+                if message.contains("call `call-shell` belongs to turn `turn-1`")
+        ));
+    }
+
+    #[test]
     fn turn_completed_reports_dangling_active_items() {
         let mut projector = ConversationNotificationProjector::new("default");
 
         projector.project_turn_event(&EventMsg::ItemStarted {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:1".to_string(),
+            call_id: None,
             kind: TurnItemKind::AssistantMessage,
             title: Some("assistant_message".to_string()),
         });

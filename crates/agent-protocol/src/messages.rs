@@ -104,6 +104,7 @@ pub enum AppServerNotification {
         conversation_id: String,
         turn_id: TurnId,
         item_id: String,
+        call_id: Option<String>,
         kind: TurnItemKind,
         title: Option<String>,
     },
@@ -135,18 +136,21 @@ pub enum AppServerNotification {
         conversation_id: String,
         turn_id: TurnId,
         item_id: String,
+        call_id: Option<String>,
         delta: String,
     },
     ToolOutputDelta {
         conversation_id: String,
         turn_id: TurnId,
         item_id: String,
+        call_id: Option<String>,
         delta: String,
     },
     FileChangeOutputDelta {
         conversation_id: String,
         turn_id: TurnId,
         item_id: String,
+        call_id: Option<String>,
         delta: String,
     },
     TokenUsageUpdated {
@@ -180,6 +184,7 @@ pub enum AppServerNotification {
     ItemCompleted {
         conversation_id: String,
         turn_id: TurnId,
+        call_id: Option<String>,
         item: TranscriptItem,
     },
     ServerRequestRequested {

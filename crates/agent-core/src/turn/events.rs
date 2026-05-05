@@ -174,18 +174,21 @@ pub enum EventMsg {
     ItemStarted {
         turn_id: TurnId,
         item_id: String,
+        call_id: Option<String>,
         kind: TurnItemKind,
         title: Option<String>,
     },
     ItemDelta {
         turn_id: TurnId,
         item_id: String,
+        call_id: Option<String>,
         kind: TurnItemDeltaKind,
         delta: String,
     },
     ItemCompleted {
         turn_id: TurnId,
         item_id: String,
+        call_id: Option<String>,
         item: TranscriptItem,
     },
     ServerRequestRequested {

@@ -1,11 +1,12 @@
 mod markdown;
 mod render;
 mod tool_aggregation;
+mod wrapping;
 
 use agent_protocol::{ConversationTurn, TranscriptItem};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use textwrap::wrap;
+use wrapping::{WrapOptions, word_wrap_text};
 
 pub use render::{RenderContext, render_active_control_placeholder, render_history_entry};
 
@@ -460,7 +461,8 @@ impl Transcript {
         for cell in &mut self.cells {
             if matches!(
                 cell.tone,
-                HistoryTone::Tool
+                HistoryTone::Reasoning
+                    | HistoryTone::Tool
                     | HistoryTone::Control
                     | HistoryTone::Warning
                     | HistoryTone::Error
@@ -488,22 +490,37 @@ impl Transcript {
 }
 
 fn render_user(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let content_width = width.saturating_sub(4).max(8);
-    let wrapped = wrap_text(cell.body(), content_width);
-    let mut lines = Vec::new();
-    for (idx, text) in wrapped.into_iter().enumerate() {
-        let prefix = if idx == 0 { "› " } else { "  " };
-        lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(Color::Rgb(140, 150, 170))),
-            Span::styled(
-                text,
-                Style::default()
-                    .fg(Color::Rgb(220, 220, 235))
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-    }
-    lines
+    word_wrap_text(
+        cell.body(),
+        WrapOptions::new(width)
+            .initial_indent(Line::from(vec![Span::styled(
+                "› ",
+                Style::default().fg(Color::Rgb(140, 150, 170)),
+            )]))
+            .subsequent_indent(Line::from("  ")),
+    )
+    .into_iter()
+    .map(|line| {
+        let spans = line
+            .spans
+            .into_iter()
+            .enumerate()
+            .map(|(index, span)| {
+                if index == 0 {
+                    span
+                } else {
+                    Span::styled(
+                        span.content.into_owned(),
+                        Style::default()
+                            .fg(Color::Rgb(220, 220, 235))
+                            .add_modifier(Modifier::BOLD),
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+        Line::from(spans)
+    })
+    .collect()
 }
 
 fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -535,36 +552,92 @@ fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
 }
 
 fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let inner = width.saturating_sub(8).max(8);
-    let text_lines = markdown::render_plaintext(cell.body(), inner);
-    let mut out = Vec::new();
-    for (i, line) in text_lines.into_iter().enumerate() {
-        let mut spans = Vec::new();
-        if i == 0 {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                "≈ ",
-                Style::default().fg(Color::Rgb(170, 140, 255)),
-            ));
-            if !cell.label().is_empty() {
-                spans.push(Span::styled(
-                    format!("{}  ", cell.label()),
-                    Style::default()
-                        .fg(Color::Rgb(210, 215, 225))
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-        } else {
-            spans.push(Span::raw("    "));
-            spans.push(Span::styled(
-                "│ ",
-                Style::default().fg(Color::Rgb(90, 96, 108)),
-            ));
-        }
-        spans.extend(line.spans);
-        out.push(Line::from(spans));
+    let mut initial_spans = vec![
+        Span::raw("  "),
+        Span::styled("≈ ", Style::default().fg(Color::Rgb(170, 140, 255))),
+    ];
+    if !cell.label().is_empty() {
+        initial_spans.push(Span::styled(
+            format!("{}  ", cell.label()),
+            Style::default()
+                .fg(Color::Rgb(210, 215, 225))
+                .add_modifier(Modifier::BOLD),
+        ));
     }
-    out
+    let initial_indent = Line::from(initial_spans);
+    let subsequent_indent = Line::from(vec![
+        Span::raw("    "),
+        Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+    ]);
+
+    let mut out = Vec::new();
+    let paragraphs = reasoning_paragraphs(cell.body());
+    let paragraph_count = paragraphs.len();
+    for (index, paragraph) in paragraphs.into_iter().enumerate() {
+        let lines = word_wrap_text(
+            &paragraph,
+            WrapOptions::new(width)
+                .initial_indent(if out.is_empty() {
+                    initial_indent.clone()
+                } else {
+                    subsequent_indent.clone()
+                })
+                .subsequent_indent(subsequent_indent.clone()),
+        );
+        out.extend(lines);
+        if index + 1 < paragraph_count && !out.is_empty() {
+            // Preserve explicit paragraph breaks without restarting the header prefix.
+            out.push(Line::default());
+        }
+    }
+    while out.last().is_some_and(|line| {
+        line.spans
+            .iter()
+            .all(|span| span.content.as_ref().trim().is_empty())
+    }) {
+        out.pop();
+    }
+    let max_lines = if cell.expanded { 24usize } else { 5usize };
+    let hidden_lines = out.len().saturating_sub(max_lines);
+    if hidden_lines == 0 {
+        return out;
+    }
+    let mut kept = out.into_iter().take(max_lines).collect::<Vec<_>>();
+    kept.push(Line::from(vec![
+        Span::raw("    "),
+        Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+        Span::styled(
+            format!("… +{} lines (ctrl+t to toggle details)", hidden_lines),
+            Style::default().fg(Color::Rgb(132, 138, 150)),
+        ),
+    ]));
+    kept
+}
+
+fn reasoning_paragraphs(text: &str) -> Vec<String> {
+    let mut paragraphs = Vec::new();
+    let mut current = Vec::new();
+
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            if !current.is_empty() {
+                paragraphs.push(current.join(" "));
+                current.clear();
+            }
+            continue;
+        }
+        current.push(line.trim().to_string());
+    }
+
+    if !current.is_empty() {
+        paragraphs.push(current.join(" "));
+    }
+
+    if paragraphs.is_empty() && !text.trim().is_empty() {
+        paragraphs.push(text.trim().to_string());
+    }
+
+    paragraphs
 }
 
 fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -600,44 +673,34 @@ fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         text.push_str(&inline);
     }
 
-    let available = width.saturating_sub(6).max(12);
-    let wrapped = wrap_text(&text, available);
-    let mut lines = Vec::new();
-    for (index, segment) in wrapped.into_iter().enumerate() {
-        let mut spans = Vec::new();
-        if index == 0 {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                "◦ ",
-                Style::default().fg(Color::Rgb(120, 170, 255)),
-            ));
-            spans.push(Span::styled(
-                format!("{title}  "),
-                Style::default()
-                    .fg(Color::Rgb(215, 220, 232))
-                    .add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            spans.push(Span::raw("    "));
-        }
-        spans.push(Span::styled(
-            segment,
-            Style::default().fg(Color::Rgb(190, 200, 216)),
-        ));
-        lines.push(Line::from(spans));
-    }
-    lines
+    word_wrap_text(
+        &text,
+        WrapOptions::new(width)
+            .initial_indent(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("◦ ", Style::default().fg(Color::Rgb(120, 170, 255))),
+                Span::styled(
+                    format!("{title}  "),
+                    Style::default()
+                        .fg(Color::Rgb(215, 220, 232))
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]))
+            .subsequent_indent(Line::from("    ")),
+    )
+    .into_iter()
+    .map(tint_tail_rgb(190, 200, 216))
+    .collect()
 }
 
 fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
     let title = if cell.label().is_empty() {
         "Command".to_string()
     } else {
         cell.label().to_string()
     };
 
-    lines.push(Line::from(vec![
+    let mut lines = vec![Line::from(vec![
         Span::raw("  "),
         Span::styled("› ", Style::default().fg(Color::Rgb(120, 170, 255))),
         Span::styled(
@@ -646,39 +709,53 @@ fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
                 .fg(Color::Rgb(215, 220, 232))
                 .add_modifier(Modifier::BOLD),
         ),
-    ]));
+    ])];
 
-    for summary in wrap_text(cell.body(), width.saturating_sub(6).max(8)) {
-        lines.push(Line::from(vec![
-            Span::raw("    "),
-            Span::styled(summary, Style::default().fg(Color::Rgb(190, 200, 216))),
-        ]));
-    }
+    lines.extend(
+        word_wrap_text(
+            cell.body(),
+            WrapOptions::new(width)
+                .initial_indent(Line::from("    "))
+                .subsequent_indent(Line::from("    ")),
+        )
+        .into_iter()
+        .map(tint_all_rgb(190, 200, 216)),
+    );
 
     if let Some(detail) = cell.detail() {
-        let body_width = width.saturating_sub(8).max(8);
         let raw_lines = detail
             .lines()
-            .flat_map(|line| wrap_text(line, body_width))
+            .flat_map(|line| {
+                word_wrap_text(
+                    line,
+                    WrapOptions::new(width)
+                        .initial_indent(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled("↳ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                        ]))
+                        .subsequent_indent(Line::from("      ")),
+                )
+            })
             .collect::<Vec<_>>();
         let max_lines = if cell.expanded { 24usize } else { 5usize };
-        let display_lines = if raw_lines.len() <= max_lines {
+        let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_lines {
             raw_lines
         } else {
             let mut kept = raw_lines.into_iter().take(max_lines).collect::<Vec<_>>();
-            kept.push(format!(
-                "… +{} lines (ctrl+t to toggle details)",
-                detail.lines().count().saturating_sub(max_lines)
-            ));
-            kept
-        };
-        for meta in display_lines {
-            lines.push(Line::from(vec![
+            kept.push(Line::from(vec![
                 Span::raw("    "),
                 Span::styled("↳ ", Style::default().fg(Color::Rgb(90, 96, 108))),
-                Span::styled(meta, Style::default().fg(Color::Rgb(132, 138, 150))),
+                Span::styled(
+                    format!(
+                        "… +{} lines (ctrl+t to toggle details)",
+                        detail.lines().count().saturating_sub(max_lines)
+                    ),
+                    Style::default().fg(Color::Rgb(132, 138, 150)),
+                ),
             ]));
-        }
+            kept
+        };
+        lines.extend(display_lines.into_iter().map(tint_tail_rgb(132, 138, 150)));
     }
 
     lines
@@ -690,14 +767,13 @@ fn render_tool_like(
     accent: Color,
     dot: &str,
 ) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
     let title = pretty_tool_title(cell.label());
     let title = if cell.repeat_count > 1 {
         format!("{title} x{}", cell.repeat_count)
     } else {
         title
     };
-    lines.push(Line::from(vec![
+    let mut lines = vec![Line::from(vec![
         Span::raw("  "),
         Span::styled(format!("{dot} "), Style::default().fg(accent)),
         Span::styled(
@@ -706,43 +782,54 @@ fn render_tool_like(
                 .fg(Color::Rgb(210, 215, 225))
                 .add_modifier(Modifier::BOLD),
         ),
-    ]));
-    let body_width = width.saturating_sub(8).max(8);
-    let wrapped = wrap_text(cell.body(), body_width);
+    ])];
+    let wrapped = word_wrap_text(
+        cell.body(),
+        WrapOptions::new(width)
+            .initial_indent(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+            ]))
+            .subsequent_indent(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+            ])),
+    );
     let max_lines = if cell.expanded { 24usize } else { 2usize };
-    let mut output_lines = Vec::new();
+    let mut output_lines: Vec<Line<'static>> = Vec::new();
     if wrapped.len() <= max_lines {
         output_lines.extend(wrapped);
     } else {
         output_lines.extend(wrapped.iter().take(max_lines).cloned());
-        output_lines.push(format!(
-            "… +{} lines (ctrl+t to toggle details)",
-            wrapped.len().saturating_sub(max_lines)
-        ));
+        output_lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+            Span::styled(
+                format!(
+                    "… +{} lines (ctrl+t to toggle details)",
+                    wrapped.len().saturating_sub(max_lines)
+                ),
+                Style::default().fg(Color::Rgb(148, 152, 164)),
+            ),
+        ]));
     }
-    for line in output_lines {
-        if !line.is_empty() {
-            lines.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
-                Span::styled(line, Style::default().fg(Color::Rgb(148, 152, 164))),
-            ]));
-        }
-    }
+    lines.extend(output_lines.into_iter().filter(|line| !line.spans.is_empty()).map(tint_tail_rgb(148, 152, 164)));
     lines
 }
 
 fn render_meta(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let wrapped = wrap_text(cell.body(), width.saturating_sub(4).max(8));
-    let mut lines = Vec::new();
-    for (i, line) in wrapped.into_iter().enumerate() {
-        let prefix = if i == 0 { "· " } else { "  " };
-        lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(Color::Rgb(80, 80, 90))),
-            Span::styled(line, Style::default().fg(Color::Rgb(110, 110, 120))),
-        ]));
-    }
-    lines
+    word_wrap_text(
+        cell.body(),
+        WrapOptions::new(width)
+            .initial_indent(Line::from(vec![Span::styled(
+                "· ",
+                Style::default().fg(Color::Rgb(80, 80, 90)),
+            )]))
+            .subsequent_indent(Line::from("  ")),
+    )
+    .into_iter()
+    .map(tint_tail_rgb(110, 110, 120))
+    .collect()
 }
 
 fn render_notice(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -773,14 +860,33 @@ fn pretty_tool_title(label: &str) -> String {
     }
 }
 
-fn wrap_text(input: &str, width: usize) -> Vec<String> {
-    if input.trim().is_empty() {
-        return Vec::new();
+fn tint_all_rgb(r: u8, g: u8, b: u8) -> impl Fn(Line<'static>) -> Line<'static> {
+    move |line| {
+        let spans = line
+            .spans
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), Style::default().fg(Color::Rgb(r, g, b))))
+            .collect::<Vec<_>>();
+        Line::from(spans)
     }
-    wrap(input, width)
-        .into_iter()
-        .map(|line| line.into_owned())
-        .collect()
+}
+
+fn tint_tail_rgb(r: u8, g: u8, b: u8) -> impl Fn(Line<'static>) -> Line<'static> {
+    move |line| {
+        let spans = line
+            .spans
+            .into_iter()
+            .enumerate()
+            .map(|(index, span)| {
+                if index == 0 {
+                    span
+                } else {
+                    Span::styled(span.content.into_owned(), Style::default().fg(Color::Rgb(r, g, b)))
+                }
+            })
+            .collect::<Vec<_>>();
+        Line::from(spans)
+    }
 }
 
 fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
@@ -830,5 +936,48 @@ mod tests {
 
         let rendered = joined(&cell, 100);
         assert!(rendered.contains("| raw | text |"));
+    }
+
+    #[test]
+    fn reasoning_cells_wrap_without_terminal_hard_break_artifacts() {
+        let cell = HistoryCell::reasoning(
+            "reasoning",
+            "Now let me look at the collect_repo_entries function to understand how it handles paths, and also check if there's any path validation that rejects relative paths.",
+        );
+
+        let rendered = joined(&cell, 80);
+        assert!(!rendered.contains("pat\n    │ h"));
+        assert!(rendered.contains("path"));
+        assert!(rendered.contains("validation that rejects relative paths."));
+    }
+
+    #[test]
+    fn reasoning_multiline_paragraphs_keep_a_single_header() {
+        let cell = HistoryCell::reasoning(
+            "reasoning",
+            "Now I have a clear picture.\n1. resolve_read_path allows absolute paths.\n2. resolve_full_access_path allows absolute paths.",
+        );
+
+        let rendered = joined(&cell, 100);
+        assert_eq!(rendered.matches("≈ reasoning").count(), 1);
+        assert!(rendered.contains("Now I have a clear picture."));
+        assert!(rendered.contains("1. resolve_read_path"));
+        assert!(rendered.contains("2."));
+        assert!(rendered.contains("resolve_full_access_path"));
+        assert!(!rendered.contains("\n\n"));
+    }
+
+    #[test]
+    fn reasoning_single_newlines_collapse_into_compact_paragraphs() {
+        let cell = HistoryCell::reasoning(
+            "reasoning",
+            "方案：只修改 exec_command 的 workdir 处理逻辑。\n但 resolve_read_path 允许绝对路径。\n所以需要评估权限边界。",
+        );
+
+        let rendered = joined(&cell, 120);
+        assert_eq!(rendered.matches("≈ reasoning").count(), 1);
+        assert!(!rendered.contains("\n\n"));
+        assert!(rendered.contains("方案：只修改 exec_command 的 workdir 处理逻辑。"));
+        assert!(rendered.contains("但 resolve_read_path 允许绝对路径。"));
     }
 }

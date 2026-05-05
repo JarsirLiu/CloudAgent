@@ -3,7 +3,7 @@ pub mod runtime_projection;
 pub mod selectors;
 pub mod status_view_model;
 
-use crate::ui::widgets::history_cell::{ExplorationAggregate, HistoryCell, Transcript};
+use crate::ui::widgets::history_cell::{ExplorationAggregate, HistoryCell, HistoryTone, Transcript};
 use agent_protocol::{ConversationTurn, FrontendMode, ModelUsage, RequestId};
 use std::time::{Duration, Instant};
 
@@ -39,14 +39,71 @@ pub struct ServerRequestState {
 #[derive(Default)]
 pub struct TranscriptState {
     pub transcript: Transcript,
-    pub active_item_id: Option<String>,
-    pub active_item_kind: Option<agent_protocol::TurnItemKind>,
-    pub active_cell: Option<HistoryCell>,
+    pub active_assistant: Option<ActiveAssistantState>,
+    pub active_exec_view: Option<ActiveExecViewState>,
     pub active_exec: Option<ActiveExecSession>,
-    pub active_reasoning_item_id: Option<String>,
-    pub active_reasoning_title: Option<String>,
-    pub active_reasoning_text: String,
+    pub active_reasoning: Option<ActiveReasoningState>,
+    pub next_overlay_order: u64,
+    pub live_overlays: Vec<LiveOverlayEntry>,
+    pub next_live_block_id: u64,
     pub last_copyable_output: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveAssistantState {
+    pub block_id: u64,
+    pub item_id: String,
+    pub cell: HistoryCell,
+    pub order: u64,
+    pub completed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveReasoningState {
+    pub block_id: u64,
+    pub item_id: String,
+    pub title: String,
+    pub text: String,
+    pub order: u64,
+    pub completed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveExecViewState {
+    pub block_id: u64,
+    pub presentation: ActiveExecPresentation,
+    pub order: u64,
+    pub committed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum ActiveExecPresentation {
+    Command {
+        label: String,
+        summary: String,
+        detail: Option<String>,
+        expanded: bool,
+    },
+    Exploration {
+        label: String,
+        summary: String,
+        aggregate: ExplorationAggregate,
+        expanded: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LiveOverlayKind {
+    Assistant,
+    Exec,
+    Reasoning,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiveOverlayEntry {
+    pub id: u64,
+    pub kind: LiveOverlayKind,
+    pub cell: HistoryCell,
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +129,65 @@ pub struct ActiveExecCall {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActiveExecRouteKey {
+    CallId(String),
     ItemId(String),
+}
+
+impl ActiveAssistantState {
+    pub fn to_history_cell(&self) -> HistoryCell {
+        self.cell.clone()
+    }
+}
+
+impl ActiveReasoningState {
+    pub fn to_history_cell(&self) -> HistoryCell {
+        let mut cell = HistoryCell::reasoning(self.title.clone(), compact_live_reasoning_text(&self.text));
+        cell.expanded = !self.completed;
+        cell
+    }
+}
+
+impl ActiveExecViewState {
+    pub fn to_history_cell(&self) -> HistoryCell {
+        self.presentation.to_history_cell()
+    }
+}
+
+impl ActiveExecPresentation {
+    pub fn to_history_cell(&self) -> HistoryCell {
+        match self {
+            ActiveExecPresentation::Command {
+                label,
+                summary,
+                detail,
+                expanded,
+            } => {
+                let mut cell = HistoryCell::exec(
+                    label.clone(),
+                    summary.clone(),
+                    detail.clone(),
+                    HistoryTone::Control,
+                );
+                cell.expanded = *expanded;
+                cell
+            }
+            ActiveExecPresentation::Exploration {
+                label,
+                summary,
+                aggregate,
+                expanded,
+            } => {
+                let mut cell = HistoryCell::exploration(
+                    label.clone(),
+                    summary.clone(),
+                    aggregate.clone(),
+                    HistoryTone::Control,
+                );
+                cell.expanded = *expanded;
+                cell
+            }
+        }
+    }
 }
 
 impl ActiveExecSession {
@@ -139,6 +254,25 @@ impl ActiveExecSession {
             return false;
         };
         call.completed = true;
+        true
+    }
+
+    pub fn complete_call_or_only_pending(&mut self, route_key: &ActiveExecRouteKey) -> bool {
+        if self.complete_call(route_key) {
+            return true;
+        }
+        let mut pending = self
+            .calls
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, call)| !call.completed);
+        let Some((first_index, _)) = pending.next() else {
+            return false;
+        };
+        if pending.next().is_some() {
+            return false;
+        }
+        self.calls[first_index].completed = true;
         true
     }
 
@@ -256,5 +390,38 @@ impl RunState {
         {
             self.system_notice = None;
         }
+    }
+}
+
+fn compact_live_reasoning_text(text: &str) -> String {
+    let mut paragraphs = Vec::new();
+    let mut current = Vec::new();
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.starts_with("```") {
+            continue;
+        }
+        if line.is_empty() {
+            if !current.is_empty() {
+                paragraphs.push(current.join(" "));
+                current.clear();
+            }
+            continue;
+        }
+        let compact = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !compact.is_empty() {
+            current.push(compact);
+        }
+    }
+
+    if !current.is_empty() {
+        paragraphs.push(current.join(" "));
+    }
+
+    if paragraphs.is_empty() {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    } else {
+        paragraphs.join("\n\n")
     }
 }

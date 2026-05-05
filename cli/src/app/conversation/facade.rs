@@ -1,3 +1,4 @@
+use crate::state::ActiveExecRouteKey;
 use crate::app::TuiApp;
 use crate::state::reducer::{ControlDispatch, ItemDispatch};
 use crate::ui::widgets::history_cell::{RenderContext, render_history_entry};
@@ -13,7 +14,6 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
         let cells = history_snapshot
             .iter()
             .flat_map(|turn| turn.items.iter())
-            .filter(|item| !matches!(item, TranscriptItem::Reasoning { .. }))
             .map(|item| render_history_entry(item, &mut render_context))
             .filter(|cell| !cell.is_empty())
             .collect::<Vec<_>>();
@@ -33,28 +33,42 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
     app.run_state.history_loaded = app.run_state.history_snapshot.is_some();
 }
 
-pub(crate) fn complete_control_item(app: &mut TuiApp, item_id: &str, item: &TranscriptItem) {
+pub(crate) fn complete_control_item(
+    app: &mut TuiApp,
+    item_id: &str,
+    route_key: ActiveExecRouteKey,
+    item: &TranscriptItem,
+) {
     let mut render_context = RenderContext;
-    app.handle_control_item_completed(item_id, render_history_entry(item, &mut render_context));
+    app.handle_control_item_completed_with_route_key(
+        item_id,
+        route_key,
+        render_history_entry(item, &mut render_context),
+    );
 }
 
 fn apply_control_dispatch(app: &mut TuiApp, dispatch: ControlDispatch) {
     match dispatch {
         ControlDispatch::Started {
             item_id,
+            route_key,
             kind,
             title,
         } => {
-            app.handle_control_item_started(&item_id, kind, &title);
+            app.handle_control_item_started_with_route_key(&item_id, route_key, kind, &title);
         }
-        ControlDispatch::Delta { item_id, delta } => {
-            app.handle_control_item_delta(&item_id, &delta);
+        ControlDispatch::Delta {
+            item_id,
+            route_key,
+            delta,
+        } => {
+            app.handle_control_item_delta_with_route_key(&item_id, &route_key, &delta);
         }
-        ControlDispatch::Completed { item } => match item {
+        ControlDispatch::Completed { route_key, item } => match item {
             TranscriptItem::CommandExecution { ref id, .. }
             | TranscriptItem::FileChange { ref id, .. }
             | TranscriptItem::ToolResult { ref id, .. } => {
-                complete_control_item(app, id, &item);
+                complete_control_item(app, id, route_key, &item);
             }
             TranscriptItem::UserMessage { .. }
             | TranscriptItem::SystemMessage { .. }

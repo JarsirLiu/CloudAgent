@@ -101,18 +101,21 @@ mod tests {
             EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
+                call_id: Some("call-1".to_string()),
                 kind: crate::turn::TurnItemKind::CommandExecution,
                 title: Some("exec_command".to_string()),
             },
             EventMsg::ItemDelta {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
+                call_id: Some("call-1".to_string()),
                 kind: TurnItemDeltaKind::CommandExecutionOutput,
                 delta: "streamed stdout".to_string(),
             },
             EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
+                call_id: Some("call-1".to_string()),
                 item: TranscriptItem::CommandExecution {
                     id: "tool-1".to_string(),
                     tool_name: "exec_command".to_string(),
@@ -143,12 +146,14 @@ mod tests {
             EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
+                call_id: Some("call-1".to_string()),
                 kind: crate::turn::TurnItemKind::ToolCall,
                 title: Some("get_metadata".to_string()),
             },
             EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
                 item_id: "tool-1".to_string(),
+                call_id: Some("call-1".to_string()),
                 item: TranscriptItem::ToolResult {
                     id: "tool-1".to_string(),
                     tool_name: "get_metadata".to_string(),

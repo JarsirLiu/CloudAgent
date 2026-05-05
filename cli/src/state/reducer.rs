@@ -1,4 +1,4 @@
-use crate::state::NoticeLevel;
+use crate::state::{ActiveExecRouteKey, NoticeLevel};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
     FrontendMode, ModelRetryStage, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind,
@@ -36,14 +36,17 @@ pub(crate) enum ItemDispatch {
 pub(crate) enum ControlDispatch {
     Started {
         item_id: String,
+        route_key: ActiveExecRouteKey,
         kind: TurnItemKind,
         title: String,
     },
     Delta {
         item_id: String,
+        route_key: ActiveExecRouteKey,
         delta: String,
     },
     Completed {
+        route_key: ActiveExecRouteKey,
         item: TranscriptItem,
     },
 }
@@ -367,6 +370,7 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
         }
         AppServerNotification::ItemStarted {
             item_id,
+            call_id,
             kind,
             title,
             ..
@@ -375,6 +379,7 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
         {
             Some(ItemDispatch::Control(ControlDispatch::Started {
                 item_id: item_id.clone(),
+                route_key: control_route_key(call_id.as_deref(), item_id),
                 kind: kind.clone(),
                 title: title.clone().unwrap_or_default(),
             }))
@@ -400,22 +405,25 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
         AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. } => {
             Some(ItemDispatch::Control(ControlDispatch::Delta {
                 item_id: item_id.clone(),
+                route_key: control_route_key(notification_call_id(notification), item_id),
                 delta: delta.clone(),
             }))
         }
         AppServerNotification::ToolOutputDelta { item_id, delta, .. } => {
             Some(ItemDispatch::Control(ControlDispatch::Delta {
                 item_id: item_id.clone(),
+                route_key: control_route_key(notification_call_id(notification), item_id),
                 delta: delta.clone(),
             }))
         }
         AppServerNotification::FileChangeOutputDelta { item_id, delta, .. } => {
             Some(ItemDispatch::Control(ControlDispatch::Delta {
                 item_id: item_id.clone(),
+                route_key: control_route_key(notification_call_id(notification), item_id),
                 delta: delta.clone(),
             }))
         }
-        AppServerNotification::ItemCompleted { item, .. } => match item {
+        AppServerNotification::ItemCompleted { item, call_id, .. } => match item {
             TranscriptItem::AgentMessage { .. } => {
                 Some(ItemDispatch::AssistantCompleted { item: item.clone() })
             }
@@ -426,11 +434,32 @@ pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Opti
             | TranscriptItem::FileChange { .. }
             | TranscriptItem::ToolResult { .. } => {
                 Some(ItemDispatch::Control(ControlDispatch::Completed {
+                    route_key: control_route_key(call_id.as_deref(), item.id()),
                     item: item.clone(),
                 }))
             }
             TranscriptItem::UserMessage { .. } | TranscriptItem::SystemMessage { .. } => None,
         },
+        _ => None,
+    }
+}
+
+fn control_route_key(call_id: Option<&str>, item_id: &str) -> ActiveExecRouteKey {
+    match call_id {
+        Some(call_id) if !call_id.trim().is_empty() => {
+            ActiveExecRouteKey::CallId(call_id.to_string())
+        }
+        _ => ActiveExecRouteKey::ItemId(item_id.to_string()),
+    }
+}
+
+fn notification_call_id(notification: &AppServerNotification) -> Option<&str> {
+    match notification {
+        AppServerNotification::ItemStarted { call_id, .. }
+        | AppServerNotification::CommandExecutionOutputDelta { call_id, .. }
+        | AppServerNotification::ToolOutputDelta { call_id, .. }
+        | AppServerNotification::FileChangeOutputDelta { call_id, .. }
+        | AppServerNotification::ItemCompleted { call_id, .. } => call_id.as_deref(),
         _ => None,
     }
 }
@@ -548,5 +577,49 @@ mod tests {
                     && *next_delay_ms == 500
             )
         }));
+    }
+
+    #[test]
+    fn control_dispatch_prefers_call_id_route_key() {
+        let notification = AppServerNotification::ToolOutputDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:1".to_string(),
+            call_id: Some("call-1".to_string()),
+            delta: "output".to_string(),
+        };
+
+        let dispatch = derive_item_dispatch(&notification);
+
+        assert!(matches!(
+            dispatch,
+            Some(ItemDispatch::Control(ControlDispatch::Delta {
+                route_key: ActiveExecRouteKey::CallId(call_id),
+                item_id,
+                delta,
+            })) if call_id == "call-1" && item_id == "tool:1" && delta == "output"
+        ));
+    }
+
+    #[test]
+    fn control_dispatch_falls_back_to_item_id_route_key() {
+        let notification = AppServerNotification::ToolOutputDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:1".to_string(),
+            call_id: None,
+            delta: "output".to_string(),
+        };
+
+        let dispatch = derive_item_dispatch(&notification);
+
+        assert!(matches!(
+            dispatch,
+            Some(ItemDispatch::Control(ControlDispatch::Delta {
+                route_key: ActiveExecRouteKey::ItemId(item_id),
+                delta,
+                ..
+            })) if item_id == "tool:1" && delta == "output"
+        ));
     }
 }
