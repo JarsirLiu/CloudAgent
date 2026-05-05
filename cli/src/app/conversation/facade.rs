@@ -13,6 +13,7 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
         let cells = history_snapshot
             .iter()
             .flat_map(|turn| turn.items.iter())
+            .filter(|item| !matches!(item, TranscriptItem::Reasoning { .. }))
             .map(|item| render_history_entry(item, &mut render_context))
             .filter(|cell| !cell.is_empty())
             .collect::<Vec<_>>();

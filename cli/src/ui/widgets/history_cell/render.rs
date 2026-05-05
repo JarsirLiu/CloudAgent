@@ -73,7 +73,11 @@ pub fn render_active_control_placeholder(kind: TurnItemKind, title: &str) -> His
             "running".to_string(),
             HistoryTone::Control,
         ),
-        _ => HistoryCell::info(title.to_string(), "running".to_string(), HistoryTone::Control),
+        _ => HistoryCell::info(
+            title.to_string(),
+            "running".to_string(),
+            HistoryTone::Control,
+        ),
     }
 }
 

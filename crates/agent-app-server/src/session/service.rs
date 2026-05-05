@@ -1,7 +1,7 @@
 use crate::app::notification::send_notification;
 use crate::routing::command_router::{ServerState, merge_active_turn};
 use crate::session::state as session_state;
-use agent_core::AgentHost;
+use agent_core::{AgentHost, filter_history_ui_turn, filter_history_ui_turns};
 use agent_protocol::{AppServerMessage, AppServerNotification, ConversationStatus, FrontendMode};
 use anyhow::Result;
 use std::sync::Arc;
@@ -47,7 +47,8 @@ pub(crate) async fn request_conversation_history(
     let (mut turns, _has_more, _next_before_turn_id) = runtime
         .build_turns_page_from_rollout(&conversation_id, None, 30)
         .await?;
-    merge_active_turn(&mut turns, active_turn);
+    merge_active_turn(&mut turns, active_turn.and_then(filter_history_ui_turn));
+    turns = filter_history_ui_turns(turns);
     send_notification(
         event_tx,
         state,
@@ -90,6 +91,7 @@ pub(crate) async fn request_conversation_history_page(
     let (turns, has_more, next_before_turn_id) = runtime
         .build_turns_page_from_rollout(&conversation_id, before_turn_id.as_deref(), limit)
         .await?;
+    let turns = filter_history_ui_turns(turns);
     send_notification(
         event_tx,
         state,
@@ -451,7 +453,7 @@ async fn publish_switched_conversation_state(
         },
     )
     .await;
-    let turns = runtime.build_turns_from_rollout(conversation_id).await?;
+    let turns = filter_history_ui_turns(runtime.build_turns_from_rollout(conversation_id).await?);
     send_notification(
         event_tx,
         state,

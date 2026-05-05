@@ -580,6 +580,25 @@ pub fn flatten_conversation_turns(turns: &[ConversationTurn]) -> Vec<TranscriptI
         .collect()
 }
 
+pub fn filter_history_ui_turns(turns: Vec<ConversationTurn>) -> Vec<ConversationTurn> {
+    turns
+        .into_iter()
+        .filter_map(filter_history_ui_turn)
+        .collect()
+}
+
+pub fn filter_history_ui_turn(turn: ConversationTurn) -> Option<ConversationTurn> {
+    let items = turn
+        .items
+        .into_iter()
+        .filter(|item| !matches!(item, TranscriptItem::Reasoning { .. }))
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return None;
+    }
+    Some(ConversationTurn { items, ..turn })
+}
+
 pub fn transcript_item_from_response_item(message: &ResponseItem) -> Option<TranscriptItem> {
     match message {
         ResponseItem::System { content } => Some(TranscriptItem::SystemMessage {
@@ -1047,6 +1066,49 @@ mod tests {
                 TranscriptItem::UserMessage { text: second, .. },
                 TranscriptItem::AgentMessage { text: two, .. }
             ] if second == "second" && two == "two"
+        ));
+    }
+
+    #[test]
+    fn filter_history_ui_turns_drops_reasoning_items_and_empty_turns() {
+        let turns = vec![
+            ConversationTurn {
+                id: "turn-1".to_string(),
+                state: TurnState::Completed,
+                items: vec![
+                    TranscriptItem::Reasoning {
+                        id: "reasoning:1".to_string(),
+                        title: "reasoning".to_string(),
+                        text: "thinking".to_string(),
+                    },
+                    TranscriptItem::AgentMessage {
+                        id: "assistant:1".to_string(),
+                        text: "answer".to_string(),
+                    },
+                ],
+                rollout_start_index: 0,
+                rollout_end_index: 1,
+            },
+            ConversationTurn {
+                id: "turn-2".to_string(),
+                state: TurnState::Completed,
+                items: vec![TranscriptItem::Reasoning {
+                    id: "reasoning:2".to_string(),
+                    title: "reasoning".to_string(),
+                    text: "only reasoning".to_string(),
+                }],
+                rollout_start_index: 2,
+                rollout_end_index: 2,
+            },
+        ];
+
+        let filtered = filter_history_ui_turns(turns);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "turn-1");
+        assert!(matches!(
+            &filtered[0].items[..],
+            [TranscriptItem::AgentMessage { text, .. }] if text == "answer"
         ));
     }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::conversation::facade::rebuild_transcript_from_history;
 use crate::state::NoticeLevel;
 use crate::state::reducer::apply_server_message;
 
@@ -233,7 +234,10 @@ fn slash_exit_parses_while_running() {
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should submit slash exit");
 
-    assert!(matches!(input, ParsedInput::Command(AppClientCommand::Exit)));
+    assert!(matches!(
+        input,
+        ParsedInput::Command(AppClientCommand::Exit)
+    ));
 }
 
 #[test]
@@ -261,7 +265,10 @@ fn slash_exit_parses_after_turn_cancelled() {
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should submit slash exit");
 
-    assert!(matches!(input, ParsedInput::Command(AppClientCommand::Exit)));
+    assert!(matches!(
+        input,
+        ParsedInput::Command(AppClientCommand::Exit)
+    ));
 }
 
 #[test]
@@ -356,6 +363,42 @@ fn reasoning_is_flushed_before_assistant_starts() {
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
     assert_eq!(cells[0].body(), "先分析");
+}
+
+#[test]
+fn history_rebuild_skips_reasoning_items() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.run_state.history_snapshot = Some(vec![agent_protocol::ConversationTurn {
+        id: "turn-1".to_string(),
+        state: agent_protocol::TurnState::Completed,
+        items: vec![
+            TranscriptItem::Reasoning {
+                id: "reasoning:1".to_string(),
+                title: "reasoning".to_string(),
+                text: "先分析".to_string(),
+            },
+            TranscriptItem::AgentMessage {
+                id: "assistant:1".to_string(),
+                text: "最终答复".to_string(),
+            },
+        ],
+        rollout_start_index: 0,
+        rollout_end_index: 1,
+    }]);
+
+    rebuild_transcript_from_history(&mut app);
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cells[0].body(), "最终答复");
 }
 
 #[test]
@@ -729,17 +772,26 @@ fn clear_last_tool_name_does_not_revive_live_status_after_idle_mode() {
         "ReadOnly".to_string(),
     );
 
-    execute_server_action(&mut app, ServerAction::SetMode(agent_protocol::FrontendMode::Running));
+    execute_server_action(
+        &mut app,
+        ServerAction::SetMode(agent_protocol::FrontendMode::Running),
+    );
     execute_server_action(&mut app, ServerAction::ClearLastToolName);
     assert_eq!(
         app.runtime_projection.live_label.as_deref(),
         Some("assistant is responding")
     );
 
-    execute_server_action(&mut app, ServerAction::SetMode(agent_protocol::FrontendMode::Idle));
+    execute_server_action(
+        &mut app,
+        ServerAction::SetMode(agent_protocol::FrontendMode::Idle),
+    );
     execute_server_action(&mut app, ServerAction::ClearLastToolName);
 
-    assert_eq!(app.runtime_projection.phase, Some(crate::state::runtime_projection::RuntimePhase::Idle));
+    assert_eq!(
+        app.runtime_projection.phase,
+        Some(crate::state::runtime_projection::RuntimePhase::Idle)
+    );
     assert!(app.runtime_projection.live_label.is_none());
 }
 

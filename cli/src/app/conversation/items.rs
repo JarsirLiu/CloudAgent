@@ -12,8 +12,11 @@ impl TuiApp {
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
         self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-        self.transcript_state.active_cell =
-            Some(HistoryCell::agent("", String::new(), HistoryFormat::Markdown));
+        self.transcript_state.active_cell = Some(HistoryCell::agent(
+            "",
+            String::new(),
+            HistoryFormat::Markdown,
+        ));
     }
 
     pub(crate) fn handle_assistant_item_delta(&mut self, item_id: &str, delta: &str) {
@@ -34,8 +37,11 @@ impl TuiApp {
             self.flush_active_cell_to_transcript();
             self.transcript_state.active_item_id = Some(item_id.to_string());
             self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-            self.transcript_state.active_cell =
-                Some(HistoryCell::agent("", String::new(), HistoryFormat::Markdown));
+            self.transcript_state.active_cell = Some(HistoryCell::agent(
+                "",
+                String::new(),
+                HistoryFormat::Markdown,
+            ));
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
             cell.replace_body(output);
@@ -96,7 +102,9 @@ impl TuiApp {
         self.flush_reasoning_buffer_to_transcript();
         if matches!(
             self.transcript_state.active_item_kind,
-            Some(TurnItemKind::CommandExecution | TurnItemKind::ToolCall | TurnItemKind::FileChange)
+            Some(
+                TurnItemKind::CommandExecution | TurnItemKind::ToolCall | TurnItemKind::FileChange
+            )
         ) {
             self.clear_active_cell();
         } else {
@@ -121,7 +129,10 @@ impl TuiApp {
             Some(std::time::Duration::from_secs(4)),
         );
         if matches!(
-            self.transcript_state.active_cell.as_ref().map(HistoryCell::kind),
+            self.transcript_state
+                .active_cell
+                .as_ref()
+                .map(HistoryCell::kind),
             Some(crate::ui::widgets::history_cell::HistoryKind::Command)
                 | Some(crate::ui::widgets::history_cell::HistoryKind::Exploration)
                 | Some(crate::ui::widgets::history_cell::HistoryKind::Notice)
@@ -135,7 +146,12 @@ impl TuiApp {
     pub(crate) fn handle_control_item_delta(&mut self, _item_id: &str, _delta: &str) {}
 
     pub(crate) fn flush_reasoning_buffer_to_transcript(&mut self) {
-        if self.transcript_state.active_reasoning_text.trim().is_empty() {
+        if self
+            .transcript_state
+            .active_reasoning_text
+            .trim()
+            .is_empty()
+        {
             self.transcript_state.active_reasoning_item_id = None;
             self.transcript_state.active_reasoning_title = None;
             self.transcript_state.active_reasoning_text.clear();
