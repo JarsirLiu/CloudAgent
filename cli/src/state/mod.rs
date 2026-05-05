@@ -42,6 +42,9 @@ pub struct TranscriptState {
     pub active_item_id: Option<String>,
     pub active_item_kind: Option<agent_protocol::TurnItemKind>,
     pub active_cell: Option<HistoryCell>,
+    pub active_reasoning_item_id: Option<String>,
+    pub active_reasoning_title: Option<String>,
+    pub active_reasoning_text: String,
     pub last_copyable_output: Option<String>,
 }
 

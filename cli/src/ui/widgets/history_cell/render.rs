@@ -1,37 +1,19 @@
 use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone};
 use agent_protocol::{
-    CommandExecutionStatus, StructuredToolResult, TranscriptItem, WriteFileStatus,
+    CommandExecutionStatus, StructuredToolResult, TranscriptItem, TurnItemKind, WriteFileStatus,
 };
 
 #[derive(Default)]
-pub struct RenderContext {
-    response_index: usize,
-}
-
-impl RenderContext {
-    fn next_response_label(&mut self) -> String {
-        self.response_index = self.response_index.saturating_add(1);
-        format!("Response {}", self.response_index)
-    }
-
-    fn current_reasoning_label(&self) -> String {
-        if self.response_index == 0 {
-            "Reasoning".to_string()
-        } else {
-            format!("Reasoning {}", self.response_index)
-        }
-    }
-}
+pub struct RenderContext;
 
 pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContext) -> HistoryCell {
     match message {
         TranscriptItem::SystemMessage { .. } => HistoryCell::info("", "", HistoryTone::Meta),
         TranscriptItem::UserMessage { text, .. } => HistoryCell::user(text.clone()),
-        TranscriptItem::AgentMessage { text, .. } => HistoryCell::agent(
-            context.next_response_label(),
-            text.clone(),
-            HistoryFormat::Markdown,
-        ),
+        TranscriptItem::AgentMessage { text, .. } => {
+            let _ = context;
+            HistoryCell::agent("", text.clone(), HistoryFormat::Markdown)
+        }
         TranscriptItem::ToolResult {
             tool_name,
             content,
@@ -63,9 +45,35 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
             None,
             HistoryTone::Control,
         ),
-        TranscriptItem::Reasoning { text, .. } => {
-            HistoryCell::reasoning(context.current_reasoning_label(), text.clone())
+        TranscriptItem::Reasoning { text, .. } => HistoryCell::reasoning("Reasoning", text.clone()),
+    }
+}
+
+pub fn render_active_control_placeholder(kind: TurnItemKind, title: &str) -> HistoryCell {
+    match kind {
+        TurnItemKind::CommandExecution if is_exploration_command(title) => {
+            let summary = summarize_exploration_command(title);
+            let mut aggregate = ExplorationAggregate::new(summary.clone());
+            aggregate.inspect_commands = 1;
+            HistoryCell::exploration(
+                "Exploring workspace",
+                summary,
+                aggregate,
+                HistoryTone::Control,
+            )
         }
+        TurnItemKind::CommandExecution => HistoryCell::exec(
+            "Run command",
+            summarize_command_head(title),
+            Some("running".to_string()),
+            HistoryTone::Control,
+        ),
+        TurnItemKind::ToolCall => HistoryCell::info(
+            humanize_tool_label(title),
+            "running".to_string(),
+            HistoryTone::Control,
+        ),
+        _ => HistoryCell::info(title.to_string(), "running".to_string(), HistoryTone::Control),
     }
 }
 

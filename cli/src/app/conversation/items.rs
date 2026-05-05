@@ -1,19 +1,19 @@
 use crate::app::TuiApp;
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
+use crate::ui::widgets::history_cell::{
+    HistoryCell, HistoryFormat, render_active_control_placeholder,
+};
 use agent_protocol::TurnItemKind;
 
 impl TuiApp {
     pub(crate) fn handle_assistant_item_started(&mut self, turn_id: &str, item_id: &str) {
         let _ = turn_id;
+        self.flush_reasoning_buffer_to_transcript();
         self.consolidate_exploration_stage();
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
         self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-        self.transcript_state.active_cell = Some(HistoryCell::agent(
-            next_response_label(self),
-            String::new(),
-            HistoryFormat::Markdown,
-        ));
+        self.transcript_state.active_cell =
+            Some(HistoryCell::agent("", String::new(), HistoryFormat::Markdown));
     }
 
     pub(crate) fn handle_assistant_item_delta(&mut self, item_id: &str, delta: &str) {
@@ -34,11 +34,8 @@ impl TuiApp {
             self.flush_active_cell_to_transcript();
             self.transcript_state.active_item_id = Some(item_id.to_string());
             self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-            self.transcript_state.active_cell = Some(HistoryCell::agent(
-                next_response_label(self),
-                String::new(),
-                HistoryFormat::Markdown,
-            ));
+            self.transcript_state.active_cell =
+                Some(HistoryCell::agent("", String::new(), HistoryFormat::Markdown));
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
             cell.replace_body(output);
@@ -61,12 +58,11 @@ impl TuiApp {
     }
 
     pub(crate) fn handle_reasoning_item_started(&mut self, item_id: &str, title: &str) {
-        self.handle_secondary_item_started(
-            item_id,
-            TurnItemKind::Reasoning,
-            title,
-            HistoryTone::Reasoning,
-        );
+        self.consolidate_exploration_stage();
+        self.flush_active_cell_to_transcript();
+        self.transcript_state.active_reasoning_item_id = Some(item_id.to_string());
+        self.transcript_state.active_reasoning_title = Some(title.to_string());
+        self.transcript_state.active_reasoning_text.clear();
     }
 
     pub(crate) fn handle_reasoning_item_completed(
@@ -75,18 +71,19 @@ impl TuiApp {
         title: &str,
         output: &str,
     ) {
-        self.handle_secondary_item_completed(
-            item_id,
-            TurnItemKind::Reasoning,
-            title,
-            output,
-            HistoryTone::Reasoning,
-        );
+        if self.transcript_state.active_reasoning_item_id.as_deref() != Some(item_id) {
+            self.transcript_state.active_reasoning_item_id = Some(item_id.to_string());
+            self.transcript_state.active_reasoning_title = Some(title.to_string());
+            self.transcript_state.active_reasoning_text.clear();
+        }
+        self.transcript_state.active_reasoning_text.clear();
+        self.transcript_state.active_reasoning_text.push_str(output);
+        self.flush_reasoning_buffer_to_transcript();
     }
 
     pub(crate) fn handle_reasoning_item_delta(&mut self, item_id: &str, delta: &str) {
-        if self.transcript_state.active_item_kind == Some(TurnItemKind::Reasoning) {
-            self.append_active_secondary_item_delta(item_id, delta);
+        if self.transcript_state.active_reasoning_item_id.as_deref() == Some(item_id) {
+            self.transcript_state.active_reasoning_text.push_str(delta);
         }
     }
 
@@ -94,77 +91,68 @@ impl TuiApp {
         &mut self,
         item_id: &str,
         kind: TurnItemKind,
-        _title: &str,
-    ) {
-        self.flush_active_cell_to_transcript();
-        self.transcript_state.active_item_id = Some(item_id.to_string());
-        self.transcript_state.active_item_kind = Some(kind.clone());
-    }
-
-    pub(crate) fn handle_control_item_completed(&mut self, _item_id: &str, cell: HistoryCell) {
-        self.transcript_state.active_item_id = None;
-        self.transcript_state.active_item_kind = None;
-        self.run_state.set_system_notice(
-            format!("Completed {}", compact_activity(cell.label())),
-            Some(std::time::Duration::from_secs(4)),
-        );
-        self.push_cell(cell);
-    }
-
-    pub(crate) fn handle_control_item_delta(&mut self, _item_id: &str, _delta: &str) {}
-
-    fn handle_secondary_item_started(
-        &mut self,
-        item_id: &str,
-        kind: TurnItemKind,
         title: &str,
-        tone: HistoryTone,
     ) {
-        self.consolidate_exploration_stage();
-        self.flush_active_cell_to_transcript();
+        self.flush_reasoning_buffer_to_transcript();
+        if matches!(
+            self.transcript_state.active_item_kind,
+            Some(TurnItemKind::CommandExecution | TurnItemKind::ToolCall | TurnItemKind::FileChange)
+        ) {
+            self.clear_active_cell();
+        } else {
+            self.flush_active_cell_to_transcript();
+        }
         self.transcript_state.active_item_id = Some(item_id.to_string());
         self.transcript_state.active_item_kind = Some(kind.clone());
-        self.transcript_state.active_cell = Some(make_secondary_cell(kind, title, tone));
+        self.transcript_state.active_cell = Some(render_active_control_placeholder(kind, title));
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
             cell.expanded = self.run_state.expand_tool_details;
         }
     }
 
-    fn handle_secondary_item_completed(
-        &mut self,
-        item_id: &str,
-        kind: TurnItemKind,
-        title: &str,
-        output: &str,
-        tone: HistoryTone,
-    ) {
-        if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
-            self.flush_active_cell_to_transcript();
-            self.transcript_state.active_item_id = Some(item_id.to_string());
-            self.transcript_state.active_item_kind = Some(kind.clone());
-            self.transcript_state.active_cell = Some(make_secondary_cell(kind, title, tone));
-            if let Some(cell) = self.transcript_state.active_cell.as_mut() {
-                cell.expanded = self.run_state.expand_tool_details;
-            }
+    pub(crate) fn handle_control_item_completed(&mut self, item_id: &str, cell: HistoryCell) {
+        self.transcript_state.active_item_id = None;
+        self.transcript_state.active_item_kind = None;
+        if cell.kind() != crate::ui::widgets::history_cell::HistoryKind::Exploration {
+            self.consolidate_exploration_stage();
         }
-        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
-            cell.replace_body(output);
+        self.run_state.set_system_notice(
+            format!("Completed {}", compact_activity(cell.label())),
+            Some(std::time::Duration::from_secs(4)),
+        );
+        if matches!(
+            self.transcript_state.active_cell.as_ref().map(HistoryCell::kind),
+            Some(crate::ui::widgets::history_cell::HistoryKind::Command)
+                | Some(crate::ui::widgets::history_cell::HistoryKind::Exploration)
+                | Some(crate::ui::widgets::history_cell::HistoryKind::Notice)
+        ) {
+            self.clear_active_cell();
         }
-        if self.transcript_state.active_item_id.as_deref() == Some(item_id) {
-            self.flush_active_cell_to_transcript();
-        }
+        self.push_cell(cell);
+        let _ = item_id;
     }
 
-    fn append_active_secondary_item_delta(&mut self, item_id: &str, delta: &str) {
-        if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
+    pub(crate) fn handle_control_item_delta(&mut self, _item_id: &str, _delta: &str) {}
+
+    pub(crate) fn flush_reasoning_buffer_to_transcript(&mut self) {
+        if self.transcript_state.active_reasoning_text.trim().is_empty() {
+            self.transcript_state.active_reasoning_item_id = None;
+            self.transcript_state.active_reasoning_title = None;
+            self.transcript_state.active_reasoning_text.clear();
             return;
         }
-        if let Some(cell) = self.transcript_state.active_cell.as_mut() {
-            if !cell.body().is_empty() {
-                cell.append_body("\n");
-            }
-            cell.append_body(delta);
-        }
+        let title = self
+            .transcript_state
+            .active_reasoning_title
+            .clone()
+            .unwrap_or_else(|| "Reasoning".to_string());
+        self.push_cell(HistoryCell::reasoning(
+            title,
+            self.transcript_state.active_reasoning_text.clone(),
+        ));
+        self.transcript_state.active_reasoning_item_id = None;
+        self.transcript_state.active_reasoning_title = None;
+        self.transcript_state.active_reasoning_text.clear();
     }
 
     fn clear_active_cell(&mut self) {
@@ -196,20 +184,4 @@ fn compact_activity(title: &str) -> String {
         out.push(ch);
     }
     out
-}
-
-fn next_response_label(app: &TuiApp) -> String {
-    let completed = app
-        .history_cells()
-        .iter()
-        .filter(|cell| cell.tone == HistoryTone::Agent)
-        .count();
-    format!("Response {}", completed + 1)
-}
-
-fn make_secondary_cell(kind: TurnItemKind, title: &str, tone: HistoryTone) -> HistoryCell {
-    match kind {
-        TurnItemKind::Reasoning => HistoryCell::reasoning(title.to_string(), String::new()),
-        _ => HistoryCell::info(title.to_string(), String::new(), tone),
-    }
 }

@@ -9,7 +9,7 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
 
     let history_snapshot = app.run_state.history_snapshot.clone().unwrap_or_default();
     if !history_snapshot.is_empty() {
-        let mut render_context = RenderContext::default();
+        let mut render_context = RenderContext;
         let cells = history_snapshot
             .iter()
             .flat_map(|turn| turn.items.iter())
@@ -33,7 +33,7 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
 }
 
 pub(crate) fn complete_control_item(app: &mut TuiApp, item_id: &str, item: &TranscriptItem) {
-    let mut render_context = RenderContext::default();
+    let mut render_context = RenderContext;
     app.handle_control_item_completed(item_id, render_history_entry(item, &mut render_context));
 }
 

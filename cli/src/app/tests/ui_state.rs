@@ -48,6 +48,7 @@ fn assistant_delta_requires_item_started_before_streaming() {
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
     assert_eq!(cells[0].body(), "complete answer");
+    assert!(cells[0].label().is_empty());
 }
 
 #[test]
@@ -87,6 +88,55 @@ fn tool_delta_requires_item_started_before_streaming() {
 }
 
 #[test]
+fn control_start_shows_active_command_placeholder() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_control_item_started(
+        "tool:1",
+        TurnItemKind::CommandExecution,
+        "cargo test --workspace",
+    );
+
+    let active = app
+        .transcript_state
+        .active_cell
+        .as_ref()
+        .expect("control start should create active placeholder");
+    assert_eq!(active.label(), "Run command");
+    assert_eq!(active.body(), "cargo test --workspace");
+}
+
+#[test]
+fn control_start_replaces_prior_control_placeholder_without_flushing_running_history() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "rg reasoning");
+    app.handle_control_item_started("tool:2", TurnItemKind::CommandExecution, "cargo test");
+
+    assert!(app.transcript_state.transcript.cells().is_empty());
+    let active = app
+        .transcript_state
+        .active_cell
+        .as_ref()
+        .expect("second control should stay active");
+    assert_eq!(active.body(), "cargo test");
+}
+
+#[test]
 fn ctrl_d_exits_when_idle_if_composer_empty() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -106,6 +156,112 @@ fn ctrl_d_exits_when_idle_if_composer_empty() {
         ParsedInput::Command(AppClientCommand::Exit)
     ));
     assert!(app.run_state.should_exit);
+}
+
+#[test]
+fn ctrl_t_toggles_tool_detail_expansion_without_emitting_command() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.push_cell(HistoryCell::info(
+        "pwd",
+        "line 1\nline 2\nline 3",
+        HistoryTone::Control,
+    ));
+
+    let result = app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+
+    assert!(result.is_none());
+    assert!(app.run_state.expand_tool_details);
+    assert!(
+        app.transcript_state
+            .transcript
+            .cells()
+            .first()
+            .is_some_and(|cell| cell.expanded)
+    );
+}
+
+#[test]
+fn ctrl_shift_t_also_toggles_tool_detail_expansion() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.push_cell(HistoryCell::info(
+        "pwd",
+        "line 1\nline 2\nline 3",
+        HistoryTone::Control,
+    ));
+
+    let result = app.handle_key(KeyEvent::new(
+        KeyCode::Char('T'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+
+    assert!(result.is_none());
+    assert!(app.run_state.expand_tool_details);
+}
+
+#[test]
+fn slash_exit_parses_while_running() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.set_mode(agent_protocol::FrontendMode::Running);
+
+    for ch in "/exit".chars() {
+        let input = app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        assert!(input.is_none(), "typing should not submit before enter");
+    }
+
+    let input = app
+        .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should submit slash exit");
+
+    assert!(matches!(input, ParsedInput::Command(AppClientCommand::Exit)));
+}
+
+#[test]
+fn slash_exit_parses_after_turn_cancelled() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.set_mode(agent_protocol::FrontendMode::Running);
+    app.apply_turn_dispatch(TurnDispatch::Cancelled {
+        reason: "interrupted".to_string(),
+    });
+    app.set_mode(agent_protocol::FrontendMode::Idle);
+
+    for ch in "/exit".chars() {
+        let input = app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        assert!(input.is_none(), "typing should not submit before enter");
+    }
+
+    let input = app
+        .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should submit slash exit");
+
+    assert!(matches!(input, ParsedInput::Command(AppClientCommand::Exit)));
 }
 
 #[test]
@@ -139,6 +295,67 @@ fn reasoning_and_control_cells_use_distinct_tones() {
         cells[1].tone,
         crate::ui::widgets::history_cell::HistoryTone::Control
     );
+}
+
+#[test]
+fn reasoning_delta_streams_as_continuous_text() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_reasoning_item_started("reasoning:1", "reasoning");
+    app.handle_reasoning_item_delta("reasoning:1", "用户");
+    app.handle_reasoning_item_delta("reasoning:1", "在问");
+
+    assert!(app.transcript_state.active_cell.is_none());
+    assert_eq!(app.transcript_state.active_reasoning_text, "用户在问");
+}
+
+#[test]
+fn reasoning_is_flushed_only_on_completion() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_reasoning_item_started("reasoning:1", "reasoning");
+    app.handle_reasoning_item_delta("reasoning:1", "用户在问");
+    assert!(app.transcript_state.transcript.cells().is_empty());
+
+    app.handle_reasoning_item_completed("reasoning:1", "reasoning", "用户在问");
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cells[0].body(), "用户在问");
+}
+
+#[test]
+fn reasoning_is_flushed_before_assistant_starts() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.handle_reasoning_item_started("reasoning:1", "reasoning");
+    app.handle_reasoning_item_delta("reasoning:1", "先分析");
+    app.handle_assistant_item_started("turn-1", "assistant:1");
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cells[0].body(), "先分析");
 }
 
 #[test]
@@ -254,6 +471,97 @@ fn assistant_start_consolidates_prior_exploration_stage() {
     assert_eq!(app.transcript_state.transcript.cells().len(), 2);
 
     app.handle_assistant_item_started("turn-1", "assistant:1");
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert!(cells[0].body().contains("searched 1 time"));
+    assert!(cells[0].body().contains("read 1 file"));
+}
+
+#[test]
+fn non_exploration_control_completion_consolidates_prior_exploration_stage() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let mut first_aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "text search `think`".to_string(),
+    );
+    first_aggregate.searches = 1;
+    let mut second_aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "cli/src/app/conversation/items.rs:1-200".to_string(),
+    );
+    second_aggregate.read_files = 1;
+
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "searched 1 time",
+        first_aggregate,
+        HistoryTone::Control,
+    ));
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "read 1 file",
+        second_aggregate,
+        HistoryTone::Control,
+    ));
+
+    app.handle_control_item_completed(
+        "tool:cmd",
+        HistoryCell::exec(
+            "Run command",
+            "cargo test --workspace",
+            Some("completed (exit 0)".to_string()),
+            HistoryTone::Control,
+        ),
+    );
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 2);
+    assert!(cells[0].body().contains("searched 1 time"));
+    assert!(cells[0].body().contains("read 1 file"));
+    assert_eq!(cells[1].body(), "cargo test --workspace");
+}
+
+#[test]
+fn turn_completion_consolidates_trailing_exploration_stage() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let mut first_aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "text search `think`".to_string(),
+    );
+    first_aggregate.searches = 1;
+    let mut second_aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "cli/src/app/conversation/items.rs:1-200".to_string(),
+    );
+    second_aggregate.read_files = 1;
+
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "searched 1 time",
+        first_aggregate,
+        HistoryTone::Control,
+    ));
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "read 1 file",
+        second_aggregate,
+        HistoryTone::Control,
+    ));
+
+    app.apply_turn_dispatch(TurnDispatch::Completed);
 
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
@@ -408,4 +716,56 @@ fn turn_dispatch_completed_flushes_active_assistant_cell() {
     let cells = app.transcript_state.transcript.cells();
     assert_eq!(cells.len(), 1);
     assert_eq!(cells[0].body(), "hello");
+}
+
+#[test]
+fn clear_last_tool_name_does_not_revive_live_status_after_idle_mode() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    execute_server_action(&mut app, ServerAction::SetMode(agent_protocol::FrontendMode::Running));
+    execute_server_action(&mut app, ServerAction::ClearLastToolName);
+    assert_eq!(
+        app.runtime_projection.live_label.as_deref(),
+        Some("assistant is responding")
+    );
+
+    execute_server_action(&mut app, ServerAction::SetMode(agent_protocol::FrontendMode::Idle));
+    execute_server_action(&mut app, ServerAction::ClearLastToolName);
+
+    assert_eq!(app.runtime_projection.phase, Some(crate::state::runtime_projection::RuntimePhase::Idle));
+    assert!(app.runtime_projection.live_label.is_none());
+}
+
+#[test]
+fn clear_last_tool_name_preserves_waiting_approval_status() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    execute_server_action(
+        &mut app,
+        ServerAction::SetMode(agent_protocol::FrontendMode::WaitingForServerRequest),
+    );
+    execute_server_action(&mut app, ServerAction::ClearLastToolName);
+
+    assert_eq!(
+        app.runtime_projection.phase,
+        Some(crate::state::runtime_projection::RuntimePhase::WaitingApproval)
+    );
+    assert_eq!(
+        app.runtime_projection.live_label.as_deref(),
+        Some("waiting for approval")
+    );
 }

@@ -55,8 +55,18 @@ impl RuntimeProjection {
 
     pub(crate) fn on_tool_finished(&mut self) {
         self.active_tool_title = None;
-        self.phase = Some(RuntimePhase::ModelStreaming);
-        self.live_label = Some("assistant is responding".to_string());
+        match self.phase {
+            Some(RuntimePhase::Idle) => {
+                self.live_label = None;
+            }
+            Some(RuntimePhase::WaitingApproval) => {
+                self.live_label = Some("waiting for approval".to_string());
+            }
+            Some(RuntimePhase::ToolRunning) | Some(RuntimePhase::ModelStreaming) | None => {
+                self.phase = Some(RuntimePhase::ModelStreaming);
+                self.live_label = Some("assistant is responding".to_string());
+            }
+        }
     }
 
     pub(crate) fn on_turn_finished(&mut self) {

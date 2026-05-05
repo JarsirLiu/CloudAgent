@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use textwrap::wrap;
 
-pub use render::{RenderContext, render_history_entry};
+pub use render::{RenderContext, render_active_control_placeholder, render_history_entry};
 
 type RenderCache = std::sync::Arc<std::sync::Mutex<Option<(usize, Vec<Line<'static>>)>>>;
 
@@ -389,7 +389,7 @@ pub struct Transcript {
 impl Transcript {
     pub fn replace_with_history(&mut self, messages: &[TranscriptItem]) {
         self.cells.clear();
-        let mut context = render::RenderContext::default();
+        let mut context = render::RenderContext;
         for message in messages {
             let cell = render::render_history_entry(message, &mut context);
             if !cell.is_empty() {
@@ -400,7 +400,7 @@ impl Transcript {
 
     pub fn replace_with_turns(&mut self, turns: &[ConversationTurn]) {
         self.cells.clear();
-        let mut context = render::RenderContext::default();
+        let mut context = render::RenderContext;
         for turn in turns {
             for message in &turn.items {
                 let cell = render_history_entry(message, &mut context);
@@ -535,7 +535,36 @@ fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
 }
 
 fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    render_tool_like(cell, width, Color::Rgb(170, 140, 255), "≈")
+    let inner = width.saturating_sub(8).max(8);
+    let text_lines = markdown::render_plaintext(cell.body(), inner);
+    let mut out = Vec::new();
+    for (i, line) in text_lines.into_iter().enumerate() {
+        let mut spans = Vec::new();
+        if i == 0 {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                "≈ ",
+                Style::default().fg(Color::Rgb(170, 140, 255)),
+            ));
+            if !cell.label().is_empty() {
+                spans.push(Span::styled(
+                    format!("{}  ", cell.label()),
+                    Style::default()
+                        .fg(Color::Rgb(210, 215, 225))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+        } else {
+            spans.push(Span::raw("    "));
+            spans.push(Span::styled(
+                "│ ",
+                Style::default().fg(Color::Rgb(90, 96, 108)),
+            ));
+        }
+        spans.extend(line.spans);
+        out.push(Line::from(spans));
+    }
+    out
 }
 
 fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -671,7 +700,7 @@ fn render_tool_like(
     } else {
         output_lines.extend(wrapped.iter().take(max_lines).cloned());
         output_lines.push(format!(
-            "… +{} lines (ctrl+t to expand)",
+            "… +{} lines (ctrl+t to toggle details)",
             wrapped.len().saturating_sub(max_lines)
         ));
     }

@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl TuiApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
-        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+        if matches_ctrl_char(key, 'c') {
             if self.console_state.mode == FrontendMode::Idle
                 && self.input_pane.composer_has_selection()
             {
@@ -28,7 +28,7 @@ impl TuiApp {
             return None;
         }
 
-        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('d') {
+        if matches_ctrl_char(key, 'd') {
             if self.console_state.mode == FrontendMode::Idle && self.input_pane.composer_is_empty()
             {
                 self.run_state.should_exit = true;
@@ -37,7 +37,7 @@ impl TuiApp {
             return None;
         }
 
-        if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if matches_ctrl_char(key, 't') {
             self.run_state.expand_tool_details = !self.run_state.expand_tool_details;
             self.transcript_state
                 .transcript
@@ -156,4 +156,9 @@ impl TuiApp {
             }),
         }
     }
+}
+
+fn matches_ctrl_char(key: KeyEvent, ch: char) -> bool {
+    matches!(key.code, KeyCode::Char(code) if code.eq_ignore_ascii_case(&ch))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
 }

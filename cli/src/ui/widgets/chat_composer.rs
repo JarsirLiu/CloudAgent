@@ -87,6 +87,11 @@ impl ChatComposer {
         }
 
         if self.completion.is_active() {
+            if matches!(key.code, KeyCode::Enter | KeyCode::Tab)
+                && let Some(pasted) = self.paste_burst.flush_before_modified_input()
+            {
+                let _ = self.handle_paste(&pasted);
+            }
             match key.code {
                 KeyCode::Up => {
                     self.completion.move_up();
