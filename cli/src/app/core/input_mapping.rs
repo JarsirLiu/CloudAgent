@@ -10,7 +10,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 impl TuiApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
-            if self.console_state.mode == FrontendMode::Idle && self.input_pane.composer_has_selection()
+            if self.console_state.mode == FrontendMode::Idle
+                && self.input_pane.composer_has_selection()
             {
                 return Some(ParsedInput::LocalCopyText(
                     self.input_pane

@@ -57,6 +57,11 @@ pub(super) fn parse_stream_frame(data: &str) -> Result<ParsedStreamFrame, Provid
     let mut completion = ProviderCompletion::default();
     let mut saw_completion = false;
     for choice in parsed.choices {
+        if let Some(delta) = choice.delta.reasoning_content
+            && !delta.is_empty()
+        {
+            events.push(ProviderStreamEvent::ReasoningTextDelta(delta));
+        }
         if let Some(delta) = choice.delta.content
             && !delta.is_empty()
         {
@@ -120,5 +125,18 @@ mod tests {
             })
         );
         assert!(!frame.done);
+    }
+
+    #[test]
+    fn reasoning_content_maps_to_reasoning_delta_event() {
+        let frame = parse_stream_frame(
+            r#"{"id":"resp_1","object":"chat.completion.chunk","created":0,"model":"test-model","choices":[{"index":0,"delta":{"reasoning_content":"让我分析一下"}}]}"#,
+        )
+        .expect("parse reasoning frame");
+
+        assert!(frame.events.iter().any(|event| matches!(
+            event,
+            ProviderStreamEvent::ReasoningTextDelta(delta) if delta == "让我分析一下"
+        )));
     }
 }

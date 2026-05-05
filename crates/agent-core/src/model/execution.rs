@@ -44,12 +44,11 @@ pub async fn complete_model_request_streaming(
     let mut attempt = 0u64;
     loop {
         let request_attempt = request.clone();
-        let mut on_text_delta = |delta| observer.on_text_delta(delta);
         let result = tokio::select! {
             _ = cancellation_token.cancelled() => {
                 return Err(anyhow!(interrupted_error.to_string()));
             }
-            response = model.complete_streaming(request_attempt, &mut on_text_delta) => response,
+            response = model.complete_streaming(request_attempt, observer) => response,
         };
 
         match result {
@@ -115,6 +114,7 @@ mod tests {
             }
             Ok(ModelResponse {
                 content: Some("ok".to_string()),
+                reasoning: None,
                 tool_calls: Vec::new(),
                 model_name: None,
                 usage: None,
@@ -136,15 +136,16 @@ mod tests {
         async fn complete_streaming(
             &self,
             _request: ModelRequest,
-            on_text_delta: &mut (dyn FnMut(String) + Send),
+            observer: &mut dyn ModelStreamObserver,
         ) -> Result<ModelResponse> {
             let attempt = self.stream_attempts.fetch_add(1, Ordering::SeqCst);
             if self.fail_stream_once && attempt == 0 {
                 return Err(anyhow!("synthetic stream closed before completion"));
             }
-            on_text_delta("ok".to_string());
+            observer.on_text_delta("ok".to_string());
             Ok(ModelResponse {
                 content: Some("ok".to_string()),
+                reasoning: None,
                 tool_calls: Vec::new(),
                 model_name: None,
                 usage: None,

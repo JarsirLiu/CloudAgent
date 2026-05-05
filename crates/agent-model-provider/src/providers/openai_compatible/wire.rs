@@ -132,6 +132,8 @@ pub(super) struct ChatCompletionChoice {
 #[derive(Deserialize)]
 pub(super) struct ChatCompletionMessage {
     pub content: Option<String>,
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
     pub tool_calls: Option<Vec<ChatToolCall>>,
 }
 
@@ -179,6 +181,8 @@ pub(super) struct ChatCompletionStreamChoice {
 #[derive(Deserialize)]
 pub(super) struct ChatCompletionStreamDelta {
     pub content: Option<String>,
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
     pub tool_calls: Option<Vec<ChatCompletionStreamToolCallDelta>>,
 }
 

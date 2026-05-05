@@ -22,6 +22,7 @@ pub struct ModelRequest {
 #[derive(Clone, Debug)]
 pub struct ModelResponse {
     pub content: Option<String>,
+    pub reasoning: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub model_name: Option<String>,
     pub usage: Option<ModelUsage>,
@@ -72,6 +73,8 @@ impl ModelRetryDecision {
 pub trait ModelStreamObserver: Send {
     fn on_text_delta(&mut self, delta: String);
 
+    fn on_reasoning_delta(&mut self, _delta: String) {}
+
     fn on_retry(&mut self, _stage: ModelRetryStage, _attempt: u64, _delay: Duration) {}
 }
 
@@ -98,11 +101,14 @@ pub trait ChatModel: Send + Sync {
     async fn complete_streaming(
         &self,
         request: ModelRequest,
-        on_text_delta: &mut (dyn FnMut(String) + Send),
+        observer: &mut dyn ModelStreamObserver,
     ) -> Result<ModelResponse> {
         let response = self.complete(request).await?;
+        if let Some(reasoning) = response.reasoning.clone() {
+            observer.on_reasoning_delta(reasoning);
+        }
         if let Some(content) = response.content.clone() {
-            on_text_delta(content);
+            observer.on_text_delta(content);
         }
         Ok(response)
     }

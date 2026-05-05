@@ -23,7 +23,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let mut line_prefix = String::new();
     let mut heading_prefix = String::new();
     let mut in_heading = false;
-    let mut in_table = false;
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut table_row: Vec<String> = Vec::new();
 
@@ -93,7 +92,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
             }
             Event::Start(Tag::Table(_)) => {
                 flush(&mut current, &mut out, width, &line_prefix);
-                in_table = true;
                 table_rows.clear();
                 table_row.clear();
             }
@@ -104,7 +102,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 }
                 render_table(&table_rows, width, &mut out);
                 out.push(Line::raw(""));
-                in_table = false;
                 table_rows.clear();
             }
             Event::Start(Tag::TableHead) => {}
@@ -197,8 +194,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
             Event::Text(text) => {
                 if in_code_block {
                     code_buf.push_str(&text);
-                } else if in_table {
-                    current.push(Span::styled(text.to_string(), *style_stack.last().unwrap()));
                 } else {
                     current.push(Span::styled(text.to_string(), *style_stack.last().unwrap()));
                 }
@@ -325,7 +320,12 @@ fn render_table(rows: &[Vec<String>], width: usize, out: &mut Vec<Line<'static>>
 
     for (row_index, row) in rows.iter().enumerate() {
         let wrapped_cells = (0..column_count)
-            .map(|column| wrap_table_cell(row.get(column).map(String::as_str).unwrap_or(""), widths[column]))
+            .map(|column| {
+                wrap_table_cell(
+                    row.get(column).map(String::as_str).unwrap_or(""),
+                    widths[column],
+                )
+            })
             .collect::<Vec<_>>();
         let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
 
@@ -367,11 +367,7 @@ fn fit_table_widths(widths: &mut [usize], width: usize, column_count: usize) {
     let max_content_width = width.max(column_count * min_column_width + separator_width);
 
     while total_width > max_content_width {
-        if let Some((index, _)) = widths
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, value)| **value)
-        {
+        if let Some((index, _)) = widths.iter().enumerate().max_by_key(|(_, value)| **value) {
             if widths[index] <= min_column_width {
                 break;
             }

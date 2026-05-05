@@ -1,6 +1,6 @@
 use crate::app::TuiApp;
 use crate::state::reducer::ItemDispatch;
-use crate::ui::widgets::history_cell::{render_history_entry, RenderContext};
+use crate::ui::widgets::history_cell::{RenderContext, render_history_entry};
 use agent_protocol::TranscriptItem;
 
 pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
@@ -67,8 +67,10 @@ pub(crate) fn apply_item_dispatch(app: &mut TuiApp, dispatch: ItemDispatch) {
             }
         }
         ItemDispatch::ReasoningCompleted { item } => match item {
-            TranscriptItem::Reasoning { id, text, .. } => {
-                app.handle_reasoning_item_completed(&id, "reasoning", &text);
+            TranscriptItem::Reasoning {
+                id, title, text, ..
+            } => {
+                app.handle_reasoning_item_completed(&id, &title, &text);
             }
             TranscriptItem::UserMessage { .. }
             | TranscriptItem::SystemMessage { .. }

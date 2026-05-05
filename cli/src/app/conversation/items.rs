@@ -1,20 +1,18 @@
 use crate::app::TuiApp;
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryKind, HistoryTone};
+use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
 use agent_protocol::TurnItemKind;
 
 impl TuiApp {
     pub(crate) fn handle_assistant_item_started(&mut self, turn_id: &str, item_id: &str) {
         let _ = turn_id;
+        self.consolidate_exploration_stage();
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
         self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-        self.transcript_state.active_cell = Some(HistoryCell::with_parts(
+        self.transcript_state.active_cell = Some(HistoryCell::agent(
             next_response_label(self),
             String::new(),
-            HistoryTone::Agent,
-            HistoryKind::Message,
             HistoryFormat::Markdown,
-            None,
         ));
     }
 
@@ -36,13 +34,10 @@ impl TuiApp {
             self.flush_active_cell_to_transcript();
             self.transcript_state.active_item_id = Some(item_id.to_string());
             self.transcript_state.active_item_kind = Some(TurnItemKind::AssistantMessage);
-            self.transcript_state.active_cell = Some(HistoryCell::with_parts(
+            self.transcript_state.active_cell = Some(HistoryCell::agent(
                 next_response_label(self),
                 String::new(),
-                HistoryTone::Agent,
-                HistoryKind::Message,
                 HistoryFormat::Markdown,
-                None,
             ));
         }
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
@@ -103,14 +98,14 @@ impl TuiApp {
     ) {
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
-        self.transcript_state.active_item_kind = Some(kind);
+        self.transcript_state.active_item_kind = Some(kind.clone());
     }
 
     pub(crate) fn handle_control_item_completed(&mut self, _item_id: &str, cell: HistoryCell) {
         self.transcript_state.active_item_id = None;
         self.transcript_state.active_item_kind = None;
         self.run_state.set_system_notice(
-            format!("Completed {}", compact_activity(&cell.label)),
+            format!("Completed {}", compact_activity(cell.label())),
             Some(std::time::Duration::from_secs(4)),
         );
         self.push_cell(cell);
@@ -125,14 +120,11 @@ impl TuiApp {
         title: &str,
         tone: HistoryTone,
     ) {
+        self.consolidate_exploration_stage();
         self.flush_active_cell_to_transcript();
         self.transcript_state.active_item_id = Some(item_id.to_string());
-        self.transcript_state.active_item_kind = Some(kind);
-        self.transcript_state.active_cell = Some(HistoryCell::from_message(
-            title.to_string(),
-            String::new(),
-            tone,
-        ));
+        self.transcript_state.active_item_kind = Some(kind.clone());
+        self.transcript_state.active_cell = Some(make_secondary_cell(kind, title, tone));
         if let Some(cell) = self.transcript_state.active_cell.as_mut() {
             cell.expanded = self.run_state.expand_tool_details;
         }
@@ -149,12 +141,8 @@ impl TuiApp {
         if self.transcript_state.active_item_id.as_deref() != Some(item_id) {
             self.flush_active_cell_to_transcript();
             self.transcript_state.active_item_id = Some(item_id.to_string());
-            self.transcript_state.active_item_kind = Some(kind);
-            self.transcript_state.active_cell = Some(HistoryCell::from_message(
-                title.to_string(),
-                String::new(),
-                tone,
-            ));
+            self.transcript_state.active_item_kind = Some(kind.clone());
+            self.transcript_state.active_cell = Some(make_secondary_cell(kind, title, tone));
             if let Some(cell) = self.transcript_state.active_cell.as_mut() {
                 cell.expanded = self.run_state.expand_tool_details;
             }
@@ -217,4 +205,11 @@ fn next_response_label(app: &TuiApp) -> String {
         .filter(|cell| cell.tone == HistoryTone::Agent)
         .count();
     format!("Response {}", completed + 1)
+}
+
+fn make_secondary_cell(kind: TurnItemKind, title: &str, tone: HistoryTone) -> HistoryCell {
+    match kind {
+        TurnItemKind::Reasoning => HistoryCell::reasoning(title.to_string(), String::new()),
+        _ => HistoryCell::info(title.to_string(), String::new(), tone),
+    }
 }

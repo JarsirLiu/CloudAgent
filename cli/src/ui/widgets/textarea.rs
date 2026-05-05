@@ -98,12 +98,24 @@ impl TextArea {
         match key.code {
             KeyCode::Backspace => self.backspace(),
             KeyCode::Delete => self.delete(),
-            KeyCode::Left => self.move_cursor_left_with_select(key.modifiers.contains(KeyModifiers::SHIFT)),
-            KeyCode::Right => self.move_cursor_right_with_select(key.modifiers.contains(KeyModifiers::SHIFT)),
-            KeyCode::Up => self.move_cursor_up_with_select(key.modifiers.contains(KeyModifiers::SHIFT)),
-            KeyCode::Down => self.move_cursor_down_with_select(key.modifiers.contains(KeyModifiers::SHIFT)),
-            KeyCode::Home => self.move_cursor_to_start_with_select(key.modifiers.contains(KeyModifiers::SHIFT)),
-            KeyCode::End => self.move_cursor_to_end_with_select(key.modifiers.contains(KeyModifiers::SHIFT)),
+            KeyCode::Left => {
+                self.move_cursor_left_with_select(key.modifiers.contains(KeyModifiers::SHIFT))
+            }
+            KeyCode::Right => {
+                self.move_cursor_right_with_select(key.modifiers.contains(KeyModifiers::SHIFT))
+            }
+            KeyCode::Up => {
+                self.move_cursor_up_with_select(key.modifiers.contains(KeyModifiers::SHIFT))
+            }
+            KeyCode::Down => {
+                self.move_cursor_down_with_select(key.modifiers.contains(KeyModifiers::SHIFT))
+            }
+            KeyCode::Home => {
+                self.move_cursor_to_start_with_select(key.modifiers.contains(KeyModifiers::SHIFT))
+            }
+            KeyCode::End => {
+                self.move_cursor_to_end_with_select(key.modifiers.contains(KeyModifiers::SHIFT))
+            }
             KeyCode::Tab => self.insert_str("  "),
             KeyCode::Char(ch)
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
@@ -160,7 +172,9 @@ impl TextArea {
         };
         self.text = state.text;
         self.cursor = state.cursor.min(char_len(&self.text));
-        self.selection_anchor = state.selection_anchor.map(|anchor| anchor.min(char_len(&self.text)));
+        self.selection_anchor = state
+            .selection_anchor
+            .map(|anchor| anchor.min(char_len(&self.text)));
         self.preferred_column = None;
     }
 
@@ -170,11 +184,11 @@ impl TextArea {
             cursor: self.cursor,
             selection_anchor: self.selection_anchor,
         };
-        if self
-            .undo_stack
-            .last()
-            .is_some_and(|last| last.text == snapshot.text && last.cursor == snapshot.cursor && last.selection_anchor == snapshot.selection_anchor)
-        {
+        if self.undo_stack.last().is_some_and(|last| {
+            last.text == snapshot.text
+                && last.cursor == snapshot.cursor
+                && last.selection_anchor == snapshot.selection_anchor
+        }) {
             return;
         }
         self.undo_stack.push(snapshot);

@@ -3,6 +3,7 @@ use agent_core::ModelUsage;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderStreamEvent {
     TextDelta(String),
+    ReasoningTextDelta(String),
     ToolCallDelta(ProviderToolCallDelta),
     Usage(ModelUsage),
     Metadata(ProviderMetadata),

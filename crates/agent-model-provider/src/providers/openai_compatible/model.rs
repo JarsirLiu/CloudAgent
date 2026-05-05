@@ -8,8 +8,8 @@ use crate::error::{ProviderRequestError, ProviderStreamError};
 use crate::event::{ProviderCompletion, ProviderStreamEvent};
 use crate::request::ProviderRequest;
 use agent_core::{
-    ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelUsage, ToolCall, ToolIdentity,
-    ToolSpec,
+    ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelStreamObserver, ModelUsage,
+    ToolCall, ToolIdentity, ToolSpec,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -242,6 +242,7 @@ impl ChatModel for OpenAiCompatibleModel {
 
         Ok(ModelResponse {
             content: choice.message.content,
+            reasoning: choice.message.reasoning_content,
             tool_calls,
             model_name: Some(parsed.model),
             usage: parsed.usage.map(ModelUsage::from),
@@ -300,7 +301,7 @@ impl ChatModel for OpenAiCompatibleModel {
     async fn complete_streaming(
         &self,
         request: ModelRequest,
-        on_text_delta: &mut (dyn FnMut(String) + Send),
+        observer: &mut dyn ModelStreamObserver,
     ) -> Result<ModelResponse> {
         let tool_spec_index = Self::tool_spec_index(&request.tools);
         let mut stream = self
@@ -309,6 +310,7 @@ impl ChatModel for OpenAiCompatibleModel {
             .map_err(anyhow::Error::new)?;
 
         let mut content = String::new();
+        let mut reasoning = String::new();
         let mut model_name: Option<String> = None;
         let mut usage: Option<ModelUsage> = None;
         let mut completion: Option<ProviderCompletion> = None;
@@ -319,8 +321,14 @@ impl ChatModel for OpenAiCompatibleModel {
             match event {
                 ProviderStreamEvent::TextDelta(delta) => {
                     if !delta.is_empty() {
-                        on_text_delta(delta.clone());
+                        observer.on_text_delta(delta.clone());
                         content.push_str(&delta);
+                    }
+                }
+                ProviderStreamEvent::ReasoningTextDelta(delta) => {
+                    if !delta.is_empty() {
+                        observer.on_reasoning_delta(delta.clone());
+                        reasoning.push_str(&delta);
                     }
                 }
                 ProviderStreamEvent::ToolCallDelta(delta) => {
@@ -385,6 +393,11 @@ impl ChatModel for OpenAiCompatibleModel {
             } else {
                 Some(content)
             },
+            reasoning: if reasoning.is_empty() {
+                None
+            } else {
+                Some(reasoning)
+            },
             tool_calls,
             model_name,
             usage,
@@ -395,10 +408,27 @@ impl ChatModel for OpenAiCompatibleModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_core::ModelStreamObserver;
     use agent_core::ResponseItem;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    #[derive(Default)]
+    struct TestObserver {
+        text: String,
+        reasoning_text: String,
+    }
+
+    impl ModelStreamObserver for TestObserver {
+        fn on_text_delta(&mut self, delta: String) {
+            self.text.push_str(&delta);
+        }
+
+        fn on_reasoning_delta(&mut self, delta: String) {
+            self.reasoning_text.push_str(&delta);
+        }
+    }
 
     #[tokio::test]
     async fn streaming_returns_after_done_even_if_connection_stays_open() {
@@ -469,18 +499,19 @@ mod tests {
         };
 
         let response = tokio::time::timeout(Duration::from_secs(1), async {
-            let mut streamed = String::new();
+            let mut observer = TestObserver::default();
             model
-                .complete_streaming(request, &mut |delta| streamed.push_str(&delta))
+                .complete_streaming(request, &mut observer)
                 .await
-                .map(|response| (response, streamed))
+                .map(|response| (response, observer))
         })
         .await
         .expect("stream should finish before socket closes")
         .expect("streaming request should succeed");
 
         assert_eq!(response.0.content.as_deref(), Some("hi"));
-        assert_eq!(response.1, "hi");
+        assert_eq!(response.1.text, "hi");
+        assert!(response.1.reasoning_text.is_empty());
 
         server.join().expect("server thread");
     }
@@ -555,12 +586,14 @@ mod tests {
             temperature: 0.0,
         };
 
+        let mut observer = TestObserver::default();
         let response = model
-            .complete_streaming(request, &mut |_| {})
+            .complete_streaming(request, &mut observer)
             .await
             .expect("streaming request should succeed");
 
         assert_eq!(response.content.as_deref(), Some("hi"));
+        assert!(observer.reasoning_text.is_empty());
         let usage = response.usage.expect("usage should be preserved");
         assert_eq!(usage.input_tokens, 10);
         assert_eq!(usage.cached_input_tokens, 2);

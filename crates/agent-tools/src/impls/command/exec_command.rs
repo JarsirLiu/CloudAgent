@@ -734,18 +734,18 @@ where
                 capture_limit_chars,
                 &mut capture_truncated,
             );
-            if let Some(output_tx) = &output_tx {
-                if let Some(delta) = take_live_chunk(
+            if let Some(output_tx) = &output_tx
+                && let Some(delta) = take_live_chunk(
                     &chunk,
                     live_limit_chars,
                     &mut live_chars_sent,
                     &mut live_truncated,
-                ) {
-                    let _ = output_tx.send(agent_core::ToolOutputDelta {
-                        stream: stream.clone(),
-                        chunk: delta,
-                    });
-                }
+                )
+            {
+                let _ = output_tx.send(agent_core::ToolOutputDelta {
+                    stream: stream.clone(),
+                    chunk: delta,
+                });
             }
         }
     }
@@ -757,18 +757,18 @@ where
             capture_limit_chars,
             &mut capture_truncated,
         );
-        if let Some(output_tx) = &output_tx {
-            if let Some(delta) = take_live_chunk(
+        if let Some(output_tx) = &output_tx
+            && let Some(delta) = take_live_chunk(
                 &tail,
                 live_limit_chars,
                 &mut live_chars_sent,
                 &mut live_truncated,
-            ) {
-                let _ = output_tx.send(agent_core::ToolOutputDelta {
-                    stream,
-                    chunk: delta,
-                });
-            }
+            )
+        {
+            let _ = output_tx.send(agent_core::ToolOutputDelta {
+                stream,
+                chunk: delta,
+            });
         }
     }
     Ok(())
@@ -805,18 +805,18 @@ where
                 capture_limit_chars,
                 &mut capture_truncated,
             );
-            if let Some(output_tx) = &output_tx {
-                if let Some(delta) = take_live_chunk(
+            if let Some(output_tx) = &output_tx
+                && let Some(delta) = take_live_chunk(
                     &chunk,
                     live_limit_chars,
                     &mut live_chars_sent,
                     &mut live_truncated,
-                ) {
-                    let _ = output_tx.send(agent_core::ToolOutputDelta {
-                        stream: stream.clone(),
-                        chunk: delta,
-                    });
-                }
+                )
+            {
+                let _ = output_tx.send(agent_core::ToolOutputDelta {
+                    stream: stream.clone(),
+                    chunk: delta,
+                });
             }
         }
     }
@@ -829,18 +829,18 @@ where
             capture_limit_chars,
             &mut capture_truncated,
         );
-        if let Some(output_tx) = &output_tx {
-            if let Some(delta) = take_live_chunk(
+        if let Some(output_tx) = &output_tx
+            && let Some(delta) = take_live_chunk(
                 &tail,
                 live_limit_chars,
                 &mut live_chars_sent,
                 &mut live_truncated,
-            ) {
-                let _ = output_tx.send(agent_core::ToolOutputDelta {
-                    stream,
-                    chunk: delta,
-                });
-            }
+            )
+        {
+            let _ = output_tx.send(agent_core::ToolOutputDelta {
+                stream,
+                chunk: delta,
+            });
         }
     }
 

@@ -325,6 +325,9 @@ pub async fn execute_regular_turn<H: TurnHost>(
             turn_id: &'a str,
             assistant_item_seq: &'a mut usize,
             streaming_assistant_item_id: &'a mut Option<String>,
+            reasoning_item_seq: &'a mut usize,
+            streaming_reasoning_item_id: &'a mut Option<String>,
+            reasoning_text_buffer: &'a mut String,
             events: &'a mut Vec<EventMsg>,
             on_event: &'a mut E,
         }
@@ -361,6 +364,38 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 );
             }
 
+            fn on_reasoning_delta(&mut self, delta: String) {
+                if delta.is_empty() {
+                    return;
+                }
+                let item_id = self.streaming_reasoning_item_id.get_or_insert_with(|| {
+                    let id = format!("reasoning:{}:{}", self.turn_id, *self.reasoning_item_seq);
+                    *self.reasoning_item_seq += 1;
+                    emit_event(
+                        self.events,
+                        self.on_event,
+                        EventMsg::ItemStarted {
+                            turn_id: self.turn_id.to_string(),
+                            item_id: id.clone(),
+                            kind: TurnItemKind::Reasoning,
+                            title: Some("reasoning".to_string()),
+                        },
+                    );
+                    id
+                });
+                self.reasoning_text_buffer.push_str(&delta);
+                emit_event(
+                    self.events,
+                    self.on_event,
+                    EventMsg::ItemDelta {
+                        turn_id: self.turn_id.to_string(),
+                        item_id: item_id.clone(),
+                        kind: TurnItemDeltaKind::ReasoningText,
+                        delta,
+                    },
+                );
+            }
+
             fn on_retry(
                 &mut self,
                 stage: crate::ModelRetryStage,
@@ -381,10 +416,16 @@ pub async fn execute_regular_turn<H: TurnHost>(
         }
 
         let mut streaming_assistant_item_id: Option<String> = None;
+        let mut streaming_reasoning_item_id: Option<String> = None;
+        let mut reasoning_item_seq = 0usize;
+        let mut reasoning_text_buffer = String::new();
         let mut stream_observer = TurnStreamObserver {
             turn_id,
             assistant_item_seq: &mut assistant_item_seq,
             streaming_assistant_item_id: &mut streaming_assistant_item_id,
+            reasoning_item_seq: &mut reasoning_item_seq,
+            streaming_reasoning_item_id: &mut streaming_reasoning_item_id,
+            reasoning_text_buffer: &mut reasoning_text_buffer,
             events: &mut events,
             on_event,
         };
@@ -407,6 +448,24 @@ pub async fn execute_regular_turn<H: TurnHost>(
                     item: TranscriptItem::AgentMessage {
                         id: item_id,
                         text: response.content.clone().unwrap_or_default(),
+                    },
+                },
+            );
+        }
+        if let Some(item_id) = streaming_reasoning_item_id.take() {
+            emit_event(
+                &mut events,
+                on_event,
+                EventMsg::ItemCompleted {
+                    turn_id: turn_id.to_string(),
+                    item_id: item_id.clone(),
+                    item: TranscriptItem::Reasoning {
+                        id: item_id,
+                        title: "reasoning".to_string(),
+                        text: response
+                            .reasoning
+                            .clone()
+                            .unwrap_or_else(|| reasoning_text_buffer.clone()),
                     },
                 },
             );
@@ -691,7 +750,7 @@ mod tests {
 
     #[test]
     fn latest_rollout_token_usage_event_carries_request_estimate() {
-        let items = vec![
+        let items = [
             RolloutItem::from(EventMsg::TokenUsageUpdated {
                 turn_id: "turn-1".to_string(),
                 last_usage: ModelUsage {

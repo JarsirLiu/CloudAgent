@@ -16,7 +16,7 @@ pub(crate) fn handle_client_event(app: &mut TuiApp, event: AppServerEvent) {
             );
         }
         AppServerEvent::Disconnected { message } => {
-            app.push_cell(HistoryCell::from_message(
+            app.push_cell(HistoryCell::info(
                 "conversation",
                 message,
                 HistoryTone::Error,

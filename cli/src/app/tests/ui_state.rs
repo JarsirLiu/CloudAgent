@@ -67,7 +67,7 @@ fn tool_delta_requires_item_started_before_streaming() {
     app.handle_control_item_started("tool:1", TurnItemKind::CommandExecution, "pwd");
     app.handle_control_item_completed(
         "tool:1",
-        HistoryCell::from_message(
+        HistoryCell::info(
             "pwd",
             "current directory is D:\\learn\\gifti\\cloudagent",
             HistoryTone::Control,
@@ -126,7 +126,7 @@ fn reasoning_and_control_cells_use_distinct_tones() {
     app.handle_control_item_delta("tool:1", "pwd");
     app.handle_control_item_completed(
         "tool:1",
-        HistoryCell::from_message("pwd", "D:\\learn\\gifti\\cloudagent", HistoryTone::Control),
+        HistoryCell::info("pwd", "D:\\learn\\gifti\\cloudagent", HistoryTone::Control),
     );
 
     let cells = app.transcript_state.transcript.cells();
@@ -152,9 +152,9 @@ fn repeated_control_cells_coalesce_and_pending_queue_stays_consistent() {
         "ReadOnly".to_string(),
     );
 
-    let first = HistoryCell::from_message("context", "workspace ready", HistoryTone::Control);
-    let second = HistoryCell::from_message("context", "workspace ready", HistoryTone::Control);
-    let third = HistoryCell::from_message("context", "workspace ready", HistoryTone::Control);
+    let first = HistoryCell::info("context", "workspace ready", HistoryTone::Control);
+    let second = HistoryCell::info("context", "workspace ready", HistoryTone::Control);
+    let third = HistoryCell::info("context", "workspace ready", HistoryTone::Control);
     app.push_cell(first);
     app.push_cell(second);
     app.push_cell(third);
@@ -168,6 +168,97 @@ fn repeated_control_cells_coalesce_and_pending_queue_stays_consistent() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].repeat_count, 3);
     assert_eq!(pending[0].body(), "workspace ready");
+}
+
+#[test]
+fn live_exploration_cells_stay_visible_until_history_rebuild() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let mut first_aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "text search `think`".to_string(),
+    );
+    first_aggregate.searches = 1;
+    let first = HistoryCell::exploration(
+        "Explored workspace",
+        "searched 1 time",
+        first_aggregate,
+        HistoryTone::Control,
+    );
+    let mut second_aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "cli/src/app/conversation/items.rs:1-200".to_string(),
+    );
+    second_aggregate.read_files = 1;
+    let second = HistoryCell::exploration(
+        "Explored workspace",
+        "read 1 file",
+        second_aggregate,
+        HistoryTone::Control,
+    );
+
+    app.push_cell(first.clone());
+    app.push_cell(second.clone());
+
+    let live_cells = app.transcript_state.transcript.cells();
+    assert_eq!(live_cells.len(), 2);
+    assert_eq!(live_cells[0].body(), "searched 1 time");
+    assert_eq!(live_cells[1].body(), "read 1 file");
+
+    app.replace_history_cells(vec![first, second]);
+
+    let rebuilt_cells = app.transcript_state.transcript.cells();
+    assert_eq!(rebuilt_cells.len(), 1);
+    assert!(rebuilt_cells[0].body().contains("searched 1 time"));
+    assert!(rebuilt_cells[0].body().contains("read 1 file"));
+}
+
+#[test]
+fn assistant_start_consolidates_prior_exploration_stage() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let mut first_aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "text search `think`".to_string(),
+    );
+    first_aggregate.searches = 1;
+    let mut second_aggregate = crate::ui::widgets::history_cell::ExplorationAggregate::new(
+        "cli/src/app/conversation/items.rs:1-200".to_string(),
+    );
+    second_aggregate.read_files = 1;
+
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "searched 1 time",
+        first_aggregate,
+        HistoryTone::Control,
+    ));
+    app.push_cell(HistoryCell::exploration(
+        "Explored workspace",
+        "read 1 file",
+        second_aggregate,
+        HistoryTone::Control,
+    ));
+
+    assert_eq!(app.transcript_state.transcript.cells().len(), 2);
+
+    app.handle_assistant_item_started("turn-1", "assistant:1");
+
+    let cells = app.transcript_state.transcript.cells();
+    assert_eq!(cells.len(), 1);
+    assert!(cells[0].body().contains("searched 1 time"));
+    assert!(cells[0].body().contains("read 1 file"));
 }
 
 #[test]

@@ -165,9 +165,14 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
     assert!(!live_cells.iter().any(|cell| cell.body() == "approved"));
     assert!(live_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-            && cell.label == "Run command"
-            && cell.body().contains("pwd")
-            && cell.detail().is_some_and(|detail| detail.contains("exit 0"))
+            && cell.label() == "Explored workspace"
+            && cell.body().contains("inspect command")
+            && cell.aggregate().is_some_and(|aggregate| {
+                aggregate
+                    .details
+                    .iter()
+                    .any(|detail| detail.contains("pwd"))
+            })
     }));
     assert!(live_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
@@ -286,11 +291,14 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
     );
     assert!(rebuilt_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-            && cell.label == "Run command"
-            && cell.body().contains("pwd")
-            && cell
-                .detail()
-                .is_some_and(|detail| detail.contains("exit 0") && ends_with_workspace_path(detail))
+            && cell.label() == "Explored workspace"
+            && cell.body().contains("inspect command")
+            && cell.aggregate().is_some_and(|aggregate| {
+                aggregate
+                    .details
+                    .iter()
+                    .any(|detail| detail.contains("pwd"))
+            })
     }));
     assert!(rebuilt_cells.iter().any(|cell| {
         cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
@@ -481,7 +489,7 @@ async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
     let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
     let debug_cells = rebuilt_cells
         .iter()
-        .map(|cell| (cell.label.as_str(), cell.body()))
+        .map(|cell| (cell.label(), cell.body()))
         .collect::<Vec<_>>();
     assert!(
         rebuilt_cells
@@ -496,11 +504,13 @@ async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
         1
     );
     assert!(
-        rebuilt_cells.iter().any(|cell| cell.label == "Run command"
-            && cell.body().contains("Set-Content out.txt hi")),
+        rebuilt_cells
+            .iter()
+            .any(|cell| cell.label() == "Run command"
+                && cell.body().contains("Set-Content out.txt hi")),
         "rebuilt cells: {debug_cells:?}"
     );
-    assert!(!rebuilt_cells.iter().any(|cell| cell.label == "request"));
+    assert!(!rebuilt_cells.iter().any(|cell| cell.label() == "request"));
 
     let recorded_requests = server_thread
         .join()

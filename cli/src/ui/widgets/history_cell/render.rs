@@ -1,4 +1,4 @@
-use super::{HistoryCell, HistoryFormat, HistoryKind, HistoryTone};
+use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone};
 use agent_protocol::{
     CommandExecutionStatus, StructuredToolResult, TranscriptItem, WriteFileStatus,
 };
@@ -25,22 +25,13 @@ impl RenderContext {
 
 pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContext) -> HistoryCell {
     match message {
-        TranscriptItem::SystemMessage { .. } => {
-            HistoryCell::from_message("", "", HistoryTone::Meta)
-        }
-        TranscriptItem::UserMessage { text, .. } => {
-            HistoryCell::from_message("you", text.clone(), HistoryTone::User)
-        }
-        TranscriptItem::AgentMessage { text, .. } => {
-            HistoryCell::with_parts(
-                context.next_response_label(),
-                text.clone(),
-                HistoryTone::Agent,
-                HistoryKind::Message,
-                HistoryFormat::Markdown,
-                None,
-            )
-        }
+        TranscriptItem::SystemMessage { .. } => HistoryCell::info("", "", HistoryTone::Meta),
+        TranscriptItem::UserMessage { text, .. } => HistoryCell::user(text.clone()),
+        TranscriptItem::AgentMessage { text, .. } => HistoryCell::agent(
+            context.next_response_label(),
+            text.clone(),
+            HistoryFormat::Markdown,
+        ),
         TranscriptItem::ToolResult {
             tool_name,
             content,
@@ -66,22 +57,15 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
         ),
         TranscriptItem::FileChange {
             tool_name, summary, ..
-        } => HistoryCell::with_parts(
+        } => HistoryCell::edit(
             humanize_tool_label(tool_name),
             summary.clone(),
+            None,
             HistoryTone::Control,
-            HistoryKind::Tool,
-            HistoryFormat::PlainText,
-            None,
         ),
-        TranscriptItem::Reasoning { text, .. } => HistoryCell::with_parts(
-            context.current_reasoning_label(),
-            text.clone(),
-            HistoryTone::Reasoning,
-            HistoryKind::Reasoning,
-            HistoryFormat::PlainText,
-            None,
-        ),
+        TranscriptItem::Reasoning { text, .. } => {
+            HistoryCell::reasoning(context.current_reasoning_label(), text.clone())
+        }
     }
 }
 
@@ -93,6 +77,12 @@ fn render_command_execution(
     exit_code: Option<i32>,
     detail: Option<&str>,
 ) -> HistoryCell {
+    if let Some(exploration) =
+        render_exploration_command(tool_name, command, current_directory, status)
+    {
+        return exploration;
+    }
+
     let summary = summarize_command_head(command);
     let cwd = compact_path(current_directory, 42);
     let state = match status {
@@ -109,18 +99,41 @@ fn render_command_execution(
         }
     };
 
-    HistoryCell::with_parts(
+    HistoryCell::exec(
         humanize_tool_label(tool_name),
         summary,
+        Some(format!("{state} @ {cwd}")),
         match status {
             CommandExecutionStatus::Failed => HistoryTone::Error,
             CommandExecutionStatus::Declined => HistoryTone::Warning,
             _ => HistoryTone::Control,
         },
-        HistoryKind::Command,
-        HistoryFormat::PlainText,
-        Some(format!("{state} @ {cwd}")),
     )
+}
+
+fn render_exploration_command(
+    tool_name: &str,
+    command: &str,
+    current_directory: &str,
+    status: &CommandExecutionStatus,
+) -> Option<HistoryCell> {
+    if !is_exploration_command(command) {
+        return None;
+    }
+
+    let summary = summarize_exploration_command(command);
+    let cwd = compact_path(current_directory, 42);
+    let mut aggregate = ExplorationAggregate::new(summary.clone());
+    aggregate.inspect_commands = 1;
+
+    let cell = HistoryCell::exploration(
+        "Explored workspace",
+        "ran 1 inspect command".to_string(),
+        aggregate.clone(),
+        HistoryTone::Control,
+    );
+    let _ = (tool_name, cwd, status);
+    Some(cell)
 }
 
 fn render_tool_result(
@@ -153,21 +166,29 @@ fn render_tool_result(
         ..
     }) = structured
     {
-        return HistoryCell::with_parts(
-            humanize_tool_label(tool_name),
-            format!(
-                "read {total_chars} chars{}",
-                if read.truncated { " truncated" } else { "" }
-            ),
-            HistoryTone::Control,
-            HistoryKind::Tool,
-            HistoryFormat::PlainText,
-            Some(compact_path(path, 48)),
+        let display_path = compact_path(path, 56);
+        let range_suffix = format_line_range(read.start_line, read.end_line);
+        let detail = format!(
+            "{}{} • {} chars{}",
+            display_path,
+            range_suffix,
+            total_chars,
+            if read.truncated { " truncated" } else { "" }
         );
+        let mut aggregate = ExplorationAggregate::new(detail);
+        aggregate.read_files = 1;
+        let cell = HistoryCell::exploration(
+            "Explored workspace",
+            "read 1 file".to_string(),
+            aggregate,
+            HistoryTone::Control,
+        );
+        return cell;
     }
     if let Some(StructuredToolResult::SearchWorkspace {
         mode,
         status,
+        query,
         file_count,
         match_count,
         truncated,
@@ -185,17 +206,50 @@ fn render_tool_result(
                 format!("found {file_count} files{truncation}{status_suffix}")
             }
             agent_protocol::SearchWorkspaceMode::Text => {
-                format!("matched {match_count} hits in {file_count} files{truncation}{status_suffix}")
+                format!(
+                    "matched {match_count} hits in {file_count} files{truncation}{status_suffix}"
+                )
             }
         };
-        return HistoryCell::with_parts(
-            humanize_tool_label(tool_name),
+        let detail = match mode {
+            agent_protocol::SearchWorkspaceMode::Files => {
+                format!("file search `{}`", compact_inline(query, 48))
+            }
+            agent_protocol::SearchWorkspaceMode::Text => {
+                format!("text search `{}`", compact_inline(query, 48))
+            }
+        };
+        let mut aggregate = ExplorationAggregate::new(detail);
+        aggregate.searches = 1;
+        let cell = HistoryCell::exploration(
+            "Explored workspace",
             summary,
+            aggregate,
             HistoryTone::Control,
-            HistoryKind::Tool,
-            HistoryFormat::PlainText,
-            None,
         );
+        return cell;
+    }
+    if let Some(StructuredToolResult::ReadDirectory {
+        path,
+        entry_count,
+        truncated,
+        ..
+    }) = structured
+    {
+        let mut aggregate = ExplorationAggregate::new(format!(
+            "{} • {} entries{}",
+            compact_path(path, 56),
+            entry_count,
+            if *truncated { " truncated" } else { "" }
+        ));
+        aggregate.listed_directories = 1;
+        let cell = HistoryCell::exploration(
+            "Explored workspace",
+            "listed 1 directory".to_string(),
+            aggregate,
+            HistoryTone::Control,
+        );
+        return cell;
     }
     if let Some(StructuredToolResult::GetMetadata {
         path,
@@ -207,22 +261,23 @@ fn render_tool_result(
     {
         if *exists {
             let kind = if *is_file { "file" } else { "directory" };
-            return HistoryCell::with_parts(
-                humanize_tool_label(tool_name),
-                format!("metadata {kind} ({size} bytes)"),
+            let mut aggregate = ExplorationAggregate::new(format!(
+                "metadata {} • {kind} ({size} bytes)",
+                compact_path(path, 56)
+            ));
+            aggregate.metadata_reads = 1;
+            let cell = HistoryCell::exploration(
+                "Explored workspace",
+                "checked 1 path".to_string(),
+                aggregate,
                 HistoryTone::Control,
-                HistoryKind::Tool,
-                HistoryFormat::PlainText,
-                Some(compact_path(path, 48)),
             );
+            return cell;
         }
-        return HistoryCell::with_parts(
+        return HistoryCell::info(
             humanize_tool_label(tool_name),
-            "metadata missing".to_string(),
+            format!("metadata missing — {}", compact_path(path, 56)),
             HistoryTone::Warning,
-            HistoryKind::Tool,
-            HistoryFormat::PlainText,
-            Some(compact_path(path, 48)),
         );
     }
     if let Some(StructuredToolResult::EditFile {
@@ -239,32 +294,25 @@ fn render_tool_result(
             WriteFileStatus::Failed => "failed",
         };
         if let Some(path) = changed_paths.first() {
-            return HistoryCell::with_parts(
+            return HistoryCell::edit(
                 humanize_tool_label(tool_name),
                 format!("{verb} {files_changed} files"),
-                HistoryTone::Control,
-                HistoryKind::Tool,
-                HistoryFormat::PlainText,
                 Some(compact_path(path, 48)),
+                HistoryTone::Control,
             );
         }
-        return HistoryCell::with_parts(
+        return HistoryCell::edit(
             humanize_tool_label(tool_name),
             format!("{verb} {files_changed} files"),
-            HistoryTone::Control,
-            HistoryKind::Tool,
-            HistoryFormat::PlainText,
             None,
+            HistoryTone::Control,
         );
     }
     if let Some(StructuredToolResult::ToolError { message, .. }) = structured {
-        return HistoryCell::with_parts(
+        return HistoryCell::info(
             humanize_tool_label(tool_name),
             compact_inline(message, 100),
             HistoryTone::Error,
-            HistoryKind::Tool,
-            HistoryFormat::PlainText,
-            None,
         );
     }
 
@@ -272,13 +320,10 @@ fn render_tool_result(
         .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("tool completed");
-    HistoryCell::with_parts(
+    HistoryCell::info(
         humanize_tool_label(tool_name),
         compact_inline(first, 100),
         HistoryTone::Control,
-        HistoryKind::Tool,
-        HistoryFormat::PlainText,
-        None,
     )
 }
 
@@ -343,4 +388,37 @@ fn compact_path(path: &str, max_chars: usize) -> String {
         .iter()
         .collect();
     format!("…{tail}")
+}
+
+fn is_exploration_command(command: &str) -> bool {
+    let normalized = command.trim().to_ascii_lowercase();
+    normalized.starts_with("ls ")
+        || normalized == "ls"
+        || normalized.starts_with("dir ")
+        || normalized == "dir"
+        || normalized == "pwd"
+        || normalized.starts_with("cat ")
+        || normalized.starts_with("type ")
+        || normalized.starts_with("rg ")
+        || normalized.starts_with("grep ")
+        || normalized.starts_with("findstr ")
+        || normalized.starts_with("select-string ")
+        || normalized.starts_with("git grep ")
+}
+
+fn summarize_exploration_command(command: &str) -> String {
+    let compact = compact_inline(command.trim(), 72);
+    if let Some((_, rhs)) = compact.rsplit_once("&&") {
+        compact_inline(rhs.trim(), 56)
+    } else {
+        compact
+    }
+}
+
+fn format_line_range(start_line: Option<usize>, end_line: Option<usize>) -> String {
+    match (start_line, end_line) {
+        (Some(start), Some(end)) if end >= start => format!(":{start}-{end}"),
+        (Some(start), _) => format!(":{start}"),
+        _ => String::new(),
+    }
 }
