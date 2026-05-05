@@ -1,6 +1,6 @@
+use crate::impls::repo::DEFAULT_IGNORED_DIRS;
 use crate::registry::shared::{
-    LocalTool, LocalToolInvocation, ToolInvocationOutput, decode_utf8_chunk, read_streaming_pipe,
-    resolve_write_path,
+    LocalTool, LocalToolInvocation, ToolInvocationOutput, decode_utf8_chunk, resolve_write_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{
@@ -23,6 +23,10 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep, timeout};
 
 pub struct ExecCommandTool;
+
+const MAX_CAPTURE_CHARS_PER_STREAM: usize = 24_000;
+const MAX_LIVE_OUTPUT_CHARS_PER_STREAM: usize = 12_000;
+const OUTPUT_TRUNCATION_NOTICE: &str = "\n[output truncated; narrow the command or use `search_workspace` and follow with `read_file` for repository discovery]\n";
 
 impl ExecCommandTool {
     pub fn descriptor() -> ToolDescriptor {
@@ -107,6 +111,17 @@ struct ExecSession {
     stderr: Arc<Mutex<String>>,
     stdout_cursor: Mutex<usize>,
     stderr_cursor: Mutex<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct CapturedOutput {
+    text: String,
+}
+
+impl CapturedOutput {
+    fn new(text: String) -> Self {
+        Self { text }
+    }
 }
 
 impl ExecSession {
@@ -254,12 +269,16 @@ impl ExecCommandLocalTool {
             ToolOutputStream::Stdout,
             stdout_buffer.clone(),
             stdout_tx,
+            MAX_CAPTURE_CHARS_PER_STREAM,
+            MAX_LIVE_OUTPUT_CHARS_PER_STREAM,
         ));
         tokio::spawn(pump_exec_reader(
             stderr,
             ToolOutputStream::Stderr,
             stderr_buffer.clone(),
             stderr_tx,
+            MAX_CAPTURE_CHARS_PER_STREAM,
+            MAX_LIVE_OUTPUT_CHARS_PER_STREAM,
         ));
 
         let session = Arc::new(ExecSession {
@@ -404,15 +423,19 @@ async fn run_one_shot_command(
         .stderr
         .take()
         .ok_or_else(|| anyhow!("failed to capture command stderr"))?;
-    let stdout_task = tokio::spawn(read_streaming_pipe(
+    let stdout_task = tokio::spawn(read_streaming_pipe_limited(
         stdout,
         ToolOutputStream::Stdout,
         ctx.output_tx.clone(),
+        MAX_CAPTURE_CHARS_PER_STREAM,
+        MAX_LIVE_OUTPUT_CHARS_PER_STREAM,
     ));
-    let stderr_task = tokio::spawn(read_streaming_pipe(
+    let stderr_task = tokio::spawn(read_streaming_pipe_limited(
         stderr,
         ToolOutputStream::Stderr,
         ctx.output_tx.clone(),
+        MAX_CAPTURE_CHARS_PER_STREAM,
+        MAX_LIVE_OUTPUT_CHARS_PER_STREAM,
     ));
     let status = tokio::select! {
         _ = ctx.cancellation_token.cancelled() => {
@@ -431,12 +454,8 @@ async fn run_one_shot_command(
             }
         }
     };
-    let stdout = String::from_utf8_lossy(&stdout_task.await??)
-        .trim()
-        .to_string();
-    let stderr = String::from_utf8_lossy(&stderr_task.await??)
-        .trim()
-        .to_string();
+    let stdout = stdout_task.await??.text.trim().to_string();
+    let stderr = stderr_task.await??.text.trim().to_string();
     let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let exit_code = status.code().unwrap_or(-1);
     let current_directory = workdir.display().to_string();
@@ -632,12 +651,17 @@ async fn pump_exec_reader<R>(
     stream: ToolOutputStream,
     buffer: Arc<Mutex<String>>,
     output_tx: Option<tokio::sync::mpsc::UnboundedSender<agent_core::ToolOutputDelta>>,
+    capture_limit_chars: usize,
+    live_limit_chars: usize,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
 {
     let mut raw = [0_u8; 8192];
     let mut pending_utf8 = Vec::new();
+    let mut capture_truncated = false;
+    let mut live_truncated = false;
+    let mut live_chars_sent = 0usize;
     loop {
         let read = reader.read(&mut raw).await?;
         if read == 0 {
@@ -646,26 +670,170 @@ where
         pending_utf8.extend_from_slice(&raw[..read]);
         let chunk = decode_utf8_chunk(&mut pending_utf8, false);
         if !chunk.is_empty() {
-            buffer.lock().await.push_str(&chunk);
+            append_capped_chunk(
+                &mut *buffer.lock().await,
+                &chunk,
+                capture_limit_chars,
+                &mut capture_truncated,
+            );
             if let Some(output_tx) = &output_tx {
-                let _ = output_tx.send(agent_core::ToolOutputDelta {
-                    stream: stream.clone(),
-                    chunk,
-                });
+                if let Some(delta) = take_live_chunk(
+                    &chunk,
+                    live_limit_chars,
+                    &mut live_chars_sent,
+                    &mut live_truncated,
+                ) {
+                    let _ = output_tx.send(agent_core::ToolOutputDelta {
+                        stream: stream.clone(),
+                        chunk: delta,
+                    });
+                }
             }
         }
     }
     let tail = decode_utf8_chunk(&mut pending_utf8, true);
     if !tail.is_empty() {
-        buffer.lock().await.push_str(&tail);
+        append_capped_chunk(
+            &mut *buffer.lock().await,
+            &tail,
+            capture_limit_chars,
+            &mut capture_truncated,
+        );
         if let Some(output_tx) = &output_tx {
-            let _ = output_tx.send(agent_core::ToolOutputDelta {
-                stream,
-                chunk: tail,
-            });
+            if let Some(delta) = take_live_chunk(
+                &tail,
+                live_limit_chars,
+                &mut live_chars_sent,
+                &mut live_truncated,
+            ) {
+                let _ = output_tx.send(agent_core::ToolOutputDelta {
+                    stream,
+                    chunk: delta,
+                });
+            }
         }
     }
     Ok(())
+}
+
+async fn read_streaming_pipe_limited<R>(
+    mut reader: R,
+    stream: ToolOutputStream,
+    output_tx: Option<tokio::sync::mpsc::UnboundedSender<agent_core::ToolOutputDelta>>,
+    capture_limit_chars: usize,
+    live_limit_chars: usize,
+) -> Result<CapturedOutput>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut raw = [0_u8; 8192];
+    let mut pending_utf8 = Vec::new();
+    let mut captured = String::new();
+    let mut capture_truncated = false;
+    let mut live_truncated = false;
+    let mut live_chars_sent = 0usize;
+
+    loop {
+        let read = reader.read(&mut raw).await?;
+        if read == 0 {
+            break;
+        }
+        pending_utf8.extend_from_slice(&raw[..read]);
+        let chunk = decode_utf8_chunk(&mut pending_utf8, false);
+        if !chunk.is_empty() {
+            append_capped_chunk(
+                &mut captured,
+                &chunk,
+                capture_limit_chars,
+                &mut capture_truncated,
+            );
+            if let Some(output_tx) = &output_tx {
+                if let Some(delta) = take_live_chunk(
+                    &chunk,
+                    live_limit_chars,
+                    &mut live_chars_sent,
+                    &mut live_truncated,
+                ) {
+                    let _ = output_tx.send(agent_core::ToolOutputDelta {
+                        stream: stream.clone(),
+                        chunk: delta,
+                    });
+                }
+            }
+        }
+    }
+
+    let tail = decode_utf8_chunk(&mut pending_utf8, true);
+    if !tail.is_empty() {
+        append_capped_chunk(
+            &mut captured,
+            &tail,
+            capture_limit_chars,
+            &mut capture_truncated,
+        );
+        if let Some(output_tx) = &output_tx {
+            if let Some(delta) = take_live_chunk(
+                &tail,
+                live_limit_chars,
+                &mut live_chars_sent,
+                &mut live_truncated,
+            ) {
+                let _ = output_tx.send(agent_core::ToolOutputDelta {
+                    stream,
+                    chunk: delta,
+                });
+            }
+        }
+    }
+
+    Ok(CapturedOutput::new(captured))
+}
+
+fn append_capped_chunk(buffer: &mut String, chunk: &str, limit_chars: usize, truncated: &mut bool) {
+    if *truncated {
+        return;
+    }
+    let current_chars = buffer.chars().count();
+    if current_chars >= limit_chars {
+        buffer.push_str(OUTPUT_TRUNCATION_NOTICE);
+        *truncated = true;
+        return;
+    }
+    let remaining = limit_chars.saturating_sub(current_chars);
+    let chunk_chars = chunk.chars().count();
+    if chunk_chars <= remaining {
+        buffer.push_str(chunk);
+        return;
+    }
+    buffer.push_str(&chunk.chars().take(remaining).collect::<String>());
+    buffer.push_str(OUTPUT_TRUNCATION_NOTICE);
+    *truncated = true;
+}
+
+fn take_live_chunk(
+    chunk: &str,
+    limit_chars: usize,
+    live_chars_sent: &mut usize,
+    truncated: &mut bool,
+) -> Option<String> {
+    if *truncated {
+        return None;
+    }
+    if *live_chars_sent >= limit_chars {
+        *truncated = true;
+        return Some(OUTPUT_TRUNCATION_NOTICE.to_string());
+    }
+    let remaining = limit_chars.saturating_sub(*live_chars_sent);
+    let chunk_chars = chunk.chars().count();
+    if chunk_chars <= remaining {
+        *live_chars_sent += chunk_chars;
+        return Some(chunk.to_string());
+    }
+    let mut rendered = chunk.chars().take(remaining).collect::<String>();
+    rendered.push_str(OUTPUT_TRUNCATION_NOTICE);
+    *live_chars_sent = limit_chars;
+    *truncated = true;
+    Some(rendered)
 }
 
 async fn take_new_buffer(buffer: &Arc<Mutex<String>>, cursor: &Mutex<usize>) -> String {
@@ -738,19 +906,19 @@ fn translate_rg_command(command: &str) -> Option<String> {
         let path_scope = extract_rg_path_scope(trimmed).unwrap_or_else(|| ".".to_string());
         return Some(if cfg!(windows) {
             format!(
-                "Get-ChildItem -Recurse -File {} | Select-Object -ExpandProperty FullName",
-                powershell_quote(&path_scope)
+                "{} | Select-Object -ExpandProperty FullName",
+                windows_bounded_file_listing_command(&path_scope)
             )
         } else {
-            format!("find {} -type f -print", shell_quote(&path_scope))
+            unix_bounded_file_listing_command(&path_scope)
         });
     }
 
     let (pattern, path_scope, case_sensitive) = extract_rg_search_args(trimmed)?;
     Some(if cfg!(windows) {
         let mut command = format!(
-            "Get-ChildItem -Recurse -File {} | Select-String -Pattern {}",
-            powershell_quote(&path_scope),
+            "{} | Select-String -Pattern {}",
+            windows_bounded_file_listing_command(&path_scope),
             powershell_quote(&pattern)
         );
         if !case_sensitive {
@@ -758,16 +926,42 @@ fn translate_rg_command(command: &str) -> Option<String> {
         }
         command
     } else {
-        let mut command = String::from("grep -R -n -I");
+        let mut command = format!(
+            "{} | xargs -0 grep -n -I",
+            unix_bounded_file_listing_command(&path_scope)
+        );
         if !case_sensitive {
             command.push_str(" -i");
         }
         command.push_str(" -e ");
         command.push_str(&shell_quote(&pattern));
-        command.push(' ');
-        command.push_str(&shell_quote(&path_scope));
         command
     })
+}
+
+fn windows_bounded_file_listing_command(path_scope: &str) -> String {
+    let mut command = format!(
+        "Get-ChildItem -Recurse -File {}",
+        powershell_quote(path_scope)
+    );
+    for ignored in DEFAULT_IGNORED_DIRS {
+        command.push_str(&format!(
+            " | Where-Object {{ $_.FullName -notmatch '[\\\\/]{ignored}([\\\\/]|$)' }}"
+        ));
+    }
+    command
+}
+
+fn unix_bounded_file_listing_command(path_scope: &str) -> String {
+    let mut command = format!("find {}", shell_quote(path_scope));
+    for ignored in DEFAULT_IGNORED_DIRS {
+        command.push_str(&format!(
+            " -path {} -prune -o",
+            shell_quote(&format!("*/{ignored}"))
+        ));
+    }
+    command.push_str(" -type f -print0");
+    command
 }
 
 fn extract_rg_search_args(command: &str) -> Option<(String, String, bool)> {
@@ -990,11 +1184,11 @@ mod tests {
             assert!(translated.contains("Get-ChildItem -Recurse -File"));
             assert!(translated.contains("Select-String -Pattern"));
             assert!(translated.contains("crates/agent-core"));
+            assert!(translated.contains("node_modules"));
         } else {
-            assert!(translated.starts_with("grep -R -n -I"));
-            assert!(translated.contains("-e"));
-            assert!(translated.contains("context|token"));
-            assert!(translated.contains("crates/agent-core"));
+            assert!(translated.starts_with("find 'crates/agent-core'"));
+            assert!(translated.contains("-prune"));
+            assert!(translated.contains("| xargs -0 grep -n -I"));
         }
     }
 
@@ -1005,8 +1199,10 @@ mod tests {
         if cfg!(windows) {
             assert!(translated.contains("Get-ChildItem -Recurse -File"));
             assert!(translated.contains("-ExpandProperty FullName"));
+            assert!(translated.contains("target"));
         } else {
-            assert_eq!(translated, "find 'crates' -type f -print");
+            assert!(translated.starts_with("find 'crates'"));
+            assert!(translated.contains("-print0"));
         }
     }
 
@@ -1065,5 +1261,14 @@ mod tests {
             }
             other => panic!("expected structured command rejection, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn capped_output_appends_notice() {
+        let mut buffer = String::new();
+        let mut truncated = false;
+        append_capped_chunk(&mut buffer, "abcdef", 4, &mut truncated);
+        assert!(truncated);
+        assert!(buffer.contains("output truncated"));
     }
 }

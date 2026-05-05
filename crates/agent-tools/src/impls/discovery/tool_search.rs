@@ -191,7 +191,7 @@ mod tests {
                     identity: ToolIdentity::built_in("tool_search"),
                     source: crate::registry::shared::LocalToolSource::BuiltIn,
                     payload: crate::registry::shared::LocalToolPayload::Function {
-                        arguments: json!({"query": "bytes"}),
+                        arguments: json!({"query": "watch"}),
                     },
                 },
                 &ToolExecutionContext {
@@ -202,13 +202,13 @@ mod tests {
                     default_shell_timeout_ms: 5_000,
                     cancellation_token: CancellationToken::new(),
                     discoverable_tools: vec![ToolSpec {
-                        name: "read_file_bytes".to_string(),
+                        name: "watch".to_string(),
                         identity: ToolIdentity {
                             source: ToolSource::BuiltIn,
                             namespace: None,
-                            wire_name: "read_file_bytes".to_string(),
+                            wire_name: "watch".to_string(),
                         },
-                        description: "Read raw bytes from one known file.".to_string(),
+                        description: "Watch workspace changes for one path.".to_string(),
                         parameters: json!({"type": "object"}),
                         mutating: false,
                         execution_policy: ToolExecutionPolicy::Sequential,
@@ -230,6 +230,6 @@ mod tests {
         };
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].tool_name, "read_file_bytes");
+        assert_eq!(hits[0].tool_name, "watch");
     }
 }

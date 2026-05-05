@@ -43,7 +43,7 @@
 
 - 单文件精读。
 - 返回带行号、截断信息和续读信息的结构化事实。
-- 这是 repo 精读工具，不是 fs 原语；底层文件系统读写原语单独由 `read_file_bytes` / `write_file_bytes` 承担。
+- 这是 repo 精读工具，不承担目录漫游或批量整仓扫描。
 
 验收标准：
 
@@ -145,7 +145,6 @@
 - 已完成：`get_metadata` 的描述收紧，不再鼓励它承担 repo 探索第一步。
 - 已完成：补充基础 fs 原语层，包括 `read_directory`、`create_directory`、`copy_path`、`remove_path`。
 - 已完成：`get_metadata` 补充 `is_symlink`、`created_at_ms`、`modified_at_ms`，向 Codex 的 fs metadata 对齐。
-- 已完成：补充更底层的原始字节读写原语 `read_file_bytes`、`write_file_bytes`，并删除重叠的文本整文件写工具 `write_file`。
 - 已完成：补充低频 fs 观察原语 `watch`、`unwatch`，默认通过 deferred discovery 暴露。
 - 待完成：真实对话抽查，确认模型默认走 `search_workspace -> read_file -> edit_file / exec_command`。
 

@@ -1,7 +1,4 @@
-use agent_core::{
-    PermissionProfile, ToolExecutionContext, ToolIdentity, ToolOutputDelta, ToolOutputStream,
-    ToolSpec,
-};
+use agent_core::{PermissionProfile, ToolExecutionContext, ToolIdentity, ToolSpec};
 use agent_protocol::{StructuredToolResult, WriteFileStatus};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -9,7 +6,6 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
 
 #[derive(Clone, Debug)]
 pub(crate) enum LocalToolSource {
@@ -73,44 +69,6 @@ pub(crate) fn register<T>(
 {
     let spec = tool.spec();
     tools.insert(spec.identity.wire_name.clone(), Arc::new(tool));
-}
-
-pub(crate) async fn read_streaming_pipe<R>(
-    mut reader: R,
-    stream: ToolOutputStream,
-    output_tx: Option<tokio::sync::mpsc::UnboundedSender<ToolOutputDelta>>,
-) -> Result<Vec<u8>>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut collected = Vec::new();
-    let mut buffer = [0_u8; 8192];
-    let mut pending_utf8 = Vec::new();
-    loop {
-        let read = reader.read(&mut buffer).await?;
-        if read == 0 {
-            break;
-        }
-        let chunk = buffer[..read].to_vec();
-        collected.extend_from_slice(&chunk);
-        if let Some(output_tx) = &output_tx {
-            pending_utf8.extend_from_slice(&chunk);
-            let _ = output_tx.send(ToolOutputDelta {
-                stream: stream.clone(),
-                chunk: decode_utf8_chunk(&mut pending_utf8, false),
-            });
-        }
-    }
-    if let Some(output_tx) = &output_tx {
-        let tail = decode_utf8_chunk(&mut pending_utf8, true);
-        if !tail.is_empty() {
-            let _ = output_tx.send(ToolOutputDelta {
-                stream,
-                chunk: tail,
-            });
-        }
-    }
-    Ok(collected)
 }
 
 pub(crate) fn decode_utf8_chunk(buffer: &mut Vec<u8>, flush: bool) -> String {
@@ -263,14 +221,6 @@ pub(crate) fn structured_failure_result(
             Some(StructuredToolResult::EditFile {
                 changed_paths: Vec::new(),
                 files_changed: 0,
-                status: WriteFileStatus::Failed,
-                version_token: None,
-            })
-        }
-        (LocalToolSource::BuiltIn, "write_file_bytes") => {
-            Some(StructuredToolResult::WriteFileBytes {
-                path: String::new(),
-                bytes_written: 0,
                 status: WriteFileStatus::Failed,
                 version_token: None,
             })

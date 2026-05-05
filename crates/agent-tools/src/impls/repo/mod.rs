@@ -3,6 +3,7 @@ mod read_file;
 mod search_workspace;
 mod text_read;
 
+pub(crate) use common::DEFAULT_IGNORED_DIRS;
 pub(crate) use read_file::ReadFileLocalTool;
 pub use read_file::ReadFileTool;
 pub(crate) use search_workspace::SearchWorkspaceLocalTool;

@@ -591,46 +591,39 @@ mod tests {
     #[test]
     fn next_round_visible_tools_include_deferred_hits_from_tool_search() {
         let default_tools = vec![demo_spec("search_workspace"), demo_spec("tool_search")];
-        let deferred_tool = demo_spec("read_file_bytes");
+        let deferred_tool = demo_spec("watch");
         let deferred_tool_map = BTreeMap::from([(
             deferred_tool.identity.wire_name.clone(),
             deferred_tool.clone(),
         )]);
 
-        let visible = compose_visible_tool_specs(
-            &default_tools,
-            &deferred_tool_map,
-            &["read_file_bytes".to_string()],
-        );
+        let visible =
+            compose_visible_tool_specs(&default_tools, &deferred_tool_map, &["watch".to_string()]);
 
         assert_eq!(
             visible
                 .iter()
                 .map(|spec| spec.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["search_workspace", "tool_search", "read_file_bytes"]
+            vec!["search_workspace", "tool_search", "watch"]
         );
     }
 
     #[test]
     fn discoverable_tools_exclude_already_exposed_deferred_hits() {
         let deferred_tool_map = BTreeMap::from([
-            ("read_file_bytes".to_string(), demo_spec("read_file_bytes")),
-            (
-                "write_file_bytes".to_string(),
-                demo_spec("write_file_bytes"),
-            ),
+            ("watch".to_string(), demo_spec("watch")),
+            ("unwatch".to_string(), demo_spec("unwatch")),
         ]);
 
-        let discoverable =
-            collect_discoverable_tools(&deferred_tool_map, &["read_file_bytes".to_string()]);
+        let discoverable = collect_discoverable_tools(&deferred_tool_map, &["watch".to_string()]);
 
         assert_eq!(
             discoverable
                 .iter()
                 .map(|spec| spec.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["write_file_bytes"]
+            vec!["unwatch"]
         );
     }
 }

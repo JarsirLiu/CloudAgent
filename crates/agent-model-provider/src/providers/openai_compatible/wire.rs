@@ -1,5 +1,5 @@
-use agent_core::{ModelUsage, ResponseItem, StructuredToolResult, ToolCall, ToolSpec};
-use anyhow::Result;
+use crate::request::ProviderMessage;
+use agent_core::{ModelUsage, ToolCall, ToolSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -36,26 +36,26 @@ pub(super) struct ChatApiMessage {
 }
 
 impl ChatApiMessage {
-    pub(super) fn from_message(message: &ResponseItem) -> Result<Self> {
+    pub(super) fn from_message(message: &ProviderMessage) -> Self {
         match message {
-            ResponseItem::System { content } => Ok(Self {
+            ProviderMessage::System { content } => Self {
                 role: "system".to_string(),
                 content: Some(content.clone()),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
-            }),
-            ResponseItem::User { content } => Ok(Self {
+            },
+            ProviderMessage::User { content } => Self {
                 role: "user".to_string(),
                 content: Some(content.clone()),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
-            }),
-            ResponseItem::Assistant {
+            },
+            ProviderMessage::Assistant {
                 content,
                 tool_calls,
-            } => Ok(Self {
+            } => Self {
                 role: "assistant".to_string(),
                 content: content.clone(),
                 tool_calls: if tool_calls.is_empty() {
@@ -70,75 +70,23 @@ impl ChatApiMessage {
                 },
                 tool_call_id: None,
                 name: None,
-            }),
-            ResponseItem::Tool {
+            },
+            ProviderMessage::Tool {
                 tool_call_id,
                 name,
                 content,
-                structured,
-            } => Ok(Self {
+            } => Self {
                 role: "tool".to_string(),
-                content: Some(tool_message_content(name, content, structured.as_ref())),
+                content: Some(tool_message_content(name, content)),
                 tool_calls: None,
                 tool_call_id: Some(tool_call_id.clone()),
                 name: Some(name.clone()),
-            }),
+            },
         }
     }
 }
 
-fn tool_message_content(
-    name: &str,
-    content: &str,
-    structured: Option<&StructuredToolResult>,
-) -> String {
-    if let Some(StructuredToolResult::CommandExecution {
-        command,
-        current_directory,
-        success,
-        exit_code,
-        stdout,
-        stderr,
-        aggregated_output,
-        ..
-    }) = structured
-    {
-        let mut rendered = String::new();
-        rendered.push_str(&format!("tool `{name}` executed `{command}`"));
-        rendered.push_str(&format!(" in `{current_directory}`"));
-        if let Some(ok) = success {
-            rendered.push_str(if *ok {
-                " successfully."
-            } else {
-                " with failure."
-            });
-        } else {
-            rendered.push('.');
-        }
-        if let Some(code) = exit_code {
-            rendered.push_str(&format!(" exit_code={code}."));
-        }
-        if let Some(output) = aggregated_output
-            && !output.trim().is_empty()
-        {
-            rendered.push_str("\noutput:\n");
-            rendered.push_str(output);
-        } else {
-            if let Some(out) = stdout
-                && !out.trim().is_empty()
-            {
-                rendered.push_str("\nstdout:\n");
-                rendered.push_str(out);
-            }
-            if let Some(err) = stderr
-                && !err.trim().is_empty()
-            {
-                rendered.push_str("\nstderr:\n");
-                rendered.push_str(err);
-            }
-        }
-        return rendered;
-    }
+fn tool_message_content(_name: &str, content: &str) -> String {
     content.to_string()
 }
 
@@ -285,5 +233,18 @@ impl From<ChatCompletionUsage> for ModelUsage {
                 .unwrap_or(0),
             total_tokens: value.total_tokens,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tool_message_content;
+
+    #[test]
+    fn tool_messages_forward_content_verbatim() {
+        let filtered = "[rtk:generic]\nCommand summary\n- listed workspace files";
+        let rendered = tool_message_content("exec_command", filtered);
+
+        assert_eq!(rendered, filtered);
     }
 }

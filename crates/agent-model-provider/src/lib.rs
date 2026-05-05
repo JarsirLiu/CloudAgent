@@ -2,6 +2,7 @@ mod config;
 mod error;
 mod event;
 mod providers;
+mod request;
 
 pub use config::ProviderRuntimeConfig;
 pub use error::{ProviderRequestError, ProviderStreamError};

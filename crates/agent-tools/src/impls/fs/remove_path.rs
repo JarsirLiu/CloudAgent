@@ -29,10 +29,7 @@ impl RemovePathTool {
                     "removing one known generated file or directory",
                     "cleaning up an artifact path after verification",
                 ],
-                avoid_for: vec![
-                    "source discovery",
-                    "routine source editing",
-                ],
+                avoid_for: vec!["source discovery", "routine source editing"],
                 ..ToolUsageGuidance::default()
             },
             ToolSpec {

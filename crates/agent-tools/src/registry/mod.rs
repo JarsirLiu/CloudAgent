@@ -285,19 +285,7 @@ mod tests {
             read_only
                 .default_tools
                 .iter()
-                .all(|spec| spec.name != "write_file_bytes")
-        );
-        assert!(
-            workspace_write
-                .default_tools
-                .iter()
-                .all(|spec| spec.name != "write_file_bytes")
-        );
-        assert!(
-            workspace_write
-                .deferred_tools
-                .iter()
-                .any(|spec| spec.name == "write_file_bytes")
+                .all(|spec| spec.name != "watch")
         );
         assert!(
             read_only
@@ -412,7 +400,7 @@ mod tests {
             exposure
                 .deferred_tools
                 .iter()
-                .any(|spec| spec.name == "read_file_bytes")
+                .any(|spec| spec.name == "watch")
         );
     }
 

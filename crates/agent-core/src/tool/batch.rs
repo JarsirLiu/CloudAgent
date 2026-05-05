@@ -584,23 +584,23 @@ mod tests {
             content: "found".to_string(),
             is_error: false,
             structured: Some(StructuredToolResult::ToolSearch {
-                query: "bytes".to_string(),
+                query: "watch".to_string(),
                 max_results: 8,
                 match_count: 2,
                 hits: vec![
                     ToolSearchHit {
-                        tool_name: "read_file_bytes".to_string(),
+                        tool_name: "watch".to_string(),
                         source: ToolSource::BuiltIn,
-                        description: "Read raw bytes".to_string(),
+                        description: "Watch workspace changes".to_string(),
                         mutating: false,
                         rank: 1,
                         match_reason: "tool name match".to_string(),
                     },
                     ToolSearchHit {
-                        tool_name: "write_file_bytes".to_string(),
+                        tool_name: "unwatch".to_string(),
                         source: ToolSource::BuiltIn,
-                        description: "Write raw bytes".to_string(),
-                        mutating: true,
+                        description: "Stop watching workspace changes".to_string(),
+                        mutating: false,
                         rank: 2,
                         match_reason: "tool description match".to_string(),
                     },
@@ -610,12 +610,6 @@ mod tests {
 
         let exposed = collect_exposed_tools(&history);
 
-        assert_eq!(
-            exposed,
-            vec![
-                "read_file_bytes".to_string(),
-                "write_file_bytes".to_string()
-            ]
-        );
+        assert_eq!(exposed, vec!["watch".to_string(), "unwatch".to_string()]);
     }
 }

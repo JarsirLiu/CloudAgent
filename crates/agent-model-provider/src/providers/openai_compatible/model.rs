@@ -6,6 +6,7 @@ use super::wire::{
 use crate::config::ProviderRuntimeConfig;
 use crate::error::{ProviderRequestError, ProviderStreamError};
 use crate::event::{ProviderCompletion, ProviderStreamEvent};
+use crate::request::ProviderRequest;
 use agent_core::{
     ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelUsage, ToolCall, ToolIdentity,
     ToolSpec,
@@ -73,20 +74,22 @@ impl OpenAiCompatibleModel {
         &self,
         request: &ModelRequest,
     ) -> Result<ProviderEventStream, ProviderStreamError> {
+        let provider_request = ProviderRequest::from_model_request(request);
         let payload = ChatCompletionRequest {
             model: self.config.model.clone(),
-            messages: request
+            messages: provider_request
                 .messages
                 .iter()
                 .map(ChatApiMessage::from_message)
-                .collect::<Result<Vec<_>>>()
-                .map_err(|err| ProviderStreamError::Protocol {
-                    message: err.to_string(),
-                })?,
-            tools: request.tools.iter().map(ChatToolSpec::from_spec).collect(),
+                .collect::<Vec<_>>(),
+            tools: provider_request
+                .tools
+                .iter()
+                .map(ChatToolSpec::from_spec)
+                .collect(),
             tool_choice: "auto".to_string(),
             parallel_tool_calls: true,
-            temperature: request.temperature,
+            temperature: provider_request.temperature,
             stream: Some(true),
             stream_options: Some(ChatCompletionStreamOptions {
                 include_usage: true,
@@ -157,18 +160,23 @@ impl OpenAiCompatibleModel {
 #[async_trait]
 impl ChatModel for OpenAiCompatibleModel {
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
-        let tool_spec_index = Self::tool_spec_index(&request.tools);
+        let provider_request = ProviderRequest::from_model_request(&request);
+        let tool_spec_index = Self::tool_spec_index(&provider_request.tools);
         let payload = ChatCompletionRequest {
             model: self.config.model.clone(),
-            messages: request
+            messages: provider_request
                 .messages
                 .iter()
                 .map(ChatApiMessage::from_message)
-                .collect::<Result<Vec<_>>>()?,
-            tools: request.tools.iter().map(ChatToolSpec::from_spec).collect(),
+                .collect::<Vec<_>>(),
+            tools: provider_request
+                .tools
+                .iter()
+                .map(ChatToolSpec::from_spec)
+                .collect(),
             tool_choice: "auto".to_string(),
             parallel_tool_calls: true,
-            temperature: request.temperature,
+            temperature: provider_request.temperature,
             stream: None,
             stream_options: None,
         };

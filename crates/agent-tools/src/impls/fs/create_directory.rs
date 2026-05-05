@@ -27,12 +27,9 @@ impl CreateDirectoryTool {
                     "preparing a known directory before writing files",
                     "creating output folders for generated artifacts",
                 ],
-                avoid_for: vec![
-                    "editing source files",
-                    "discovering repository structure",
-                ],
+                avoid_for: vec!["editing source files", "discovering repository structure"],
                 follow_up_hint: Some(
-                    "use `write_file_bytes` for raw file creation or `edit_file` for targeted source edits",
+                    "follow with `edit_file` for source changes or `copy_path` when seeding a directory from an existing path",
                 ),
                 ..ToolUsageGuidance::default()
             },

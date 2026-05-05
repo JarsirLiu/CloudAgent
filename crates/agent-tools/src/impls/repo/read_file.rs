@@ -42,10 +42,9 @@ impl ReadFileTool {
                 avoid_for: vec![
                     "broad repository discovery",
                     "batch previews across many files",
-                    "raw filesystem byte reads",
                 ],
                 follow_up_hint: Some(
-                    "use `read_file_bytes` only when raw bytes matter; otherwise keep code and text inspection on `read_file`",
+                    "keep repository inspection on `read_file`; for multiple files, issue multiple `read_file` calls and let the runtime parallelize them",
                 ),
                 if_truncated_hint: Some(
                     "rerun the same file with the returned `next_start_line` or a narrower `start_line` / `max_lines` slice",
@@ -55,7 +54,7 @@ impl ReadFileTool {
                 name: "read_file".to_string(),
                 identity: ToolIdentity::built_in("read_file"),
                 description: format!(
-                    "Read one known repository text file in a structured code-reading tool call. This is the main repo inspection tool, not a raw filesystem byte reader. Use one call per file. When several files need inspection, issue multiple `read_file` calls and let the runtime parallelize them. Output is capped at about {max_read_chars} characters."
+                    "Read one known repository text file in a structured code-reading tool call. This is the main repo inspection tool. Use one call per file. When several files need inspection, issue multiple `read_file` calls and let the runtime parallelize them. Output is capped at about {max_read_chars} characters."
                 ),
                 parameters: json!({
                     "type": "object",
