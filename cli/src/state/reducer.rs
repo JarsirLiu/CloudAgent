@@ -71,6 +71,7 @@ pub(crate) enum UiInputEvent {
         reason: String,
     },
     LocalCopy,
+    LocalCopyText(String),
     LocalHelp,
     LocalInputError(String),
 }

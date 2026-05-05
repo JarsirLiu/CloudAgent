@@ -87,7 +87,7 @@ fn tool_delta_requires_item_started_before_streaming() {
 }
 
 #[test]
-fn ctrl_c_exits_when_idle() {
+fn ctrl_d_exits_when_idle_if_composer_empty() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -98,8 +98,8 @@ fn ctrl_c_exits_when_idle() {
     );
 
     let input = app
-        .handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
-        .expect("ctrl+c should produce exit input");
+        .handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
+        .expect("ctrl+d should produce exit input");
 
     assert!(matches!(
         input,

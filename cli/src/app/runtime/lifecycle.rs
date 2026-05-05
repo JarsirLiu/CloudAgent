@@ -6,7 +6,7 @@ pub(crate) fn pause_welcome_animation_for_input(app: &mut TuiApp) {
 
 pub(crate) fn handle_animation_tick(app: &mut TuiApp) -> bool {
     app.run_state.clear_expired_notices();
-    let mut needs_redraw = false;
+    let mut needs_redraw = app.input_pane.handle_tick();
     if !matches!(
         app.runtime_projection.phase,
         None | Some(crate::state::runtime_projection::RuntimePhase::Idle)

@@ -121,7 +121,7 @@ impl WelcomeScreen {
             ),
             Span::styled("send  ", Style::default().fg(dim)),
             Span::styled(
-                "Ctrl+C ",
+                "Ctrl+D ",
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),

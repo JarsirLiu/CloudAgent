@@ -9,6 +9,33 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl TuiApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+            if self.console_state.mode == FrontendMode::Idle && self.input_pane.composer_has_selection()
+            {
+                return Some(ParsedInput::LocalCopyText(
+                    self.input_pane
+                        .handle_key(KeyEvent::new(
+                            KeyCode::Char('C'),
+                            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                        ))
+                        .and_then(|action| match action {
+                            InputPaneAction::Composer(ComposerIntent::CopyText(text)) => Some(text),
+                            _ => None,
+                        })?,
+                ));
+            }
+            return None;
+        }
+
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('d') {
+            if self.console_state.mode == FrontendMode::Idle && self.input_pane.composer_is_empty()
+            {
+                self.run_state.should_exit = true;
+                return Some(ParsedInput::Command(AppClientCommand::Exit));
+            }
+            return None;
+        }
+
         if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.run_state.expand_tool_details = !self.run_state.expand_tool_details;
             self.transcript_state
@@ -45,8 +72,7 @@ impl TuiApp {
             )),
             InputPaneAction::Composer(ComposerIntent::Interrupt) => {
                 if self.console_state.mode == FrontendMode::Idle {
-                    self.run_state.should_exit = true;
-                    Some(ParsedInput::Command(AppClientCommand::Exit))
+                    None
                 } else {
                     Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
                         conversation_id: self.conversation_id.clone(),
@@ -99,6 +125,9 @@ impl TuiApp {
                 model,
             }),
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
+            InputPaneAction::Composer(ComposerIntent::CopyText(text)) => {
+                Some(ParsedInput::LocalCopyText(text))
+            }
             InputPaneAction::Composer(ComposerIntent::Help) => Some(ParsedInput::LocalHelp),
             InputPaneAction::Composer(ComposerIntent::UnknownCommand(command)) => {
                 Some(ParsedInput::LocalInputError(format!(

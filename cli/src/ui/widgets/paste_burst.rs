@@ -1,0 +1,182 @@
+use std::time::{Duration, Instant};
+
+#[cfg(not(windows))]
+const PASTE_BURST_CHAR_INTERVAL: Duration = Duration::from_millis(8);
+#[cfg(windows)]
+const PASTE_BURST_CHAR_INTERVAL: Duration = Duration::from_millis(30);
+
+#[cfg(not(windows))]
+const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(8);
+#[cfg(windows)]
+const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(60);
+
+const PASTE_ENTER_SUPPRESS_WINDOW: Duration = Duration::from_millis(120);
+
+#[derive(Default)]
+pub(crate) struct PasteBurst {
+    last_plain_char_time: Option<Instant>,
+    consecutive_plain_char_burst: u16,
+    burst_window_until: Option<Instant>,
+    buffer: String,
+    active: bool,
+    pending_first_char: Option<(char, Instant)>,
+}
+
+pub(crate) enum CharDecision {
+    BufferAppend,
+    RetainFirstChar,
+    BeginBufferFromPending,
+}
+
+pub(crate) enum FlushResult {
+    Paste(String),
+    Typed(char),
+    None,
+}
+
+impl PasteBurst {
+    pub(crate) fn on_plain_char(&mut self, ch: char, now: Instant) -> CharDecision {
+        self.note_plain_char(now);
+
+        if self.active {
+            self.burst_window_until = Some(now + PASTE_ENTER_SUPPRESS_WINDOW);
+            return CharDecision::BufferAppend;
+        }
+
+        if let Some((held, held_at)) = self.pending_first_char
+            && now.duration_since(held_at) <= PASTE_BURST_CHAR_INTERVAL
+        {
+            self.active = true;
+            let _ = self.pending_first_char.take();
+            self.buffer.push(held);
+            self.burst_window_until = Some(now + PASTE_ENTER_SUPPRESS_WINDOW);
+            return CharDecision::BeginBufferFromPending;
+        }
+
+        self.pending_first_char = Some((ch, now));
+        CharDecision::RetainFirstChar
+    }
+
+    fn note_plain_char(&mut self, now: Instant) {
+        match self.last_plain_char_time {
+            Some(prev) if now.duration_since(prev) <= PASTE_BURST_CHAR_INTERVAL => {
+                self.consecutive_plain_char_burst =
+                    self.consecutive_plain_char_burst.saturating_add(1)
+            }
+            _ => self.consecutive_plain_char_burst = 1,
+        }
+        self.last_plain_char_time = Some(now);
+    }
+
+    pub(crate) fn append_char_to_buffer(&mut self, ch: char, now: Instant) {
+        self.buffer.push(ch);
+        self.burst_window_until = Some(now + PASTE_ENTER_SUPPRESS_WINDOW);
+    }
+
+    pub(crate) fn append_newline_if_active(&mut self, now: Instant) -> bool {
+        if self.is_active() {
+            self.buffer.push('\n');
+            self.burst_window_until = Some(now + PASTE_ENTER_SUPPRESS_WINDOW);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn flush_if_due(&mut self, now: Instant) -> FlushResult {
+        let timeout = if self.is_active_internal() {
+            PASTE_BURST_ACTIVE_IDLE_TIMEOUT
+        } else {
+            PASTE_BURST_CHAR_INTERVAL
+        };
+        let timed_out = self
+            .last_plain_char_time
+            .is_some_and(|t| now.duration_since(t) > timeout);
+
+        if timed_out && self.is_active_internal() {
+            self.active = false;
+            let out = std::mem::take(&mut self.buffer);
+            self.pending_first_char = None;
+            FlushResult::Paste(out)
+        } else if timed_out {
+            if let Some((ch, _)) = self.pending_first_char.take() {
+                FlushResult::Typed(ch)
+            } else {
+                FlushResult::None
+            }
+        } else {
+            FlushResult::None
+        }
+    }
+
+    pub(crate) fn flush_before_modified_input(&mut self) -> Option<String> {
+        if !self.is_active() {
+            return None;
+        }
+        self.active = false;
+        let mut out = std::mem::take(&mut self.buffer);
+        if let Some((ch, _)) = self.pending_first_char.take() {
+            out.push(ch);
+        }
+        Some(out)
+    }
+
+    pub(crate) fn clear_window_after_non_char(&mut self) {
+        self.consecutive_plain_char_burst = 0;
+        self.last_plain_char_time = None;
+        self.burst_window_until = None;
+        self.active = false;
+        self.pending_first_char = None;
+    }
+
+    pub(crate) fn clear_after_explicit_paste(&mut self) {
+        self.last_plain_char_time = None;
+        self.consecutive_plain_char_burst = 0;
+        self.burst_window_until = None;
+        self.active = false;
+        self.buffer.clear();
+        self.pending_first_char = None;
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.is_active_internal() || self.pending_first_char.is_some()
+    }
+
+    fn is_active_internal(&self) -> bool {
+        self.active || !self.buffer.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_char_flushes_as_typed_when_no_burst_follows() {
+        let mut burst = PasteBurst::default();
+        let t0 = Instant::now();
+        assert!(matches!(
+            burst.on_plain_char('a', t0),
+            CharDecision::RetainFirstChar
+        ));
+
+        let t1 = t0 + PASTE_BURST_CHAR_INTERVAL + Duration::from_millis(1);
+        assert!(matches!(burst.flush_if_due(t1), FlushResult::Typed('a')));
+    }
+
+    #[test]
+    fn second_fast_char_starts_buffer_and_flushes_as_paste() {
+        let mut burst = PasteBurst::default();
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_millis(1);
+        let t2 = t1 + PASTE_BURST_ACTIVE_IDLE_TIMEOUT + Duration::from_millis(1);
+        let _ = burst.on_plain_char('a', t0);
+        assert!(matches!(
+            burst.on_plain_char('b', t1),
+            CharDecision::BeginBufferFromPending
+        ));
+        burst.append_char_to_buffer('b', t1);
+
+        assert!(matches!(burst.flush_if_due(t2), FlushResult::Paste(ref s) if s == "ab"));
+    }
+}

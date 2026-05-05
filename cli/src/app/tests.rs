@@ -376,9 +376,9 @@ async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
         ) {
             saw_server_request = true;
             let input = app
-                .handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
-                .expect("ctrl+c should produce interrupt input");
-            handle_tui_input(&mut app, &client, input).expect("ctrl+c interrupt turn");
+                .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .expect("esc should produce interrupt input");
+            handle_tui_input(&mut app, &client, input).expect("esc interrupt turn");
         }
         if matches!(
             &event,

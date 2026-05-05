@@ -2,11 +2,13 @@ use crate::input::completion::CompletionState;
 use crate::input::intent::ComposerIntent;
 use crate::input::slash_command::{SlashCommand, find_slash_command};
 use crate::ui::widgets::completion_popup::completion_popup_lines;
+use crate::ui::widgets::paste_burst::{CharDecision, FlushResult, PasteBurst};
 use agent_protocol::FrontendMode;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::time::Instant;
 
 use crate::ui::widgets::textarea::{TextArea, display_width, is_altgr};
 
@@ -19,6 +21,7 @@ pub struct ComposerRender {
 pub struct ChatComposer {
     textarea: TextArea,
     completion: CompletionState,
+    paste_burst: PasteBurst,
 }
 
 impl ChatComposer {
@@ -26,21 +29,42 @@ impl ChatComposer {
         Self {
             textarea: TextArea::new(),
             completion: CompletionState::default(),
+            paste_burst: PasteBurst::default(),
         }
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ComposerIntent> {
+        self.flush_paste_burst_if_due();
+
         if !matches!(key.kind, KeyEventKind::Press) {
             return None;
         }
 
+        if key.modifiers == (KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+            && key.code == KeyCode::Char('C')
+            && let Some(selected) = self.textarea.selected_text()
+        {
+            if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
+                let _ = self.handle_paste(&pasted);
+            }
+            return Some(ComposerIntent::CopyText(selected));
+        }
+
         if key.code == KeyCode::Enter && is_newline_shortcut(key.modifiers) {
+            if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
+                let _ = self.handle_paste(&pasted);
+            }
             self.textarea.insert_str("\n");
             self.sync_completion();
             return None;
         }
 
         if key.modifiers == KeyModifiers::CONTROL {
+            if key.code != KeyCode::Char('j')
+                && let Some(pasted) = self.paste_burst.flush_before_modified_input()
+            {
+                let _ = self.handle_paste(&pasted);
+            }
             return Some(match key.code {
                 KeyCode::Char('c') => ComposerIntent::Interrupt,
                 KeyCode::Char('q') => ComposerIntent::Exit,
@@ -54,6 +78,9 @@ impl ChatComposer {
         }
 
         if is_altgr(key.modifiers) {
+            if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
+                let _ = self.handle_paste(&pasted);
+            }
             self.textarea.handle_key(key);
             self.sync_completion();
             return None;
@@ -92,8 +119,58 @@ impl ChatComposer {
             }
         }
 
+        if matches!(key.code, KeyCode::Enter)
+            && key.modifiers.is_empty()
+            && self.paste_burst.append_newline_if_active(Instant::now())
+        {
+            return Some(ComposerIntent::None);
+        }
+
+        if let KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers,
+            ..
+        } = key
+            && (modifiers.is_empty() || modifiers == KeyModifiers::SHIFT)
+            && !ch.is_ascii_control()
+        {
+            if ch == '/' {
+                if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
+                    let _ = self.handle_paste(&pasted);
+                }
+                self.textarea.handle_key(key);
+                self.sync_completion();
+                return Some(ComposerIntent::None);
+            }
+
+            let now = Instant::now();
+            match self.paste_burst.on_plain_char(ch, now) {
+                CharDecision::BufferAppend => {
+                    self.paste_burst.append_char_to_buffer(ch, now);
+                    return Some(ComposerIntent::None);
+                }
+                CharDecision::BeginBufferFromPending => {
+                    self.paste_burst.append_char_to_buffer(ch, now);
+                    return Some(ComposerIntent::None);
+                }
+                CharDecision::RetainFirstChar => return Some(ComposerIntent::None),
+            }
+        }
+
+        if !matches!(key.code, KeyCode::Char(_) | KeyCode::Enter) {
+            if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
+                let _ = self.handle_paste(&pasted);
+            }
+            self.paste_burst.clear_window_after_non_char();
+        }
+
         match key.code {
-            KeyCode::Enter => Some(self.submit()),
+            KeyCode::Enter => {
+                if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
+                    let _ = self.handle_paste(&pasted);
+                }
+                Some(self.submit())
+            }
             _ => {
                 self.textarea.handle_key(key);
                 self.sync_completion();
@@ -103,9 +180,25 @@ impl ChatComposer {
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> ComposerIntent {
+        self.paste_burst.clear_after_explicit_paste();
         self.textarea.insert_str(text);
         self.sync_completion();
         ComposerIntent::None
+    }
+
+    pub(crate) fn flush_paste_burst_if_due(&mut self) -> bool {
+        match self.paste_burst.flush_if_due(Instant::now()) {
+            FlushResult::Paste(pasted) => {
+                let _ = self.handle_paste(&pasted);
+                true
+            }
+            FlushResult::Typed(ch) => {
+                self.textarea.insert_str(&ch.to_string());
+                self.sync_completion();
+                true
+            }
+            FlushResult::None => false,
+        }
     }
 
     pub fn render(&self, mode: FrontendMode, width: usize) -> ComposerRender {
@@ -183,6 +276,10 @@ impl ChatComposer {
 
     pub fn is_empty(&self) -> bool {
         self.textarea.is_empty()
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.textarea.has_selection()
     }
 
     pub fn has_completion_menu(&self) -> bool {
@@ -299,6 +396,8 @@ mod tests {
     fn type_text(composer: &mut ChatComposer, text: &str) {
         for ch in text.chars() {
             composer.handle_key(key(KeyCode::Char(ch)));
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            let _ = composer.flush_paste_burst_if_due();
         }
     }
 
@@ -518,5 +617,31 @@ mod tests {
             composer.textarea.cursor(),
             composer.textarea.text().chars().count()
         );
+    }
+
+    #[test]
+    fn single_plain_char_is_flushed_on_tick() {
+        let mut composer = ChatComposer::new();
+
+        let action = composer.handle_key(key(KeyCode::Char('a')));
+        assert_eq!(action, Some(ComposerIntent::None));
+        assert_eq!(composer.textarea.text(), "");
+
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        assert!(composer.flush_paste_burst_if_due());
+        assert_eq!(composer.textarea.text(), "a");
+    }
+
+    #[test]
+    fn two_fast_chars_flush_as_paste() {
+        let mut composer = ChatComposer::new();
+
+        let _ = composer.handle_key(key(KeyCode::Char('a')));
+        let _ = composer.handle_key(key(KeyCode::Char('b')));
+        assert_eq!(composer.textarea.text(), "");
+
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        assert!(composer.flush_paste_burst_if_due());
+        assert_eq!(composer.textarea.text(), "ab");
     }
 }

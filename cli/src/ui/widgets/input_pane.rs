@@ -10,7 +10,7 @@ pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
 use agent_protocol::{ConversationSummary, FrontendMode, RequestId, ServerRequestDecisionKind};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -44,7 +44,7 @@ impl InputPane {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
-        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+        if key.code == KeyCode::Esc && key.modifiers.is_empty() {
             return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
         }
 
@@ -93,6 +93,14 @@ impl InputPane {
             };
         }
         Some(InputPaneAction::Composer(self.composer.handle_paste(text)))
+    }
+
+    pub(crate) fn composer_has_selection(&self) -> bool {
+        self.view_stack.is_empty() && self.composer.has_selection()
+    }
+
+    pub(crate) fn handle_tick(&mut self) -> bool {
+        self.view_stack.is_empty() && self.composer.flush_paste_burst_if_due()
     }
 
     pub(crate) fn render(
@@ -427,7 +435,7 @@ mod tests {
     use ratatui::widgets::Widget;
 
     #[test]
-    fn ctrl_c_interrupts_even_when_server_request_overlay_is_active() {
+    fn esc_interrupts_even_when_server_request_overlay_is_active() {
         let mut pane = InputPane::new();
         pane.set_server_request(ServerRequestInlineState {
             request_id: RequestId::String("req-1".to_string()),
@@ -436,8 +444,8 @@ mod tests {
         });
 
         let action = pane.handle_key(KeyEvent {
-            code: KeyCode::Char('c'),
-            modifiers: KeyModifiers::CONTROL,
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
             state: crossterm::event::KeyEventState::NONE,
         });

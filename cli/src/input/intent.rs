@@ -20,6 +20,7 @@ pub(crate) enum ComposerIntent {
     Exit,
     Reset,
     Copy,
+    CopyText(String),
     Help,
     UnknownCommand(String),
     None,

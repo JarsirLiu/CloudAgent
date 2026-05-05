@@ -49,6 +49,19 @@ pub(crate) fn handle_tui_input(
                 }
             }
         }
+        ParsedInput::LocalCopyText(text) => match copy_text_to_clipboard(&text) {
+            Ok(()) => {
+                app.run_state
+                    .set_system_notice_level("Copied selected input text", NoticeLevel::Info);
+            }
+            Err(err) => {
+                app.push_cell(HistoryCell::from_message(
+                    "error",
+                    format!("failed to copy: {err}"),
+                    HistoryTone::Error,
+                ));
+            }
+        },
         ParsedInput::LocalHelp => {
             app.push_cell(HistoryCell::from_message(
                 "commands",
