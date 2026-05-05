@@ -44,13 +44,18 @@ impl InputPane {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
-        if key.code == KeyCode::Esc && key.modifiers.is_empty() {
-            return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
-        }
-
         if let Some(view) = self.view_stack.last_mut() {
             match view.handle_key_event(key) {
-                BottomPaneViewAction::None => {}
+                BottomPaneViewAction::None => {
+                    // The view did not consume this key.
+                    // For Esc, fall through to composer / interrupt logic below.
+                    if key.code != KeyCode::Esc || !key.modifiers.is_empty() {
+                        if view.is_complete() {
+                            self.view_stack.pop();
+                        }
+                        return None;
+                    }
+                }
                 BottomPaneViewAction::Close => {
                     self.view_stack.pop();
                     return Some(InputPaneAction::Composer(ComposerIntent::None));
@@ -79,8 +84,17 @@ impl InputPane {
             if view.is_complete() {
                 self.view_stack.pop();
             }
-            return None;
         }
+
+        // Let the composer handle Esc first (e.g. dismiss completion popup).
+        // Only if the composer did not consume it, treat Esc as Interrupt.
+        if key.code == KeyCode::Esc && key.modifiers.is_empty() {
+            if let Some(action) = self.composer.handle_key(key) {
+                return Some(InputPaneAction::Composer(action));
+            }
+            return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
+        }
+
         self.composer.handle_key(key).map(InputPaneAction::Composer)
     }
 
