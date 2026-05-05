@@ -1,3 +1,4 @@
+use super::compaction::{CompactionMode, maybe_compact_history};
 use super::loop_guard::LoopGuard;
 use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
 use crate::context::{ContextFragment, MemoryBudgetSource};
@@ -171,28 +172,63 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &settings.workspace_root,
             );
 
-        let prepared = context_facade
-            .prepare_model_request(
-                &mut context_manager,
-                &settings.workspace_root,
-                filter_policy,
-                budgeted.fragments,
-                tool_specs.clone(),
-                settings.llm_temperature,
-                compaction_config,
-                estimated_total_tokens.max(compaction_estimated_total_tokens),
-                settings.post_compact_memory_floor_tokens,
-                settings.context_budget_safety_buffer_tokens,
-                |summary_request| async {
-                    let response = host
-                        .complete_model_request(&cancellation_token, summary_request)
-                        .await?;
-                    Ok(response.content)
+        let compaction = maybe_compact_history(
+            host,
+            context_manager.history_mut(),
+            CompactionMode::Automatic {
+                estimated_total_tokens: estimated_total_tokens
+                    .max(compaction_estimated_total_tokens),
+                memory_floor_tokens: settings.post_compact_memory_floor_tokens,
+                safety_buffer_tokens: settings.context_budget_safety_buffer_tokens,
+            },
+        )
+        .await?;
+        if compaction.is_some() {
+            emit_event(
+                &mut events,
+                on_event,
+                EventMsg::ContextCompactionStarted {
+                    turn_id: turn_id.to_string(),
+                    estimated_tokens: estimated_total_tokens as u64,
                 },
+            );
+        }
+        if let Some(compacted) = compaction.as_ref() {
+            host.persist_rollout_items(
+                conversation_id,
+                &[RolloutItem::Compacted {
+                    summary: compacted.summary.clone(),
+                    rendered_summary: compacted.rendered_summary.clone(),
+                    replacement_history: compacted.replacement_history.clone(),
+                }],
             )
             .await?;
+            host.save_history(context_manager.history().clone()).await?;
+            emit_event(
+                &mut events,
+                on_event,
+                EventMsg::ContextCompacted {
+                    turn_id: turn_id.to_string(),
+                    pre_context_tokens_estimate: compacted.pre_context_tokens_estimate,
+                    post_context_tokens_estimate: compacted.post_context_tokens_estimate,
+                    pre_message_count: compacted.pre_message_count,
+                    post_message_count: compacted.post_message_count,
+                    preserved_tail_count: compacted.post_message_count.saturating_sub(2),
+                },
+            );
+        }
+        let model_request = context_facade
+            .prepare_model_request(
+                &context_manager,
+                &settings.workspace_root,
+                filter_policy,
+                budgeted.fragments.clone(),
+                tool_specs.clone(),
+                settings.llm_temperature,
+            )
+            .model_request;
         let final_budget = context_facade.check_final_model_request_budget(
-            &prepared.model_request,
+            &model_request,
             settings.model_context_window as usize,
             settings.context_budget_safety_buffer_tokens,
         );
@@ -268,46 +304,6 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 state: TurnState::Failed,
             });
         }
-        let persistent_compaction = prepared
-            .compaction
-            .as_ref()
-            .filter(|compaction| !compaction.ephemeral);
-        if persistent_compaction.is_some() {
-            emit_event(
-                &mut events,
-                on_event,
-                EventMsg::ContextCompactionStarted {
-                    turn_id: turn_id.to_string(),
-                    estimated_tokens: estimated_total_tokens as u64,
-                },
-            );
-        }
-        if let Some(compacted) = persistent_compaction {
-            host.persist_rollout_items(
-                conversation_id,
-                &[RolloutItem::Compacted {
-                    summary: compacted.summary.clone(),
-                    rendered_summary: compacted.rendered_summary.clone(),
-                    replacement_history: compacted.replacement_history.clone(),
-                }],
-            )
-            .await?;
-            host.save_history(context_manager.history().clone()).await?;
-            emit_event(
-                &mut events,
-                on_event,
-                EventMsg::ContextCompacted {
-                    turn_id: turn_id.to_string(),
-                    pre_context_tokens_estimate: compacted.pre_context_tokens_estimate,
-                    post_context_tokens_estimate: compacted.post_context_tokens_estimate,
-                    pre_message_count: compacted.pre_message_count,
-                    post_message_count: compacted.post_message_count,
-                    preserved_tail_count: compacted.post_message_count.saturating_sub(2),
-                },
-            );
-        }
-
-        let model_request = prepared.model_request;
 
         emit_event(
             &mut events,

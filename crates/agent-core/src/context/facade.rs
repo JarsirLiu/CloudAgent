@@ -4,10 +4,9 @@ use crate::context::{
     MemoryBudgetSource, apply_history_compaction, build_compaction_summary_request,
     build_memory_budgeted_fragments, plan_manual_history_compaction,
 };
-use crate::conversation::{ConversationHistory, ResponseItem};
+use crate::conversation::ResponseItem;
 use crate::model::ModelRequest;
 use crate::tool::ToolSpec;
-use anyhow::Result;
 use std::path::Path;
 
 #[derive(Clone, Debug, Default)]
@@ -16,22 +15,8 @@ pub struct ContextFacade {
 }
 
 #[derive(Clone, Debug)]
-pub struct PreparedCompaction {
-    pub summary: CompactionSummary,
-    pub rendered_summary: String,
-    pub replacement_history: Vec<ResponseItem>,
-    pub pre_context_tokens_estimate: u64,
-    pub post_context_tokens_estimate: u64,
-    pub pre_message_count: usize,
-    pub post_message_count: usize,
-    pub ephemeral: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct PreparedModelRequest {
     pub model_request: ModelRequest,
-    pub compaction_requested: bool,
-    pub compaction: Option<PreparedCompaction>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,141 +192,21 @@ impl ContextFacade {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn prepare_model_request<F, Fut>(
+    pub fn prepare_model_request(
         &self,
-        context_manager: &mut ContextManager,
+        context_manager: &ContextManager,
         workspace_root: &Path,
         filter_policy: FilterPolicy,
         fragments: Vec<ResponseItem>,
         tools: Vec<ToolSpec>,
         temperature: f32,
-        compaction_config: ContextCompactionConfig,
-        estimated_total_tokens: usize,
-        memory_floor_tokens: usize,
-        safety_buffer_tokens: usize,
-        summarize_compaction: F,
-    ) -> Result<PreparedModelRequest>
-    where
-        F: FnOnce(ModelRequest) -> Fut,
-        Fut: std::future::Future<Output = Result<Option<String>>>,
-    {
-        let trigger_tokens = ((compaction_config.model_context_window as f32)
-            * compaction_config.trigger_ratio) as usize;
-        let available_history_tokens = trigger_tokens
-            .saturating_sub(compaction_config.request_overhead_tokens)
-            .saturating_sub(memory_floor_tokens)
-            .saturating_sub(safety_buffer_tokens)
-            .max(1);
-        let compaction_requested = estimated_total_tokens > available_history_tokens;
+    ) -> PreparedModelRequest {
+        let mut model_request = context_manager
+            .build_current_model_request_with_rendered_fragments(&fragments, tools, temperature);
+        model_request.messages =
+            self.apply_pre_llm_filter(model_request.messages, filter_policy, workspace_root);
 
-        let mut prepared_messages_override: Option<Vec<ResponseItem>> = None;
-        let compaction = if compaction_requested {
-            let raw_messages = &context_manager.history().messages;
-            let filtered_messages = self.filtered_messages_for_canonical_compaction(raw_messages);
-            let filtered_plan =
-                self.plan_manual_compaction(&filtered_messages, compaction_config, 1);
-            let raw_plan = self.plan_manual_compaction(raw_messages, compaction_config, 1);
-            if let (Some(filtered_plan), Some(raw_plan)) = (filtered_plan, raw_plan) {
-                let pre_message_count = context_manager.history().messages.len();
-                let pre_context_tokens_estimate =
-                    estimate_history_tokens(&context_manager.history().messages) as u64;
-                let summary_request = self.build_compaction_summary_request(
-                    &filtered_plan,
-                    compaction_config,
-                    temperature,
-                );
-                let summary_text = summarize_compaction(summary_request)
-                    .await?
-                    .unwrap_or_default();
-                let summary = CompactionSummary::from_model_output(&summary_text).ensure_defaults();
-                if filter_policy.enabled {
-                    let mut filtered_history = filtered_messages.clone();
-                    let compacted =
-                        self.apply_compaction(&mut filtered_history, &filtered_plan, summary);
-                    let post_message_count = compacted.replacement_history.len();
-                    let post_context_tokens_estimate =
-                        estimate_history_tokens(&compacted.replacement_history) as u64;
-                    let rendered_summary = compacted.summary.rendered();
-                    let temp_history = ConversationHistory {
-                        id: context_manager.history().id.clone(),
-                        turn_count: context_manager.history().turn_count,
-                        messages: compacted.replacement_history.clone(),
-                    };
-                    let temp_manager = ContextManager::from_history(temp_history);
-                    prepared_messages_override = Some(
-                        temp_manager
-                            .build_current_model_request_with_rendered_fragments(
-                                &fragments,
-                                tools.clone(),
-                                temperature,
-                            )
-                            .messages,
-                    );
-                    Some(PreparedCompaction {
-                        summary: compacted.summary,
-                        rendered_summary,
-                        replacement_history: compacted.replacement_history,
-                        pre_context_tokens_estimate,
-                        post_context_tokens_estimate,
-                        pre_message_count,
-                        post_message_count,
-                        ephemeral: true,
-                    })
-                } else {
-                    let compacted = self.apply_compaction(
-                        &mut context_manager.history_mut().messages,
-                        &raw_plan,
-                        summary,
-                    );
-                    let post_message_count = compacted.replacement_history.len();
-                    let post_context_tokens_estimate =
-                        estimate_history_tokens(&compacted.replacement_history) as u64;
-                    let rendered_summary = compacted.summary.rendered();
-                    Some(PreparedCompaction {
-                        summary: compacted.summary,
-                        rendered_summary,
-                        replacement_history: compacted.replacement_history,
-                        pre_context_tokens_estimate,
-                        post_context_tokens_estimate,
-                        pre_message_count,
-                        post_message_count,
-                        ephemeral: false,
-                    })
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let mut model_request = if let Some(messages) = prepared_messages_override {
-            ModelRequest {
-                messages,
-                tools,
-                temperature,
-            }
-        } else {
-            context_manager.build_current_model_request_with_rendered_fragments(
-                &fragments,
-                tools,
-                temperature,
-            )
-        };
-        if !compaction
-            .as_ref()
-            .is_some_and(|compaction| compaction.ephemeral)
-        {
-            model_request.messages =
-                self.apply_pre_llm_filter(model_request.messages, filter_policy, workspace_root);
-        }
-
-        Ok(PreparedModelRequest {
-            model_request,
-            compaction_requested,
-            compaction,
-        })
+        PreparedModelRequest { model_request }
     }
 
     fn canonical_compaction_filter_policy() -> FilterPolicy {

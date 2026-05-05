@@ -1,7 +1,8 @@
 use crate::context::{
     CompactionSummary, ContextCompactionConfig, ContextFacade, ContextFragment,
-    apply_history_compaction, build_compaction_summary_request, plan_manual_history_compaction,
+    build_compaction_summary_request, plan_manual_history_compaction,
 };
+use crate::conversation::ConversationHistory;
 use crate::rollout::RolloutItem;
 use crate::turn::TurnHost;
 use anyhow::Result;
@@ -21,15 +22,38 @@ pub enum ManualCompactionOutcome {
     },
 }
 
-pub async fn run_manual_compaction<H>(
+#[derive(Debug, Clone)]
+pub struct AppliedCompaction {
+    pub summary: CompactionSummary,
+    pub rendered_summary: String,
+    pub replacement_history: Vec<crate::ResponseItem>,
+    pub pre_context_tokens_estimate: u64,
+    pub post_context_tokens_estimate: u64,
+    pub pre_message_count: usize,
+    pub post_message_count: usize,
+    pub preserved_tail_count: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CompactionMode {
+    Manual {
+        minimum_history_tokens: usize,
+    },
+    Automatic {
+        estimated_total_tokens: usize,
+        memory_floor_tokens: usize,
+        safety_buffer_tokens: usize,
+    },
+}
+
+pub async fn maybe_compact_history<H>(
     host: &H,
-    conversation_id: &str,
-    minimum_history_tokens: usize,
-) -> Result<ManualCompactionOutcome>
+    history: &mut ConversationHistory,
+    mode: CompactionMode,
+) -> Result<Option<AppliedCompaction>>
 where
     H: TurnHost,
 {
-    let mut history = host.load_history(conversation_id).await?;
     let context_facade = ContextFacade::new();
     let environment_context = host.environment_context();
     let settings = host.regular_turn_settings();
@@ -37,11 +61,6 @@ where
         &history.messages,
         &settings.workspace_root,
     );
-    if estimated_history_tokens < minimum_history_tokens {
-        return Ok(ManualCompactionOutcome::Skipped {
-            estimated_history_tokens,
-        });
-    }
 
     let compaction_config = ContextCompactionConfig {
         model_context_window: settings.model_context_window,
@@ -58,6 +77,35 @@ where
         summary_source_max_tokens: settings.context_compaction_summary_source_tokens,
     };
 
+    let minimum_history_tokens = match mode {
+        CompactionMode::Manual {
+            minimum_history_tokens,
+        } => {
+            if estimated_history_tokens < minimum_history_tokens {
+                return Ok(None);
+            }
+            minimum_history_tokens.max(1)
+        }
+        CompactionMode::Automatic {
+            estimated_total_tokens,
+            memory_floor_tokens,
+            safety_buffer_tokens,
+        } => {
+            let trigger_tokens = ((settings.model_context_window as f32)
+                * settings.context_compaction_trigger_ratio)
+                as usize;
+            let available_history_tokens = trigger_tokens
+                .saturating_sub(compaction_config.request_overhead_tokens)
+                .saturating_sub(memory_floor_tokens)
+                .saturating_sub(safety_buffer_tokens)
+                .max(1);
+            if estimated_total_tokens <= available_history_tokens {
+                return Ok(None);
+            }
+            1
+        }
+    };
+
     let filtered_messages =
         context_facade.filtered_messages_for_canonical_compaction(&history.messages);
     let Some(filtered_plan) = plan_manual_history_compaction(
@@ -65,18 +113,14 @@ where
         compaction_config,
         minimum_history_tokens,
     ) else {
-        return Ok(ManualCompactionOutcome::Skipped {
-            estimated_history_tokens,
-        });
+        return Ok(None);
     };
     let Some(raw_plan) = plan_manual_history_compaction(
         &history.messages,
         compaction_config,
         minimum_history_tokens,
     ) else {
-        return Ok(ManualCompactionOutcome::Skipped {
-            estimated_history_tokens,
-        });
+        return Ok(None);
     };
 
     let summary_request = build_compaction_summary_request(
@@ -96,19 +140,60 @@ where
     let pre_message_count = history.messages.len();
     let pre_context_tokens_estimate =
         context_facade.estimate_history_tokens(&history.messages) as u64;
-    let compacted = apply_history_compaction(&mut history.messages, &raw_plan, summary);
+    let compacted = context_facade.apply_compaction(&mut history.messages, &raw_plan, summary);
     let post_message_count = compacted.replacement_history.len();
     let post_context_tokens_estimate =
         context_facade.estimate_history_tokens(&compacted.replacement_history) as u64;
     let preserved_tail_count = post_message_count.saturating_sub(2);
     let rendered_summary = compacted.summary.rendered();
 
+    Ok(Some(AppliedCompaction {
+        summary: compacted.summary,
+        rendered_summary,
+        replacement_history: compacted.replacement_history,
+        pre_context_tokens_estimate,
+        post_context_tokens_estimate,
+        pre_message_count,
+        post_message_count,
+        preserved_tail_count,
+    }))
+}
+
+pub async fn run_manual_compaction<H>(
+    host: &H,
+    conversation_id: &str,
+    minimum_history_tokens: usize,
+) -> Result<ManualCompactionOutcome>
+where
+    H: TurnHost,
+{
+    let mut history = host.load_history(conversation_id).await?;
+    let Some(compacted) = maybe_compact_history(
+        host,
+        &mut history,
+        CompactionMode::Manual {
+            minimum_history_tokens,
+        },
+    )
+    .await?
+    else {
+        let context_facade = ContextFacade::new();
+        let estimated_history_tokens = context_facade
+            .estimate_history_tokens_for_canonical_compaction(
+                &history.messages,
+                &host.regular_turn_settings().workspace_root,
+            );
+        return Ok(ManualCompactionOutcome::Skipped {
+            estimated_history_tokens,
+        });
+    };
+
     host.persist_rollout_items(
         conversation_id,
         &[RolloutItem::Compacted {
             summary: compacted.summary,
-            rendered_summary,
-            replacement_history: compacted.replacement_history.clone(),
+            rendered_summary: compacted.rendered_summary,
+            replacement_history: compacted.replacement_history,
         }],
     )
     .await?;
@@ -116,10 +201,10 @@ where
     host.flush_rollout().await?;
 
     Ok(ManualCompactionOutcome::Compacted {
-        pre_context_tokens_estimate,
-        post_context_tokens_estimate,
-        pre_message_count,
-        post_message_count,
-        preserved_tail_count,
+        pre_context_tokens_estimate: compacted.pre_context_tokens_estimate,
+        post_context_tokens_estimate: compacted.post_context_tokens_estimate,
+        pre_message_count: compacted.pre_message_count,
+        post_message_count: compacted.post_message_count,
+        preserved_tail_count: compacted.preserved_tail_count,
     })
 }
