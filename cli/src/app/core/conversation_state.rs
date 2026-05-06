@@ -44,6 +44,7 @@ impl TuiApp {
         self.console_state = ConsoleState::new();
         self.server_request_state = ServerRequestState::default();
         self.transcript_state = TranscriptState::default();
+        self.transcript_state.reset_scroll();
         self.run_state = RunState::new(&self.connection_label);
         self.run_state.pre_llm_filter_enabled = filter_enabled;
         self.run_state.permission_mode = permission_mode;

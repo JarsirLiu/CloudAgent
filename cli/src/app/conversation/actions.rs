@@ -363,6 +363,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::ClearLastToolName => {}
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
+            app.transcript_state.reset_scroll();
             conversation_facade::rebuild_transcript_from_history(app);
         }
         ServerAction::UpsertTurnSnapshot(turn) => {

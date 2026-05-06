@@ -49,7 +49,7 @@ fn bottom_pane_height(app: &TuiApp, width: u16) -> u16 {
         .max(1)
 }
 
-fn render_transcript_area(app: &TuiApp, frame: &mut Frame, area: Rect) {
+fn render_transcript_area(app: &mut TuiApp, frame: &mut Frame, area: Rect) {
     if area.height == 0 {
         return;
     }
@@ -67,15 +67,28 @@ fn render_transcript_area(app: &TuiApp, frame: &mut Frame, area: Rect) {
     }
 
     let render_width = inner.width.saturating_sub(2).max(40) as usize;
-    let lines = clipped_transcript_lines(app, render_width, inner.height as usize);
+    let lines = visible_transcript_lines(app, render_width, inner.height as usize);
     frame.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), inner);
 }
 
-fn clipped_transcript_lines(app: &TuiApp, render_width: usize, max_lines: usize) -> Vec<Line<'static>> {
+fn visible_transcript_lines(
+    app: &mut TuiApp,
+    render_width: usize,
+    max_lines: usize,
+) -> Vec<Line<'static>> {
     let lines = transcript_lines(app, render_width as usize);
+    app.transcript_state.note_total_lines(lines.len());
+    app.transcript_state.set_viewport_height(max_lines);
+    app.transcript_state.clamp_scroll();
     if lines.len() > max_lines {
-        lines[lines.len() - max_lines..].to_vec()
+        let offset = app.transcript_state.scroll_offset_lines;
+        let start = lines
+            .len()
+            .saturating_sub(max_lines)
+            .saturating_sub(offset);
+        lines[start..start + max_lines].to_vec()
     } else {
+        app.transcript_state.jump_to_bottom();
         lines
     }
 }

@@ -40,6 +40,72 @@ pub struct ServerRequestState {
 pub struct TranscriptState {
     pub transcript: Transcript,
     pub last_copyable_output: Option<String>,
+    pub scroll_offset_lines: usize,
+    pub last_total_lines: usize,
+    pub last_viewport_height: usize,
+}
+
+impl TranscriptState {
+    pub fn reset_scroll(&mut self) {
+        self.scroll_offset_lines = 0;
+        self.last_total_lines = 0;
+        self.last_viewport_height = 0;
+    }
+
+    pub fn note_total_lines(&mut self, total_lines: usize) {
+        if self.scroll_offset_lines > 0 {
+            if total_lines >= self.last_total_lines {
+                self.scroll_offset_lines = self
+                    .scroll_offset_lines
+                    .saturating_add(total_lines - self.last_total_lines);
+            } else {
+                self.scroll_offset_lines = self
+                    .scroll_offset_lines
+                    .saturating_sub(self.last_total_lines - total_lines);
+            }
+        }
+        self.last_total_lines = total_lines;
+    }
+
+    pub fn set_viewport_height(&mut self, viewport_height: usize) {
+        self.last_viewport_height = viewport_height;
+    }
+
+    pub fn clamp_scroll(&mut self) {
+        let max_offset = self
+            .last_total_lines
+            .saturating_sub(self.last_viewport_height);
+        self.scroll_offset_lines = self.scroll_offset_lines.min(max_offset);
+    }
+
+    pub fn scroll_up(&mut self, lines: usize) {
+        let max_offset = self
+            .last_total_lines
+            .saturating_sub(self.last_viewport_height);
+        self.scroll_offset_lines = self.scroll_offset_lines.saturating_add(lines).min(max_offset);
+    }
+
+    pub fn scroll_down(&mut self, lines: usize) {
+        self.scroll_offset_lines = self.scroll_offset_lines.saturating_sub(lines);
+    }
+
+    pub fn page_up(&mut self) {
+        self.scroll_up(self.last_viewport_height.max(1));
+    }
+
+    pub fn page_down(&mut self) {
+        self.scroll_down(self.last_viewport_height.max(1));
+    }
+
+    pub fn jump_to_top(&mut self) {
+        self.scroll_offset_lines = self
+            .last_total_lines
+            .saturating_sub(self.last_viewport_height);
+    }
+
+    pub fn jump_to_bottom(&mut self) {
+        self.scroll_offset_lines = 0;
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -133,5 +199,32 @@ impl RunState {
         {
             self.system_notice = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TranscriptState;
+
+    #[test]
+    fn transcript_scroll_tracks_new_lines_while_scrolled_up() {
+        let mut state = TranscriptState::default();
+        state.set_viewport_height(10);
+        state.note_total_lines(40);
+        state.scroll_up(5);
+
+        state.note_total_lines(45);
+
+        assert_eq!(state.scroll_offset_lines, 10);
+    }
+
+    #[test]
+    fn transcript_scroll_clamps_to_available_history() {
+        let mut state = TranscriptState::default();
+        state.set_viewport_height(10);
+        state.note_total_lines(12);
+        state.scroll_up(50);
+
+        assert_eq!(state.scroll_offset_lines, 2);
     }
 }

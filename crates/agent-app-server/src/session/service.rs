@@ -44,9 +44,7 @@ pub(crate) async fn request_conversation_history(
         Some(listener) => listener.active_turn_snapshot().await,
         None => None,
     };
-    let (mut turns, _has_more, _next_before_turn_id) = runtime
-        .build_turns_page_from_rollout(&conversation_id, None, 30)
-        .await?;
+    let mut turns = runtime.build_turns_from_rollout(&conversation_id).await?;
     merge_active_turn(&mut turns, active_turn);
     send_notification(
         event_tx,

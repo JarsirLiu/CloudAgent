@@ -5,7 +5,9 @@ mod insert_history;
 
 use anyhow::Result;
 use crossterm::SynchronizedUpdate;
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
@@ -29,6 +31,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
     let mut stdout = io::stdout();
     let init_result = (|| -> Result<TerminalGuard> {
         execute!(stdout, EnableBracketedPaste)?;
+        execute!(stdout, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = custom_terminal::Terminal::new(backend)?;
         Ok(TerminalGuard { terminal })
@@ -41,6 +44,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
 
 pub(crate) fn restore() -> Result<()> {
     let _ = execute!(io::stdout(), DisableBracketedPaste);
+    let _ = execute!(io::stdout(), DisableMouseCapture);
     disable_raw_mode()?;
     Ok(())
 }

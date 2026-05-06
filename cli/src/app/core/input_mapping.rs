@@ -8,6 +8,28 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl TuiApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
+        if !self.input_pane.has_active_view() {
+            match (key.code, key.modifiers) {
+                (KeyCode::PageUp, _) => {
+                    self.transcript_state.page_up();
+                    return None;
+                }
+                (KeyCode::PageDown, _) => {
+                    self.transcript_state.page_down();
+                    return None;
+                }
+                (KeyCode::Home, modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.transcript_state.jump_to_top();
+                    return None;
+                }
+                (KeyCode::End, modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.transcript_state.jump_to_bottom();
+                    return None;
+                }
+                _ => {}
+            }
+        }
+
         if matches_ctrl_char(key, 'c') {
             if self.console_state.mode == FrontendMode::Idle
                 && self.input_pane.composer_has_selection()
@@ -143,6 +165,14 @@ impl TuiApp {
                 reason,
             }),
         }
+    }
+
+    pub(crate) fn scroll_transcript_up(&mut self, lines: usize) {
+        self.transcript_state.scroll_up(lines);
+    }
+
+    pub(crate) fn scroll_transcript_down(&mut self, lines: usize) {
+        self.transcript_state.scroll_down(lines);
     }
 }
 

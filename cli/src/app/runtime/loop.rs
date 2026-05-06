@@ -5,6 +5,7 @@ use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animat
 use crate::terminal::{TerminalGuard, UiEvent, spawn_tui_event_loop};
 use agent_app_server_client::AppServerClient;
 use anyhow::Result;
+use crossterm::event::{MouseEvent, MouseEventKind};
 
 pub(crate) async fn run_tui_event_loop(
     app: &mut TuiApp,
@@ -41,6 +42,9 @@ pub(crate) async fn run_tui_event_loop(
                         let _ = app.input_pane.handle_paste(&text);
                         true
                     }
+                    UiEvent::Mouse(mouse) => {
+                        handle_mouse_event(app, mouse)
+                    }
                     UiEvent::Resize => true,
                     UiEvent::Tick => handle_animation_tick(app),
                 }
@@ -55,4 +59,21 @@ pub(crate) async fn run_tui_event_loop(
     }
 
     Ok(())
+}
+
+fn handle_mouse_event(app: &mut TuiApp, mouse: MouseEvent) -> bool {
+    if app.input_pane.has_active_view() {
+        return false;
+    }
+    match mouse.kind {
+        MouseEventKind::ScrollUp => {
+            app.scroll_transcript_up(3);
+            true
+        }
+        MouseEventKind::ScrollDown => {
+            app.scroll_transcript_down(3);
+            true
+        }
+        _ => false,
+    }
 }
