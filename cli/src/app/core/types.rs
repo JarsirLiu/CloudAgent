@@ -1,10 +1,9 @@
+use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::state::runtime_projection::RuntimeProjection;
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
-use crate::ui::widgets::history_cell::HistoryCell;
 use crate::ui::widgets::input_pane::InputPane;
 use agent_core::AgentHost;
 use agent_protocol::ConversationSummary;
-use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -48,13 +47,12 @@ pub(crate) struct TuiApp {
     pub(crate) console_state: ConsoleState,
     pub(crate) server_request_state: ServerRequestState,
     pub(crate) transcript_state: TranscriptState,
+    pub(crate) transcript_owner: TranscriptOwner,
     pub(crate) run_state: RunState,
     pub(crate) runtime_projection: RuntimeProjection,
     pub(crate) input_pane: InputPane,
     pub(crate) welcome_animation_frame: u64,
     pub(crate) welcome_animation_pause_ticks: u8,
-    pub(crate) pending_history_cells: VecDeque<HistoryCell>,
-    pub(crate) pending_history_rebuild: bool,
     pub(crate) session_picker_requested: bool,
     pub(crate) delete_picker_requested: bool,
     pub(crate) workspace_root: PathBuf,

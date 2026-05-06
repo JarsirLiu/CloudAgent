@@ -4,7 +4,7 @@ pub(crate) mod conversation;
 mod core;
 pub mod effects;
 mod facade;
-mod runtime;
+pub(crate) mod runtime;
 
 pub(crate) use crate::app::core::types::TuiApp;
 pub use crate::app::core::types::{ConsoleConfig, ConsoleConnection};

@@ -286,24 +286,26 @@ pub(super) fn render_plaintext(input: &str, width: usize) -> Vec<Line<'static>> 
             continue;
         }
 
-        out.extend(word_wrap_text(
-            paragraph,
-            WrapOptions::new(width).initial_indent(Line::default()),
-        )
-        .into_iter()
-        .map(|line| {
-            let spans = line
-                .spans
-                .into_iter()
-                .map(|span| {
-                    Span::styled(
-                        span.content.into_owned(),
-                        Style::default().fg(Color::Rgb(200, 200, 210)),
-                    )
-                })
-                .collect::<Vec<_>>();
-            Line::from(spans)
-        }));
+        out.extend(
+            word_wrap_text(
+                paragraph,
+                WrapOptions::new(width).initial_indent(Line::default()),
+            )
+            .into_iter()
+            .map(|line| {
+                let spans = line
+                    .spans
+                    .into_iter()
+                    .map(|span| {
+                        Span::styled(
+                            span.content.into_owned(),
+                            Style::default().fg(Color::Rgb(200, 200, 210)),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                Line::from(spans)
+            }),
+        );
     }
 
     while out.last().is_some_and(|line| line.spans.is_empty()) {

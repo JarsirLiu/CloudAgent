@@ -52,8 +52,12 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
     }
 }
 
-pub fn render_active_control_placeholder(kind: TurnItemKind, title: &str) -> HistoryCell {
+pub fn render_active_item_placeholder(kind: TurnItemKind, title: &str) -> HistoryCell {
     match kind {
+        TurnItemKind::AssistantMessage => {
+            HistoryCell::agent("", "responding".to_string(), HistoryFormat::Markdown)
+        }
+        TurnItemKind::Reasoning => HistoryCell::reasoning("Reasoning", "thinking".to_string()),
         TurnItemKind::CommandExecution if is_exploration_command(title) => {
             let summary = summarize_exploration_command(title);
             let mut aggregate = ExplorationAggregate::new(summary.clone());

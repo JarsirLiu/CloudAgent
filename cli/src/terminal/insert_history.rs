@@ -16,8 +16,39 @@ use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
 use crate::terminal::custom_terminal::Terminal;
+use crate::ui::widgets::history_cell::HistoryCell;
 
-pub(crate) fn insert_history_lines<B>(
+pub(crate) fn insert_history_cells<B>(
+    terminal: &mut Terminal<B>,
+    cells: Vec<HistoryCell>,
+) -> Result<()>
+where
+    B: Backend + Write,
+{
+    if cells.is_empty() {
+        return Ok(());
+    }
+
+    let render_width = terminal.viewport_area.width.max(1) as usize;
+    let mut lines = Vec::new();
+    let mut has_emitted_history = terminal.visible_history_rows() > 0;
+
+    for cell in cells {
+        let mut display = cell.to_lines_with_mode(render_width);
+        if display.is_empty() {
+            continue;
+        }
+        if has_emitted_history && !cell.is_stream_continuation() {
+            lines.push(Line::from(""));
+        }
+        lines.append(&mut display);
+        has_emitted_history = true;
+    }
+
+    insert_history_lines_raw(terminal, lines)
+}
+
+fn insert_history_lines_raw<B>(
     terminal: &mut Terminal<B>,
     lines: Vec<Line<'static>>,
 ) -> Result<()>
@@ -31,6 +62,7 @@ where
     let screen_size = terminal.backend().size()?;
     let mut area = terminal.viewport_area;
     let mut should_update_area = false;
+    let mut history_region_was_empty = area.top() == 0;
     let last_cursor_pos = terminal.last_known_cursor_pos;
     let wrap_width = area.width.max(1) as usize;
     let lines = wrap_history_lines(lines, wrap_width);
@@ -40,7 +72,21 @@ where
     }
 
     let writer = terminal.backend_mut();
-    let cursor_top = if area.bottom() < screen_size.height {
+    let cursor_top = if area.top() == 0 {
+        let viewport_height = area.height.max(1).min(screen_size.height.max(1));
+        let max_reserved_rows = screen_size.height.saturating_sub(viewport_height);
+        let reserved_rows = wrapped_rows.min(max_reserved_rows);
+
+            if reserved_rows > 0 {
+                queue!(writer, MoveTo(0, screen_size.height.saturating_sub(1)))?;
+                for _ in 0..reserved_rows {
+                    queue!(writer, Print("\n"))?;
+                }
+                area.y = reserved_rows;
+                should_update_area = true;
+            }
+        0
+    } else if area.bottom() < screen_size.height {
         let scroll_amount = wrapped_rows.min(screen_size.height - area.bottom());
         let top_1based = area.top() + 1;
         queue!(writer, SetScrollRegion(top_1based..screen_size.height))?;
@@ -58,14 +104,17 @@ where
         area.top().saturating_sub(1)
     };
 
-    let has_history_region = area.top() > 1;
+    let has_history_region = area.top() > 0;
     if has_history_region {
         queue!(writer, SetScrollRegion(1..area.top()))?;
     }
     queue!(writer, MoveTo(0, cursor_top))?;
-    for line in &lines {
-        queue!(writer, Print("\r\n"))?;
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 || !history_region_was_empty {
+            queue!(writer, Print("\r\n"))?;
+        }
         write_history_line(writer, line, wrap_width)?;
+        history_region_was_empty = false;
     }
     if has_history_region {
         queue!(writer, ResetScrollRegion)?;

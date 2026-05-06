@@ -1,11 +1,9 @@
 use crate::app::TuiApp;
-use crate::app::conversation::actions::handle_tui_input;
-use crate::app::conversation::event_router;
-use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
-use crate::terminal::{TerminalGuard, UiEvent, spawn_tui_event_loop};
+use crate::app::runtime::controller::{RuntimeControl, RuntimeController};
+use crate::app::runtime::render_pass::draw_app_frame;
+use crate::terminal::{TerminalGuard, spawn_tui_event_loop};
 use agent_app_server_client::AppServerClient;
 use anyhow::Result;
-use crossterm::event::{MouseEvent, MouseEventKind};
 
 pub(crate) async fn run_tui_event_loop(
     app: &mut TuiApp,
@@ -14,39 +12,21 @@ pub(crate) async fn run_tui_event_loop(
     let mut terminal = TerminalGuard::new()?;
     let mut events = spawn_tui_event_loop();
     let mut needs_redraw = true;
+    let mut controller = RuntimeController::new();
 
     loop {
-        if needs_redraw {
-            let height = terminal.terminal.size()?.height.max(1);
-            terminal.draw_with_history(height, Vec::new(), |frame| app.render(frame))?;
+        if controller.should_draw(needs_redraw) {
+            draw_app_frame(app, &mut terminal)?;
         }
 
         let redraw_after_event = tokio::select! {
             Some(event) = client.next_event() => {
-                event_router::handle_client_event(app, event);
-                true
+                controller.handle_client_event_batch(app, client, event)
             }
             Some(event) = events.recv() => {
-                match event {
-                    UiEvent::Key(key) => {
-                        pause_welcome_animation_for_input(app);
-                        if let Some(input) = app.handle_key(key)
-                            && handle_tui_input(app, client, input)?
-                        {
-                            break;
-                        }
-                        true
-                    }
-                    UiEvent::Paste(text) => {
-                        pause_welcome_animation_for_input(app);
-                        let _ = app.input_pane.handle_paste(&text);
-                        true
-                    }
-                    UiEvent::Mouse(mouse) => {
-                        handle_mouse_event(app, mouse)
-                    }
-                    UiEvent::Resize => true,
-                    UiEvent::Tick => handle_animation_tick(app),
+                match controller.handle_ui_event_batch(app, client, &mut events, event)? {
+                    RuntimeControl::Continue(redraw) => redraw,
+                    RuntimeControl::Break => break,
                 }
             }
             else => break,
@@ -59,21 +39,4 @@ pub(crate) async fn run_tui_event_loop(
     }
 
     Ok(())
-}
-
-fn handle_mouse_event(app: &mut TuiApp, mouse: MouseEvent) -> bool {
-    if app.input_pane.has_active_view() {
-        return false;
-    }
-    match mouse.kind {
-        MouseEventKind::ScrollUp => {
-            app.scroll_transcript_up(3);
-            true
-        }
-        MouseEventKind::ScrollDown => {
-            app.scroll_transcript_down(3);
-            true
-        }
-        _ => false,
-    }
 }

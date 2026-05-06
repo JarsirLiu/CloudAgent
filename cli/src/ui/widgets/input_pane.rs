@@ -113,10 +113,6 @@ impl InputPane {
         self.view_stack.is_empty() && self.composer.has_selection()
     }
 
-    pub(crate) fn has_active_view(&self) -> bool {
-        !self.view_stack.is_empty()
-    }
-
     pub(crate) fn handle_tick(&mut self) -> bool {
         self.view_stack.is_empty() && self.composer.flush_paste_burst_if_due()
     }

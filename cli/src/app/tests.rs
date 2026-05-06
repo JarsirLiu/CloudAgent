@@ -1,1384 +1,371 @@
-use super::TuiApp;
-use crate::agent_host::build_agent_host;
-use crate::app::commands::parse::ParsedInput;
-use crate::app::conversation::actions::{execute_server_action, handle_tui_input};
-use crate::app::conversation::event_router;
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
-use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
-use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus,
-    ConversationStatus, ConversationTurn, FrontendMode, ServerRequestDecisionKind, TranscriptItem,
-};
-use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use serde_json::json;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use crate::app::core::transcript_owner::TranscriptOwner;
+use crate::app::conversation::facade as conversation_facade;
+use crate::app::TuiApp;
+use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
+use agent_protocol::CommandExecutionStatus;
+use agent_protocol::{ConversationTurn, TranscriptItem, TurnState};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::OnceLock;
-use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::time::timeout;
 
-fn flatten_turns(turns: Vec<ConversationTurn>) -> Vec<TranscriptItem> {
-    turns
-        .into_iter()
-        .flat_map(|turn| turn.items.into_iter())
-        .collect()
+fn user(id: &str, text: &str) -> TranscriptItem {
+    TranscriptItem::UserMessage {
+        id: id.to_string(),
+        text: text.to_string(),
+    }
 }
 
-fn ends_with_workspace_path(text: &str) -> bool {
-    text.ends_with("/workspace") || text.ends_with("\\workspace")
+fn reasoning(id: &str, text: &str) -> TranscriptItem {
+    TranscriptItem::Reasoning {
+        id: id.to_string(),
+        title: "Reasoning".to_string(),
+        text: text.to_string(),
+    }
 }
 
-#[tokio::test]
-async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
-    let _guard = cli_e2e_test_lock().await;
-    let fixture = TempFixture::new();
-    let expected_path = fixture.workspace.display().to_string();
-    let responses = vec![
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{
-                "delta": {
-                    "tool_calls": [{
-                        "index": 0,
-                        "id": "call_1",
-                        "function": {
-                            "name": "exec_command",
-                            "arguments": "{\"command\":\"pwd\"}"
-                        }
-                    }]
-                }
-            }]
-        })]),
-        sse_body(vec![
-            json!({
-                "model": "fake-model",
-                "choices": [{
-                    "delta": {
-                        "content": "current directory is "
-                    }
-                }]
-            }),
-            json!({
-                "model": "fake-model",
-                "choices": [{
-                    "delta": {
-                        "content": expected_path
-                    }
-                }]
-            }),
-        ]),
-    ];
-    let (base_url, server_thread) = spawn_fake_llm_server(responses);
-    let config = Arc::new(test_config(
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        base_url,
-    ));
-
-    let runtime = build_agent_host((*config).clone()).expect("runtime");
-    let mut client = AppServerClient::in_process(InProcessClientConfig {
-        runtime: runtime.clone(),
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    let mut app = TuiApp::new(
-        "default".to_string(),
-        "in-process",
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        false,
-        "ReadOnly".to_string(),
-    );
-
-    handle_tui_input(
-        &mut app,
-        &client,
-        ParsedInput::Command(AppClientCommand::SubmitTurn(
-            agent_protocol::UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: "可以看到当前在哪个目录下吗".to_string(),
-                turn_policy: agent_protocol::TurnPolicy {
-                    permission_profile: agent_protocol::PermissionProfile::ReadOnly,
-                    approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
-                },
-            },
-        )),
-    )
-    .expect("submit turn");
-
-    let mut saw_server_request = false;
-    let mut saw_turn_completed = false;
-    while !saw_turn_completed {
-        let event = timeout(Duration::from_secs(10), client.next_event())
-            .await
-            .expect("timed out waiting for client event")
-            .expect("client event");
-        let request_id = match &event {
-            AppServerEvent::Message(AppServerMessage::Request(
-                agent_protocol::AppServerRequest::ServerRequest { request_id, .. },
-            )) => Some(request_id.clone()),
-            _ => None,
-        };
-        if matches!(
-            &event,
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::TurnCompleted { .. }
-            ))
-        ) {
-            saw_turn_completed = true;
-        }
-        event_router::handle_client_event(&mut app, event);
-        if let Some(request_id) = request_id {
-            saw_server_request = true;
-            handle_tui_input(
-                &mut app,
-                &client,
-                ParsedInput::ServerRequestAnswer {
-                    request_id,
-                    decision: ServerRequestDecisionKind::Accept,
-                    reason: "ok".to_string(),
-                },
-            )
-            .expect("approve request");
-        }
+fn agent(id: &str, text: &str) -> TranscriptItem {
+    TranscriptItem::AgentMessage {
+        id: id.to_string(),
+        text: text.to_string(),
     }
-    assert!(
-        !saw_server_request,
-        "safe workspace read commands should not trigger approval"
-    );
-
-    client
-        .send_command(AppClientCommand::RequestConversationStatus {
-            conversation_id: "default".to_string(),
-        })
-        .expect("request status");
-    client
-        .send_command(AppClientCommand::RequestConversationHistory {
-            conversation_id: "default".to_string(),
-        })
-        .expect("request history");
-
-    let mut history = None;
-    let mut status_idle = false;
-    while history.is_none() || !status_idle {
-        let event = timeout(Duration::from_secs(10), client.next_event())
-            .await
-            .expect("timed out waiting for history")
-            .expect("client event");
-        match event {
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::ConversationHistory { turns, .. },
-            )) => history = Some(flatten_turns(turns)),
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::ConversationStatus { snapshot, .. },
-            )) => {
-                status_idle = matches!(snapshot.conversation_status, ConversationStatus::Idle)
-                    && snapshot.active_turn.is_none();
-            }
-            other => event_router::handle_client_event(&mut app, other),
-        }
-    }
-    client.shutdown().await.expect("shutdown client");
-
-    let rollout_log = std::fs::read_to_string(fixture.store.join("default.rollout.jsonl"))
-        .expect("read rollout log");
-    assert!(
-        rollout_log.contains("\"type\":\"event_msg\""),
-        "rollout should persist EventMsg entries"
-    );
-    assert!(
-        rollout_log.contains("\"type\":\"response_item\""),
-        "rollout should persist ResponseItem entries"
-    );
-
-    let history = history.expect("history snapshot");
-    assert!(history.iter().any(|entry| matches!(
-        entry,
-        TranscriptItem::UserMessage { text, .. } if text == "可以看到当前在哪个目录下吗"
-    )));
-    assert!(history.iter().any(|entry| matches!(
-        entry,
-        TranscriptItem::CommandExecution {
-            tool_name,
-            command,
-            ..
-        } if tool_name == "exec_command" && command == "pwd"
-    )));
-    assert!(history.iter().any(|entry| matches!(
-        entry,
-        TranscriptItem::AgentMessage { text, .. }
-        if text.starts_with("current directory is ") && ends_with_workspace_path(text)
-    )));
-
-    let runtime_after_restart = build_agent_host((*config).clone()).expect("restart runtime");
-    let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
-        runtime: runtime_after_restart,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    let mut restarted_app = TuiApp::new(
-        "default".to_string(),
-        "in-process",
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        false,
-        "ReadOnly".to_string(),
-    );
-    restarted_client
-        .send_command(AppClientCommand::RequestConversationHistory {
-            conversation_id: "default".to_string(),
-        })
-        .expect("request history after restart");
-
-    let mut restarted_history_loaded = false;
-    while !restarted_history_loaded {
-        let event = timeout(Duration::from_secs(10), restarted_client.next_event())
-            .await
-            .expect("timed out waiting after restart")
-            .expect("client event after restart");
-        if let AppServerEvent::Message(AppServerMessage::Notification(
-            AppServerNotification::ConversationHistory { .. },
-        )) = &event
-        {
-            restarted_history_loaded = true;
-        }
-        event_router::handle_client_event(&mut restarted_app, event);
-    }
-    restarted_client
-        .shutdown()
-        .await
-        .expect("shutdown restarted client");
-
-    let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
-    assert!(
-        rebuilt_cells
-            .iter()
-            .any(|cell| cell.body() == "可以看到当前在哪个目录下吗")
-    );
-    assert!(rebuilt_cells.iter().any(|cell| {
-        cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-            && ((cell.kind() == crate::ui::widgets::history_cell::HistoryKind::Tool
-                && cell.children().is_some_and(|children| {
-                    children.iter().any(|child| child.body().contains("pwd"))
-                }))
-                || (cell.label() == "Explored workspace"
-                    && cell.aggregate().is_some_and(|aggregate| {
-                        aggregate.details.iter().any(|detail| detail.contains("pwd"))
-                    })))
-    }));
-    assert!(rebuilt_cells.iter().any(|cell| {
-        cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
-            && cell.body().starts_with("current directory is ")
-            && ends_with_workspace_path(cell.body())
-    }));
-
-    let recorded_requests = server_thread
-        .join()
-        .expect("fake llm server thread panicked")
-        .expect("fake llm server");
-    assert_eq!(recorded_requests.len(), 2);
-    assert!(recorded_requests[0].contains("\"stream\":true"));
-    assert!(recorded_requests[1].contains("\"role\":\"tool\""));
-    assert!(recorded_requests[1].contains("\"exec_command\""));
 }
 
-#[tokio::test]
-async fn interrupted_server_request_turn_rebuilds_tail_after_restart() {
-    let _guard = cli_e2e_test_lock().await;
-    let fixture = TempFixture::new();
-    let responses = vec![sse_body(vec![json!({
-        "model": "fake-model",
-        "choices": [{
-            "delta": {
-                "tool_calls": [{
-                    "index": 0,
-                    "id": "call_interrupt",
-                    "function": {
-                        "name": "exec_command",
-                        "arguments": "{\"command\":\"Set-Content out.txt hi\"}"
-                    }
-                }]
-            }
-        }]
-    })])];
-    let (base_url, server_thread) = spawn_fake_llm_server(responses);
-    let config = Arc::new(test_config(
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        base_url,
-    ));
-    let runtime = build_agent_host((*config).clone()).expect("runtime");
-    let mut client = AppServerClient::in_process(InProcessClientConfig {
-        runtime,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    let mut app = TuiApp::new(
-        "default".to_string(),
-        "in-process",
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        false,
-        "ReadOnly".to_string(),
-    );
-
-    handle_tui_input(
-        &mut app,
-        &client,
-        ParsedInput::Command(AppClientCommand::SubmitTurn(
-            agent_protocol::UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: "帮我看看当前目录".to_string(),
-                turn_policy: agent_protocol::TurnPolicy {
-                    permission_profile: agent_protocol::PermissionProfile::ReadOnly,
-                    approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
-                },
-            },
-        )),
-    )
-    .expect("submit turn");
-
-    let mut saw_server_request = false;
-    let mut saw_server_request_cancelled = false;
-    let mut saw_turn_cancelled = false;
-    while !saw_turn_cancelled {
-        let event = timeout(Duration::from_secs(10), client.next_event())
-            .await
-            .expect("timed out waiting for client event")
-            .expect("client event");
-        if matches!(
-            &event,
-            AppServerEvent::Message(AppServerMessage::Request(_))
-        ) {
-            saw_server_request = true;
-            let input = app
-                .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
-                .expect("esc should produce interrupt input");
-            handle_tui_input(&mut app, &client, input).expect("esc interrupt turn");
-        }
-        if matches!(
-            &event,
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::ServerRequestResolved {
-                    decision,
-                    ..
-                }
-            )) if decision.decision == agent_protocol::ServerRequestDecisionKind::Cancel
-        ) {
-            saw_server_request_cancelled = true;
-        }
-        if matches!(
-            &event,
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::TurnCancelled { .. }
-            ))
-        ) {
-            saw_turn_cancelled = true;
-        }
-        event_router::handle_client_event(&mut app, event);
+fn command(id: &str, command: &str) -> TranscriptItem {
+    TranscriptItem::CommandExecution {
+        id: id.to_string(),
+        tool_name: "exec_command".to_string(),
+        command: command.to_string(),
+        current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
+        status: CommandExecutionStatus::Completed,
+        exit_code: Some(0),
+        stdout: Some(String::new()),
+        stderr: Some(String::new()),
+        aggregated_output: Some(String::new()),
+        duration_ms: Some(1),
+        summary: command.to_string(),
     }
-    assert!(
-        saw_server_request,
-        "expected pending server request before interrupt"
-    );
-    assert!(
-        saw_server_request_cancelled,
-        "expected interrupt to cancel the pending server request"
-    );
-
-    client
-        .send_command(AppClientCommand::RequestConversationHistory {
-            conversation_id: "default".to_string(),
-        })
-        .expect("request history");
-
-    let history = loop {
-        let event = timeout(Duration::from_secs(10), client.next_event())
-            .await
-            .expect("timed out waiting for history")
-            .expect("client event");
-        match event {
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::ConversationHistory { turns, .. },
-            )) => break flatten_turns(turns),
-            other => event_router::handle_client_event(&mut app, other),
-        }
-    };
-    client.shutdown().await.expect("shutdown client");
-
-    assert!(history.iter().any(|entry| matches!(
-        entry,
-        TranscriptItem::UserMessage { text, .. } if text == "帮我看看当前目录"
-    )));
-
-    let runtime_after_restart = build_agent_host((*config).clone()).expect("restart runtime");
-    let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
-        runtime: runtime_after_restart,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    let mut restarted_app = TuiApp::new(
-        "default".to_string(),
-        "in-process",
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        false,
-        "ReadOnly".to_string(),
-    );
-    restarted_client
-        .send_command(AppClientCommand::RequestConversationHistory {
-            conversation_id: "default".to_string(),
-        })
-        .expect("request history after restart");
-
-    let mut restarted_history_loaded = false;
-    while !restarted_history_loaded {
-        let event = timeout(Duration::from_secs(10), restarted_client.next_event())
-            .await
-            .expect("timed out waiting after restart")
-            .expect("client event after restart");
-        if let AppServerEvent::Message(AppServerMessage::Notification(
-            AppServerNotification::ConversationHistory { .. },
-        )) = &event
-        {
-            restarted_history_loaded = true;
-        }
-        event_router::handle_client_event(&mut restarted_app, event);
-    }
-    restarted_client
-        .shutdown()
-        .await
-        .expect("shutdown restarted client");
-
-    let rebuilt_cells = restarted_app.transcript_state.transcript.cells();
-    let debug_cells = rebuilt_cells
-        .iter()
-        .map(|cell| (cell.label(), cell.body()))
-        .collect::<Vec<_>>();
-    assert!(
-        rebuilt_cells
-            .iter()
-            .any(|cell| cell.body() == "帮我看看当前目录")
-    );
-    assert_eq!(
-        rebuilt_cells
-            .iter()
-            .filter(|cell| cell.body() == "帮我看看当前目录")
-            .count(),
-        1
-    );
-    assert!(
-        rebuilt_cells
-            .iter()
-            .any(|cell| cell.label() == "Run command"
-                && cell.body().contains("Set-Content out.txt hi")),
-        "rebuilt cells: {debug_cells:?}"
-    );
-    assert!(!rebuilt_cells.iter().any(|cell| cell.label() == "request"));
-
-    let recorded_requests = server_thread
-        .join()
-        .expect("fake llm server thread panicked")
-        .expect("fake llm server");
-    assert_eq!(recorded_requests.len(), 1);
 }
 
-#[tokio::test]
-async fn consecutive_tool_turns_preserve_history_across_restart() {
-    let _guard = cli_e2e_test_lock().await;
-    let fixture = TempFixture::new();
-    let responses = vec![
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{
-                "delta": {
-                    "tool_calls": [{
-                        "index": 0,
-                        "id": "call_one",
-                        "function": {
-                            "name": "exec_command",
-                        "arguments": "{\"command\":\"pwd\"}"
-                        }
-                    }]
-                }
-            }]
-        })]),
-        sse_body(vec![
-            json!({
-                "model": "fake-model",
-                "choices": [{ "delta": { "content": "current directory is " } }]
-            }),
-            json!({
-                "model": "fake-model",
-                "choices": [{ "delta": { "content": fixture.workspace.display().to_string() } }]
-            }),
-        ]),
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{
-                "delta": {
-                    "tool_calls": [{
-                        "index": 0,
-                        "id": "call_two",
-                        "function": {
-                            "name": "exec_command",
-                            "arguments": "{\"command\":\"pwd\"}"
-                        }
-                    }]
-                }
-            }]
-        })]),
-        sse_body(vec![
-            json!({
-                "model": "fake-model",
-                "choices": [{ "delta": { "content": "again current directory is " } }]
-            }),
-            json!({
-                "model": "fake-model",
-                "choices": [{ "delta": { "content": fixture.workspace.display().to_string() } }]
-            }),
-        ]),
-    ];
-    let (base_url, server_thread) = spawn_fake_llm_server(responses);
-    let config = Arc::new(test_config(
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        base_url,
-    ));
-    let runtime = build_agent_host((*config).clone()).expect("runtime");
-    let mut client = AppServerClient::in_process(InProcessClientConfig {
-        runtime,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    let mut app = TuiApp::new(
-        "default".to_string(),
-        "in-process",
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        false,
-        "ReadOnly".to_string(),
-    );
-
-    for content in ["第一轮看看目录", "第二轮再看一次目录"] {
-        client
-            .send_command(AppClientCommand::SubmitTurn(
-                agent_protocol::UserTurnInput {
-                    conversation_id: "default".to_string(),
-                    content: content.to_string(),
-                    turn_policy: agent_protocol::TurnPolicy {
-                        permission_profile: agent_protocol::PermissionProfile::ReadOnly,
-                        approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
-                    },
-                },
-            ))
-            .expect("submit turn");
-
-        let mut saw_turn_completed = false;
-        let mut saw_idle = false;
-        while !saw_turn_completed || !saw_idle {
-            let event = timeout(Duration::from_secs(10), client.next_event())
-                .await
-                .expect("timed out waiting for client event")
-                .expect("client event");
-            if matches!(
-                &event,
-                AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::TurnCompleted { .. }
-                ))
-            ) {
-                saw_turn_completed = true;
-            }
-            if matches!(
-                &event,
-                AppServerEvent::Message(AppServerMessage::Notification(
-                    AppServerNotification::FrontendStateChanged {
-                        mode: agent_protocol::FrontendMode::Idle,
-                        ..
-                    }
-                ))
-            ) {
-                saw_idle = true;
-            }
-            event_router::handle_client_event(&mut app, event);
-        }
+fn turn(id: &str, state: TurnState, items: Vec<TranscriptItem>) -> ConversationTurn {
+    ConversationTurn {
+        id: id.to_string(),
+        state,
+        rollout_start_index: 0,
+        rollout_end_index: items.len(),
+        items,
     }
-
-    client
-        .send_command(AppClientCommand::RequestConversationHistory {
-            conversation_id: "default".to_string(),
-        })
-        .expect("request live history");
-    let live_history = loop {
-        let event = timeout(Duration::from_secs(10), client.next_event())
-            .await
-            .expect("timed out waiting for history")
-            .expect("client event");
-        match event {
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::ConversationHistory { turns, .. },
-            )) => break flatten_turns(turns),
-            other => event_router::handle_client_event(&mut app, other),
-        }
-    };
-    client.shutdown().await.expect("shutdown client");
-
-    let runtime_after_restart = build_agent_host((*config).clone()).expect("restart runtime");
-    let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
-        runtime: runtime_after_restart,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    restarted_client
-        .send_command(AppClientCommand::RequestConversationHistory {
-            conversation_id: "default".to_string(),
-        })
-        .expect("request history after restart");
-    let restarted_history = loop {
-        let event = timeout(Duration::from_secs(10), restarted_client.next_event())
-            .await
-            .expect("timed out waiting after restart")
-            .expect("client event after restart");
-        if let AppServerEvent::Message(AppServerMessage::Notification(
-            AppServerNotification::ConversationHistory { turns, .. },
-        )) = event
-        {
-            break flatten_turns(turns);
-        }
-    };
-    restarted_client
-        .shutdown()
-        .await
-        .expect("shutdown restarted client");
-
-    assert_eq!(restarted_history.len(), live_history.len());
-    assert!(restarted_history.iter().any(|entry| matches!(
-        entry,
-        TranscriptItem::UserMessage { text, .. } if text == "第一轮看看目录"
-    )));
-    assert!(restarted_history.iter().any(|entry| matches!(
-        entry,
-        TranscriptItem::UserMessage { text, .. } if text == "第二轮再看一次目录"
-    )));
-    assert!(restarted_history.iter().filter(|entry| matches!(
-            entry,
-            TranscriptItem::AgentMessage { text, .. } if text.starts_with("current directory is ")
-        )).count() >= 1);
-    assert!(restarted_history.iter().filter(|entry| matches!(
-            entry,
-            TranscriptItem::AgentMessage { text, .. } if text.starts_with("again current directory is ")
-        )).count() >= 1);
-
-    let recorded_requests = server_thread
-        .join()
-        .expect("fake llm server thread panicked")
-        .expect("fake llm server");
-    assert_eq!(recorded_requests.len(), 4);
-}
-
-#[tokio::test]
-async fn restarted_turn_uses_rollout_history_in_model_request() {
-    let _guard = cli_e2e_test_lock().await;
-    let fixture = TempFixture::new();
-    let responses = vec![
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{
-                "delta": {
-                    "content": "first answer"
-                }
-            }]
-        })]),
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{
-                "delta": {
-                    "content": "second answer"
-                }
-            }]
-        })]),
-    ];
-    let (base_url, server_thread) = spawn_fake_llm_server(responses);
-    let config = Arc::new(test_config(
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        base_url,
-    ));
-
-    let runtime = build_agent_host((*config).clone()).expect("runtime");
-    let mut client = AppServerClient::in_process(InProcessClientConfig {
-        runtime: runtime.clone(),
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    let mut app = TuiApp::new(
-        "default".to_string(),
-        "in-process",
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        false,
-        "ReadOnly".to_string(),
-    );
-
-    handle_tui_input(
-        &mut app,
-        &client,
-        ParsedInput::Command(AppClientCommand::SubmitTurn(
-            agent_protocol::UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: "first question".to_string(),
-                turn_policy: agent_protocol::TurnPolicy {
-                    permission_profile: agent_protocol::PermissionProfile::ReadOnly,
-                    approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
-                },
-            },
-        )),
-    )
-    .expect("submit first turn");
-
-    while !matches!(app.console_state.mode, FrontendMode::Idle) {
-        let event = timeout(Duration::from_secs(10), client.next_event())
-            .await
-            .expect("timed out waiting for first turn")
-            .expect("client event");
-        event_router::handle_client_event(&mut app, event);
-    }
-    client.shutdown().await.expect("shutdown first client");
-
-    let runtime_after_restart = build_agent_host((*config).clone()).expect("restart runtime");
-    let mut restarted_client = AppServerClient::in_process(InProcessClientConfig {
-        runtime: runtime_after_restart,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    let mut restarted_app = TuiApp::new(
-        "default".to_string(),
-        "in-process",
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        false,
-        "ReadOnly".to_string(),
-    );
-
-    handle_tui_input(
-        &mut restarted_app,
-        &restarted_client,
-        ParsedInput::Command(AppClientCommand::SubmitTurn(
-            agent_protocol::UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: "second question".to_string(),
-                turn_policy: agent_protocol::TurnPolicy {
-                    permission_profile: agent_protocol::PermissionProfile::ReadOnly,
-                    approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
-                },
-            },
-        )),
-    )
-    .expect("submit second turn");
-
-    while !matches!(restarted_app.console_state.mode, FrontendMode::Idle) {
-        let event = timeout(Duration::from_secs(10), restarted_client.next_event())
-            .await
-            .expect("timed out waiting for restarted turn")
-            .expect("client event after restart");
-        event_router::handle_client_event(&mut restarted_app, event);
-    }
-    restarted_client
-        .shutdown()
-        .await
-        .expect("shutdown restarted client");
-
-    let recorded_requests = server_thread
-        .join()
-        .expect("fake llm server thread panicked")
-        .expect("fake llm server");
-    assert_eq!(recorded_requests.len(), 2);
-    assert!(recorded_requests[1].contains("first question"));
-    assert!(recorded_requests[1].contains("first answer"));
-    assert!(recorded_requests[1].contains("second question"));
-}
-
-#[tokio::test]
-async fn cli_settings_persist_in_sqlite_and_reload() {
-    let _guard = cli_e2e_test_lock().await;
-    let fixture = TempFixture::new();
-    let config = Arc::new(test_config(
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        "http://127.0.0.1:9".to_string(),
-    ));
-    let runtime = build_agent_host((*config).clone()).expect("runtime");
-    let client = AppServerClient::in_process(InProcessClientConfig {
-        runtime,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-    let mut app = TuiApp::new(
-        "default".to_string(),
-        "in-process",
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        false,
-        "ReadOnly".to_string(),
-    );
-
-    handle_tui_input(
-        &mut app,
-        &client,
-        ParsedInput::LocalFilterToggle("on".to_string()),
-    )
-    .expect("toggle filter");
-    handle_tui_input(
-        &mut app,
-        &client,
-        ParsedInput::LocalPermissionMode("FullAccess".to_string()),
-    )
-    .expect("set permission mode");
-
-    let settings = crate::app::cli_settings::load_cli_settings(&fixture.store)
-        .expect("load cli settings")
-        .expect("persisted settings");
-    assert!(settings.pre_llm_filter_enabled);
-    assert_eq!(settings.permission_mode, "FullAccess");
-}
-
-#[tokio::test]
-async fn denied_tool_in_multi_tool_batch_still_records_all_tool_results() {
-    let _guard = cli_e2e_test_lock().await;
-    let fixture = TempFixture::new();
-    let responses = vec![
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{
-                "delta": {
-                    "tool_calls": [
-                        {
-                            "index": 0,
-                        "id": "call_denied",
-                        "function": {
-                            "name": "exec_command",
-                            "arguments": "{\"command\":\"Set-Content out.txt hi\"}"
-                        }
-                    },
-                    {
-                        "index": 1,
-                        "id": "call_allowed",
-                        "function": {
-                            "name": "exec_command",
-                            "arguments": "{\"command\":\"Set-Content other.txt hi\"}"
-                        }
-                    }
-                    ]
-                }
-            }]
-        })]),
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{ "delta": { "content": "done" } }]
-        })]),
-    ];
-    let (base_url, server_thread) = spawn_fake_llm_server(responses);
-    let config = Arc::new(test_config(
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        base_url,
-    ));
-    let runtime = build_agent_host((*config).clone()).expect("runtime");
-    let mut client = AppServerClient::in_process(InProcessClientConfig {
-        runtime,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-
-    client
-        .send_command(AppClientCommand::SubmitTurn(
-            agent_protocol::UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: "run two commands".to_string(),
-                turn_policy: agent_protocol::TurnPolicy {
-                    permission_profile: agent_protocol::PermissionProfile::ReadOnly,
-                    approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
-                },
-            },
-        ))
-        .expect("submit turn");
-
-    let mut request_count = 0usize;
-    let mut saw_completed = false;
-    while !saw_completed {
-        let event = timeout(Duration::from_secs(10), client.next_event())
-            .await
-            .expect("timed out waiting for client event")
-            .expect("client event");
-        match event {
-            AppServerEvent::Message(AppServerMessage::Request(
-                agent_protocol::AppServerRequest::ServerRequest { request_id, .. },
-            )) => {
-                request_count += 1;
-                let decision = if request_count == 1 {
-                    agent_protocol::ServerRequestDecision::decline(Some("skip first".to_string()))
-                } else {
-                    agent_protocol::ServerRequestDecision::accept(Some("ok".to_string()))
-                };
-                client
-                    .send_command(AppClientCommand::ResolveServerRequest {
-                        conversation_id: "default".to_string(),
-                        request_id,
-                        decision,
-                    })
-                    .expect("resolve request");
-            }
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::TurnCompleted { .. },
-            )) => {
-                saw_completed = true;
-            }
-            _ => {}
-        }
-    }
-    client.shutdown().await.expect("shutdown client");
-
-    assert_eq!(request_count, 2);
-    let recorded_requests = server_thread
-        .join()
-        .expect("fake llm server thread panicked")
-        .expect("fake llm server");
-    assert_eq!(recorded_requests.len(), 2);
-    assert!(recorded_requests[1].contains("\"tool_call_id\":\"call_denied\""));
-    assert!(recorded_requests[1].contains("\"tool_call_id\":\"call_allowed\""));
-}
-
-#[tokio::test]
-async fn repeated_denied_tool_request_does_not_prompt_again() {
-    let _guard = cli_e2e_test_lock().await;
-    let fixture = TempFixture::new();
-    let responses = vec![
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{
-                "delta": {
-                    "tool_calls": [{
-                        "index": 0,
-                        "id": "call_denied_once",
-                        "function": {
-                            "name": "exec_command",
-                            "arguments": "{\"command\":\"df -h\"}"
-                        }
-                    }]
-                }
-            }]
-        })]),
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{
-                "delta": {
-                    "tool_calls": [{
-                        "index": 0,
-                        "id": "call_denied_repeat",
-                        "function": {
-                            "name": "exec_command",
-                            "arguments": "{\"command\":\"df -h\"}"
-                        }
-                    }]
-                }
-            }]
-        })]),
-        sse_body(vec![json!({
-            "model": "fake-model",
-            "choices": [{ "delta": { "content": "I cannot inspect disk usage because permission was denied." } }]
-        })]),
-    ];
-    let (base_url, server_thread) = spawn_fake_llm_server(responses);
-    let config = Arc::new(test_config(
-        fixture.workspace.clone(),
-        fixture.store.clone(),
-        base_url,
-    ));
-    let runtime = build_agent_host((*config).clone()).expect("runtime");
-    let mut client = AppServerClient::in_process(InProcessClientConfig {
-        runtime,
-        conversation_id: "default".to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-    });
-
-    client
-        .send_command(AppClientCommand::SubmitTurn(
-            agent_protocol::UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: "check disk".to_string(),
-                turn_policy: agent_protocol::TurnPolicy {
-                    permission_profile: agent_protocol::PermissionProfile::ReadOnly,
-                    approval_policy: agent_protocol::ApprovalPolicy::OnRequest,
-                },
-            },
-        ))
-        .expect("submit turn");
-
-    let mut request_count = 0usize;
-    let mut saw_completed = false;
-    while !saw_completed {
-        let event = timeout(Duration::from_secs(10), client.next_event())
-            .await
-            .expect("timed out waiting for client event")
-            .expect("client event");
-        match event {
-            AppServerEvent::Message(AppServerMessage::Request(
-                agent_protocol::AppServerRequest::ServerRequest { request_id, .. },
-            )) => {
-                request_count += 1;
-                client
-                    .send_command(AppClientCommand::ResolveServerRequest {
-                        conversation_id: "default".to_string(),
-                        request_id,
-                        decision: agent_protocol::ServerRequestDecision::decline(Some(
-                            String::new(),
-                        )),
-                    })
-                    .expect("deny request");
-            }
-            AppServerEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::TurnCompleted { .. },
-            )) => {
-                saw_completed = true;
-            }
-            _ => {}
-        }
-    }
-    client.shutdown().await.expect("shutdown client");
-
-    assert_eq!(request_count, 1);
-    let recorded_requests = server_thread
-        .join()
-        .expect("fake llm server thread panicked")
-        .expect("fake llm server");
-    assert_eq!(recorded_requests.len(), 3);
-    assert!(recorded_requests[1].contains("\"tool_call_id\":\"call_denied_once\""));
-    assert!(recorded_requests[1].contains("exec command rejected by user"));
-    assert!(recorded_requests[2].contains("\"tool_call_id\":\"call_denied_repeat\""));
-    assert!(recorded_requests[2].contains("exec command rejected by user"));
-    assert!(recorded_requests[2].contains("same tool request was already denied in this turn"));
 }
 
 #[test]
-fn repeated_turn_snapshots_preserve_late_reasoning_after_assistant_when_it_arrives_late() {
+fn transcript_owner_shows_local_user_immediately() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user("hello".to_string(), false);
+
+    assert!(owner.live_cells().is_empty());
+    let pending = owner
+        .pending_history_cells()
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(pending, vec!["hello"]);
+}
+
+#[test]
+fn transcript_owner_rebuilds_history_and_keeps_only_live_tail_active() {
+    let mut owner = TranscriptOwner::default();
+    let history = vec![
+        turn("turn-1", TurnState::Completed, vec![user("u1", "first"), agent("a1", "done")]),
+        turn(
+            "turn-2",
+            TurnState::Running,
+            vec![user("u2", "second"), reasoning("r2", "thinking")],
+        ),
+    ];
+
+    owner.rebuild_from_history_snapshot(&history, false);
+
+    let pending = owner
+        .pending_history_cells()
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(pending, vec!["first", "done", "second"]);
+    let visible = owner
+        .live_cells()
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(visible, vec!["thinking"]);
+}
+
+#[test]
+fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user("hello".to_string(), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        agent_protocol::TurnItemKind::Reasoning,
+        Some("Reasoning".to_string()),
+        false,
+    );
+    owner.append_reasoning_delta(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        "thinking".to_string(),
+        false,
+    );
+    owner.complete_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        reasoning("r1", "thinking"),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        agent_protocol::TurnItemKind::CommandExecution,
+        Some("Run command".to_string()),
+        false,
+    );
+    owner.append_output_delta(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        "rg *".to_string(),
+        false,
+    );
+
+    let visible = owner
+        .live_cells()
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(visible.len(), 1);
+    assert!(
+        visible[0].contains("rg *") || visible[0].contains("inspect command"),
+        "visible: {visible:?}"
+    );
+
+    owner.complete_item(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        command("c1", "rg *"),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent_protocol::TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "done".to_string(),
+        false,
+    );
+
+    let visible = owner
+        .live_cells()
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(visible, vec!["done"]);
+}
+
+#[test]
+fn completing_older_item_does_not_flush_current_live_item() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user("hello".to_string(), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent_protocol::TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "partial answer".to_string(),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        agent_protocol::TurnItemKind::CommandExecution,
+        Some("Run command".to_string()),
+        false,
+    );
+    owner.append_output_delta(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        "rg esc".to_string(),
+        false,
+    );
+
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent("a1", "partial answer"),
+        false,
+    );
+
+    let visible = owner
+        .live_cells()
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(visible.len(), 1);
+    assert!(
+        visible[0].contains("rg esc") || visible[0].contains("inspect command"),
+        "visible: {visible:?}"
+    );
+}
+
+#[test]
+fn running_snapshot_updates_history_cache_without_touching_live_transcript() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
-        PathBuf::from("."),
-        PathBuf::from("."),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
         false,
         "ReadOnly".to_string(),
     );
+    app.run_state.history_loaded = true;
 
-    let turn_id = "turn-1".to_string();
-    let snapshots = vec![
-        ConversationTurn {
-            id: turn_id.clone(),
-            state: agent_protocol::TurnState::Running,
-            rollout_start_index: 0,
-            rollout_end_index: 1,
-            items: vec![
-                TranscriptItem::UserMessage {
-                    id: "user:turn-1".to_string(),
-                    text: "看看 cli 和 agent 的关系".to_string(),
-                },
-                TranscriptItem::Reasoning {
-                    id: "reasoning:1".to_string(),
-                    title: "Inspecting workspace files".to_string(),
-                    text: "先看入口".to_string(),
-                },
-            ],
-        },
-        ConversationTurn {
-            id: turn_id.clone(),
-            state: agent_protocol::TurnState::Running,
-            rollout_start_index: 0,
-            rollout_end_index: 3,
-            items: vec![
-                TranscriptItem::UserMessage {
-                    id: "user:turn-1".to_string(),
-                    text: "看看 cli 和 agent 的关系".to_string(),
-                },
-                TranscriptItem::Reasoning {
-                    id: "reasoning:1".to_string(),
-                    title: "Inspecting workspace files".to_string(),
-                    text: "先看入口".to_string(),
-                },
-                TranscriptItem::CommandExecution {
-                    id: "tool:1".to_string(),
-                    tool_name: "exec_command".to_string(),
-                    command: "rg cli".to_string(),
-                    current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
-                    status: CommandExecutionStatus::Completed,
-                    exit_code: Some(0),
-                    stdout: Some("cli".to_string()),
-                    stderr: Some(String::new()),
-                    aggregated_output: Some("cli".to_string()),
-                    duration_ms: Some(1),
-                    summary: "cli".to_string(),
-                },
-                TranscriptItem::AgentMessage {
-                    id: "assistant:1".to_string(),
-                    text: "我先看下 CLI 主入口。".to_string(),
-                },
-            ],
-        },
-        ConversationTurn {
-            id: turn_id,
-            state: agent_protocol::TurnState::Running,
-            rollout_start_index: 0,
-            rollout_end_index: 5,
-            items: vec![
-                TranscriptItem::UserMessage {
-                    id: "user:turn-1".to_string(),
-                    text: "看看 cli 和 agent 的关系".to_string(),
-                },
-                TranscriptItem::Reasoning {
-                    id: "reasoning:1".to_string(),
-                    title: "Inspecting workspace files".to_string(),
-                    text: "先看入口".to_string(),
-                },
-                TranscriptItem::CommandExecution {
-                    id: "tool:1".to_string(),
-                    tool_name: "exec_command".to_string(),
-                    command: "rg cli".to_string(),
-                    current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
-                    status: CommandExecutionStatus::Completed,
-                    exit_code: Some(0),
-                    stdout: Some("cli".to_string()),
-                    stderr: Some(String::new()),
-                    aggregated_output: Some("cli".to_string()),
-                    duration_ms: Some(1),
-                    summary: "cli".to_string(),
-                },
-                TranscriptItem::AgentMessage {
-                    id: "assistant:1".to_string(),
-                    text: "我先看下 CLI 主入口。".to_string(),
-                },
-                TranscriptItem::Reasoning {
-                    id: "reasoning:2".to_string(),
-                    title: "Inspecting workspace files".to_string(),
-                    text: "再看 agent".to_string(),
-                },
-            ],
-        },
-    ];
+    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .bind_turn_id("turn-1".to_string(), false);
+    app.transcript_owner.start_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        agent_protocol::TurnItemKind::Reasoning,
+        Some("Reasoning".to_string()),
+        false,
+    );
+    app.transcript_owner.append_reasoning_delta(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        "thinking".to_string(),
+        false,
+    );
 
-    for turn in snapshots {
-        let reduce = crate::state::reducer::apply_server_message(&AppServerMessage::Notification(
-            AppServerNotification::TurnSnapshot {
-                conversation_id: "default".to_string(),
-                turn,
-            },
-        ));
-        for action in reduce.actions {
-            execute_server_action(&mut app, action);
-        }
-    }
-
-    let cells = app.transcript_state.transcript.cells();
-    let visible = cells
+    let before = app
+        .live_cells()
         .iter()
-        .map(|cell| (cell.label().to_string(), cell.body().to_string(), cell.tone))
+        .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>();
 
-    assert!(matches!(
-        &cells[..],
-        [
-            HistoryCell { tone: HistoryTone::User, .. },
-            HistoryCell { tone: HistoryTone::Reasoning, .. },
-            HistoryCell { tone: HistoryTone::Control, .. },
-            HistoryCell { tone: HistoryTone::Agent, .. },
-            HistoryCell { tone: HistoryTone::Reasoning, .. },
-        ]
-    ), "visible cells: {visible:?}");
-    assert_eq!(cells[1].body(), "先看入口");
-    assert!(
-        cells[2].body().contains("inspect command")
-            || cells[2].body().contains("tool call")
-            || cells[2].body().contains("rg cli"),
-        "visible cells: {visible:?}"
+    conversation_facade::upsert_turn_snapshot(
+        &mut app,
+        turn(
+            "turn-1",
+            TurnState::Running,
+            vec![user("u1", "hello"), reasoning("r1", "thinking from snapshot")],
+        ),
     );
-    assert_eq!(cells[3].body(), "我先看下 CLI 主入口。");
-    assert_eq!(cells[4].body(), "再看 agent");
-    assert_eq!(cells.len(), 5);
+
+    let after = app
+        .live_cells()
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(before, after);
+    let history = app.run_state.history_snapshot.clone().unwrap_or_default();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].id, "turn-1");
+    assert_eq!(history[0].state, TurnState::Running);
 }
 
-fn test_config(
-    workspace_root: PathBuf,
-    conversation_store_dir: PathBuf,
-    base_url: String,
-) -> AgentConfig {
-    AgentConfig {
-        workspace_root,
-        llm: LlmConfig {
-            base_url,
-            api_key: "test-key".to_string(),
-            model: "fake-model".to_string(),
-            temperature: 0.0,
-            request_max_retries: 0,
-            stream_max_retries: 0,
-            stream_idle_timeout_ms: 30_000,
-        },
-        runtime: RuntimeConfig {
-            system_prompt: "You are a test agent.".to_string(),
-            max_tool_roundtrips: Some(4),
-            conversation_store_dir,
-            model_context_window: 200_000,
-            context_compaction_trigger_ratio: 0.90,
-            context_compaction_target_tokens: 36_000,
-            context_compaction_request_overhead_tokens: 28_000,
-            context_compaction_preserved_user_turns: 3,
-            context_compaction_preserved_tail_tokens: 12_000,
-            context_compaction_summary_source_tokens: 24_000,
-            memory: Default::default(),
-            enable_skill_bucket: false,
-            enable_mcp_bucket: false,
-            post_compact_token_budget: 50_000,
-            post_compact_memory_floor_tokens: 6_000,
-            post_compact_skills_token_budget: 25_000,
-            post_compact_mcp_token_budget: 8_000,
-            post_compact_max_tokens_per_memory: 6_000,
-            post_compact_max_tokens_per_skill: 5_000,
-            post_compact_max_tokens_per_mcp: 3_000,
-            context_budget_safety_buffer_tokens: 8_000,
-        },
-        tools: ToolConfig {
-            default_shell_timeout_ms: 5_000,
-            max_read_chars: 8_192,
-            mcp_servers: Vec::new(),
-        },
-        cli: config::CliConfig {
-            pre_llm_filter_enabled: false,
-            permission_mode: "ReadOnly".to_string(),
-        },
-    }
-}
+#[test]
+fn chat_surface_model_renders_streaming_visible_tail() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.run_state.history_loaded = true;
 
-fn sse_body(chunks: Vec<serde_json::Value>) -> String {
-    let mut body = String::new();
-    for chunk in chunks {
-        body.push_str("data: ");
-        body.push_str(&serde_json::to_string(&chunk).expect("sse chunk"));
-        body.push_str("\n\n");
-    }
-    body.push_str("data: [DONE]\n\n");
-    body
-}
+    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .bind_turn_id("turn-1".to_string(), false);
+    app.transcript_owner.start_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        agent_protocol::TurnItemKind::Reasoning,
+        Some("Reasoning".to_string()),
+        false,
+    );
+    app.transcript_owner.append_reasoning_delta(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        "thinking".to_string(),
+        false,
+    );
 
-fn spawn_fake_llm_server(
-    responses: Vec<String>,
-) -> (String, thread::JoinHandle<std::io::Result<Vec<String>>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake llm server");
-    let base_url = format!("http://{}", listener.local_addr().expect("listener addr"));
-    let handle = thread::spawn(move || {
-        let mut requests = Vec::new();
-        for response in responses {
-            let (mut stream, _) = listener.accept()?;
-            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-            let request_body = read_http_request_body(&mut stream)?;
-            requests.push(request_body);
-            let http_response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
-                response.len(),
-                response
-            );
-            stream.write_all(http_response.as_bytes())?;
-            stream.flush()?;
-        }
-        Ok(requests)
-    });
-    (base_url, handle)
-}
-
-fn read_http_request_body(stream: &mut TcpStream) -> std::io::Result<String> {
-    let mut buffer = Vec::new();
-    let mut scratch = [0u8; 4096];
-    let header_end = loop {
-        let read = stream.read(&mut scratch)?;
-        if read == 0 {
-            return Ok(String::new());
-        }
-        buffer.extend_from_slice(&scratch[..read]);
-        if let Some(position) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-            break position + 4;
-        }
+    let model = build_chat_surface_model(&mut app, 80, 12);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
     };
 
-    let header_text = String::from_utf8_lossy(&buffer[..header_end]);
-    let content_length = header_text
-        .lines()
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            if name.eq_ignore_ascii_case("content-length") {
-                value.trim().parse::<usize>().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
 
-    let mut body = buffer[header_end..].to_vec();
-    while body.len() < content_length {
-        let read = stream.read(&mut scratch)?;
-        if read == 0 {
-            break;
-        }
-        body.extend_from_slice(&scratch[..read]);
-    }
-    body.truncate(content_length);
-    Ok(String::from_utf8_lossy(&body).to_string())
+    assert!(
+        rendered.iter().any(|line| line.contains("thinking")),
+        "rendered: {rendered:?}"
+    );
 }
 
-struct TempFixture {
-    root: PathBuf,
-    workspace: PathBuf,
-    store: PathBuf,
-}
+#[test]
+fn chat_surface_model_renders_placeholder_before_first_delta() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.run_state.history_loaded = true;
 
-impl TempFixture {
-    fn new() -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("cloudagent-cli-test-{unique}"));
-        let workspace = root.join("workspace");
-        let store = root.join("conversations");
-        std::fs::create_dir_all(&workspace).expect("create workspace");
-        std::fs::create_dir_all(&store).expect("create conversation store");
-        Self {
-            root,
-            workspace,
-            store,
-        }
-    }
-}
+    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .bind_turn_id("turn-1".to_string(), false);
+    app.transcript_owner.start_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        agent_protocol::TurnItemKind::Reasoning,
+        Some("Reasoning".to_string()),
+        false,
+    );
 
-impl Drop for TempFixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
+    let model = build_chat_surface_model(&mut app, 80, 12);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
 
-async fn cli_e2e_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+
+    assert!(
+        rendered.iter().any(|line| line.contains("thinking")),
+        "rendered: {rendered:?}"
+    );
 }

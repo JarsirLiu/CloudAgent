@@ -8,7 +8,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use wrapping::{WrapOptions, word_wrap_text};
 
-pub use render::{RenderContext, render_active_control_placeholder, render_history_entry};
+pub use render::{RenderContext, render_active_item_placeholder, render_history_entry};
 
 type RenderCache = std::sync::Arc<std::sync::Mutex<Option<(usize, Vec<Line<'static>>)>>>;
 
@@ -331,6 +331,10 @@ impl HistoryCell {
             HistoryContent::Edit(_) | HistoryContent::ToolGroup(_) => HistoryKind::Tool,
             HistoryContent::Info(_) => default_kind_for_tone(self.tone),
         }
+    }
+
+    pub fn is_stream_continuation(&self) -> bool {
+        false
     }
 
     pub fn detail(&self) -> Option<&str> {
@@ -825,7 +829,11 @@ fn render_tool(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     }
 }
 
-fn render_tool_group(cell: &HistoryCell, group: &ToolGroupCell, width: usize) -> Vec<Line<'static>> {
+fn render_tool_group(
+    cell: &HistoryCell,
+    group: &ToolGroupCell,
+    width: usize,
+) -> Vec<Line<'static>> {
     let title = pretty_tool_title(&group.label);
     let mut lines = vec![Line::from(vec![
         Span::raw("  "),
@@ -896,11 +904,7 @@ fn render_tool_group(cell: &HistoryCell, group: &ToolGroupCell, width: usize) ->
                     format!(
                         "{} more step{} hidden (Ctrl+T toggles details)",
                         hidden_count,
-                        if hidden_count == 1 {
-                            ""
-                        } else {
-                            "s"
-                        }
+                        if hidden_count == 1 { "" } else { "s" }
                     ),
                     Style::default().fg(Color::Rgb(148, 152, 164)),
                 ),
@@ -983,7 +987,10 @@ fn render_tool_group_child(cell: &HistoryCell, width: usize, is_last: bool) -> V
                 Span::raw("    "),
                 Span::styled(rail, Style::default().fg(Color::Rgb(90, 96, 108))),
                 Span::styled(
-                    format!("… +{} more lines", detail.lines().count().saturating_sub(max_lines)),
+                    format!(
+                        "… +{} more lines",
+                        detail.lines().count().saturating_sub(max_lines)
+                    ),
                     Style::default().fg(Color::Rgb(132, 138, 150)),
                 ),
             ]));
@@ -1047,7 +1054,12 @@ fn render_tool_like(
             ),
         ]));
     }
-    lines.extend(output_lines.into_iter().filter(|line| !line.spans.is_empty()).map(tint_tail_rgb(148, 152, 164)));
+    lines.extend(
+        output_lines
+            .into_iter()
+            .filter(|line| !line.spans.is_empty())
+            .map(tint_tail_rgb(148, 152, 164)),
+    );
     lines
 }
 
@@ -1119,7 +1131,12 @@ fn tint_all_rgb(r: u8, g: u8, b: u8) -> impl Fn(Line<'static>) -> Line<'static> 
         let spans = line
             .spans
             .into_iter()
-            .map(|span| Span::styled(span.content.into_owned(), Style::default().fg(Color::Rgb(r, g, b))))
+            .map(|span| {
+                Span::styled(
+                    span.content.into_owned(),
+                    Style::default().fg(Color::Rgb(r, g, b)),
+                )
+            })
             .collect::<Vec<_>>();
         Line::from(spans)
     }
@@ -1135,7 +1152,10 @@ fn tint_tail_rgb(r: u8, g: u8, b: u8) -> impl Fn(Line<'static>) -> Line<'static>
                 if index == 0 {
                     span
                 } else {
-                    Span::styled(span.content.into_owned(), Style::default().fg(Color::Rgb(r, g, b)))
+                    Span::styled(
+                        span.content.into_owned(),
+                        Style::default().fg(Color::Rgb(r, g, b)),
+                    )
                 }
             })
             .collect::<Vec<_>>();

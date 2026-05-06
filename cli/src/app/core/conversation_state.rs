@@ -1,4 +1,5 @@
 use crate::app::TuiApp;
+use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::state::reducer::TurnDispatch;
 use crate::state::runtime_projection::RuntimeProjection;
 use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
@@ -24,13 +25,12 @@ impl TuiApp {
             console_state: ConsoleState::new(),
             server_request_state: ServerRequestState::default(),
             transcript_state: TranscriptState::default(),
+            transcript_owner: TranscriptOwner::default(),
             run_state,
             runtime_projection: RuntimeProjection::new(),
             input_pane: crate::ui::widgets::input_pane::InputPane::new(),
             welcome_animation_frame: 0,
             welcome_animation_pause_ticks: 0,
-            pending_history_cells: std::collections::VecDeque::new(),
-            pending_history_rebuild: false,
             session_picker_requested: false,
             delete_picker_requested: false,
             workspace_root,
@@ -45,6 +45,7 @@ impl TuiApp {
         self.server_request_state = ServerRequestState::default();
         self.transcript_state = TranscriptState::default();
         self.transcript_state.reset_scroll();
+        self.transcript_owner.clear();
         self.run_state = RunState::new(&self.connection_label);
         self.run_state.pre_llm_filter_enabled = filter_enabled;
         self.run_state.permission_mode = permission_mode;
@@ -53,8 +54,6 @@ impl TuiApp {
         self.input_pane.clear_views();
         self.welcome_animation_frame = 0;
         self.welcome_animation_pause_ticks = 0;
-        self.pending_history_cells.clear();
-        self.pending_history_rebuild = false;
     }
 
     pub(crate) fn switch_conversation(&mut self, conversation_id: String) {
@@ -71,20 +70,31 @@ impl TuiApp {
 
     pub(crate) fn set_mode(&mut self, mode: FrontendMode) {
         self.console_state.mode = mode;
+        if mode == FrontendMode::Idle {
+            self.transcript_state.clear_inline_viewport_height_lock();
+        }
     }
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
         match dispatch {
-            TurnDispatch::Completed => {}
+            TurnDispatch::Completed => {
+                if let Some(turn_id) = self.transcript_owner.active_turn_id().map(str::to_owned) {
+                    self.transcript_owner
+                        .complete_turn(turn_id, self.run_state.expand_tool_details);
+                } else {
+                    self.transcript_owner
+                        .clear_active_turn(self.run_state.expand_tool_details);
+                }
+            }
             TurnDispatch::Failed { error } => {
-                self.push_cell(HistoryCell::info(
+                self.push_live_cell(HistoryCell::info(
                     "turn",
                     format!("failed: {error}"),
                     HistoryTone::Error,
                 ));
             }
             TurnDispatch::Cancelled { reason } => {
-                self.push_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));
+                self.push_live_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));
             }
         }
     }

@@ -1,24 +1,24 @@
 pub mod custom_terminal;
+mod draw_coordinator;
 pub mod events;
 mod inline_viewport;
 mod insert_history;
 
 use anyhow::Result;
 use crossterm::SynchronizedUpdate;
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
-use ratatui::text::Line;
 use std::io::{self, stdout};
 use std::panic;
 use std::sync::Once;
 
+use crate::ui::widgets::history_cell::HistoryCell;
+
 pub(crate) use custom_terminal::Frame;
+use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{UiEvent, spawn_tui_event_loop};
-use inline_viewport::update_inline_viewport;
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 
@@ -31,7 +31,6 @@ pub(crate) fn init() -> Result<TerminalGuard> {
     let mut stdout = io::stdout();
     let init_result = (|| -> Result<TerminalGuard> {
         execute!(stdout, EnableBracketedPaste)?;
-        execute!(stdout, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = custom_terminal::Terminal::new(backend)?;
         Ok(TerminalGuard { terminal })
@@ -44,7 +43,6 @@ pub(crate) fn init() -> Result<TerminalGuard> {
 
 pub(crate) fn restore() -> Result<()> {
     let _ = execute!(io::stdout(), DisableBracketedPaste);
-    let _ = execute!(io::stdout(), DisableMouseCapture);
     disable_raw_mode()?;
     Ok(())
 }
@@ -67,13 +65,12 @@ impl TerminalGuard {
     pub(crate) fn draw_with_history(
         &mut self,
         height: u16,
-        pending_history_lines: Vec<Line<'static>>,
+        pending_history_cells: Vec<HistoryCell>,
         render: impl FnOnce(&mut Frame),
     ) -> Result<()> {
         stdout().sync_update(|_| {
-            update_inline_viewport(self, height)?;
-            insert_history::insert_history_lines(&mut self.terminal, pending_history_lines)?;
-            self.terminal.draw(render)?;
+            let mut coordinator = DrawCoordinator::new(&mut self.terminal);
+            coordinator.draw_frame(height, pending_history_cells, render)?;
             Ok::<(), anyhow::Error>(())
         })??;
         Ok(())

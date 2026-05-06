@@ -6,7 +6,6 @@ pub mod filter_picker;
 pub mod footer;
 pub mod history_cell;
 pub mod input_pane;
-pub mod live_status_cell;
 pub mod paste_burst;
 pub mod permissions_picker;
 pub mod server_request_overlay;

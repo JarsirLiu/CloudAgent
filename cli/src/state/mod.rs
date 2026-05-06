@@ -3,7 +3,6 @@ pub mod runtime_projection;
 pub mod selectors;
 pub mod status_view_model;
 
-use crate::ui::widgets::history_cell::Transcript;
 use agent_protocol::{ConversationTurn, FrontendMode, ModelUsage, RequestId};
 use std::time::{Duration, Instant};
 
@@ -38,11 +37,10 @@ pub struct ServerRequestState {
 
 #[derive(Default)]
 pub struct TranscriptState {
-    pub transcript: Transcript,
-    pub last_copyable_output: Option<String>,
     pub scroll_offset_lines: usize,
     pub last_total_lines: usize,
     pub last_viewport_height: usize,
+    pub locked_inline_viewport_height: Option<u16>,
 }
 
 impl TranscriptState {
@@ -50,6 +48,7 @@ impl TranscriptState {
         self.scroll_offset_lines = 0;
         self.last_total_lines = 0;
         self.last_viewport_height = 0;
+        self.locked_inline_viewport_height = None;
     }
 
     pub fn note_total_lines(&mut self, total_lines: usize) {
@@ -82,7 +81,10 @@ impl TranscriptState {
         let max_offset = self
             .last_total_lines
             .saturating_sub(self.last_viewport_height);
-        self.scroll_offset_lines = self.scroll_offset_lines.saturating_add(lines).min(max_offset);
+        self.scroll_offset_lines = self
+            .scroll_offset_lines
+            .saturating_add(lines)
+            .min(max_offset);
     }
 
     pub fn scroll_down(&mut self, lines: usize) {
@@ -105,6 +107,18 @@ impl TranscriptState {
 
     pub fn jump_to_bottom(&mut self) {
         self.scroll_offset_lines = 0;
+    }
+
+    pub fn lock_inline_viewport_height(&mut self, height: u16) -> u16 {
+        *self.locked_inline_viewport_height.get_or_insert(height.max(1))
+    }
+
+    pub fn inline_viewport_height(&self) -> Option<u16> {
+        self.locked_inline_viewport_height
+    }
+
+    pub fn clear_inline_viewport_height_lock(&mut self) {
+        self.locked_inline_viewport_height = None;
     }
 }
 

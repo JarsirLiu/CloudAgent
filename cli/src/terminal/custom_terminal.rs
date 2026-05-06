@@ -8,7 +8,7 @@ use crossterm::style::{
     SetForegroundColor,
 };
 use crossterm::terminal::{Clear, ClearType as CrosstermClearType};
-use ratatui::backend::{Backend, ClearType};
+use ratatui::backend::Backend;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::{Color, Modifier};
@@ -175,10 +175,19 @@ where
         draw_updates(&mut self.backend, updates.into_iter())
     }
 
-    pub(crate) fn clear_after_position(&mut self, position: Position) -> io::Result<()> {
-        self.backend.set_cursor_position(position)?;
-        self.backend.clear_region(ClearType::AfterCursor)?;
+    pub(crate) fn clear_rows(&mut self, start_y: u16, end_y_exclusive: u16) -> io::Result<()> {
+        if start_y >= end_y_exclusive {
+            return Ok(());
+        }
+        for y in start_y..end_y_exclusive {
+            queue!(
+                self.backend,
+                MoveTo(0, y),
+                Clear(CrosstermClearType::UntilNewLine)
+            )?;
+        }
         self.previous_buffer_mut().reset();
+        std::io::Write::flush(&mut self.backend)?;
         Ok(())
     }
 
@@ -187,6 +196,10 @@ where
             .visible_history_rows
             .saturating_add(inserted_rows)
             .min(self.viewport_area.top());
+    }
+
+    pub(crate) fn visible_history_rows(&self) -> u16 {
+        self.visible_history_rows
     }
 
     fn swap_buffers(&mut self) {
@@ -246,21 +259,22 @@ fn diff_buffers(previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
         let row_end = row_start + previous.area.width as usize;
         let row = &next.content[row_start..row_end];
         let bg = row.last().map(|cell| cell.bg).unwrap_or(Color::Reset);
-        let mut last_nonblank_column = 0usize;
+        let mut last_nonblank_column = None;
         let mut column = 0usize;
         while column < row.len() {
             let cell = &row[column];
             let width = display_width(cell.symbol());
             if cell.symbol() != " " || cell.bg != bg || cell.modifier != Modifier::empty() {
-                last_nonblank_column = column + width.saturating_sub(1);
+                last_nonblank_column = Some(column + width.saturating_sub(1));
             }
             column += width.max(1);
         }
-        if last_nonblank_column + 1 < row.len() {
-            let (x, y) = previous.pos_of(row_start + last_nonblank_column + 1);
+        let clear_start = last_nonblank_column.map_or(0, |column| column.saturating_add(1));
+        if clear_start < row.len() {
+            let (x, y) = previous.pos_of(row_start + clear_start);
             updates.push(DrawCommand::ClearToEnd { x, y, bg });
         }
-        last_nonblank_columns[y as usize] = last_nonblank_column as u16;
+        last_nonblank_columns[y as usize] = last_nonblank_column.unwrap_or(0) as u16;
     }
 
     let mut invalidated = 0usize;
@@ -383,4 +397,29 @@ fn queue_modifier_diff<W: Write>(writer: &mut W, from: Modifier, to: Modifier) -
         queue!(writer, SetAttribute(Attribute::CrossedOut))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DrawCommand, diff_buffers};
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn diff_buffers_clears_fully_blank_row_from_first_column() {
+        let area = Rect::new(0, 0, 4, 1);
+        let mut previous = Buffer::empty(area);
+        previous[(0, 0)].set_symbol("A");
+        previous[(1, 0)].set_symbol("B");
+        previous[(2, 0)].set_symbol("C");
+        previous[(3, 0)].set_symbol("D");
+
+        let next = Buffer::empty(area);
+        let updates = diff_buffers(&previous, &next);
+
+        assert!(matches!(
+            updates.first(),
+            Some(DrawCommand::ClearToEnd { x: 0, y: 0, .. })
+        ));
+    }
 }

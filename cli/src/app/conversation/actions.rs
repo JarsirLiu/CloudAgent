@@ -25,8 +25,8 @@ pub(crate) fn handle_tui_input(
 ) -> Result<bool> {
     match input {
         ParsedInput::LocalCopy => {
-            let Some(text) = app.transcript_state.last_copyable_output.as_deref() else {
-                app.push_cell(HistoryCell::info(
+            let Some(text) = app.transcript_owner.last_copyable_output() else {
+                app.push_live_cell(HistoryCell::info(
                     "conversation",
                     "`/copy` unavailable before first assistant output",
                     HistoryTone::Warning,
@@ -41,7 +41,7 @@ pub(crate) fn handle_tui_input(
                     );
                 }
                 Err(err) => {
-                    app.push_cell(HistoryCell::info(
+                    app.push_live_cell(HistoryCell::info(
                         "error",
                         format!("failed to copy: {err}"),
                         HistoryTone::Error,
@@ -55,7 +55,7 @@ pub(crate) fn handle_tui_input(
                     .set_system_notice_level("Copied selected input text", NoticeLevel::Info);
             }
             Err(err) => {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "error",
                     format!("failed to copy: {err}"),
                     HistoryTone::Error,
@@ -63,14 +63,14 @@ pub(crate) fn handle_tui_input(
             }
         },
         ParsedInput::LocalHelp => {
-            app.push_cell(HistoryCell::agent(
+            app.push_live_cell(HistoryCell::agent(
                 "commands",
                 slash_command_help_text(),
                 HistoryFormat::Markdown,
             ));
         }
         ParsedInput::LocalInputError(message) => {
-            app.push_cell(HistoryCell::info(
+            app.push_live_cell(HistoryCell::info(
                 "conversation",
                 message,
                 HistoryTone::Warning,
@@ -83,9 +83,9 @@ pub(crate) fn handle_tui_input(
                 return Ok(false);
             }
             if let Err(err) = apply_permission_mode(app, mode.trim()) {
-                app.push_cell(HistoryCell::info("conversation", err, HistoryTone::Warning));
+                app.push_live_cell(HistoryCell::info("conversation", err, HistoryTone::Warning));
             } else if let Err(err) = persist_cli_settings(app) {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "config",
                     format!("failed to persist permission mode: {err}"),
                     HistoryTone::Warning,
@@ -105,7 +105,7 @@ pub(crate) fn handle_tui_input(
                 return Ok(false);
             }
             if base_url.trim().is_empty() || model.trim().is_empty() {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "config",
                     "Base URL and Model cannot be empty.",
                     HistoryTone::Warning,
@@ -117,7 +117,7 @@ pub(crate) fn handle_tui_input(
                 "Config updated in ~/.cloudagent/config.toml",
                 NoticeLevel::Info,
             );
-            app.push_cell(HistoryCell::info(
+            app.push_live_cell(HistoryCell::info(
                 "config",
                 "Saved API Key / Base URL / Model.",
                 HistoryTone::Control,
@@ -147,7 +147,7 @@ pub(crate) fn handle_tui_input(
             app.input_pane.clear_session_picker();
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "conversation",
                     "Usage: /session <session-id>",
                     HistoryTone::Warning,
@@ -161,7 +161,7 @@ pub(crate) fn handle_tui_input(
         ParsedInput::LocalConversationTitle(title) => {
             let trimmed = title.trim();
             if trimmed.is_empty() {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "conversation",
                     "Usage: /title <text>",
                     HistoryTone::Warning,
@@ -176,7 +176,7 @@ pub(crate) fn handle_tui_input(
         ParsedInput::LocalConversationArchive(target_conversation_id) => {
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "conversation",
                     "Usage: /archive <session-id>",
                     HistoryTone::Warning,
@@ -205,14 +205,14 @@ pub(crate) fn handle_tui_input(
                 return Ok(false);
             }
             if let Err(usage) = apply_filter_toggle(app, &raw_args) {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "conversation",
                     usage,
                     HistoryTone::Warning,
                 ));
                 return Ok(false);
             } else if let Err(err) = persist_cli_settings(app) {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "config",
                     format!("failed to persist filter setting: {err}"),
                     HistoryTone::Warning,
@@ -233,7 +233,7 @@ pub(crate) fn handle_tui_input(
             if matches!(command, AppClientCommand::SubmitTurn(_))
                 && !app.console_state.can_submit_turn()
             {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "conversation",
                     "turn already running; wait, answer the pending request, or interrupt first",
                     HistoryTone::Warning,
@@ -242,7 +242,7 @@ pub(crate) fn handle_tui_input(
             }
 
             if let AppClientCommand::ResolveServerRequest { .. } = &command {
-                app.push_cell(HistoryCell::info(
+                app.push_live_cell(HistoryCell::info(
                     "request",
                     "server requests must be answered through the active approval view",
                     HistoryTone::Error,
@@ -254,7 +254,7 @@ pub(crate) fn handle_tui_input(
                 client.send_command(command)?;
                 return Ok(false);
             }
-            if let AppClientCommand::SubmitTurn(UserTurnInput { content: _, .. }) = &command {
+            if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
                 app.console_state.mode = FrontendMode::Running;
                 app.run_state
                     .set_system_notice_level("Submitting turn", NoticeLevel::Info);
@@ -262,6 +262,10 @@ pub(crate) fn handle_tui_input(
                 app.run_state.total_turn_usage = None;
                 app.run_state.model_context_window = None;
                 app.input_pane.clear_views();
+                app.transcript_owner.start_local_user(
+                    content.clone(),
+                    app.run_state.expand_tool_details,
+                );
             }
             client.send_command(command)?;
         }
@@ -364,14 +368,81 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
             app.transcript_state.reset_scroll();
+            app.transcript_owner.clear_pending_history();
             conversation_facade::rebuild_transcript_from_history(app);
         }
         ServerAction::UpsertTurnSnapshot(turn) => {
             conversation_facade::upsert_turn_snapshot(app, turn);
         }
+        ServerAction::BindActiveTurn(turn_id) => {
+            app.transcript_owner
+                .bind_turn_id(turn_id, app.run_state.expand_tool_details);
+        }
+        ServerAction::StartActiveTurnItem {
+            turn_id,
+            item_id,
+            kind,
+            title,
+        } => {
+            app.transcript_owner.start_item(
+                turn_id,
+                item_id,
+                kind,
+                title,
+                app.run_state.expand_tool_details,
+            );
+        }
+        ServerAction::AppendActiveAgentDelta {
+            turn_id,
+            item_id,
+            delta,
+        } => {
+            app.transcript_owner.append_agent_delta(
+                turn_id,
+                item_id,
+                delta,
+                app.run_state.expand_tool_details,
+            );
+        }
+        ServerAction::AppendActiveReasoningDelta {
+            turn_id,
+            item_id,
+            delta,
+        } => {
+            app.transcript_owner.append_reasoning_delta(
+                turn_id,
+                item_id,
+                delta,
+                app.run_state.expand_tool_details,
+            );
+        }
+        ServerAction::AppendActiveOutputDelta {
+            turn_id,
+            item_id,
+            delta,
+        } => {
+            app.transcript_owner.append_output_delta(
+                turn_id,
+                item_id,
+                delta,
+                app.run_state.expand_tool_details,
+            );
+        }
+        ServerAction::CompleteActiveTurnItem {
+            turn_id,
+            item_id,
+            item,
+        } => {
+            app.transcript_owner.complete_item(
+                turn_id,
+                item_id,
+                item,
+                app.run_state.expand_tool_details,
+            );
+        }
         ServerAction::PushErrorCell(message) => {
             app.input_pane.clear_views();
-            app.push_cell(HistoryCell::info("error", message, HistoryTone::Error));
+            app.push_live_cell(HistoryCell::info("error", message, HistoryTone::Error));
         }
         ServerAction::TurnDispatch(dispatch) => {
             conversation_facade::apply_turn_dispatch(app, dispatch)

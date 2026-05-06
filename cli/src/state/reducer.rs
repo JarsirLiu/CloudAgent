@@ -2,6 +2,7 @@ use crate::state::NoticeLevel;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
     FrontendMode, ModelRetryStage, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind,
+    TranscriptItem, TurnId, TurnItemKind,
 };
 
 #[derive(Debug, Clone)]
@@ -71,6 +72,33 @@ pub(crate) enum ServerAction {
     ClearLastToolName,
     ReplaceHistory(Vec<ConversationTurn>),
     UpsertTurnSnapshot(ConversationTurn),
+    BindActiveTurn(TurnId),
+    StartActiveTurnItem {
+        turn_id: TurnId,
+        item_id: String,
+        kind: TurnItemKind,
+        title: Option<String>,
+    },
+    AppendActiveAgentDelta {
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    AppendActiveReasoningDelta {
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    AppendActiveOutputDelta {
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    CompleteActiveTurnItem {
+        turn_id: TurnId,
+        item_id: String,
+        item: TranscriptItem,
+    },
     PushErrorCell(String),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
@@ -84,166 +112,240 @@ pub(crate) enum ServerAction {
 pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageReduce {
     let mut actions = Vec::new();
     match message {
-        AppServerMessage::Notification(notification) => {
-            match notification {
-                AppServerNotification::FrontendStateChanged { mode, .. } => {
-                    actions.push(ServerAction::SetMode(*mode));
-                }
-                AppServerNotification::TurnStarted { .. } => {
-                    actions.push(ServerAction::ClearCurrentTurnUsage);
-                }
-                AppServerNotification::ConversationStatus { .. } => {
-                    actions.push(ServerAction::ClearSystemNotice);
-                }
-                AppServerNotification::ConversationHistory { turns, .. } => {
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: "Workspace context ready".to_string(),
-                        level: NoticeLevel::Info,
-                    });
-                    actions.push(ServerAction::SetHistoryLoaded(true));
-                    actions.push(ServerAction::ReplaceHistory(turns.clone()));
-                }
-                AppServerNotification::TurnSnapshot { turn, .. } => {
-                    actions.push(ServerAction::SetHistoryLoaded(true));
-                    actions.push(ServerAction::UpsertTurnSnapshot(turn.clone()));
-                }
-                AppServerNotification::ConversationList { conversations, .. } => {
-                    actions.push(ServerAction::SetConversationList(conversations.clone()));
-                }
-                AppServerNotification::ConversationSwitched { conversation_id } => {
-                    actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: format!("Switched to `{conversation_id}`"),
-                        level: NoticeLevel::Info,
-                    });
-                }
-                AppServerNotification::Info { message, .. } => {
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: message.clone(),
-                        level: NoticeLevel::Info,
-                    });
-                }
-                AppServerNotification::TokenUsageUpdated {
-                    last_usage,
-                    total_usage,
-                    model_context_window,
-                    ..
-                } => {
-                    actions.push(ServerAction::SetTokenUsage {
-                        last_usage: last_usage.clone(),
-                        total_usage: total_usage.clone(),
-                        model_context_window: *model_context_window,
-                    });
-                }
-                AppServerNotification::ModelRetrying {
-                    stage,
-                    attempt,
-                    next_delay_ms,
-                    ..
-                } => {
-                    actions.push(ServerAction::SetRetryStatus {
-                        stage: stage.clone(),
-                        attempt: *attempt,
-                        next_delay_ms: *next_delay_ms,
-                    });
-                }
-                AppServerNotification::ContextCompacted {
-                    pre_context_tokens_estimate,
-                    post_context_tokens_estimate,
-                    ..
-                } => {
-                    let summary = format!(
-                        "Context compacted: ~{} -> ~{} tokens",
-                        pre_context_tokens_estimate, post_context_tokens_estimate
-                    );
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: summary.clone(),
-                        level: NoticeLevel::Warn,
-                    });
-                    actions.push(ServerAction::ClearLastToolName);
-                }
-                AppServerNotification::ContextCompactionStarted {
-                    estimated_tokens, ..
-                } => {
-                    let summary = format!("Compacting context... (~{} tokens)", estimated_tokens);
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: summary.clone(),
-                        level: NoticeLevel::Warn,
-                    });
-                }
-                AppServerNotification::Error { message, .. } => {
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: message.clone(),
-                        level: NoticeLevel::Error,
-                    });
-                    actions.push(ServerAction::PushErrorCell(message.clone()));
-                }
-                AppServerNotification::ServerRequestRequested { request, .. } => {
-                    let notice = match request {
-                        ServerRequest::CommandApproval { request } => {
-                            format!("Command approval required for {}", request.tool_name)
-                        }
-                        ServerRequest::FileChangeApproval { request } => {
-                            format!("Action required for {}", request.tool_name)
-                        }
-                    };
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: notice,
-                        level: NoticeLevel::Warn,
-                    });
-                }
-                AppServerNotification::ServerRequestResolved {
-                    request_id,
-                    decision,
-                    ..
-                } => {
-                    actions.push(ServerAction::SetMode(FrontendMode::Running));
-                    actions.push(ServerAction::DismissServerRequestView(request_id.clone()));
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: format!(
-                            "Request {}{}",
-                            decision.label(),
-                            decision
-                                .reason
-                                .as_deref()
-                                .map(|r| format!(": {r}"))
-                                .unwrap_or_default()
-                        ),
-                        level: NoticeLevel::Info,
-                    });
-                }
-                AppServerNotification::TurnCompleted { .. } => {
-                    actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::ClearServerRequestStatus);
-                    actions.push(ServerAction::ClearServerRequestView);
-                    actions.push(ServerAction::ClearLastToolName);
-                    actions.push(ServerAction::SetSystemNotice {
-                        text: "Turn complete".to_string(),
-                        level: NoticeLevel::Info,
-                    });
-                    actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
-                }
-                AppServerNotification::TurnFailed { error, .. } => {
-                    actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::ClearServerRequestStatus);
-                    actions.push(ServerAction::ClearServerRequestView);
-                    actions.push(ServerAction::ClearLastToolName);
-                    actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
-                        error: error.clone(),
-                    }));
-                }
-                AppServerNotification::TurnCancelled { reason, .. } => {
-                    actions.push(ServerAction::SetMode(FrontendMode::Idle));
-                    actions.push(ServerAction::ClearServerRequestStatus);
-                    actions.push(ServerAction::ClearServerRequestView);
-                    actions.push(ServerAction::ClearLastToolName);
-                    actions.push(ServerAction::TurnDispatch(TurnDispatch::Cancelled {
-                        reason: reason.clone(),
-                    }));
-                }
-                _ => {}
+        AppServerMessage::Notification(notification) => match notification {
+            AppServerNotification::FrontendStateChanged { mode, .. } => {
+                actions.push(ServerAction::SetMode(*mode));
             }
-        }
+            AppServerNotification::TurnStarted { turn_id, .. } => {
+                actions.push(ServerAction::ClearCurrentTurnUsage);
+                actions.push(ServerAction::BindActiveTurn(turn_id.clone()));
+            }
+            AppServerNotification::ConversationStatus { .. } => {
+                actions.push(ServerAction::ClearSystemNotice);
+            }
+            AppServerNotification::ConversationHistory { turns, .. } => {
+                actions.push(ServerAction::SetSystemNotice {
+                    text: "Workspace context ready".to_string(),
+                    level: NoticeLevel::Info,
+                });
+                actions.push(ServerAction::SetHistoryLoaded(true));
+                actions.push(ServerAction::ReplaceHistory(turns.clone()));
+            }
+            AppServerNotification::TurnSnapshot { turn, .. } => {
+                actions.push(ServerAction::SetHistoryLoaded(true));
+                actions.push(ServerAction::UpsertTurnSnapshot(turn.clone()));
+            }
+            AppServerNotification::ItemStarted {
+                turn_id,
+                item_id,
+                kind,
+                title,
+                ..
+            } => {
+                actions.push(ServerAction::StartActiveTurnItem {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    kind: kind.clone(),
+                    title: title.clone(),
+                });
+            }
+            AppServerNotification::AgentMessageDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            } => {
+                actions.push(ServerAction::AppendActiveAgentDelta {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                });
+            }
+            AppServerNotification::ReasoningSummaryTextDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            }
+            | AppServerNotification::ReasoningTextDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            } => {
+                actions.push(ServerAction::AppendActiveReasoningDelta {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                });
+            }
+            AppServerNotification::CommandExecutionOutputDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            }
+            | AppServerNotification::ToolOutputDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            }
+            | AppServerNotification::FileChangeOutputDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            } => {
+                actions.push(ServerAction::AppendActiveOutputDelta {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                });
+            }
+            AppServerNotification::ItemCompleted { turn_id, item, .. } => {
+                actions.push(ServerAction::CompleteActiveTurnItem {
+                    turn_id: turn_id.clone(),
+                    item_id: item.id().to_string(),
+                    item: item.clone(),
+                });
+            }
+            AppServerNotification::ConversationList { conversations, .. } => {
+                actions.push(ServerAction::SetConversationList(conversations.clone()));
+            }
+            AppServerNotification::ConversationSwitched { conversation_id } => {
+                actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
+                actions.push(ServerAction::SetSystemNotice {
+                    text: format!("Switched to `{conversation_id}`"),
+                    level: NoticeLevel::Info,
+                });
+            }
+            AppServerNotification::Info { message, .. } => {
+                actions.push(ServerAction::SetSystemNotice {
+                    text: message.clone(),
+                    level: NoticeLevel::Info,
+                });
+            }
+            AppServerNotification::TokenUsageUpdated {
+                last_usage,
+                total_usage,
+                model_context_window,
+                ..
+            } => {
+                actions.push(ServerAction::SetTokenUsage {
+                    last_usage: last_usage.clone(),
+                    total_usage: total_usage.clone(),
+                    model_context_window: *model_context_window,
+                });
+            }
+            AppServerNotification::ModelRetrying {
+                stage,
+                attempt,
+                next_delay_ms,
+                ..
+            } => {
+                actions.push(ServerAction::SetRetryStatus {
+                    stage: stage.clone(),
+                    attempt: *attempt,
+                    next_delay_ms: *next_delay_ms,
+                });
+            }
+            AppServerNotification::ContextCompacted {
+                pre_context_tokens_estimate,
+                post_context_tokens_estimate,
+                ..
+            } => {
+                let summary = format!(
+                    "Context compacted: ~{} -> ~{} tokens",
+                    pre_context_tokens_estimate, post_context_tokens_estimate
+                );
+                actions.push(ServerAction::SetSystemNotice {
+                    text: summary.clone(),
+                    level: NoticeLevel::Warn,
+                });
+                actions.push(ServerAction::ClearLastToolName);
+            }
+            AppServerNotification::ContextCompactionStarted {
+                estimated_tokens, ..
+            } => {
+                let summary = format!("Compacting context... (~{} tokens)", estimated_tokens);
+                actions.push(ServerAction::SetSystemNotice {
+                    text: summary.clone(),
+                    level: NoticeLevel::Warn,
+                });
+            }
+            AppServerNotification::Error { message, .. } => {
+                actions.push(ServerAction::SetSystemNotice {
+                    text: message.clone(),
+                    level: NoticeLevel::Error,
+                });
+                actions.push(ServerAction::PushErrorCell(message.clone()));
+            }
+            AppServerNotification::ServerRequestRequested { request, .. } => {
+                let notice = match request {
+                    ServerRequest::CommandApproval { request } => {
+                        format!("Command approval required for {}", request.tool_name)
+                    }
+                    ServerRequest::FileChangeApproval { request } => {
+                        format!("Action required for {}", request.tool_name)
+                    }
+                };
+                actions.push(ServerAction::SetSystemNotice {
+                    text: notice,
+                    level: NoticeLevel::Warn,
+                });
+            }
+            AppServerNotification::ServerRequestResolved {
+                request_id,
+                decision,
+                ..
+            } => {
+                actions.push(ServerAction::SetMode(FrontendMode::Running));
+                actions.push(ServerAction::DismissServerRequestView(request_id.clone()));
+                actions.push(ServerAction::SetSystemNotice {
+                    text: format!(
+                        "Request {}{}",
+                        decision.label(),
+                        decision
+                            .reason
+                            .as_deref()
+                            .map(|r| format!(": {r}"))
+                            .unwrap_or_default()
+                    ),
+                    level: NoticeLevel::Info,
+                });
+            }
+            AppServerNotification::TurnCompleted { .. } => {
+                actions.push(ServerAction::SetMode(FrontendMode::Idle));
+                actions.push(ServerAction::ClearServerRequestStatus);
+                actions.push(ServerAction::ClearServerRequestView);
+                actions.push(ServerAction::ClearLastToolName);
+                actions.push(ServerAction::SetSystemNotice {
+                    text: "Turn complete".to_string(),
+                    level: NoticeLevel::Info,
+                });
+                actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
+            }
+            AppServerNotification::TurnFailed { error, .. } => {
+                actions.push(ServerAction::SetMode(FrontendMode::Idle));
+                actions.push(ServerAction::ClearServerRequestStatus);
+                actions.push(ServerAction::ClearServerRequestView);
+                actions.push(ServerAction::ClearLastToolName);
+                actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
+                    error: error.clone(),
+                }));
+            }
+            AppServerNotification::TurnCancelled { reason, .. } => {
+                actions.push(ServerAction::SetMode(FrontendMode::Idle));
+                actions.push(ServerAction::ClearServerRequestStatus);
+                actions.push(ServerAction::ClearServerRequestView);
+                actions.push(ServerAction::ClearLastToolName);
+                actions.push(ServerAction::TurnDispatch(TurnDispatch::Cancelled {
+                    reason: reason.clone(),
+                }));
+            }
+            _ => {}
+        },
         AppServerMessage::Request(AppServerRequest::ServerRequest {
             request_id,
             request,
@@ -412,5 +514,4 @@ mod tests {
             )
         }));
     }
-
 }

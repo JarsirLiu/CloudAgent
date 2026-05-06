@@ -1,10 +1,10 @@
-use crossterm::event::{self, Event as CEvent, KeyEvent, MouseEvent};
+use crossterm::event::{self, Event as CEvent, KeyEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub(crate) enum UiEvent {
     Key(KeyEvent),
-    Mouse(MouseEvent),
+    ScrollbackBrowse,
     Paste(String),
     Resize,
     Tick,
@@ -26,8 +26,8 @@ pub(crate) fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
                             break;
                         }
                     }
-                    Ok(CEvent::Mouse(mouse)) => {
-                        if tx.send(UiEvent::Mouse(mouse)).is_err() {
+                    Ok(CEvent::Mouse(_)) => {
+                        if tx.send(UiEvent::ScrollbackBrowse).is_err() {
                             break;
                         }
                     }

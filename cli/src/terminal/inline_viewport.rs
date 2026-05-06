@@ -4,16 +4,27 @@ use anyhow::Result;
 use crossterm::cursor::MoveTo;
 use crossterm::queue;
 use crossterm::style::Print;
-use ratatui::layout::Position;
 
-use crate::terminal::TerminalGuard;
+use ratatui::backend::Backend;
+use std::io::Write;
 
-pub(crate) fn update_inline_viewport(terminal: &mut TerminalGuard, height: u16) -> Result<()> {
-    let size = terminal.terminal.size()?;
-    let previous = terminal.terminal.viewport_area;
+use crate::terminal::custom_terminal::Terminal;
+
+pub(crate) fn update_inline_viewport_area<B>(terminal: &mut Terminal<B>, height: u16) -> Result<()>
+where
+    B: Backend + Write,
+{
+    let size = terminal.size()?;
+    let previous = terminal.viewport_area;
     let mut area = previous;
     area.height = height.clamp(1, size.height.max(1));
     area.width = size.width;
+    area.y = size.height.saturating_sub(area.height);
+
+    if area.y < previous.y {
+        let grow_by = previous.y - area.y;
+        scroll_region_up(terminal, 0..previous.top(), grow_by)?;
+    }
 
     if area.bottom() > size.height {
         let scroll_by = area.bottom() - size.height;
@@ -22,22 +33,24 @@ pub(crate) fn update_inline_viewport(terminal: &mut TerminalGuard, height: u16) 
     }
 
     if area != previous {
-        let clear_position = Position::new(0, previous.y.min(area.y));
-        terminal.terminal.set_viewport_area(area);
-        terminal.terminal.clear_after_position(clear_position)?;
+        terminal.set_viewport_area(area);
+        terminal.clear_rows(previous.y.min(area.y), size.height)?;
     }
     Ok(())
 }
 
-fn scroll_region_up(
-    terminal: &mut TerminalGuard,
+fn scroll_region_up<B>(
+    terminal: &mut Terminal<B>,
     region: std::ops::Range<u16>,
     scroll_by: u16,
-) -> Result<()> {
+) -> Result<()>
+where
+    B: Backend + Write,
+{
     if scroll_by == 0 || region.is_empty() {
         return Ok(());
     }
-    let writer = terminal.terminal.backend_mut();
+    let writer = terminal.backend_mut();
     queue!(writer, SetScrollRegion(region.start + 1..region.end))?;
     queue!(writer, MoveTo(0, region.end.saturating_sub(1)))?;
     for _ in 0..scroll_by {
