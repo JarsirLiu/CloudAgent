@@ -1,6 +1,7 @@
 use crate::app::TuiApp;
 use crate::state::status_view_model::build_status_view_model;
 use crate::terminal::Frame;
+use crate::ui::widgets::history_cell::HistoryCell;
 use crate::ui::widgets::live_status_cell::render_live_status_line;
 use crate::ui::widgets::welcome::WelcomeScreen;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
@@ -8,9 +9,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-const WELCOME_HEIGHT: u16 = 27;
 const MAX_CONTENT_WIDTH: u16 = 140;
-const ACTIVE_TOP_INSET: u16 = 1;
+
 pub(crate) struct ChatSurface;
 
 impl ChatSurface {
@@ -18,14 +18,16 @@ impl ChatSurface {
         let area = frame.area();
         let content = centered_column(area, MAX_CONTENT_WIDTH);
         let bottom_height = bottom_pane_height(app, content.width).min(content.height);
-        let live_height = live_area_height(app, content.width)
-            .unwrap_or(0)
-            .min(content.height.saturating_sub(bottom_height));
+        let transcript_height = content.height.saturating_sub(bottom_height).max(1);
 
-        let (live_area, bottom_area) = split_live_and_bottom(content, live_height, bottom_height);
-        render_live_area(app, frame, live_area);
+        let [transcript_area, bottom_area] = Layout::vertical([
+            Constraint::Length(transcript_height),
+            Constraint::Length(bottom_height.max(1)),
+        ])
+        .areas(content);
+
+        render_transcript_area(app, frame, transcript_area);
         let status = build_status_view_model(app);
-
         let bottom = app.input_pane.render(
             frame,
             bottom_area,
@@ -39,13 +41,6 @@ impl ChatSurface {
             frame.set_cursor_position((x, y));
         }
     }
-
-    pub(crate) fn desired_height(app: &TuiApp, width: u16) -> u16 {
-        let content_width = width.min(MAX_CONTENT_WIDTH);
-        let bottom_height = bottom_pane_height(app, content_width);
-        let live_height = live_area_height(app, content_width).unwrap_or(0);
-        bottom_height.saturating_add(live_height).max(1)
-    }
 }
 
 fn bottom_pane_height(app: &TuiApp, width: u16) -> u16 {
@@ -54,52 +49,57 @@ fn bottom_pane_height(app: &TuiApp, width: u16) -> u16 {
         .max(1)
 }
 
-fn live_area_height(app: &TuiApp, width: u16) -> Option<u16> {
-    if should_show_welcome(app) {
-        Some(WELCOME_HEIGHT)
-    } else if has_live_status(app) {
-        let status_lines = 1u16;
-        let active_height = active_cell_height(app, width).unwrap_or(0);
-        Some(
-            active_height
-                .saturating_add(status_lines)
-                .saturating_add(ACTIVE_TOP_INSET),
-        )
-    } else {
-        active_cell_height(app, width).map(|height| height.saturating_add(ACTIVE_TOP_INSET))
-    }
-}
-
-fn split_live_and_bottom(content: Rect, live_height: u16, bottom_height: u16) -> (Rect, Rect) {
-    if live_height == 0 {
-        return (
-            Rect {
-                height: 0,
-                ..content
-            },
-            Rect {
-                height: bottom_height.max(1),
-                ..content
-            },
-        );
-    }
-
-    let [live_area, bottom_area] = Layout::vertical([
-        Constraint::Length(live_height),
-        Constraint::Length(bottom_height.max(1)),
-    ])
-    .areas(content);
-    (live_area, bottom_area)
-}
-
-fn render_live_area(app: &TuiApp, frame: &mut Frame, area: Rect) {
+fn render_transcript_area(app: &TuiApp, frame: &mut Frame, area: Rect) {
     if area.height == 0 {
         return;
     }
     if should_show_welcome(app) {
         render_welcome(app, frame, area);
+        return;
+    }
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let render_width = inner.width.saturating_sub(2).max(40) as usize;
+    let lines = clipped_transcript_lines(app, render_width, inner.height as usize);
+    frame.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), inner);
+}
+
+fn clipped_transcript_lines(app: &TuiApp, render_width: usize, max_lines: usize) -> Vec<Line<'static>> {
+    let lines = transcript_lines(app, render_width as usize);
+    if lines.len() > max_lines {
+        lines[lines.len() - max_lines..].to_vec()
     } else {
-        render_live_overlays(app, frame, area);
+        lines
+    }
+}
+
+fn transcript_lines(app: &TuiApp, render_width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for (index, cell) in app.history_cells().iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::from(""));
+        }
+        push_cell_lines(&mut lines, cell, render_width);
+    }
+    if let Some(line) = render_live_status_line(app) {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(line);
+    }
+    lines
+}
+
+fn push_cell_lines(lines: &mut Vec<Line<'static>>, cell: &HistoryCell, render_width: usize) {
+    if !cell.body().trim().is_empty() {
+        lines.extend(cell.to_lines_with_mode(render_width));
     }
 }
 
@@ -187,63 +187,7 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
 fn should_show_welcome(app: &TuiApp) -> bool {
     app.transcript_state.transcript.is_empty()
         && app.run_state.history_loaded
-        && !has_live_status(app)
-}
-
-fn active_cell_height(app: &TuiApp, width: u16) -> Option<u16> {
-    let render_width = width.saturating_sub(4).max(40) as usize;
-    let lines = live_overlay_lines(app, render_width);
-    (!lines.is_empty()).then_some(lines.len().max(1) as u16)
-}
-
-fn render_live_overlays(app: &TuiApp, frame: &mut Frame, area: Rect) {
-    let live_area = Rect {
-        y: area.y.saturating_add(ACTIVE_TOP_INSET),
-        height: area.height.saturating_sub(ACTIVE_TOP_INSET),
-        ..area
-    };
-    let inner = live_area.inner(Margin {
-        horizontal: 2,
-        vertical: 0,
-    });
-    let render_width = inner.width.max(40) as usize;
-    let mut lines = live_overlay_lines(app, render_width);
-    if let Some(line) = render_live_status_line(app) {
-        lines.push(line);
-    }
-    if lines.is_empty() {
-        return;
-    }
-    let max_lines = inner.height as usize;
-    if lines.len() > max_lines {
-        lines = lines[lines.len() - max_lines..].to_vec();
-    }
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
-        inner,
-    );
-}
-
-fn has_live_status(app: &TuiApp) -> bool {
-    render_live_status_line(app).is_some()
-}
-
-fn live_overlay_lines(app: &TuiApp, render_width: usize) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    for (index, cell) in app
-        .transcript_state
-        .live_cells(app.run_state.expand_tool_details)
-        .iter()
-        .enumerate()
-    {
-        if index > 0 {
-            lines.push(Line::from(""));
-        }
-        if !cell.body().trim().is_empty() {
-            lines.extend(cell.to_lines_with_mode(render_width));
-        }
-    }
-    lines
+        && render_live_status_line(app).is_none()
 }
 
 fn centered_column(area: Rect, max_width: u16) -> Rect {

@@ -1263,4 +1263,174 @@ mod tests {
             2
         );
     }
+
+    #[test]
+    fn late_reasoning_stays_after_assistant_in_arrival_order() {
+        let turns = build_turns_from_rollout_items(&[
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "hi".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:1".to_string(),
+                call_id: None,
+                kind: TurnItemKind::AssistantMessage,
+                title: Some("assistant_message".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemDelta {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:1".to_string(),
+                call_id: None,
+                kind: TurnItemDeltaKind::Text,
+                delta: "final".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning:1".to_string(),
+                call_id: None,
+                kind: TurnItemKind::Reasoning,
+                title: Some("reasoning".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemDelta {
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning:1".to_string(),
+                call_id: None,
+                kind: TurnItemDeltaKind::ReasoningSummary,
+                delta: "thinking".to_string(),
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ]);
+
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { .. },
+                TranscriptItem::AgentMessage { text: assistant, .. },
+                TranscriptItem::Reasoning { text: reasoning, .. },
+            ] if reasoning == "thinking" && assistant == "final"
+        ));
+    }
+
+    #[test]
+    fn late_reasoning_and_tools_preserve_arrival_order_after_assistant() {
+        let turns = build_turns_from_rollout_items(&[
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "hi".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:1".to_string(),
+                call_id: None,
+                kind: TurnItemKind::AssistantMessage,
+                title: Some("assistant_message".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:1".to_string(),
+                call_id: Some("call-1".to_string()),
+                kind: TurnItemKind::CommandExecution,
+                title: Some("pwd".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemDelta {
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:1".to_string(),
+                call_id: Some("call-1".to_string()),
+                kind: TurnItemDeltaKind::CommandExecutionOutput,
+                delta: "D:\\work".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning:1".to_string(),
+                call_id: None,
+                kind: TurnItemKind::Reasoning,
+                title: Some("reasoning".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemDelta {
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning:1".to_string(),
+                call_id: None,
+                kind: TurnItemDeltaKind::ReasoningSummary,
+                delta: "thinking".to_string(),
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ]);
+
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { .. },
+                TranscriptItem::AgentMessage { .. },
+                TranscriptItem::CommandExecution { .. },
+                TranscriptItem::Reasoning { .. },
+            ]
+        ));
+    }
+
+    #[test]
+    fn later_reasoning_preserves_arrival_order_relative_to_existing_blocks() {
+        let turns = build_turns_from_rollout_items(&[
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: "hi".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning:1".to_string(),
+                call_id: None,
+                kind: TurnItemKind::Reasoning,
+                title: Some("reasoning".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemDelta {
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning:1".to_string(),
+                call_id: None,
+                kind: TurnItemDeltaKind::ReasoningSummary,
+                delta: "thinking 1".to_string(),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "tool:1".to_string(),
+                call_id: Some("call-1".to_string()),
+                kind: TurnItemKind::CommandExecution,
+                title: Some("pwd".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:1".to_string(),
+                call_id: None,
+                kind: TurnItemKind::AssistantMessage,
+                title: Some("assistant_message".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning:2".to_string(),
+                call_id: None,
+                kind: TurnItemKind::Reasoning,
+                title: Some("reasoning".to_string()),
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ]);
+
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { .. },
+                TranscriptItem::Reasoning { id: first_reasoning, .. },
+                TranscriptItem::CommandExecution { .. },
+                TranscriptItem::AgentMessage { .. },
+                TranscriptItem::Reasoning { id: second_reasoning, .. },
+            ] if first_reasoning == "reasoning:1" && second_reasoning == "reasoning:2"
+        ));
+    }
 }

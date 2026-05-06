@@ -366,6 +366,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "conversation/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::TurnSnapshot { .. } => (
+            "conversation/turnSnapshot",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ConversationHistoryPage { .. } => (
             "conversation/historyPage",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -449,6 +453,7 @@ fn parse_server_notification(
         | "turn/cancelled"
         | "conversation/status"
         | "conversation/history"
+        | "conversation/turnSnapshot"
         | "conversation/historyPage"
         | "conversation/list"
         | "conversation/switched"

@@ -2,8 +2,7 @@ use crate::app::TuiApp;
 use crate::app::conversation::actions::handle_tui_input;
 use crate::app::conversation::event_router;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
-use crate::terminal::{ScrollbackSurface, TerminalGuard, UiEvent, spawn_tui_event_loop};
-use crate::ui::chat_surface::ChatSurface;
+use crate::terminal::{TerminalGuard, UiEvent, spawn_tui_event_loop};
 use agent_app_server_client::AppServerClient;
 use anyhow::Result;
 
@@ -12,22 +11,13 @@ pub(crate) async fn run_tui_event_loop(
     client: &mut AppServerClient,
 ) -> Result<()> {
     let mut terminal = TerminalGuard::new()?;
-    let mut surface = ScrollbackSurface::new();
     let mut events = spawn_tui_event_loop();
     let mut needs_redraw = true;
 
     loop {
         if needs_redraw {
-            if app.take_pending_history_rebuild() {
-                surface.replace_all(&mut terminal, app.history_cells())?;
-                app.clear_pending_history_cells();
-            } else {
-                surface.reflow_if_width_changed(&mut terminal, app.history_cells())?;
-            }
-            let pending_history_lines =
-                surface.pending_lines(&terminal, app.drain_pending_history_cells())?;
-            let height = ChatSurface::desired_height(app, terminal.terminal.size()?.width).max(1);
-            terminal.draw_with_history(height, pending_history_lines, |frame| app.render(frame))?;
+            let height = terminal.terminal.size()?.height.max(1);
+            terminal.draw_with_history(height, Vec::new(), |frame| app.render(frame))?;
         }
 
         let redraw_after_event = tokio::select! {

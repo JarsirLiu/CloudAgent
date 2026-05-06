@@ -221,6 +221,10 @@ pub enum AppServerNotification {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
     },
+    TurnSnapshot {
+        conversation_id: String,
+        turn: ConversationTurn,
+    },
     ConversationHistoryPage {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
@@ -320,6 +324,9 @@ impl AppServerNotification {
             | Self::ConversationHistory {
                 conversation_id, ..
             }
+            | Self::TurnSnapshot {
+                conversation_id, ..
+            }
             | Self::ConversationHistoryPage {
                 conversation_id, ..
             }
@@ -393,6 +400,7 @@ pub fn classify_notification(
         | AppServerNotification::ReasoningSummaryTextDelta { .. }
         | AppServerNotification::ReasoningTextDelta { .. }
         | AppServerNotification::ItemCompleted { .. }
+        | AppServerNotification::TurnSnapshot { .. }
         | AppServerNotification::TurnCompleted { .. } => (
             NotificationStream::CoreTranscript,
             NotificationDelivery::Lossless,

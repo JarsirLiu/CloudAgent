@@ -8,7 +8,6 @@ pub(crate) fn render_live_status_line(app: &TuiApp) -> Option<Line<'static>> {
     let dot = frames[(app.run_state.live_animation_frame as usize) % frames.len()];
     if let Some(label) = app.runtime_projection.live_label.as_ref() {
         let color = match app.runtime_projection.phase.as_ref() {
-            Some(RuntimePhase::ToolRunning) => Color::Rgb(120, 190, 130),
             Some(RuntimePhase::WaitingApproval) => Color::Rgb(255, 190, 90),
             _ => Color::Rgb(100, 180, 255),
         };
@@ -42,17 +41,6 @@ pub(crate) fn render_live_status_line(app: &TuiApp) -> Option<Line<'static>> {
             ),
             Span::styled(
                 " waiting for approval",
-                Style::default().fg(Color::Rgb(140, 150, 170)),
-            ),
-        ])),
-        Some(RuntimePhase::ToolRunning) => Some(Line::from(vec![
-            Span::styled(" ", Style::default().fg(Color::Rgb(90, 100, 120))),
-            Span::styled(
-                dot.to_string(),
-                Style::default().fg(Color::Rgb(120, 190, 130)),
-            ),
-            Span::styled(
-                " running tool",
                 Style::default().fg(Color::Rgb(140, 150, 170)),
             ),
         ])),

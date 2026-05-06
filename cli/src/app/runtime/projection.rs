@@ -1,5 +1,5 @@
 use crate::app::TuiApp;
-use crate::state::reducer::{ControlDispatch, ItemDispatch, ServerAction};
+use crate::state::reducer::ServerAction;
 
 pub(crate) fn apply_runtime_projection_update(app: &mut TuiApp, action: &ServerAction) {
     match action {
@@ -13,20 +13,6 @@ pub(crate) fn apply_runtime_projection_update(app: &mut TuiApp, action: &ServerA
         } => app
             .runtime_projection
             .on_model_retrying(stage.clone(), *attempt, *next_delay_ms),
-        ServerAction::ItemDispatch(ItemDispatch::AssistantStarted { .. })
-        | ServerAction::ItemDispatch(ItemDispatch::AssistantDelta { .. }) => {
-            app.runtime_projection.on_assistant_activity();
-        }
-        ServerAction::ItemDispatch(ItemDispatch::ReasoningStarted { .. })
-        | ServerAction::ItemDispatch(ItemDispatch::ReasoningDelta { .. }) => {
-            app.runtime_projection.on_reasoning_activity();
-        }
-        ServerAction::ItemDispatch(ItemDispatch::Control(ControlDispatch::Started {
-            title, ..
-        })) => app.runtime_projection.on_tool_started(title.clone()),
-        ServerAction::ItemDispatch(ItemDispatch::Control(ControlDispatch::Completed { .. })) => {
-            app.runtime_projection.on_tool_finished();
-        }
         ServerAction::TurnDispatch(_) => app.runtime_projection.on_turn_finished(),
         _ => {}
     }

@@ -74,15 +74,8 @@ impl TuiApp {
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
         match dispatch {
-            TurnDispatch::Completed => {
-                self.flush_reasoning_buffer_to_transcript();
-                self.flush_live_cells_to_transcript();
-                self.consolidate_exploration_stage();
-            }
+            TurnDispatch::Completed => {}
             TurnDispatch::Failed { error } => {
-                self.flush_reasoning_buffer_to_transcript();
-                self.flush_live_cells_to_transcript();
-                self.consolidate_exploration_stage();
                 self.push_cell(HistoryCell::info(
                     "turn",
                     format!("failed: {error}"),
@@ -90,9 +83,6 @@ impl TuiApp {
                 ));
             }
             TurnDispatch::Cancelled { reason } => {
-                self.flush_reasoning_buffer_to_transcript();
-                self.flush_live_cells_to_transcript();
-                self.consolidate_exploration_stage();
                 self.push_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));
             }
         }

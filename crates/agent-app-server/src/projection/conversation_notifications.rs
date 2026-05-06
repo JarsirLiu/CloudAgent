@@ -1,5 +1,7 @@
-use agent_core::{CoreTranscriptEvent, core_transcript_event_from_event_msg};
-use agent_protocol::{AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnState};
+use agent_core::{ConversationTurn, CoreTranscriptEvent, TranscriptItem, core_transcript_event_from_event_msg};
+use agent_protocol::{
+    AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnItemKind, TurnState,
+};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -9,11 +11,110 @@ struct ActiveLifecycle {
     call_id: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ProjectedItemStatus {
+    Started,
+    Completed,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct ProjectedItemState {
+    turn_id: String,
+    item_id: String,
+    call_id: Option<String>,
+    kind: TurnItemKind,
+    title: Option<String>,
+    status: ProjectedItemStatus,
+    last_delta_kind: Option<TurnItemDeltaKind>,
+    text_buffer: String,
+    reasoning_buffer: String,
+    tool_output_buffer: String,
+    order_hint: u64,
+}
+
+impl ProjectedItemState {
+    fn new(
+        turn_id: String,
+        item_id: String,
+        call_id: Option<String>,
+        kind: TurnItemKind,
+        title: Option<String>,
+        order_hint: u64,
+    ) -> Self {
+        Self {
+            turn_id,
+            item_id,
+            call_id,
+            kind,
+            title,
+            status: ProjectedItemStatus::Started,
+            last_delta_kind: None,
+            text_buffer: String::new(),
+            reasoning_buffer: String::new(),
+            tool_output_buffer: String::new(),
+            order_hint,
+        }
+    }
+
+    fn apply_delta(&mut self, kind: TurnItemDeltaKind, delta: &str) {
+        self.last_delta_kind = Some(kind.clone());
+        match kind {
+            TurnItemDeltaKind::Text => self.text_buffer.push_str(delta),
+            TurnItemDeltaKind::ReasoningSummary | TurnItemDeltaKind::ReasoningText => {
+                self.reasoning_buffer.push_str(delta)
+            }
+            TurnItemDeltaKind::CommandExecutionOutput
+            | TurnItemDeltaKind::ToolOutput
+            | TurnItemDeltaKind::FileChangeOutput => self.tool_output_buffer.push_str(delta),
+            TurnItemDeltaKind::JsonPatch => {}
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TurnProjectionState {
+    state: TurnState,
+    items_in_order: Vec<String>,
+    rollout_start_index: usize,
+    rollout_end_index: usize,
+}
+
+impl TurnProjectionState {
+    fn new(rollout_index: usize) -> Self {
+        Self {
+            state: TurnState::Running,
+            items_in_order: Vec::new(),
+            rollout_start_index: rollout_index,
+            rollout_end_index: rollout_index,
+        }
+    }
+
+    fn push_item(&mut self, item_id: &str) {
+        if !self.items_in_order.iter().any(|existing| existing == item_id) {
+            self.items_in_order.push(item_id.to_string());
+        }
+    }
+
+    fn retain_item_ids(&mut self, keep: impl Fn(&String) -> bool) {
+        self.items_in_order.retain(keep);
+    }
+
+    fn touch(&mut self, rollout_index: usize) {
+        self.rollout_end_index = rollout_index;
+    }
+}
+
 pub(crate) struct ConversationNotificationProjector {
     conversation_id: String,
     deferred_terminal_notifications: Vec<AppServerNotification>,
     active_items_by_item_id: HashMap<String, ActiveLifecycle>,
     active_item_id_by_call_id: HashMap<String, String>,
+    turns_by_turn_id: HashMap<String, TurnProjectionState>,
+    items_by_item_id: HashMap<String, ProjectedItemState>,
+    next_item_order_hint: u64,
+    next_rollout_index: usize,
+    active_turn_id: Option<String>,
 }
 
 impl ConversationNotificationProjector {
@@ -23,19 +124,36 @@ impl ConversationNotificationProjector {
             deferred_terminal_notifications: Vec::new(),
             active_items_by_item_id: HashMap::new(),
             active_item_id_by_call_id: HashMap::new(),
+            turns_by_turn_id: HashMap::new(),
+            items_by_item_id: HashMap::new(),
+            next_item_order_hint: 0,
+            next_rollout_index: 0,
+            active_turn_id: None,
         }
     }
 
+    pub(crate) fn conversation_id(&self) -> &str {
+        &self.conversation_id
+    }
+
     pub(crate) fn project_turn_event(&mut self, event: &EventMsg) -> Vec<AppServerNotification> {
+        let rollout_index = self.bump_rollout_index();
         if let Some(core_event) = core_transcript_event_from_event_msg(event) {
-            return self.project_core_transcript_event(core_event);
+            return self.project_core_transcript_event(core_event, rollout_index);
         }
 
         match event {
-            EventMsg::TurnStarted { turn_id, .. } => vec![AppServerNotification::TurnStarted {
-                conversation_id: self.conversation_id.clone(),
-                turn_id: turn_id.clone(),
-            }],
+            EventMsg::TurnStarted {
+                turn_id,
+                user_input,
+                ..
+            } => {
+                self.observe_turn_started(turn_id.clone(), user_input.clone(), rollout_index);
+                vec![AppServerNotification::TurnStarted {
+                    conversation_id: self.conversation_id.clone(),
+                    turn_id: turn_id.clone(),
+                }]
+            }
             EventMsg::ItemStarted {
                 turn_id,
                 item_id,
@@ -49,6 +167,14 @@ impl ConversationNotificationProjector {
                     call_id: call_id.clone(),
                 };
                 self.register_active_item(lifecycle);
+                self.observe_item_started(
+                    turn_id.clone(),
+                    item_id.clone(),
+                    call_id.clone(),
+                    kind.clone(),
+                    title.clone(),
+                    rollout_index,
+                );
                 vec![AppServerNotification::ItemStarted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id: turn_id.clone(),
@@ -67,8 +193,12 @@ impl ConversationNotificationProjector {
             } => match kind {
                 TurnItemDeltaKind::Text
                 | TurnItemDeltaKind::ReasoningSummary
-                | TurnItemDeltaKind::ReasoningText => Vec::new(),
+                | TurnItemDeltaKind::ReasoningText => {
+                    self.observe_item_delta(turn_id, item_id, kind.clone(), delta, rollout_index);
+                    Vec::new()
+                }
                 TurnItemDeltaKind::CommandExecutionOutput => {
+                    self.observe_item_delta(turn_id, item_id, kind.clone(), delta, rollout_index);
                     if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
                         return vec![error];
                     }
@@ -83,6 +213,7 @@ impl ConversationNotificationProjector {
                     }]
                 }
                 TurnItemDeltaKind::ToolOutput => {
+                    self.observe_item_delta(turn_id, item_id, kind.clone(), delta, rollout_index);
                     if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
                         return vec![error];
                     }
@@ -97,6 +228,7 @@ impl ConversationNotificationProjector {
                     }]
                 }
                 TurnItemDeltaKind::FileChangeOutput => {
+                    self.observe_item_delta(turn_id, item_id, kind.clone(), delta, rollout_index);
                     if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
                         return vec![error];
                     }
@@ -169,8 +301,12 @@ impl ConversationNotificationProjector {
                     request: request.clone(),
                 }]
             }
-            EventMsg::TurnCompleted { .. } => Vec::new(),
+            EventMsg::TurnCompleted { turn_id } => {
+                self.observe_turn_state(turn_id, TurnState::Completed, rollout_index);
+                Vec::new()
+            }
             EventMsg::TurnFailed { turn_id, error } => {
+                self.observe_turn_state(turn_id, TurnState::Failed, rollout_index);
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnFailed {
                         conversation_id: self.conversation_id.clone(),
@@ -180,6 +316,7 @@ impl ConversationNotificationProjector {
                 Vec::new()
             }
             EventMsg::TurnCancelled { turn_id, reason } => {
+                self.observe_turn_state(turn_id, TurnState::Cancelled, rollout_index);
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnCancelled {
                         conversation_id: self.conversation_id.clone(),
@@ -197,6 +334,7 @@ impl ConversationNotificationProjector {
     fn project_core_transcript_event(
         &mut self,
         event: CoreTranscriptEvent,
+        rollout_index: usize,
     ) -> Vec<AppServerNotification> {
         match event {
             CoreTranscriptEvent::TurnCompleted { turn_id } => {
@@ -204,6 +342,7 @@ impl ConversationNotificationProjector {
                     self.deferred_terminal_notifications.push(error);
                 }
                 self.retain_active_items_for_other_turns(&turn_id);
+                self.clear_turn_projection_state(&turn_id);
                 self.deferred_terminal_notifications
                     .push(AppServerNotification::TurnCompleted {
                         conversation_id: self.conversation_id.clone(),
@@ -220,6 +359,14 @@ impl ConversationNotificationProjector {
                 let lifecycle_error =
                     self.validate_active_lifecycle(&turn_id, &item_id, &call_id);
                 let lifecycle = self.remove_active_item(&item_id);
+                self.observe_item_completed(&turn_id, &item_id, &item, rollout_index);
+                if matches!(
+                    item,
+                    agent_core::TranscriptItem::AgentMessage { .. }
+                        | agent_core::TranscriptItem::Reasoning { .. }
+                ) {
+                    return lifecycle_error.into_iter().collect();
+                }
                 let mut notifications = Vec::new();
                 if let Some(error) = lifecycle_error {
                     notifications.push(error);
@@ -236,19 +383,16 @@ impl ConversationNotificationProjector {
                 turn_id,
                 item_id,
                 delta,
-            } => self.project_core_delta(
-                turn_id,
-                item_id,
-                delta,
-                |conversation_id, turn_id, item_id, delta| {
-                    AppServerNotification::AgentMessageDelta {
-                        conversation_id,
-                        turn_id,
-                        item_id,
-                        delta,
-                    }
-                },
-            ),
+            } => {
+                self.observe_item_delta(
+                    &turn_id,
+                    &item_id,
+                    TurnItemDeltaKind::Text,
+                    &delta,
+                    rollout_index,
+                );
+                Vec::new()
+            }
             CoreTranscriptEvent::PlanDelta {
                 turn_id,
                 item_id,
@@ -268,36 +412,30 @@ impl ConversationNotificationProjector {
                 turn_id,
                 item_id,
                 delta,
-            } => self.project_core_delta(
-                turn_id,
-                item_id,
-                delta,
-                |conversation_id, turn_id, item_id, delta| {
-                    AppServerNotification::ReasoningSummaryTextDelta {
-                        conversation_id,
-                        turn_id,
-                        item_id,
-                        delta,
-                    }
-                },
-            ),
+            } => {
+                self.observe_item_delta(
+                    &turn_id,
+                    &item_id,
+                    TurnItemDeltaKind::ReasoningSummary,
+                    &delta,
+                    rollout_index,
+                );
+                Vec::new()
+            }
             CoreTranscriptEvent::ReasoningTextDelta {
                 turn_id,
                 item_id,
                 delta,
-            } => self.project_core_delta(
-                turn_id,
-                item_id,
-                delta,
-                |conversation_id, turn_id, item_id, delta| {
-                    AppServerNotification::ReasoningTextDelta {
-                        conversation_id,
-                        turn_id,
-                        item_id,
-                        delta,
-                    }
-                },
-            ),
+            } => {
+                self.observe_item_delta(
+                    &turn_id,
+                    &item_id,
+                    TurnItemDeltaKind::ReasoningText,
+                    &delta,
+                    rollout_index,
+                );
+                Vec::new()
+            }
         }
     }
 
@@ -413,6 +551,175 @@ impl ConversationNotificationProjector {
             .and_then(|lifecycle| lifecycle.call_id.as_deref())
     }
 
+    fn observe_item_started(
+        &mut self,
+        turn_id: String,
+        item_id: String,
+        call_id: Option<String>,
+        kind: TurnItemKind,
+        title: Option<String>,
+        rollout_index: usize,
+    ) {
+        let order_hint = self.bump_item_order_hint();
+        self.turns_by_turn_id
+            .entry(turn_id.clone())
+            .or_insert_with(|| TurnProjectionState::new(rollout_index))
+            .push_item(&item_id);
+        self.touch_turn(&turn_id, rollout_index);
+        self.items_by_item_id.insert(
+            item_id.clone(),
+            ProjectedItemState::new(
+                turn_id,
+                item_id,
+                call_id,
+                kind,
+                title,
+                order_hint,
+            ),
+        );
+    }
+
+    fn observe_item_delta(
+        &mut self,
+        turn_id: &str,
+        item_id: &str,
+        kind: TurnItemDeltaKind,
+        delta: &str,
+        rollout_index: usize,
+    ) {
+        if let Some(item) = self.items_by_item_id.get_mut(item_id) {
+            item.apply_delta(kind, delta);
+        }
+        self.touch_turn(turn_id, rollout_index);
+    }
+
+    fn observe_item_completed(
+        &mut self,
+        turn_id: &str,
+        item_id: &str,
+        completed_item: &TranscriptItem,
+        rollout_index: usize,
+    ) {
+        if let Some(item_state) = self.items_by_item_id.get_mut(item_id) {
+            item_state.status = ProjectedItemStatus::Completed;
+            item_state.kind = turn_item_kind_for_transcript_item(completed_item);
+        }
+        self.touch_turn(turn_id, rollout_index);
+        self.items_by_item_id.insert(
+            item_id.to_string(),
+            projected_item_from_transcript_item(
+                turn_id.to_string(),
+                completed_item.clone(),
+                rollout_index,
+            ),
+        );
+        if let Some(turn) = self.turns_by_turn_id.get_mut(turn_id) {
+            turn.push_item(item_id);
+        }
+    }
+
+    fn clear_turn_projection_state(&mut self, turn_id: &str) {
+        self.turns_by_turn_id.remove(turn_id);
+        self.items_by_item_id.retain(|_, item| item.turn_id != turn_id);
+    }
+
+    fn bump_item_order_hint(&mut self) -> u64 {
+        self.next_item_order_hint = self.next_item_order_hint.saturating_add(1);
+        self.next_item_order_hint
+    }
+
+    fn bump_rollout_index(&mut self) -> usize {
+        let current = self.next_rollout_index;
+        self.next_rollout_index = self.next_rollout_index.saturating_add(1);
+        current
+    }
+
+    fn observe_turn_started(&mut self, turn_id: String, user_input: String, rollout_index: usize) {
+        self.active_turn_id = Some(turn_id.clone());
+        self.turns_by_turn_id
+            .insert(turn_id.clone(), TurnProjectionState::new(rollout_index));
+        let user_item_id = format!("user:{turn_id}");
+        let order_hint = self.bump_item_order_hint();
+        self.turns_by_turn_id
+            .get_mut(&turn_id)
+            .expect("turn inserted above")
+            .push_item(&user_item_id);
+        self.items_by_item_id.insert(
+            user_item_id.clone(),
+            ProjectedItemState {
+                turn_id,
+                item_id: user_item_id,
+                call_id: None,
+                kind: TurnItemKind::UserMessage,
+                title: None,
+                status: ProjectedItemStatus::Completed,
+                last_delta_kind: None,
+                text_buffer: user_input,
+                reasoning_buffer: String::new(),
+                tool_output_buffer: String::new(),
+                order_hint,
+            },
+        );
+    }
+
+    fn observe_turn_state(&mut self, turn_id: &str, state: TurnState, rollout_index: usize) {
+        if let Some(turn) = self.turns_by_turn_id.get_mut(turn_id) {
+            turn.state = state;
+            turn.touch(rollout_index);
+        }
+    }
+
+    fn touch_turn(&mut self, turn_id: &str, rollout_index: usize) {
+        if let Some(turn) = self.turns_by_turn_id.get_mut(turn_id) {
+            turn.touch(rollout_index);
+        }
+    }
+
+    fn stable_item_ids_for_turn(&self, turn_id: &str) -> Vec<String> {
+        let Some(turn) = self.turns_by_turn_id.get(turn_id) else {
+            return Vec::new();
+        };
+
+        let mut output = Vec::with_capacity(turn.items_in_order.len());
+        let mut emitted = HashMap::<String, ()>::new();
+
+        for item_id in &turn.items_in_order {
+            if emitted.contains_key(item_id) {
+                continue;
+            }
+            if self.items_by_item_id.get(item_id).is_none() {
+                continue;
+            }
+            output.push(item_id.clone());
+            emitted.insert(item_id.clone(), ());
+        }
+
+        output
+    }
+
+    pub(crate) fn active_turn_snapshot(&self) -> Option<ConversationTurn> {
+        let turn_id = self.active_turn_id.as_deref()?;
+        self.turn_snapshot(turn_id)
+    }
+
+    pub(crate) fn turn_snapshot(&self, turn_id: &str) -> Option<ConversationTurn> {
+        let turn = self.turns_by_turn_id.get(turn_id)?;
+        let items = self
+            .stable_item_ids_for_turn(turn_id)
+            .into_iter()
+            .filter_map(|item_id| self.items_by_item_id.get(&item_id))
+            .filter_map(projected_item_to_transcript_item)
+            .filter(|item| !projected_transcript_item_is_empty(item))
+            .collect::<Vec<_>>();
+        Some(ConversationTurn {
+            id: turn_id.to_string(),
+            state: turn.state.clone(),
+            items,
+            rollout_start_index: turn.rollout_start_index,
+            rollout_end_index: turn.rollout_end_index,
+        })
+    }
+
     fn retain_active_items_for_other_turns(&mut self, turn_id: &str) {
         let stale_item_ids = self
             .active_items_by_item_id
@@ -422,6 +729,13 @@ impl ConversationNotificationProjector {
             .collect::<Vec<_>>();
         for item_id in stale_item_ids {
             let _ = self.remove_active_item(&item_id);
+        }
+        for turn in self.turns_by_turn_id.values_mut() {
+            turn.retain_item_ids(|item_id| {
+                self.items_by_item_id
+                    .get(item_id)
+                    .is_some_and(|item| item.turn_id != turn_id)
+            });
         }
     }
 
@@ -436,7 +750,201 @@ impl ConversationNotificationProjector {
                 mode: FrontendMode::Idle,
             });
         }
+        self.active_turn_id = None;
         notifications
+    }
+}
+
+fn projected_item_from_transcript_item(
+    turn_id: String,
+    item: TranscriptItem,
+    order_hint: usize,
+) -> ProjectedItemState {
+    let kind = turn_item_kind_for_transcript_item(&item);
+    match item {
+        TranscriptItem::SystemMessage { id, text } => ProjectedItemState {
+            turn_id,
+            item_id: id,
+            call_id: None,
+            kind,
+            title: None,
+            status: ProjectedItemStatus::Completed,
+            last_delta_kind: None,
+            text_buffer: text,
+            reasoning_buffer: String::new(),
+            tool_output_buffer: String::new(),
+            order_hint: order_hint as u64,
+        },
+        TranscriptItem::UserMessage { id, text } | TranscriptItem::AgentMessage { id, text } => {
+            ProjectedItemState {
+                turn_id,
+                item_id: id,
+                call_id: None,
+                kind,
+                title: None,
+                status: ProjectedItemStatus::Completed,
+                last_delta_kind: None,
+                text_buffer: text,
+                reasoning_buffer: String::new(),
+                tool_output_buffer: String::new(),
+                order_hint: order_hint as u64,
+            }
+        }
+        TranscriptItem::Reasoning { id, title, text } => ProjectedItemState {
+            turn_id,
+            item_id: id,
+            call_id: None,
+            kind,
+            title: Some(title),
+            status: ProjectedItemStatus::Completed,
+            last_delta_kind: None,
+            text_buffer: String::new(),
+            reasoning_buffer: text,
+            tool_output_buffer: String::new(),
+            order_hint: order_hint as u64,
+        },
+        TranscriptItem::CommandExecution {
+            id,
+            tool_name: _,
+            command,
+            current_directory: _,
+            status: _,
+            exit_code: _,
+            stdout: _,
+            stderr: _,
+            aggregated_output: _,
+            duration_ms: _,
+            summary,
+        } => ProjectedItemState {
+            turn_id,
+            item_id: id,
+            call_id: None,
+            kind,
+            title: Some(command),
+            status: ProjectedItemStatus::Completed,
+            last_delta_kind: None,
+            text_buffer: String::new(),
+            reasoning_buffer: String::new(),
+            tool_output_buffer: summary,
+            order_hint: order_hint as u64,
+        },
+        TranscriptItem::FileChange {
+            id,
+            tool_name: _,
+            path,
+            status: _,
+            files_changed: _,
+            summary,
+        } => ProjectedItemState {
+            turn_id,
+            item_id: id,
+            call_id: None,
+            kind,
+            title: Some(path),
+            status: ProjectedItemStatus::Completed,
+            last_delta_kind: None,
+            text_buffer: String::new(),
+            reasoning_buffer: String::new(),
+            tool_output_buffer: summary,
+            order_hint: order_hint as u64,
+        },
+        TranscriptItem::ToolResult {
+            id,
+            tool_name,
+            content,
+            summary,
+            structured: _,
+        } => ProjectedItemState {
+            turn_id,
+            item_id: id,
+            call_id: None,
+            kind,
+            title: Some(tool_name),
+            status: ProjectedItemStatus::Completed,
+            last_delta_kind: None,
+            text_buffer: String::new(),
+            reasoning_buffer: String::new(),
+            tool_output_buffer: if summary.trim().is_empty() { content } else { summary },
+            order_hint: order_hint as u64,
+        },
+    }
+}
+
+fn projected_item_to_transcript_item(item: &ProjectedItemState) -> Option<TranscriptItem> {
+    match item.kind {
+        TurnItemKind::UserMessage => Some(TranscriptItem::UserMessage {
+            id: item.item_id.clone(),
+            text: item.text_buffer.clone(),
+        }),
+        TurnItemKind::AssistantMessage => Some(TranscriptItem::AgentMessage {
+            id: item.item_id.clone(),
+            text: item.text_buffer.clone(),
+        }),
+        TurnItemKind::Reasoning => Some(TranscriptItem::Reasoning {
+            id: item.item_id.clone(),
+            title: item
+                .title
+                .clone()
+                .unwrap_or_else(|| "reasoning".to_string()),
+            text: item.reasoning_buffer.clone(),
+        }),
+        TurnItemKind::CommandExecution => Some(TranscriptItem::CommandExecution {
+            id: item.item_id.clone(),
+            tool_name: "exec_command".to_string(),
+            command: item.title.clone().unwrap_or_default(),
+            current_directory: String::new(),
+            status: agent_protocol::CommandExecutionStatus::InProgress,
+            exit_code: None,
+            stdout: Some(item.tool_output_buffer.clone()),
+            stderr: None,
+            aggregated_output: (!item.tool_output_buffer.is_empty())
+                .then(|| item.tool_output_buffer.clone()),
+            duration_ms: None,
+            summary: item.tool_output_buffer.clone(),
+        }),
+        TurnItemKind::FileChange => Some(TranscriptItem::FileChange {
+            id: item.item_id.clone(),
+            tool_name: "edit_file".to_string(),
+            path: item.title.clone().unwrap_or_default(),
+            status: agent_protocol::WriteFileStatus::InProgress,
+            files_changed: 0,
+            summary: item.tool_output_buffer.clone(),
+        }),
+        TurnItemKind::ToolCall | TurnItemKind::ToolResult => Some(TranscriptItem::ToolResult {
+            id: item.item_id.clone(),
+            tool_name: item.title.clone().unwrap_or_else(|| "tool".to_string()),
+            content: item.tool_output_buffer.clone(),
+            summary: item.tool_output_buffer.clone(),
+            structured: None,
+        }),
+        TurnItemKind::SystemNote => Some(TranscriptItem::SystemMessage {
+            id: item.item_id.clone(),
+            text: item.text_buffer.clone(),
+        }),
+    }
+}
+
+fn turn_item_kind_for_transcript_item(item: &TranscriptItem) -> TurnItemKind {
+    match item {
+        TranscriptItem::SystemMessage { .. } => TurnItemKind::SystemNote,
+        TranscriptItem::UserMessage { .. } => TurnItemKind::UserMessage,
+        TranscriptItem::AgentMessage { .. } => TurnItemKind::AssistantMessage,
+        TranscriptItem::CommandExecution { .. } => TurnItemKind::CommandExecution,
+        TranscriptItem::FileChange { .. } => TurnItemKind::FileChange,
+        TranscriptItem::ToolResult { .. } => TurnItemKind::ToolResult,
+        TranscriptItem::Reasoning { .. } => TurnItemKind::Reasoning,
+    }
+}
+
+fn projected_transcript_item_is_empty(item: &TranscriptItem) -> bool {
+    match item {
+        TranscriptItem::SystemMessage { text, .. }
+        | TranscriptItem::UserMessage { text, .. }
+        | TranscriptItem::AgentMessage { text, .. }
+        | TranscriptItem::Reasoning { text, .. } => text.trim().is_empty(),
+        TranscriptItem::CommandExecution { summary, .. }
+        | TranscriptItem::FileChange { summary, .. }
+        | TranscriptItem::ToolResult { summary, .. } => summary.trim().is_empty(),
     }
 }
 
@@ -639,7 +1147,7 @@ mod tests {
     }
 
     #[test]
-    fn delta_without_started_reports_lifecycle_error() {
+    fn assistant_text_delta_is_not_projected_directly() {
         let mut projector = ConversationNotificationProjector::new("default");
 
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
@@ -650,12 +1158,7 @@ mod tests {
             delta: "hello".to_string(),
         });
 
-        assert_eq!(notifications.len(), 1);
-        assert!(matches!(
-            &notifications[0],
-            AppServerNotification::Error { message, .. }
-                if message.contains("before item start")
-        ));
+        assert!(notifications.is_empty());
     }
 
     #[test]
@@ -683,7 +1186,7 @@ mod tests {
         });
         let flushed = projector.finish_turn(TurnState::Completed);
 
-        assert_eq!(completed.len(), 1);
+        assert!(completed.is_empty());
         assert!(terminal.is_empty());
         assert_eq!(flushed.len(), 2);
         assert!(
@@ -694,7 +1197,7 @@ mod tests {
     }
 
     #[test]
-    fn item_completed_notification_includes_call_id_field_for_compat() {
+    fn assistant_item_completed_is_not_projected_directly() {
         let mut projector = ConversationNotificationProjector::new("default");
 
         projector.project_turn_event(&EventMsg::ItemStarted {
@@ -714,10 +1217,7 @@ mod tests {
             },
         });
 
-        assert!(matches!(
-            &completed[0],
-            AppServerNotification::ItemCompleted { call_id, .. } if call_id.is_none()
-        ));
+        assert!(completed.is_empty());
     }
 
     #[test]
@@ -863,5 +1363,145 @@ mod tests {
             AppServerNotification::Error { message, .. }
                 if message.contains("completed with active items")
         )));
+    }
+
+    #[test]
+    fn stable_item_ids_preserve_arrival_order_when_reasoning_starts_late() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::AssistantMessage,
+            title: Some("assistant_message".to_string()),
+        });
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::Reasoning,
+            title: Some("reasoning".to_string()),
+        });
+
+        let ordered = projector.stable_item_ids_for_turn("turn-1");
+        assert_eq!(ordered, vec!["assistant:1", "reasoning:1"]);
+    }
+
+    #[test]
+    fn tool_items_preserve_arrival_order_relative_to_assistant() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::AssistantMessage,
+            title: Some("assistant_message".to_string()),
+        });
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:1".to_string(),
+            call_id: Some("call-1".to_string()),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("exec_command".to_string()),
+        });
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::Reasoning,
+            title: Some("reasoning".to_string()),
+        });
+
+        let ordered = projector.stable_item_ids_for_turn("turn-1");
+        assert_eq!(ordered, vec!["assistant:1", "tool:1", "reasoning:1"]);
+    }
+
+    #[test]
+    fn active_turn_snapshot_preserves_late_reasoning_after_assistant_when_it_arrives_late() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::TurnStarted {
+            turn_id: "turn-1".to_string(),
+            conversation_id: "default".to_string(),
+            user_input: "hi".to_string(),
+        });
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::Reasoning,
+            title: Some("reasoning".to_string()),
+        });
+        projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemDeltaKind::ReasoningSummary,
+            delta: "first".to_string(),
+        });
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:1".to_string(),
+            call_id: Some("call-1".to_string()),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("pwd".to_string()),
+        });
+        projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "tool:1".to_string(),
+            call_id: Some("call-1".to_string()),
+            kind: TurnItemDeltaKind::CommandExecutionOutput,
+            delta: "D:\\work".to_string(),
+        });
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::AssistantMessage,
+            title: Some("assistant_message".to_string()),
+        });
+        projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            call_id: None,
+            kind: TurnItemDeltaKind::Text,
+            delta: "answer".to_string(),
+        });
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:2".to_string(),
+            call_id: None,
+            kind: TurnItemKind::Reasoning,
+            title: Some("reasoning".to_string()),
+        });
+        projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:2".to_string(),
+            call_id: None,
+            kind: TurnItemDeltaKind::ReasoningSummary,
+            delta: "second".to_string(),
+        });
+
+        let snapshot = projector
+            .active_turn_snapshot()
+            .expect("active turn snapshot should exist");
+
+        let ids = snapshot
+            .items
+            .iter()
+            .map(|item| item.id().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "user:turn-1",
+                "reasoning:1",
+                "tool:1",
+                "assistant:1",
+                "reasoning:2",
+            ]
+        );
     }
 }

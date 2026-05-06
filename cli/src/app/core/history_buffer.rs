@@ -3,14 +3,7 @@ use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 
 impl TuiApp {
     pub(crate) fn push_cell(&mut self, cell: HistoryCell) {
-        let (index, inserted) = self.transcript_state.transcript.push_live(cell.clone());
-        if inserted {
-            self.pending_history_cells.push_back(cell);
-        } else if let Some(last) = self.pending_history_cells.back_mut()
-            && let Some(coalesced) = self.transcript_state.transcript.cells().get(index)
-        {
-            *last = coalesced.clone();
-        }
+        let _ = self.transcript_state.transcript.push_live(cell);
     }
 
     pub(crate) fn replace_history_cells(&mut self, cells: Vec<HistoryCell>) {
@@ -34,50 +27,9 @@ impl TuiApp {
         self.transcript_state
             .transcript
             .set_tool_cells_expanded(self.run_state.expand_tool_details);
-        self.pending_history_cells = cells.into();
-        self.pending_history_rebuild = true;
-    }
-
-    pub(crate) fn drain_pending_history_cells(&mut self) -> Vec<HistoryCell> {
-        self.pending_history_cells.drain(..).collect()
-    }
-
-    pub(crate) fn clear_pending_history_cells(&mut self) {
-        self.pending_history_cells.clear();
-    }
-
-    pub(crate) fn take_pending_history_rebuild(&mut self) -> bool {
-        std::mem::take(&mut self.pending_history_rebuild)
     }
 
     pub(crate) fn history_cells(&self) -> &[HistoryCell] {
         self.transcript_state.transcript.cells()
-    }
-
-    pub(crate) fn consolidate_exploration_stage(&mut self) {
-        if self
-            .transcript_state
-            .transcript
-            .consolidate_trailing_exploration_run()
-        {
-            self.pending_history_cells = self.transcript_state.transcript.cells().to_vec().into();
-            self.pending_history_rebuild = true;
-        }
-    }
-
-    pub(crate) fn insert_cell_before_trailing_agent(&mut self, cell: HistoryCell) -> bool {
-        let existing = self.transcript_state.transcript.cells();
-        let Some(last) = existing.last() else {
-            return false;
-        };
-        if last.tone != HistoryTone::Agent {
-            return false;
-        }
-
-        let insert_at = existing.len().saturating_sub(1);
-        let mut cells = existing.to_vec();
-        cells.insert(insert_at, cell);
-        self.replace_history_cells(cells);
-        true
     }
 }

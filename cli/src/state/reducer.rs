@@ -1,55 +1,8 @@
-use crate::state::{ActiveExecRouteKey, NoticeLevel};
+use crate::state::NoticeLevel;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
     FrontendMode, ModelRetryStage, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind,
-    TranscriptItem, TurnItemKind,
 };
-
-#[derive(Debug, Clone)]
-pub(crate) enum ItemDispatch {
-    AssistantStarted {
-        turn_id: String,
-        item_id: String,
-    },
-    ReasoningStarted {
-        item_id: String,
-        title: String,
-    },
-    AssistantDelta {
-        item_id: String,
-        delta: String,
-    },
-    ReasoningDelta {
-        item_id: String,
-        delta: String,
-    },
-    AssistantCompleted {
-        item: TranscriptItem,
-    },
-    ReasoningCompleted {
-        item: TranscriptItem,
-    },
-    Control(ControlDispatch),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum ControlDispatch {
-    Started {
-        item_id: String,
-        route_key: ActiveExecRouteKey,
-        kind: TurnItemKind,
-        title: String,
-    },
-    Delta {
-        item_id: String,
-        route_key: ActiveExecRouteKey,
-        delta: String,
-    },
-    Completed {
-        route_key: ActiveExecRouteKey,
-        item: TranscriptItem,
-    },
-}
 
 #[derive(Debug, Clone)]
 pub(crate) enum TurnDispatch {
@@ -117,8 +70,8 @@ pub(crate) enum ServerAction {
     ClearServerRequestStatus,
     ClearLastToolName,
     ReplaceHistory(Vec<ConversationTurn>),
+    UpsertTurnSnapshot(ConversationTurn),
     PushErrorCell(String),
-    ItemDispatch(ItemDispatch),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
         request_id: RequestId,
@@ -149,6 +102,10 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     });
                     actions.push(ServerAction::SetHistoryLoaded(true));
                     actions.push(ServerAction::ReplaceHistory(turns.clone()));
+                }
+                AppServerNotification::TurnSnapshot { turn, .. } => {
+                    actions.push(ServerAction::SetHistoryLoaded(true));
+                    actions.push(ServerAction::UpsertTurnSnapshot(turn.clone()));
                 }
                 AppServerNotification::ConversationList { conversations, .. } => {
                     actions.push(ServerAction::SetConversationList(conversations.clone()));
@@ -286,9 +243,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }
                 _ => {}
             }
-            if let Some(dispatch) = derive_item_dispatch(notification) {
-                actions.push(ServerAction::ItemDispatch(dispatch));
-            }
         }
         AppServerMessage::Request(AppServerRequest::ServerRequest {
             request_id,
@@ -344,130 +298,10 @@ fn summarize_args_preview(arguments_preview: &str) -> String {
     out.push_str("… (truncated)");
     out
 }
-
-pub(crate) fn derive_item_dispatch(notification: &AppServerNotification) -> Option<ItemDispatch> {
-    match notification {
-        AppServerNotification::ItemStarted {
-            turn_id,
-            item_id,
-            kind,
-            title,
-            ..
-        } if *kind == TurnItemKind::AssistantMessage => Some(ItemDispatch::AssistantStarted {
-            turn_id: turn_id.clone(),
-            item_id: item_id.clone(),
-        }),
-        AppServerNotification::ItemStarted {
-            item_id,
-            kind,
-            title,
-            ..
-        } if *kind == TurnItemKind::Reasoning && title.is_some() => {
-            Some(ItemDispatch::ReasoningStarted {
-                item_id: item_id.clone(),
-                title: title.clone().unwrap_or_default(),
-            })
-        }
-        AppServerNotification::ItemStarted {
-            item_id,
-            call_id,
-            kind,
-            title,
-            ..
-        } if (*kind == TurnItemKind::ToolCall || *kind == TurnItemKind::CommandExecution)
-            && title.is_some() =>
-        {
-            Some(ItemDispatch::Control(ControlDispatch::Started {
-                item_id: item_id.clone(),
-                route_key: control_route_key(call_id.as_deref(), item_id),
-                kind: kind.clone(),
-                title: title.clone().unwrap_or_default(),
-            }))
-        }
-        AppServerNotification::AgentMessageDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::AssistantDelta {
-                item_id: item_id.clone(),
-                delta: delta.clone(),
-            })
-        }
-        AppServerNotification::ReasoningSummaryTextDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::ReasoningDelta {
-                item_id: item_id.clone(),
-                delta: delta.clone(),
-            })
-        }
-        AppServerNotification::ReasoningTextDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::ReasoningDelta {
-                item_id: item_id.clone(),
-                delta: delta.clone(),
-            })
-        }
-        AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::Control(ControlDispatch::Delta {
-                item_id: item_id.clone(),
-                route_key: control_route_key(notification_call_id(notification), item_id),
-                delta: delta.clone(),
-            }))
-        }
-        AppServerNotification::ToolOutputDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::Control(ControlDispatch::Delta {
-                item_id: item_id.clone(),
-                route_key: control_route_key(notification_call_id(notification), item_id),
-                delta: delta.clone(),
-            }))
-        }
-        AppServerNotification::FileChangeOutputDelta { item_id, delta, .. } => {
-            Some(ItemDispatch::Control(ControlDispatch::Delta {
-                item_id: item_id.clone(),
-                route_key: control_route_key(notification_call_id(notification), item_id),
-                delta: delta.clone(),
-            }))
-        }
-        AppServerNotification::ItemCompleted { item, call_id, .. } => match item {
-            TranscriptItem::AgentMessage { .. } => {
-                Some(ItemDispatch::AssistantCompleted { item: item.clone() })
-            }
-            TranscriptItem::Reasoning { .. } => {
-                Some(ItemDispatch::ReasoningCompleted { item: item.clone() })
-            }
-            TranscriptItem::CommandExecution { .. }
-            | TranscriptItem::FileChange { .. }
-            | TranscriptItem::ToolResult { .. } => {
-                Some(ItemDispatch::Control(ControlDispatch::Completed {
-                    route_key: control_route_key(call_id.as_deref(), item.id()),
-                    item: item.clone(),
-                }))
-            }
-            TranscriptItem::UserMessage { .. } | TranscriptItem::SystemMessage { .. } => None,
-        },
-        _ => None,
-    }
-}
-
-fn control_route_key(call_id: Option<&str>, item_id: &str) -> ActiveExecRouteKey {
-    match call_id {
-        Some(call_id) if !call_id.trim().is_empty() => {
-            ActiveExecRouteKey::CallId(call_id.to_string())
-        }
-        _ => ActiveExecRouteKey::ItemId(item_id.to_string()),
-    }
-}
-
-fn notification_call_id(notification: &AppServerNotification) -> Option<&str> {
-    match notification {
-        AppServerNotification::ItemStarted { call_id, .. }
-        | AppServerNotification::CommandExecutionOutputDelta { call_id, .. }
-        | AppServerNotification::ToolOutputDelta { call_id, .. }
-        | AppServerNotification::FileChangeOutputDelta { call_id, .. }
-        | AppServerNotification::ItemCompleted { call_id, .. } => call_id.as_deref(),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_protocol::TurnState;
+    use agent_protocol::{TranscriptItem, TurnState};
 
     #[test]
     fn conversation_history_action_preserves_turns() {
@@ -579,47 +413,4 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn control_dispatch_prefers_call_id_route_key() {
-        let notification = AppServerNotification::ToolOutputDelta {
-            conversation_id: "default".to_string(),
-            turn_id: "turn-1".to_string(),
-            item_id: "tool:1".to_string(),
-            call_id: Some("call-1".to_string()),
-            delta: "output".to_string(),
-        };
-
-        let dispatch = derive_item_dispatch(&notification);
-
-        assert!(matches!(
-            dispatch,
-            Some(ItemDispatch::Control(ControlDispatch::Delta {
-                route_key: ActiveExecRouteKey::CallId(call_id),
-                item_id,
-                delta,
-            })) if call_id == "call-1" && item_id == "tool:1" && delta == "output"
-        ));
-    }
-
-    #[test]
-    fn control_dispatch_falls_back_to_item_id_route_key() {
-        let notification = AppServerNotification::ToolOutputDelta {
-            conversation_id: "default".to_string(),
-            turn_id: "turn-1".to_string(),
-            item_id: "tool:1".to_string(),
-            call_id: None,
-            delta: "output".to_string(),
-        };
-
-        let dispatch = derive_item_dispatch(&notification);
-
-        assert!(matches!(
-            dispatch,
-            Some(ItemDispatch::Control(ControlDispatch::Delta {
-                route_key: ActiveExecRouteKey::ItemId(item_id),
-                delta,
-                ..
-            })) if item_id == "tool:1" && delta == "output"
-        ));
-    }
 }

@@ -2,7 +2,6 @@ pub mod custom_terminal;
 pub mod events;
 mod inline_viewport;
 mod insert_history;
-pub mod surface;
 
 use anyhow::Result;
 use crossterm::SynchronizedUpdate;
@@ -17,8 +16,6 @@ use std::sync::Once;
 
 pub(crate) use custom_terminal::Frame;
 pub(crate) use events::{UiEvent, spawn_tui_event_loop};
-pub(crate) use surface::ScrollbackSurface;
-
 use inline_viewport::update_inline_viewport;
 
 static INSTALL_PANIC_HOOK: Once = Once::new();

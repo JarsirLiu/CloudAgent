@@ -1,15 +1,3 @@
-pub(crate) fn is_exploration_tool(title: &str) -> bool {
-    matches!(title, "read_file" | "search_workspace")
-}
-
-pub(crate) fn humanize_exploration_tool_title(tool_name: &str) -> String {
-    match tool_name {
-        "read_file" => "Read file".to_string(),
-        "search_workspace" => "Search workspace".to_string(),
-        other => other.replace('_', " "),
-    }
-}
-
 pub(crate) fn is_exploration_command(command: &str) -> bool {
     let normalized = command.trim().to_ascii_lowercase();
     if normalized.is_empty()

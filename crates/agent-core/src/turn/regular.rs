@@ -70,6 +70,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
     };
     let (mut last_sdk_context_tokens, mut last_request_estimated_tokens) =
         restore_budget_baseline_from_host(host, conversation_id).await?;
+    let mut reasoning_item_seq = 0usize;
 
     let mut roundtrip_count = 0usize;
     loop {
@@ -421,7 +422,6 @@ pub async fn execute_regular_turn<H: TurnHost>(
 
         let mut streaming_assistant_item_id: Option<String> = None;
         let mut streaming_reasoning_item_id: Option<String> = None;
-        let mut reasoning_item_seq = 0usize;
         let mut reasoning_text_buffer = String::new();
         let mut stream_observer = TurnStreamObserver {
             turn_id,
@@ -690,11 +690,23 @@ fn collect_discoverable_tools(
 #[cfg(test)]
 mod tests {
     use super::{collect_discoverable_tools, compose_visible_tool_specs};
+    use super::execute_regular_turn;
     use crate::{
-        EventMsg, ModelUsage, RolloutItem, ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec,
-        TurnItemDeltaKind, TurnItemKind,
+        ContextManager, ConversationHistory, EventMsg, ModelRequest, ModelResponse, ModelStreamObserver,
+        ModelUsage, RolloutItem, ToolCall, ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec,
+        TurnItemDeltaKind, TurnItemKind, TurnOutcome,
     };
+    use crate::context::EnvironmentContext;
+    use crate::tool::RegularTurnToolExposure;
+    use crate::turn::{RegularTurnSettings, ServerRequest, ServerRequestDecision, ServerRequestHandler, ToolBatchOutcome, TurnHost};
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use serde_json::json;
     use std::collections::BTreeMap;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use tokio_util::sync::CancellationToken;
 
     fn demo_spec(name: &str) -> ToolSpec {
         ToolSpec {
@@ -798,5 +810,268 @@ mod tests {
         });
 
         assert_eq!(restored, Some((240, 222)));
+    }
+
+    struct MockTurnHost {
+        responses: Mutex<Vec<ModelResponse>>,
+    }
+
+    impl MockTurnHost {
+        fn new(responses: Vec<ModelResponse>) -> Self {
+            Self {
+                responses: Mutex::new(responses),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TurnHost for MockTurnHost {
+        type PermissionProfile = ();
+        type ApprovalPolicy = ();
+
+        fn turn_interrupted_error(&self) -> &'static str {
+            "interrupted"
+        }
+
+        fn regular_turn_settings(&self) -> RegularTurnSettings {
+            RegularTurnSettings {
+                workspace_root: PathBuf::from("."),
+                llm_temperature: 0.0,
+                pre_llm_filter_enabled: false,
+                max_tool_roundtrips: Some(4),
+                model_context_window: 200_000,
+                context_compaction_trigger_ratio: 0.9,
+                context_compaction_request_overhead_tokens: 1_000,
+                context_compaction_target_tokens: 36_000,
+                context_compaction_preserved_user_turns: 3,
+                context_compaction_preserved_tail_tokens: 12_000,
+                context_compaction_summary_source_tokens: 24_000,
+                post_compact_token_budget: 50_000,
+                post_compact_memory_floor_tokens: 6_000,
+                post_compact_skills_token_budget: 25_000,
+                post_compact_mcp_token_budget: 8_000,
+                post_compact_max_tokens_per_memory: 6_000,
+                post_compact_max_tokens_per_skill: 5_000,
+                post_compact_max_tokens_per_mcp: 3_000,
+                context_budget_safety_buffer_tokens: 8_000,
+                enable_skill_bucket: false,
+                enable_mcp_bucket: false,
+            }
+        }
+
+        fn environment_context(&self) -> EnvironmentContext {
+            EnvironmentContext::new(".", "powershell", "2026-05-06", "12:00:00", "2026-05-06T12:00:00+08:00", "+08:00")
+        }
+
+        fn raw_memory_fragment(&self) -> Option<String> {
+            None
+        }
+
+        fn resolve_regular_turn_tool_exposure(
+            &self,
+            _permission_profile: &Self::PermissionProfile,
+        ) -> RegularTurnToolExposure {
+            RegularTurnToolExposure {
+                default_tools: vec![],
+                deferred_tools: vec![],
+            }
+        }
+
+        async fn start_turn(
+            &self,
+            _conversation_id: String,
+            _turn_id: String,
+        ) -> Option<crate::state::ActiveTurnHandle> {
+            unreachable!()
+        }
+
+        async fn finish_turn(&self, _conversation_id: &str) {}
+
+        async fn is_turn_cancelled(&self, _conversation_id: &str) -> bool {
+            false
+        }
+
+        fn append_conversation_event(&self, _conversation_id: &str, _event: EventMsg) {}
+
+        async fn load_history(&self, _conversation_id: &str) -> Result<ConversationHistory> {
+            unreachable!()
+        }
+
+        async fn history_from_rollout(&self, _conversation_id: &str) -> Result<ConversationHistory> {
+            unreachable!()
+        }
+
+        async fn restore_budget_baseline(
+            &self,
+            _conversation_id: &str,
+        ) -> Result<Option<crate::turn::RestoredBudgetBaseline>> {
+            Ok(None)
+        }
+
+        async fn save_history(&self, _history: ConversationHistory) -> Result<()> {
+            Ok(())
+        }
+
+        async fn persist_rollout_items(
+            &self,
+            _conversation_id: &str,
+            _items: &[RolloutItem],
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn record_rollout_items(&self, _conversation_id: &str, _items: &[RolloutItem]) -> Result<()> {
+            Ok(())
+        }
+
+        async fn flush_rollout(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn should_persist_memory(&self, _history: &ConversationHistory) -> bool {
+            false
+        }
+
+        fn persist_memory_from_history(&self, _history: &ConversationHistory) {}
+
+        async fn complete_model_request(
+            &self,
+            _cancellation_token: &CancellationToken,
+            _request: ModelRequest,
+        ) -> Result<ModelResponse> {
+            unreachable!()
+        }
+
+        async fn complete_model_request_streaming(
+            &self,
+            _cancellation_token: &CancellationToken,
+            _request: ModelRequest,
+            observer: &mut dyn ModelStreamObserver,
+        ) -> Result<ModelResponse> {
+            let response = self
+                .responses
+                .lock()
+                .expect("responses lock")
+                .remove(0);
+            if let Some(reasoning) = response.reasoning.clone() {
+                observer.on_reasoning_delta(reasoning);
+            }
+            if let Some(content) = response.content.clone() {
+                observer.on_text_delta(content);
+            }
+            Ok(response)
+        }
+
+        async fn run_tool_batch(
+            &self,
+            _conversation_id: &str,
+            _turn_id: &str,
+            _permission_profile: &Self::PermissionProfile,
+            _approval_policy: &Self::ApprovalPolicy,
+            _cancellation_token: CancellationToken,
+            _tool_calls: Vec<ToolCall>,
+            _tool_specs: &[ToolSpec],
+            _discoverable_tools: &[ToolSpec],
+            _context_manager: &mut ContextManager,
+            _events: &mut Vec<EventMsg>,
+            _on_event: &mut (dyn for<'a> FnMut(&'a EventMsg) + Send + '_),
+            _approval: &dyn ServerRequestHandler,
+            _denied_requests: &mut HashSet<String>,
+        ) -> Result<ToolBatchOutcome> {
+            Ok(ToolBatchOutcome {
+                cancelled: false,
+                exposed_tools: Vec::new(),
+            })
+        }
+
+        fn audit_turn_started(&self, _conversation_id: &str, _user_input: &str) {}
+        fn audit_turn_completed(
+            &self,
+            _conversation_id: &str,
+            _turn_id: &str,
+            _state: &str,
+            _events_count: usize,
+            _model_name: Option<&str>,
+        ) {}
+        fn audit_turn_cancelled(&self, _conversation_id: &str, _turn_id: &str, _reason: &str) {}
+        fn audit_turn_failed(&self, _conversation_id: &str, _turn_id: &str, _error: &str) {}
+        fn audit_model_request_started(
+            &self,
+            _conversation_id: &str,
+            _turn_id: &str,
+            _message_count: usize,
+            _tool_count: usize,
+        ) {}
+        fn audit_model_response_received(
+            &self,
+            _conversation_id: &str,
+            _turn_id: &str,
+            _model_name: Option<&str>,
+            _has_content: bool,
+            _tool_call_count: usize,
+        ) {}
+    }
+
+    #[tokio::test]
+    async fn reasoning_item_ids_advance_across_tool_roundtrips() {
+        let host = MockTurnHost::new(vec![
+            ModelResponse {
+                content: None,
+                reasoning: Some("first reasoning".to_string()),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".to_string(),
+                    name: "read_file".to_string(),
+                    identity: ToolIdentity::built_in("read_file"),
+                    arguments: json!({"path":"README.md"}),
+                }],
+                model_name: Some("test-model".to_string()),
+                usage: None,
+            },
+            ModelResponse {
+                content: Some("final answer".to_string()),
+                reasoning: Some("second reasoning".to_string()),
+                tool_calls: vec![],
+                model_name: Some("test-model".to_string()),
+                usage: None,
+            },
+        ]);
+
+        let history = ConversationHistory::new("default".to_string(), "system".to_string());
+        let mut delivered = Vec::new();
+        let outcome: TurnOutcome = execute_regular_turn(
+            &host,
+            "default",
+            "turn-1",
+            &(),
+            &(),
+            CancellationToken::new(),
+            history,
+            &mut |event| delivered.push(event.clone()),
+            &(|_req: ServerRequest| async move { Ok(ServerRequestDecision::accept(Some("ok".to_string()))) }),
+        )
+        .await
+        .expect("turn outcome");
+
+        let reasoning_starts = outcome
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                EventMsg::ItemStarted {
+                    kind: TurnItemKind::Reasoning,
+                    item_id,
+                    ..
+                } => Some(item_id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            reasoning_starts,
+            vec![
+                "reasoning:turn-1:0".to_string(),
+                "reasoning:turn-1:1".to_string()
+            ]
+        );
+        assert!(delivered.iter().any(|event| matches!(event, EventMsg::TurnCompleted { turn_id } if turn_id == "turn-1")));
     }
 }

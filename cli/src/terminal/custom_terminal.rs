@@ -175,31 +175,11 @@ where
         draw_updates(&mut self.backend, updates.into_iter())
     }
 
-    pub(crate) fn clear(&mut self) -> io::Result<()> {
-        if self.viewport_area.is_empty() {
-            return Ok(());
-        }
-        self.clear_after_position(self.viewport_area.as_position())
-    }
-
     pub(crate) fn clear_after_position(&mut self, position: Position) -> io::Result<()> {
         self.backend.set_cursor_position(position)?;
         self.backend.clear_region(ClearType::AfterCursor)?;
         self.previous_buffer_mut().reset();
         Ok(())
-    }
-
-    pub(crate) fn clear_scrollback_and_visible_screen(&mut self) -> io::Result<()> {
-        write!(self.backend, "\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H")?;
-        std::io::Write::flush(&mut self.backend)?;
-        self.last_known_cursor_pos = Position { x: 0, y: 0 };
-        self.visible_history_rows = 0;
-        self.previous_buffer_mut().reset();
-        Ok(())
-    }
-
-    pub(crate) fn invalidate_viewport(&mut self) {
-        self.previous_buffer_mut().reset();
     }
 
     pub(crate) fn note_history_rows_inserted(&mut self, inserted_rows: u16) {

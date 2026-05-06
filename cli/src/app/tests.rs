@@ -3,13 +3,11 @@ use crate::agent_host::build_agent_host;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::conversation::actions::{execute_server_action, handle_tui_input};
 use crate::app::conversation::event_router;
-use crate::state::reducer::{ServerAction, TurnDispatch};
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::{AppServerClient, AppServerEvent, InProcessClientConfig};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, CommandExecutionStatus,
-    ConversationStatus, ConversationTurn, FrontendMode, ServerRequestDecisionKind,
-    StructuredToolResult, TranscriptItem, TurnItemKind,
+    ConversationStatus, ConversationTurn, FrontendMode, ServerRequestDecisionKind, TranscriptItem,
 };
 use config::{AgentConfig, LlmConfig, RuntimeConfig, ToolConfig};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -33,8 +31,6 @@ fn flatten_turns(turns: Vec<ConversationTurn>) -> Vec<TranscriptItem> {
 fn ends_with_workspace_path(text: &str) -> bool {
     text.ends_with("/workspace") || text.ends_with("\\workspace")
 }
-
-mod ui_state;
 
 #[tokio::test]
 async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
@@ -155,26 +151,6 @@ async fn end_to_end_turn_roundtrips_live_and_rebuilds_after_restart() {
         !saw_server_request,
         "safe workspace read commands should not trigger approval"
     );
-
-    let live_cells = app.transcript_state.transcript.cells();
-    assert!(
-        live_cells
-            .iter()
-            .any(|cell| cell.body() == "可以看到当前在哪个目录下吗")
-    );
-    assert!(!live_cells.iter().any(|cell| cell.body() == "approved"));
-    assert!(live_cells.iter().any(|cell| {
-        cell.tone == crate::ui::widgets::history_cell::HistoryTone::Control
-            && cell.kind() == crate::ui::widgets::history_cell::HistoryKind::Tool
-            && cell
-                .children()
-                .is_some_and(|children| children.iter().any(|child| child.body().contains("pwd")))
-    }));
-    assert!(live_cells.iter().any(|cell| {
-        cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
-            && cell.body().starts_with("current directory is ")
-            && ends_with_workspace_path(cell.body())
-    }));
 
     client
         .send_command(AppClientCommand::RequestConversationStatus {
@@ -1096,6 +1072,151 @@ async fn repeated_denied_tool_request_does_not_prompt_again() {
     assert!(recorded_requests[2].contains("\"tool_call_id\":\"call_denied_repeat\""));
     assert!(recorded_requests[2].contains("exec command rejected by user"));
     assert!(recorded_requests[2].contains("same tool request was already denied in this turn"));
+}
+
+#[test]
+fn repeated_turn_snapshots_preserve_late_reasoning_after_assistant_when_it_arrives_late() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("."),
+        PathBuf::from("."),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let turn_id = "turn-1".to_string();
+    let snapshots = vec![
+        ConversationTurn {
+            id: turn_id.clone(),
+            state: agent_protocol::TurnState::Running,
+            rollout_start_index: 0,
+            rollout_end_index: 1,
+            items: vec![
+                TranscriptItem::UserMessage {
+                    id: "user:turn-1".to_string(),
+                    text: "看看 cli 和 agent 的关系".to_string(),
+                },
+                TranscriptItem::Reasoning {
+                    id: "reasoning:1".to_string(),
+                    title: "Inspecting workspace files".to_string(),
+                    text: "先看入口".to_string(),
+                },
+            ],
+        },
+        ConversationTurn {
+            id: turn_id.clone(),
+            state: agent_protocol::TurnState::Running,
+            rollout_start_index: 0,
+            rollout_end_index: 3,
+            items: vec![
+                TranscriptItem::UserMessage {
+                    id: "user:turn-1".to_string(),
+                    text: "看看 cli 和 agent 的关系".to_string(),
+                },
+                TranscriptItem::Reasoning {
+                    id: "reasoning:1".to_string(),
+                    title: "Inspecting workspace files".to_string(),
+                    text: "先看入口".to_string(),
+                },
+                TranscriptItem::CommandExecution {
+                    id: "tool:1".to_string(),
+                    tool_name: "exec_command".to_string(),
+                    command: "rg cli".to_string(),
+                    current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
+                    status: CommandExecutionStatus::Completed,
+                    exit_code: Some(0),
+                    stdout: Some("cli".to_string()),
+                    stderr: Some(String::new()),
+                    aggregated_output: Some("cli".to_string()),
+                    duration_ms: Some(1),
+                    summary: "cli".to_string(),
+                },
+                TranscriptItem::AgentMessage {
+                    id: "assistant:1".to_string(),
+                    text: "我先看下 CLI 主入口。".to_string(),
+                },
+            ],
+        },
+        ConversationTurn {
+            id: turn_id,
+            state: agent_protocol::TurnState::Running,
+            rollout_start_index: 0,
+            rollout_end_index: 5,
+            items: vec![
+                TranscriptItem::UserMessage {
+                    id: "user:turn-1".to_string(),
+                    text: "看看 cli 和 agent 的关系".to_string(),
+                },
+                TranscriptItem::Reasoning {
+                    id: "reasoning:1".to_string(),
+                    title: "Inspecting workspace files".to_string(),
+                    text: "先看入口".to_string(),
+                },
+                TranscriptItem::CommandExecution {
+                    id: "tool:1".to_string(),
+                    tool_name: "exec_command".to_string(),
+                    command: "rg cli".to_string(),
+                    current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
+                    status: CommandExecutionStatus::Completed,
+                    exit_code: Some(0),
+                    stdout: Some("cli".to_string()),
+                    stderr: Some(String::new()),
+                    aggregated_output: Some("cli".to_string()),
+                    duration_ms: Some(1),
+                    summary: "cli".to_string(),
+                },
+                TranscriptItem::AgentMessage {
+                    id: "assistant:1".to_string(),
+                    text: "我先看下 CLI 主入口。".to_string(),
+                },
+                TranscriptItem::Reasoning {
+                    id: "reasoning:2".to_string(),
+                    title: "Inspecting workspace files".to_string(),
+                    text: "再看 agent".to_string(),
+                },
+            ],
+        },
+    ];
+
+    for turn in snapshots {
+        let reduce = crate::state::reducer::apply_server_message(&AppServerMessage::Notification(
+            AppServerNotification::TurnSnapshot {
+                conversation_id: "default".to_string(),
+                turn,
+            },
+        ));
+        for action in reduce.actions {
+            execute_server_action(&mut app, action);
+        }
+    }
+
+    let cells = app.transcript_state.transcript.cells();
+    let visible = cells
+        .iter()
+        .map(|cell| (cell.label().to_string(), cell.body().to_string(), cell.tone))
+        .collect::<Vec<_>>();
+
+    assert!(matches!(
+        &cells[..],
+        [
+            HistoryCell { tone: HistoryTone::User, .. },
+            HistoryCell { tone: HistoryTone::Reasoning, .. },
+            HistoryCell { tone: HistoryTone::Control, .. },
+            HistoryCell { tone: HistoryTone::Agent, .. },
+            HistoryCell { tone: HistoryTone::Reasoning, .. },
+        ]
+    ), "visible cells: {visible:?}");
+    assert_eq!(cells[1].body(), "先看入口");
+    assert!(
+        cells[2].body().contains("inspect command")
+            || cells[2].body().contains("tool call")
+            || cells[2].body().contains("rg cli"),
+        "visible cells: {visible:?}"
+    );
+    assert_eq!(cells[3].body(), "我先看下 CLI 主入口。");
+    assert_eq!(cells[4].body(), "再看 agent");
+    assert_eq!(cells.len(), 5);
 }
 
 fn test_config(

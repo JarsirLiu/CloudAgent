@@ -12,6 +12,15 @@ use std::process::Command;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     cli::terminal::install_panic_hook();
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if wants_help(&args) {
+        print_help();
+        return Ok(());
+    }
+    if wants_version(&args) {
+        print_version();
+        return Ok(());
+    }
 
     ensure_user_config_exists()?;
     let workspace_root = std::env::current_dir()?;
@@ -41,8 +50,6 @@ async fn main() -> Result<()> {
     };
     runtime.run_startup_retention_cleanup().await;
     let conversation_id = runtime.ensure_active_conversation().await?;
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-
     let transport = arg_value(&args, "--transport")
         .or_else(|| std::env::var_os("CLOUDAGENT_CLIENT_TRANSPORT"))
         .and_then(|value| value.into_string().ok());
@@ -134,4 +141,36 @@ fn arg_value(args: &[OsString], name: &str) -> Option<OsString> {
     args.windows(2)
         .find(|pair| pair[0] == name)
         .map(|pair| pair[1].clone())
+}
+
+fn wants_help(args: &[OsString]) -> bool {
+    args.iter().any(|arg| arg == "--help" || arg == "-h")
+}
+
+fn wants_version(args: &[OsString]) -> bool {
+    args.iter().any(|arg| arg == "--version" || arg == "-V")
+}
+
+fn print_help() {
+    println!(
+        "\
+cloudagent cli
+
+Usage:
+  cloudagent [--transport stdio] [--app-server-bin PATH] [--conversation ID]
+  cloudagent --help
+  cloudagent --version
+
+Options:
+  -h, --help                 Show this help text
+  -V, --version              Show the CLI version
+      --transport MODE       Client transport: in-process (default) or stdio
+      --app-server-bin PATH  app-server binary path when using stdio transport
+      --conversation ID      Conversation id for stdio transport
+"
+    );
+}
+
+fn print_version() {
+    println!("{}", env!("CARGO_PKG_VERSION"));
 }

@@ -254,7 +254,7 @@ pub(crate) fn handle_tui_input(
                 client.send_command(command)?;
                 return Ok(false);
             }
-            if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
+            if let AppClientCommand::SubmitTurn(UserTurnInput { content: _, .. }) = &command {
                 app.console_state.mode = FrontendMode::Running;
                 app.run_state
                     .set_system_notice_level("Submitting turn", NoticeLevel::Info);
@@ -262,7 +262,6 @@ pub(crate) fn handle_tui_input(
                 app.run_state.total_turn_usage = None;
                 app.run_state.model_context_window = None;
                 app.input_pane.clear_views();
-                app.push_cell(HistoryCell::user(content.clone()));
             }
             client.send_command(command)?;
         }
@@ -366,12 +365,12 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.run_state.history_snapshot = Some(messages);
             conversation_facade::rebuild_transcript_from_history(app);
         }
+        ServerAction::UpsertTurnSnapshot(turn) => {
+            conversation_facade::upsert_turn_snapshot(app, turn);
+        }
         ServerAction::PushErrorCell(message) => {
             app.input_pane.clear_views();
             app.push_cell(HistoryCell::info("error", message, HistoryTone::Error));
-        }
-        ServerAction::ItemDispatch(dispatch) => {
-            conversation_facade::apply_item_dispatch(app, dispatch)
         }
         ServerAction::TurnDispatch(dispatch) => {
             conversation_facade::apply_turn_dispatch(app, dispatch)
