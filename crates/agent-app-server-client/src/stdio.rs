@@ -74,6 +74,10 @@ impl StdioAppServerClient {
         self.event_rx.recv().await
     }
 
+    pub fn try_next_event(&mut self) -> Option<AppServerEvent> {
+        self.event_rx.try_recv().ok()
+    }
+
     pub async fn shutdown(self) -> Result<()> {
         let StdioAppServerClient {
             command_tx,

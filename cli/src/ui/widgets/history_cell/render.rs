@@ -365,7 +365,7 @@ fn summarize_command_head(command: &str) -> String {
     compact_inline(normalized.trim(), 64)
 }
 
-fn humanize_tool_label(tool_name: &str) -> String {
+pub(crate) fn humanize_tool_label(tool_name: &str) -> String {
     match tool_name {
         "exec_command" | "tool" => "Run command".to_string(),
         "apply_patch" | "edit_file" => "Edit file".to_string(),

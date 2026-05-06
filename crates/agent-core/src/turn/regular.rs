@@ -689,16 +689,19 @@ fn collect_discoverable_tools(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_discoverable_tools, compose_visible_tool_specs};
     use super::execute_regular_turn;
-    use crate::{
-        ContextManager, ConversationHistory, EventMsg, ModelRequest, ModelResponse, ModelStreamObserver,
-        ModelUsage, RolloutItem, ToolCall, ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec,
-        TurnItemDeltaKind, TurnItemKind, TurnOutcome,
-    };
+    use super::{collect_discoverable_tools, compose_visible_tool_specs};
     use crate::context::EnvironmentContext;
     use crate::tool::RegularTurnToolExposure;
-    use crate::turn::{RegularTurnSettings, ServerRequest, ServerRequestDecision, ServerRequestHandler, ToolBatchOutcome, TurnHost};
+    use crate::turn::{
+        RegularTurnSettings, ServerRequest, ServerRequestDecision, ServerRequestHandler,
+        ToolBatchOutcome, TurnHost,
+    };
+    use crate::{
+        ContextManager, ConversationHistory, EventMsg, ModelRequest, ModelResponse,
+        ModelStreamObserver, ModelUsage, RolloutItem, ToolCall, ToolExecutionPolicy, ToolIdentity,
+        ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind, TurnOutcome,
+    };
     use anyhow::Result;
     use async_trait::async_trait;
     use serde_json::json;
@@ -860,7 +863,14 @@ mod tests {
         }
 
         fn environment_context(&self) -> EnvironmentContext {
-            EnvironmentContext::new(".", "powershell", "2026-05-06", "12:00:00", "2026-05-06T12:00:00+08:00", "+08:00")
+            EnvironmentContext::new(
+                ".",
+                "powershell",
+                "2026-05-06",
+                "12:00:00",
+                "2026-05-06T12:00:00+08:00",
+                "+08:00",
+            )
         }
 
         fn raw_memory_fragment(&self) -> Option<String> {
@@ -897,7 +907,10 @@ mod tests {
             unreachable!()
         }
 
-        async fn history_from_rollout(&self, _conversation_id: &str) -> Result<ConversationHistory> {
+        async fn history_from_rollout(
+            &self,
+            _conversation_id: &str,
+        ) -> Result<ConversationHistory> {
             unreachable!()
         }
 
@@ -920,7 +933,11 @@ mod tests {
             Ok(())
         }
 
-        fn record_rollout_items(&self, _conversation_id: &str, _items: &[RolloutItem]) -> Result<()> {
+        fn record_rollout_items(
+            &self,
+            _conversation_id: &str,
+            _items: &[RolloutItem],
+        ) -> Result<()> {
             Ok(())
         }
 
@@ -948,11 +965,7 @@ mod tests {
             _request: ModelRequest,
             observer: &mut dyn ModelStreamObserver,
         ) -> Result<ModelResponse> {
-            let response = self
-                .responses
-                .lock()
-                .expect("responses lock")
-                .remove(0);
+            let response = self.responses.lock().expect("responses lock").remove(0);
             if let Some(reasoning) = response.reasoning.clone() {
                 observer.on_reasoning_delta(reasoning);
             }
@@ -992,7 +1005,8 @@ mod tests {
             _state: &str,
             _events_count: usize,
             _model_name: Option<&str>,
-        ) {}
+        ) {
+        }
         fn audit_turn_cancelled(&self, _conversation_id: &str, _turn_id: &str, _reason: &str) {}
         fn audit_turn_failed(&self, _conversation_id: &str, _turn_id: &str, _error: &str) {}
         fn audit_model_request_started(
@@ -1001,7 +1015,8 @@ mod tests {
             _turn_id: &str,
             _message_count: usize,
             _tool_count: usize,
-        ) {}
+        ) {
+        }
         fn audit_model_response_received(
             &self,
             _conversation_id: &str,
@@ -1009,7 +1024,8 @@ mod tests {
             _model_name: Option<&str>,
             _has_content: bool,
             _tool_call_count: usize,
-        ) {}
+        ) {
+        }
     }
 
     #[tokio::test]
@@ -1047,7 +1063,9 @@ mod tests {
             CancellationToken::new(),
             history,
             &mut |event| delivered.push(event.clone()),
-            &(|_req: ServerRequest| async move { Ok(ServerRequestDecision::accept(Some("ok".to_string()))) }),
+            &(|_req: ServerRequest| async move {
+                Ok(ServerRequestDecision::accept(Some("ok".to_string())))
+            }),
         )
         .await
         .expect("turn outcome");
@@ -1072,6 +1090,8 @@ mod tests {
                 "reasoning:turn-1:1".to_string()
             ]
         );
-        assert!(delivered.iter().any(|event| matches!(event, EventMsg::TurnCompleted { turn_id } if turn_id == "turn-1")));
+        assert!(delivered.iter().any(
+            |event| matches!(event, EventMsg::TurnCompleted { turn_id } if turn_id == "turn-1")
+        ));
     }
 }

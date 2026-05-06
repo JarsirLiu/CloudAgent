@@ -2,7 +2,7 @@ use crate::app::notification::send_notification;
 use crate::projection::ConversationNotificationProjector;
 use crate::routing::command_router::ServerState;
 use agent_core::ConversationTurn;
-use agent_protocol::{AppServerMessage, AppServerNotification, EventMsg, TurnState};
+use agent_protocol::{AppServerMessage, EventMsg, TurnState};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -43,19 +43,6 @@ pub(crate) fn start_conversation_listener(
                     for notification in projector.project_turn_event(&event) {
                         send_notification(&event_tx, &state, notification).await;
                     }
-                    if event_updates_turn_snapshot(&event)
-                        && let Some(turn) = projector.active_turn_snapshot()
-                    {
-                        send_notification(
-                            &event_tx,
-                            &state,
-                            AppServerNotification::TurnSnapshot {
-                                conversation_id: projector.conversation_id().to_string(),
-                                turn,
-                            },
-                        )
-                        .await;
-                    }
                 }
                 ConversationListenerCommand::ActiveTurnSnapshot { ack } => {
                     let _ = ack.send(projector.active_turn_snapshot());
@@ -71,19 +58,6 @@ pub(crate) fn start_conversation_listener(
         }
     });
     (handle, task)
-}
-
-fn event_updates_turn_snapshot(event: &EventMsg) -> bool {
-    matches!(
-        event,
-        EventMsg::TurnStarted { .. }
-            | EventMsg::ItemStarted { .. }
-            | EventMsg::ItemDelta { .. }
-            | EventMsg::ItemCompleted { .. }
-            | EventMsg::TurnCompleted { .. }
-            | EventMsg::TurnFailed { .. }
-            | EventMsg::TurnCancelled { .. }
-    )
 }
 
 impl ConversationListenerHandle {

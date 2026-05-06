@@ -73,6 +73,13 @@ impl AppServerClient {
         }
     }
 
+    pub fn try_next_event(&mut self) -> Option<AppServerEvent> {
+        match self {
+            Self::InProcess(client) => client.try_next_event(),
+            Self::Stdio(client) => client.try_next_event(),
+        }
+    }
+
     pub async fn shutdown(self) -> Result<()> {
         match self {
             Self::InProcess(client) => client.shutdown().await,

@@ -8,7 +8,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use wrapping::{WrapOptions, word_wrap_text};
 
-pub use render::{RenderContext, render_active_item_placeholder, render_history_entry};
+pub(crate) use render::{
+    RenderContext, humanize_tool_label, render_active_item_placeholder, render_history_entry,
+};
 
 type RenderCache = std::sync::Arc<std::sync::Mutex<Option<(usize, Vec<Line<'static>>)>>>;
 

@@ -796,7 +796,9 @@ mod tests {
                 .expect("reparse");
         match reparsed.message {
             AppServerMessage::Notification(AppServerNotification::ItemStarted {
-                call_id, item_id, ..
+                call_id,
+                item_id,
+                ..
             }) => {
                 assert!(call_id.is_none());
                 assert_eq!(item_id, "assistant:1");

@@ -3,7 +3,10 @@ use crate::app::conversation::facade as conversation_facade;
 use crate::app::TuiApp;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
 use agent_protocol::CommandExecutionStatus;
-use agent_protocol::{ConversationTurn, TranscriptItem, TurnState};
+use agent_protocol::{
+    ConversationTurn, ReadFileEntry, ReadFileStatus, StructuredToolResult, TranscriptItem,
+    TurnState,
+};
 use std::path::PathBuf;
 
 fn user(id: &str, text: &str) -> TranscriptItem {
@@ -41,6 +44,34 @@ fn command(id: &str, command: &str) -> TranscriptItem {
         aggregated_output: Some(String::new()),
         duration_ms: Some(1),
         summary: command.to_string(),
+    }
+}
+
+fn read_file_result(id: &str, path: &str) -> TranscriptItem {
+    TranscriptItem::ToolResult {
+        id: id.to_string(),
+        tool_name: "read_file".to_string(),
+        content: String::new(),
+        summary: String::new(),
+        structured: Some(StructuredToolResult::ReadFile {
+            path: path.to_string(),
+            start_line: Some(1),
+            max_lines: Some(1),
+            total_chars: 10,
+            read: ReadFileEntry {
+                path: path.to_string(),
+                start_line: Some(1),
+                end_line: Some(1),
+                next_start_line: None,
+                returned_line_count: 1,
+                total_line_count: Some(1),
+                returned_char_count: 10,
+                truncated: false,
+                char_count: 10,
+                status: ReadFileStatus::Ok,
+                version_token: None,
+            },
+        }),
     }
 }
 
@@ -224,6 +255,51 @@ fn completing_older_item_does_not_flush_current_live_item() {
     assert!(
         visible[0].contains("rg esc") || visible[0].contains("inspect command"),
         "visible: {visible:?}"
+    );
+}
+
+#[test]
+fn tool_result_completion_replaces_matching_toolcall_placeholder() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user("hello".to_string(), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "toolcall-1".to_string(),
+        agent_protocol::TurnItemKind::ToolCall,
+        Some("read_file".to_string()),
+        false,
+    );
+
+    owner.complete_item(
+        "turn-1".to_string(),
+        "toolresult-1".to_string(),
+        read_file_result("toolresult-1", "D:\\learn\\gifti\\cloudagent\\README.md"),
+        false,
+    );
+
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent_protocol::TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+
+    let pending = owner
+        .pending_history_cells()
+        .iter()
+        .map(|cell| format!("{}|{}", cell.label(), cell.body()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(owner.live_cells().len(), 1);
+    assert!(
+        pending.iter().any(|entry| entry.contains("Explored workspace|read 1 file")),
+        "pending: {pending:?}"
+    );
+    assert!(
+        pending.iter().all(|entry| !entry.contains("Read file|running")),
+        "pending: {pending:?}"
     );
 }
 

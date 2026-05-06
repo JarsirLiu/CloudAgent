@@ -1,4 +1,6 @@
-use agent_core::{ConversationTurn, CoreTranscriptEvent, TranscriptItem, core_transcript_event_from_event_msg};
+use agent_core::{
+    ConversationTurn, CoreTranscriptEvent, TranscriptItem, core_transcript_event_from_event_msg,
+};
 use agent_protocol::{
     AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnItemKind, TurnState,
 };
@@ -91,7 +93,11 @@ impl TurnProjectionState {
     }
 
     fn push_item(&mut self, item_id: &str) {
-        if !self.items_in_order.iter().any(|existing| existing == item_id) {
+        if !self
+            .items_in_order
+            .iter()
+            .any(|existing| existing == item_id)
+        {
             self.items_in_order.push(item_id.to_string());
         }
     }
@@ -130,10 +136,6 @@ impl ConversationNotificationProjector {
             next_rollout_index: 0,
             active_turn_id: None,
         }
-    }
-
-    pub(crate) fn conversation_id(&self) -> &str {
-        &self.conversation_id
     }
 
     pub(crate) fn project_turn_event(&mut self, event: &EventMsg) -> Vec<AppServerNotification> {
@@ -356,8 +358,7 @@ impl ConversationNotificationProjector {
                 item,
             } => {
                 let item_id = item.id().to_string();
-                let lifecycle_error =
-                    self.validate_active_lifecycle(&turn_id, &item_id, &call_id);
+                let lifecycle_error = self.validate_active_lifecycle(&turn_id, &item_id, &call_id);
                 let lifecycle = self.remove_active_item(&item_id);
                 self.observe_item_completed(&turn_id, &item_id, &item, rollout_index);
                 if matches!(
@@ -391,7 +392,19 @@ impl ConversationNotificationProjector {
                     &delta,
                     rollout_index,
                 );
-                Vec::new()
+                self.project_core_delta(
+                    turn_id,
+                    item_id,
+                    delta,
+                    |conversation_id, turn_id, item_id, delta| {
+                        AppServerNotification::AgentMessageDelta {
+                            conversation_id,
+                            turn_id,
+                            item_id,
+                            delta,
+                        }
+                    },
+                )
             }
             CoreTranscriptEvent::PlanDelta {
                 turn_id,
@@ -420,7 +433,19 @@ impl ConversationNotificationProjector {
                     &delta,
                     rollout_index,
                 );
-                Vec::new()
+                self.project_core_delta(
+                    turn_id,
+                    item_id,
+                    delta,
+                    |conversation_id, turn_id, item_id, delta| {
+                        AppServerNotification::ReasoningSummaryTextDelta {
+                            conversation_id,
+                            turn_id,
+                            item_id,
+                            delta,
+                        }
+                    },
+                )
             }
             CoreTranscriptEvent::ReasoningTextDelta {
                 turn_id,
@@ -434,7 +459,19 @@ impl ConversationNotificationProjector {
                     &delta,
                     rollout_index,
                 );
-                Vec::new()
+                self.project_core_delta(
+                    turn_id,
+                    item_id,
+                    delta,
+                    |conversation_id, turn_id, item_id, delta| {
+                        AppServerNotification::ReasoningTextDelta {
+                            conversation_id,
+                            turn_id,
+                            item_id,
+                            delta,
+                        }
+                    },
+                )
             }
         }
     }
@@ -568,14 +605,7 @@ impl ConversationNotificationProjector {
         self.touch_turn(&turn_id, rollout_index);
         self.items_by_item_id.insert(
             item_id.clone(),
-            ProjectedItemState::new(
-                turn_id,
-                item_id,
-                call_id,
-                kind,
-                title,
-                order_hint,
-            ),
+            ProjectedItemState::new(turn_id, item_id, call_id, kind, title, order_hint),
         );
     }
 
@@ -620,7 +650,8 @@ impl ConversationNotificationProjector {
 
     fn clear_turn_projection_state(&mut self, turn_id: &str) {
         self.turns_by_turn_id.remove(turn_id);
-        self.items_by_item_id.retain(|_, item| item.turn_id != turn_id);
+        self.items_by_item_id
+            .retain(|_, item| item.turn_id != turn_id);
     }
 
     fn bump_item_order_hint(&mut self) -> u64 {
@@ -864,7 +895,11 @@ fn projected_item_from_transcript_item(
             last_delta_kind: None,
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
-            tool_output_buffer: if summary.trim().is_empty() { content } else { summary },
+            tool_output_buffer: if summary.trim().is_empty() {
+                content
+            } else {
+                summary
+            },
             order_hint: order_hint as u64,
         },
     }
@@ -1147,18 +1182,105 @@ mod tests {
     }
 
     #[test]
-    fn assistant_text_delta_is_not_projected_directly() {
+    fn assistant_text_delta_projects_to_notification() {
         let mut projector = ConversationNotificationProjector::new("default");
 
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::AssistantMessage,
+            title: Some("assistant_message".to_string()),
+        });
         let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
-            item_id: "assistant:missing".to_string(),
+            item_id: "assistant:1".to_string(),
             call_id: None,
             kind: TurnItemDeltaKind::Text,
             delta: "hello".to_string(),
         });
 
-        assert!(notifications.is_empty());
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::AgentMessageDelta {
+                conversation_id,
+                turn_id,
+                item_id,
+                delta,
+            } if conversation_id == "default"
+                && turn_id == "turn-1"
+                && item_id == "assistant:1"
+                && delta == "hello"
+        ));
+    }
+
+    #[test]
+    fn reasoning_text_delta_projects_to_notification() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::Reasoning,
+            title: Some("reasoning".to_string()),
+        });
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemDeltaKind::ReasoningText,
+            delta: "step".to_string(),
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::ReasoningTextDelta {
+                conversation_id,
+                turn_id,
+                item_id,
+                delta,
+            } if conversation_id == "default"
+                && turn_id == "turn-1"
+                && item_id == "reasoning:1"
+                && delta == "step"
+        ));
+    }
+
+    #[test]
+    fn reasoning_summary_delta_projects_to_notification() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::Reasoning,
+            title: Some("reasoning".to_string()),
+        });
+        let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemDeltaKind::ReasoningSummary,
+            delta: "summary".to_string(),
+        });
+
+        assert_eq!(notifications.len(), 1);
+        assert!(matches!(
+            &notifications[0],
+            AppServerNotification::ReasoningSummaryTextDelta {
+                conversation_id,
+                turn_id,
+                item_id,
+                delta,
+            } if conversation_id == "default"
+                && turn_id == "turn-1"
+                && item_id == "reasoning:1"
+                && delta == "summary"
+        ));
     }
 
     #[test]

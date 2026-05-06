@@ -51,6 +51,10 @@ impl InProcessAppServerClient {
         self.event_rx.recv().await
     }
 
+    pub fn try_next_event(&mut self) -> Option<AppServerEvent> {
+        self.event_rx.try_recv().ok()
+    }
+
     pub async fn shutdown(mut self) -> Result<()> {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());

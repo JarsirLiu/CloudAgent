@@ -1,5 +1,6 @@
 use crate::ui::widgets::history_cell::{
-    HistoryCell, HistoryFormat, HistoryTone, render_active_item_placeholder, render_history_entry,
+    HistoryCell, HistoryFormat, HistoryTone, humanize_tool_label, render_active_item_placeholder,
+    render_history_entry,
 };
 use agent_protocol::{TranscriptItem, TurnId, TurnItemKind};
 use std::collections::HashSet;
@@ -55,6 +56,7 @@ pub(crate) struct ActiveTurnEffects {
 pub(crate) struct ActiveTurnState {
     turn_id: Option<TurnId>,
     live_item_id: Option<String>,
+    live_item_kind: Option<TurnItemKind>,
     live_cell: Option<HistoryCell>,
     last_copyable_output: Option<String>,
     replayed_item_ids: HashSet<String>,
@@ -69,6 +71,7 @@ impl ActiveTurnState {
     pub(crate) fn clear(&mut self) -> ActiveTurnEffects {
         self.turn_id = None;
         self.live_item_id = None;
+        self.live_item_kind = None;
         self.live_cell = None;
         self.last_copyable_output = None;
         self.replayed_item_ids.clear();
@@ -82,6 +85,7 @@ impl ActiveTurnState {
             ActiveTurnAction::StartLocalUser { user_input } => {
                 self.turn_id = None;
                 self.live_item_id = None;
+                self.live_item_kind = None;
                 self.live_cell = None;
                 self.last_copyable_output = None;
                 self.replayed_item_ids.clear();
@@ -110,6 +114,7 @@ impl ActiveTurnState {
                 self.ensure_turn(&turn_id);
                 let replay_cells = self.flush_live_tail_if_different(&item_id);
                 self.live_item_id = Some(item_id);
+                self.live_item_kind = Some(kind.clone());
                 self.live_cell = Some(render_active_item_placeholder(
                     kind,
                     title.as_deref().unwrap_or(""),
@@ -187,6 +192,14 @@ impl ActiveTurnState {
                 }
                 if self.live_item_id.as_deref() == Some(item_id.as_str()) {
                     self.live_item_id = None;
+                    self.live_item_kind = None;
+                    self.live_cell = None;
+                    if !cell.is_empty() {
+                        replay_cells.push(cell);
+                    }
+                } else if self.should_replace_live_tool_placeholder(&item) {
+                    self.live_item_id = None;
+                    self.live_item_kind = None;
                     self.live_cell = None;
                     if !cell.is_empty() {
                         replay_cells.push(cell);
@@ -203,6 +216,7 @@ impl ActiveTurnState {
                 }
                 let replay_cells = self.live_cell.take().into_iter().collect::<Vec<_>>();
                 self.live_item_id = None;
+                self.live_item_kind = None;
                 let last_copyable_output = self.last_copyable_output.clone();
                 self.turn_id = None;
                 self.last_copyable_output = None;
@@ -223,6 +237,7 @@ impl ActiveTurnState {
             Some(_) => {
                 self.turn_id = Some(turn_id.to_string());
                 self.live_item_id = None;
+                self.live_item_kind = None;
                 self.live_cell = None;
                 self.last_copyable_output = None;
                 self.replayed_item_ids.clear();
@@ -238,6 +253,7 @@ impl ActiveTurnState {
         let replay_cells = self.flush_live_tail_if_different(item_id);
         if self.live_item_id.as_deref() != Some(item_id) {
             self.live_item_id = Some(item_id.to_string());
+            self.live_item_kind = None;
             self.live_cell = Some(placeholder);
         } else if self.live_cell.is_none() {
             self.live_cell = Some(placeholder);
@@ -255,7 +271,21 @@ impl ActiveTurnState {
         }
         let flushed = self.live_cell.take().into_iter().collect::<Vec<_>>();
         self.live_item_id = None;
+        self.live_item_kind = None;
         flushed
+    }
+
+    fn should_replace_live_tool_placeholder(&self, item: &TranscriptItem) -> bool {
+        let Some(live_cell) = self.live_cell.as_ref() else {
+            return false;
+        };
+        if self.live_item_kind != Some(TurnItemKind::ToolCall) {
+            return false;
+        }
+        let TranscriptItem::ToolResult { tool_name, .. } = item else {
+            return false;
+        };
+        live_cell.body().trim() == "running" && live_cell.label() == humanize_tool_label(tool_name)
     }
 
     fn snapshot_effects(&self) -> ActiveTurnEffects {
