@@ -194,12 +194,10 @@ fn render_tool_result(
             total_chars,
             if read.truncated { " truncated" } else { "" }
         );
-        let mut aggregate = ExplorationAggregate::new(detail);
-        aggregate.read_files = 1;
-        let cell = HistoryCell::exploration(
-            "Explored workspace",
+        let cell = HistoryCell::edit(
+            humanize_tool_label(tool_name),
             "read 1 file".to_string(),
-            aggregate,
+            Some(detail),
             HistoryTone::Control,
         );
         return cell;
@@ -238,12 +236,10 @@ fn render_tool_result(
                 format!("text search `{}`", compact_inline(query, 48))
             }
         };
-        let mut aggregate = ExplorationAggregate::new(detail);
-        aggregate.searches = 1;
-        let cell = HistoryCell::exploration(
-            "Explored workspace",
+        let cell = HistoryCell::edit(
+            humanize_tool_label(tool_name),
             summary,
-            aggregate,
+            Some(detail),
             HistoryTone::Control,
         );
         return cell;
@@ -255,17 +251,16 @@ fn render_tool_result(
         ..
     }) = structured
     {
-        let mut aggregate = ExplorationAggregate::new(format!(
+        let detail = format!(
             "{} • {} entries{}",
             compact_path(path, 56),
             entry_count,
             if *truncated { " truncated" } else { "" }
-        ));
-        aggregate.listed_directories = 1;
-        let cell = HistoryCell::exploration(
-            "Explored workspace",
+        );
+        let cell = HistoryCell::edit(
+            humanize_tool_label(tool_name),
             "listed 1 directory".to_string(),
-            aggregate,
+            Some(detail),
             HistoryTone::Control,
         );
         return cell;
@@ -280,15 +275,14 @@ fn render_tool_result(
     {
         if *exists {
             let kind = if *is_file { "file" } else { "directory" };
-            let mut aggregate = ExplorationAggregate::new(format!(
+            let detail = format!(
                 "metadata {} • {kind} ({size} bytes)",
                 compact_path(path, 56)
-            ));
-            aggregate.metadata_reads = 1;
-            let cell = HistoryCell::exploration(
-                "Explored workspace",
+            );
+            let cell = HistoryCell::edit(
+                humanize_tool_label(tool_name),
                 "checked 1 path".to_string(),
-                aggregate,
+                Some(detail),
                 HistoryTone::Control,
             );
             return cell;

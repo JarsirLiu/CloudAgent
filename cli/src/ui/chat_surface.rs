@@ -6,11 +6,13 @@ use crate::ui::widgets::welcome::WelcomeScreen;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 const MAX_CONTENT_WIDTH: u16 = 140;
 const MIN_RENDER_WIDTH: u16 = 40;
 const HORIZONTAL_CHROME_WIDTH: u16 = 6;
+const BODY_BOTTOM_GAP_HEIGHT: u16 = 1;
+const STATUS_AREA_HEIGHT: u16 = 1;
 
 pub(crate) struct ChatSurface;
 
@@ -19,6 +21,8 @@ pub(crate) struct ChatSurfaceLayout {
     pub(crate) viewport_height: u16,
     content: Rect,
     body_area: Rect,
+    gap_area: Rect,
+    status_area: Rect,
     bottom_area: Rect,
 }
 
@@ -30,13 +34,22 @@ impl ChatSurface {
         let surface_model = build_chat_surface_model(app, layout.render_width, max_body_height);
         let layout = apply_body_height(app, layout, &surface_model);
 
+        frame.render_widget(Clear, layout.body_area);
+        frame.render_widget(Clear, layout.gap_area);
+        frame.render_widget(Clear, layout.status_area);
         render_body_area(app, frame, layout.body_area, surface_model);
         let status = build_status_view_model(app);
+        render_status_area(
+            frame,
+            layout.status_area,
+            &status.bar_text,
+            &status.live_text,
+        );
         let bottom = app.input_pane.render(
             frame,
             layout.bottom_area,
             app.console_state.mode,
-            &status.text,
+            &status.bar_text,
             &status.meta,
             &status.hint_meta,
         );
@@ -57,21 +70,28 @@ impl ChatSurface {
 
 fn compute_layout(app: &TuiApp, area: Rect) -> ChatSurfaceLayout {
     let content = centered_column(area, MAX_CONTENT_WIDTH);
-    let bottom_height = bottom_pane_height(app, content.width)
+    let input_height = bottom_pane_height(app, content.width)
         .min(content.height)
         .max(1);
     let render_width = content
         .width
         .saturating_sub(HORIZONTAL_CHROME_WIDTH)
         .max(MIN_RENDER_WIDTH) as usize;
-    let [body_area, bottom_area] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(bottom_height)]).areas(content);
+    let [body_area, gap_area, status_area, bottom_area] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(BODY_BOTTOM_GAP_HEIGHT),
+        Constraint::Length(STATUS_AREA_HEIGHT),
+        Constraint::Length(input_height),
+    ])
+    .areas(content);
 
     ChatSurfaceLayout {
         render_width,
         viewport_height: content.height.max(1),
         content,
         body_area,
+        gap_area,
+        status_area,
         bottom_area,
     }
 }
@@ -89,19 +109,25 @@ fn apply_body_height(
 
     let desired_body_height = surface_model.body_height.min(layout.body_area.height);
     let stack_height = desired_body_height
+        .saturating_add(layout.gap_area.height)
+        .saturating_add(layout.status_area.height)
         .saturating_add(layout.bottom_area.height)
         .max(1);
     let desired_viewport_height = stack_height.min(layout.content.height.max(1));
     layout.viewport_height = resolved_viewport_height(app, desired_viewport_height);
 
     let top_spacer = layout.content.height.saturating_sub(stack_height);
-    let [_, body_area, bottom_area] = Layout::vertical([
+    let [_, body_area, gap_area, status_area, bottom_area] = Layout::vertical([
         Constraint::Length(top_spacer),
         Constraint::Length(desired_body_height),
+        Constraint::Length(layout.gap_area.height),
+        Constraint::Length(layout.status_area.height),
         Constraint::Length(layout.bottom_area.height),
     ])
     .areas(layout.content);
     layout.body_area = body_area;
+    layout.gap_area = gap_area;
+    layout.status_area = status_area;
     layout.bottom_area = bottom_area;
     layout
 }
@@ -155,6 +181,32 @@ fn render_active_cell(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
         inner,
     );
+}
+
+fn render_status_area(
+    frame: &mut Frame,
+    area: Rect,
+    status_label: &str,
+    status_text: &str,
+) {
+    if area.height == 0 || area.width == 0 || status_text.trim().is_empty() {
+        return;
+    }
+    let line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            status_label.to_ascii_lowercase(),
+            Style::default()
+                .fg(Color::Rgb(100, 160, 255))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  ", Style::default()),
+        Span::styled(
+            status_text.to_string(),
+            Style::default().fg(Color::Rgb(140, 140, 155)),
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
@@ -226,7 +278,7 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
     frame.render_widget(
         WelcomeScreen::new(
             app.run_state.history_loaded,
-            build_status_view_model(app).text,
+            build_status_view_model(app).bar_text,
             app.welcome_animation_frame,
         )
         .render(left_inner),

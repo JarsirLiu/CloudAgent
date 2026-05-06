@@ -422,7 +422,7 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
 
     assert_eq!(owner.live_cells().len(), 1);
     assert!(
-        pending.iter().any(|entry| entry.contains("Explored workspace|read 1 file")),
+        pending.iter().any(|entry| entry.contains("Read file|read 1 file")),
         "pending: {pending:?}"
     );
     assert!(
@@ -432,7 +432,7 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
 }
 
 #[test]
-fn adjacent_exploration_history_cells_merge_without_crossing_reasoning_barrier() {
+fn adjacent_exploration_history_cells_remain_separate() {
     let mut owner = TranscriptOwner::default();
     let history = vec![turn(
         "turn-1",
@@ -458,12 +458,10 @@ fn adjacent_exploration_history_cells_merge_without_crossing_reasoning_barrier()
         pending,
         vec![
             ("you".to_string(), "hello".to_string()),
-            (
-                "Explored workspace".to_string(),
-                "searched 1 time, read 1 file".to_string(),
-            ),
+            ("Read file".to_string(), "read 1 file".to_string()),
+            ("Search workspace".to_string(), "matched 3 hits in 2 files".to_string()),
             ("Reasoning".to_string(), "thinking".to_string()),
-            ("Explored workspace".to_string(), "read 1 file".to_string()),
+            ("Read file".to_string(), "read 1 file".to_string()),
         ]
     );
 }

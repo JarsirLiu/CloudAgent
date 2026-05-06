@@ -26,13 +26,10 @@ impl RuntimeController {
     pub(crate) fn handle_client_event_batch(
         &mut self,
         app: &mut TuiApp,
-        client: &mut AppServerClient,
+        _client: &mut AppServerClient,
         first_event: AppServerEvent,
     ) -> bool {
         event_router::handle_client_event(app, first_event);
-        while let Some(event) = client.try_next_event() {
-            event_router::handle_client_event(app, event);
-        }
         true
     }
 
