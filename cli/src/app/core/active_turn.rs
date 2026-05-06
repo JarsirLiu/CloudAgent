@@ -1,6 +1,6 @@
 use crate::ui::widgets::history_cell::{
-    HistoryCell, HistoryFormat, HistoryTone, humanize_tool_label, render_active_item_placeholder,
-    render_history_entry,
+    HistoryCell, HistoryFormat, HistoryKind, HistoryTone, humanize_tool_label,
+    render_active_item_placeholder, render_history_entry,
 };
 use agent_protocol::{TranscriptItem, TurnId, TurnItemKind};
 use std::collections::HashSet;
@@ -47,7 +47,7 @@ pub(crate) enum ActiveTurnAction {
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ActiveTurnEffects {
-    pub(crate) live_cells: Vec<HistoryCell>,
+    pub(crate) active_cell: Option<HistoryCell>,
     pub(crate) last_copyable_output: Option<String>,
     pub(crate) replay_cells: Vec<HistoryCell>,
 }
@@ -59,6 +59,7 @@ pub(crate) struct ActiveTurnState {
     live_item_kind: Option<TurnItemKind>,
     live_cell: Option<HistoryCell>,
     last_copyable_output: Option<String>,
+    previous_committed_was_agent_message: bool,
     replayed_item_ids: HashSet<String>,
     pending_local_user_input: Option<String>,
 }
@@ -74,6 +75,7 @@ impl ActiveTurnState {
         self.live_item_kind = None;
         self.live_cell = None;
         self.last_copyable_output = None;
+        self.previous_committed_was_agent_message = false;
         self.replayed_item_ids.clear();
         self.pending_local_user_input = None;
         ActiveTurnEffects::default()
@@ -88,10 +90,11 @@ impl ActiveTurnState {
                 self.live_item_kind = None;
                 self.live_cell = None;
                 self.last_copyable_output = None;
+                self.previous_committed_was_agent_message = false;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = Some(user_input);
                 ActiveTurnEffects {
-                    live_cells: Vec::new(),
+                    active_cell: None,
                     last_copyable_output: None,
                     replay_cells: vec![HistoryCell::user(
                         self.pending_local_user_input
@@ -112,7 +115,8 @@ impl ActiveTurnState {
                 title,
             } => {
                 self.ensure_turn(&turn_id);
-                let replay_cells = self.flush_live_tail_if_different(&item_id);
+                let mut replay_cells = self.flush_live_tail_if_different(&item_id);
+                self.mark_runtime_replay_cells(&mut replay_cells);
                 self.live_item_id = Some(item_id);
                 self.live_item_kind = Some(kind.clone());
                 self.live_cell = Some(render_active_item_placeholder(
@@ -208,22 +212,25 @@ impl ActiveTurnState {
                     self.replayed_item_ids.insert(item_id.clone());
                     replay_cells.push(cell);
                 }
+                self.mark_runtime_replay_cells(&mut replay_cells);
                 self.snapshot_effects_with_replay(replay_cells)
             }
             ActiveTurnAction::CompleteTurn { turn_id } => {
                 if self.turn_id.as_deref() != Some(turn_id.as_str()) {
                     return self.clear();
                 }
-                let replay_cells = self.live_cell.take().into_iter().collect::<Vec<_>>();
+                let mut replay_cells = self.live_cell.take().into_iter().collect::<Vec<_>>();
+                self.mark_runtime_replay_cells(&mut replay_cells);
                 self.live_item_id = None;
                 self.live_item_kind = None;
                 let last_copyable_output = self.last_copyable_output.clone();
                 self.turn_id = None;
                 self.last_copyable_output = None;
+                self.previous_committed_was_agent_message = false;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = None;
                 ActiveTurnEffects {
-                    live_cells: Vec::new(),
+                    active_cell: None,
                     last_copyable_output,
                     replay_cells,
                 }
@@ -240,6 +247,7 @@ impl ActiveTurnState {
                 self.live_item_kind = None;
                 self.live_cell = None;
                 self.last_copyable_output = None;
+                self.previous_committed_was_agent_message = false;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = None;
             }
@@ -275,6 +283,22 @@ impl ActiveTurnState {
         flushed
     }
 
+    fn mark_runtime_replay_cells(&mut self, replay_cells: &mut [HistoryCell]) {
+        for cell in replay_cells {
+            if cell.is_empty() {
+                cell.set_stream_continuation(false);
+                self.previous_committed_was_agent_message = false;
+                continue;
+            }
+            let is_agent_message =
+                cell.tone == HistoryTone::Agent && cell.kind() == HistoryKind::Message;
+            cell.set_stream_continuation(
+                is_agent_message && self.previous_committed_was_agent_message,
+            );
+            self.previous_committed_was_agent_message = is_agent_message;
+        }
+    }
+
     fn should_replace_live_tool_placeholder(&self, item: &TranscriptItem) -> bool {
         let Some(live_cell) = self.live_cell.as_ref() else {
             return false;
@@ -294,7 +318,7 @@ impl ActiveTurnState {
 
     fn snapshot_effects_with_replay(&self, replay_cells: Vec<HistoryCell>) -> ActiveTurnEffects {
         ActiveTurnEffects {
-            live_cells: self.live_cell.clone().into_iter().collect(),
+            active_cell: self.live_cell.clone(),
             last_copyable_output: self.last_copyable_output.clone(),
             replay_cells,
         }

@@ -129,6 +129,7 @@ pub struct HistoryCell {
     content: HistoryContent,
     pub expanded: bool,
     pub repeat_count: usize,
+    stream_continuation: bool,
     cache: RenderCache,
 }
 
@@ -151,6 +152,7 @@ impl HistoryCell {
             content: HistoryContent::User(UserCell { text: text.into() }),
             expanded: false,
             repeat_count: 1,
+            stream_continuation: false,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -165,6 +167,7 @@ impl HistoryCell {
             }),
             expanded: false,
             repeat_count: 1,
+            stream_continuation: false,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -178,6 +181,7 @@ impl HistoryCell {
             }),
             expanded: false,
             repeat_count: 1,
+            stream_continuation: false,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -197,6 +201,7 @@ impl HistoryCell {
             }),
             expanded: false,
             repeat_count: 1,
+            stream_continuation: false,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -216,6 +221,7 @@ impl HistoryCell {
             }),
             expanded: false,
             repeat_count: 1,
+            stream_continuation: false,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -235,6 +241,7 @@ impl HistoryCell {
             }),
             expanded: false,
             repeat_count: 1,
+            stream_continuation: false,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -248,6 +255,7 @@ impl HistoryCell {
             }),
             expanded: false,
             repeat_count: 1,
+            stream_continuation: false,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -267,6 +275,7 @@ impl HistoryCell {
             }),
             expanded: false,
             repeat_count: 1,
+            stream_continuation: false,
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -336,7 +345,16 @@ impl HistoryCell {
     }
 
     pub fn is_stream_continuation(&self) -> bool {
-        false
+        self.stream_continuation
+    }
+
+    pub fn set_stream_continuation(&mut self, is_stream_continuation: bool) {
+        self.stream_continuation = is_stream_continuation;
+    }
+
+    pub fn with_stream_continuation(mut self, is_stream_continuation: bool) -> Self {
+        self.stream_continuation = is_stream_continuation;
+        self
     }
 
     pub fn detail(&self) -> Option<&str> {
@@ -433,6 +451,7 @@ impl PartialEq for HistoryCell {
             && self.content == other.content
             && self.expanded == other.expanded
             && self.repeat_count == other.repeat_count
+            && self.stream_continuation == other.stream_continuation
     }
 }
 
@@ -477,6 +496,11 @@ impl Transcript {
     }
 
     fn push_with_policy(&mut self, cell: HistoryCell, allow_exploration: bool) -> (usize, bool) {
+        if let Some(last) = self.cells.last_mut()
+            && tool_aggregation::coalesce_agent_stream(last, &cell)
+        {
+            return (self.cells.len().saturating_sub(1), false);
+        }
         if let Some(last) = self.cells.last_mut()
             && tool_aggregation::coalesce_tool_like(last, &cell, allow_exploration)
         {
@@ -608,36 +632,33 @@ fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
 }
 
 fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let mut initial_spans = vec![
+    let header = Line::from(vec![
         Span::raw("  "),
         Span::styled("≈ ", Style::default().fg(Color::Rgb(170, 140, 255))),
-    ];
-    if !cell.label().is_empty() {
-        initial_spans.push(Span::styled(
-            format!("{}  ", cell.label()),
+        Span::styled(
+            if cell.label().is_empty() {
+                "Reasoning".to_string()
+            } else {
+                cell.label().to_string()
+            },
             Style::default()
                 .fg(Color::Rgb(210, 215, 225))
                 .add_modifier(Modifier::BOLD),
-        ));
-    }
-    let initial_indent = Line::from(initial_spans);
+        ),
+    ]);
     let subsequent_indent = Line::from(vec![
         Span::raw("    "),
         Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
     ]);
 
-    let mut out = Vec::new();
+    let mut out = vec![header];
     let paragraphs = reasoning_paragraphs(cell.body());
     let paragraph_count = paragraphs.len();
     for (index, paragraph) in paragraphs.into_iter().enumerate() {
         let lines = word_wrap_text(
             &paragraph,
             WrapOptions::new(width)
-                .initial_indent(if out.is_empty() {
-                    initial_indent.clone()
-                } else {
-                    subsequent_indent.clone()
-                })
+                .initial_indent(subsequent_indent.clone())
                 .subsequent_indent(subsequent_indent.clone()),
         );
         out.extend(lines);
@@ -656,7 +677,7 @@ fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     }) {
         out.pop();
     }
-    let max_lines = if cell.expanded { 24usize } else { 5usize };
+    let max_lines = if cell.expanded { 24usize } else { 12usize };
     let hidden_lines = out.len().saturating_sub(max_lines);
     if hidden_lines == 0 {
         return out;
@@ -710,27 +731,36 @@ fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         .map(|aggregate| aggregate.details.as_slice())
         .unwrap_or(&[]);
     let max_details = if cell.expanded { 8 } else { 2 };
-    let mut lines = word_wrap_text(
+    let mut lines = vec![Line::from(vec![
+        Span::raw("  "),
+        Span::styled("◦ ", Style::default().fg(Color::Rgb(120, 170, 255))),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(215, 220, 232))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+
+    lines.extend(
+        word_wrap_text(
         cell.body(),
         WrapOptions::new(width)
             .initial_indent(Line::from(vec![
-                Span::raw("  "),
-                Span::styled("◦ ", Style::default().fg(Color::Rgb(120, 170, 255))),
-                Span::styled(
-                    format!("{title}  "),
-                    Style::default()
-                        .fg(Color::Rgb(215, 220, 232))
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::raw("    "),
+                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
             ]))
-            .subsequent_indent(Line::from("    ")),
+            .subsequent_indent(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+            ])),
     )
     .into_iter()
-    .map(tint_tail_rgb(190, 200, 216))
-    .collect::<Vec<_>>();
+    .map(tint_tail_rgb(190, 200, 216)),
+    );
 
     for (index, detail) in details.iter().take(max_details).enumerate() {
-        let indent = if index == 0 { "  └ " } else { "    " };
+        let indent = if index == 0 { "    └ " } else { "      " };
         lines.extend(
             word_wrap_text(
                 detail,
@@ -1062,6 +1092,47 @@ fn render_tool_like(
             .filter(|line| !line.spans.is_empty())
             .map(tint_tail_rgb(148, 152, 164)),
     );
+
+    if let Some(detail) = cell.detail() {
+        let raw_lines = detail
+            .lines()
+            .flat_map(|line| {
+                word_wrap_text(
+                    line,
+                    WrapOptions::new(width)
+                        .initial_indent(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled("└ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                        ]))
+                        .subsequent_indent(Line::from(vec![
+                            Span::raw("      "),
+                            Span::styled("  ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                        ])),
+                )
+            })
+            .collect::<Vec<_>>();
+        let max_detail_lines = if cell.expanded { 12usize } else { 3usize };
+        let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_detail_lines {
+            raw_lines
+        } else {
+            let mut kept = raw_lines
+                .into_iter()
+                .take(max_detail_lines)
+                .collect::<Vec<_>>();
+            kept.push(Line::from(vec![
+                Span::raw("      "),
+                Span::styled(
+                    format!(
+                        "… +{} more lines (Ctrl+T toggles details)",
+                        detail.lines().count().saturating_sub(max_detail_lines)
+                    ),
+                    Style::default().fg(Color::Rgb(132, 138, 150)),
+                ),
+            ]));
+            kept
+        };
+        lines.extend(display_lines.into_iter().map(tint_tail_rgb(132, 138, 150)));
+    }
     lines
 }
 
@@ -1091,20 +1162,10 @@ fn render_notice(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
 
 fn pretty_tool_title(label: &str) -> String {
     match label {
-        "exec_command" | "tool" => "Run command".to_string(),
-        "apply_patch" | "edit_file" => "Edit file".to_string(),
-        "read_file" => "Read file".to_string(),
-        "search_workspace" => "Search workspace".to_string(),
-        "get_metadata" => "File info".to_string(),
-        "read_directory" => "Read directory".to_string(),
-        "create_directory" => "Create directory".to_string(),
-        "write_file" => "Write file".to_string(),
-        "copy_path" => "Copy path".to_string(),
-        "remove_path" => "Remove path".to_string(),
         "context" => "Context".to_string(),
         "conversation" => "conversation".to_string(),
         "reasoning" => "reasoning".to_string(),
-        other => other.replace('_', " "),
+        other => humanize_tool_label(other),
     }
 }
 
@@ -1176,7 +1237,7 @@ fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone};
+    use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone, Transcript};
 
     fn joined(cell: &HistoryCell, width: usize) -> String {
         cell.to_lines_with_mode(width)
@@ -1224,7 +1285,6 @@ mod tests {
         let rendered = joined(&cell, 80);
         assert!(!rendered.contains("pat\n    │ h"));
         assert!(rendered.contains("path"));
-        assert!(rendered.contains("validation that rejects relative paths."));
     }
 
     #[test]
@@ -1277,5 +1337,42 @@ mod tests {
         assert!(rendered.contains("searched 8 times, read 10 files"));
         assert!(rendered.contains("└ file search `cli`"));
         assert!(rendered.contains("text search `clipboard`"));
+    }
+
+    #[test]
+    fn transcript_merges_adjacent_agent_stream_continuations() {
+        let mut transcript = Transcript::default();
+        let first = HistoryCell::agent("", "hello", HistoryFormat::Markdown);
+        let second =
+            HistoryCell::agent("", " world", HistoryFormat::Markdown).with_stream_continuation(true);
+
+        let (_, inserted_first) = transcript.push_aggregated(first);
+        let (_, inserted_second) = transcript.push_aggregated(second);
+
+        assert!(inserted_first);
+        assert!(!inserted_second);
+        assert_eq!(transcript.cells().len(), 1);
+        assert_eq!(transcript.cells()[0].body(), "hello world");
+    }
+
+    #[test]
+    fn transcript_does_not_merge_agent_cells_across_non_agent_boundaries() {
+        let mut transcript = Transcript::default();
+        let first = HistoryCell::agent("", "hello", HistoryFormat::Markdown);
+        let barrier = HistoryCell::reasoning("Reasoning", "thinking");
+        let second =
+            HistoryCell::agent("", " world", HistoryFormat::Markdown).with_stream_continuation(true);
+
+        let (_, inserted_first) = transcript.push_aggregated(first);
+        let (_, inserted_barrier) = transcript.push_aggregated(barrier);
+        let (_, inserted_second) = transcript.push_aggregated(second);
+
+        assert!(inserted_first);
+        assert!(inserted_barrier);
+        assert!(inserted_second);
+        assert_eq!(transcript.cells().len(), 3);
+        assert_eq!(transcript.cells()[0].body(), "hello");
+        assert_eq!(transcript.cells()[1].body(), "thinking");
+        assert_eq!(transcript.cells()[2].body(), " world");
     }
 }

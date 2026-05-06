@@ -6,6 +6,9 @@ pub(crate) fn apply_runtime_projection_update(app: &mut TuiApp, action: &ServerA
         ServerAction::SetMode(mode) => app.runtime_projection.on_mode_changed(*mode),
         ServerAction::ClearCurrentTurnUsage => app.runtime_projection.on_turn_started(),
         ServerAction::ClearLastToolName => app.runtime_projection.on_tool_finished(),
+        ServerAction::StartActiveTurnItem { kind, title, .. } => app
+            .runtime_projection
+            .on_active_item_started(kind, title.as_deref()),
         ServerAction::SetRetryStatus {
             stage,
             attempt,

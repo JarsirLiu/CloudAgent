@@ -19,7 +19,7 @@ pub(crate) fn upsert_turn_snapshot(app: &mut TuiApp, turn: ConversationTurn) {
         history.push(turn.clone());
     }
 
-    if app.transcript_owner.active_turn_id().is_none() && app.live_cells().is_empty() {
+    if app.transcript_owner.active_turn_id().is_none() && app.transcript_owner.live_is_empty() {
         rebuild_transcript_from_history(app);
     }
 }

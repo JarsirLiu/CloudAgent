@@ -1,63 +1,97 @@
-use crate::app::conversation::projection::{HistoryTurnCells, project_conversation_history};
+use crate::app::conversation::projection::{
+    HistoryTurnCells, mark_turn_stream_continuations, project_conversation_history,
+};
 use crate::app::core::active_turn::{ActiveTurnAction, ActiveTurnEffects, ActiveTurnState};
-use crate::app::core::history_replay::HistoryReplay;
-use crate::app::core::live_transcript::LiveTranscript;
-use crate::ui::widgets::history_cell::{HistoryCell, RenderContext, render_history_entry};
+use crate::ui::widgets::history_cell::{
+    HistoryCell, HistoryTone, RenderContext, Transcript, render_history_entry,
+};
 use agent_protocol::{ConversationTurn, TranscriptItem, TurnId, TurnItemKind, TurnState};
+use std::collections::{HashSet, VecDeque};
+
 #[derive(Default)]
 pub(crate) struct TranscriptOwner {
-    live_transcript: LiveTranscript,
+    live_transcript: Transcript,
     active_turn: ActiveTurnState,
-    history_replay: HistoryReplay,
+    pending_history_cells: VecDeque<HistoryCell>,
+    emitted_turn_ids: HashSet<String>,
+    has_committed_history: bool,
+    last_copyable_output: Option<String>,
 }
 
 impl TranscriptOwner {
     pub(crate) fn clear(&mut self) {
-        self.live_transcript.clear();
+        self.live_transcript = Transcript::default();
         let _ = self.active_turn.clear();
-        self.history_replay.clear();
+        self.pending_history_cells.clear();
+        self.emitted_turn_ids.clear();
+        self.has_committed_history = false;
+        self.last_copyable_output = None;
     }
 
     pub(crate) fn push_live_cell(&mut self, cell: HistoryCell) {
-        self.live_transcript.push_cell(cell);
+        let _ = self.live_transcript.push_live(cell);
     }
 
     pub(crate) fn replace_live_cells(&mut self, cells: Vec<HistoryCell>, expand_details: bool) {
-        self.live_transcript.replace_cells(cells, expand_details);
+        let mut cells = cells;
+        for cell in &mut cells {
+            if matches!(
+                cell.tone,
+                HistoryTone::Reasoning
+                    | HistoryTone::Tool
+                    | HistoryTone::Control
+                    | HistoryTone::Warning
+                    | HistoryTone::Error
+            ) {
+                cell.expanded = expand_details;
+            }
+        }
+        self.live_transcript.replace_cells(cells);
+        self.live_transcript.set_tool_cells_expanded(expand_details);
     }
 
+    #[cfg(test)]
     pub(crate) fn live_cells(&self) -> &[HistoryCell] {
         self.live_transcript.cells()
     }
 
+    pub(crate) fn active_cell(&self) -> Option<&HistoryCell> {
+        self.live_transcript.cells().first()
+    }
+
     pub(crate) fn live_is_empty(&self) -> bool {
-        self.live_transcript.cells().is_empty()
+        self.live_transcript.is_empty()
     }
 
     pub(crate) fn has_transcript_content(&self) -> bool {
         !self.live_is_empty()
-            || self.history_replay.has_pending_cells()
-            || self.history_replay.has_committed_history()
+            || !self.pending_history_cells.is_empty()
+            || self.has_committed_history
     }
 
     pub(crate) fn set_expand_details(&mut self, expand_details: bool) {
-        self.live_transcript.set_expand_details(expand_details);
+        self.live_transcript.set_tool_cells_expanded(expand_details);
     }
 
     pub(crate) fn last_copyable_output(&self) -> Option<&str> {
-        self.live_transcript.last_copyable_output()
+        self.last_copyable_output.as_deref()
     }
 
     pub(crate) fn set_last_copyable_output(&mut self, text: Option<String>) {
-        self.live_transcript.set_last_copyable_output(text);
+        self.last_copyable_output = text;
     }
 
     pub(crate) fn queue_projected_history(&mut self, turns: Vec<HistoryTurnCells>) {
-        self.history_replay.queue_turns(turns);
+        for turn in turns {
+            if !self.emitted_turn_ids.insert(turn.turn_id) {
+                continue;
+            }
+            self.queue_history_cells(turn.cells);
+        }
     }
 
     pub(crate) fn clear_pending_history(&mut self) {
-        self.history_replay.clear_pending();
+        self.pending_history_cells.clear();
     }
 
     pub(crate) fn rebuild_from_history_snapshot(
@@ -189,11 +223,17 @@ impl TranscriptOwner {
 
     #[cfg(test)]
     pub(crate) fn pending_history_cells(&self) -> &std::collections::VecDeque<HistoryCell> {
-        self.history_replay.pending_cells()
+        &self.pending_history_cells
     }
 
     pub(crate) fn drain_pending_history_cells(&mut self) -> Vec<HistoryCell> {
-        self.history_replay.drain_cells()
+        let mut cells = Vec::new();
+        while let Some(cell) = self.pending_history_cells.pop_front() {
+            if !cell.body().trim().is_empty() {
+                cells.push(cell);
+            }
+        }
+        cells
     }
 
     fn apply_active_turn(
@@ -214,10 +254,9 @@ impl TranscriptOwner {
         effects: ActiveTurnEffects,
         expand_details: bool,
     ) {
-        self.replace_live_cells(effects.live_cells, expand_details);
-        self.live_transcript
-            .set_last_copyable_output(effects.last_copyable_output);
-        self.history_replay.queue_cells(effects.replay_cells);
+        self.replace_live_cells(effects.active_cell.into_iter().collect(), expand_details);
+        self.last_copyable_output = effects.last_copyable_output;
+        self.queue_history_cells(effects.replay_cells);
     }
 
     fn restore_running_turn_snapshot(
@@ -262,10 +301,29 @@ impl TranscriptOwner {
             live_cells.push(live_cell);
         }
 
+        mark_turn_stream_continuations(&mut replay_cells);
         self.replace_live_cells(live_cells, expand_details);
-        self.live_transcript
-            .set_last_copyable_output(last_copyable_output.take());
-        self.history_replay.queue_cells(replay_cells);
+        self.last_copyable_output = last_copyable_output.take();
+        self.queue_history_cells(replay_cells);
+    }
+
+    fn queue_history_cells(&mut self, cells: Vec<HistoryCell>) {
+        if cells.is_empty() {
+            return;
+        }
+
+        let mut transcript = Transcript::default();
+        while let Some(existing) = self.pending_history_cells.pop_front() {
+            let _ = transcript.push_aggregated(existing);
+        }
+
+        for cell in cells {
+            self.has_committed_history = true;
+            let _ = transcript.push_aggregated(cell);
+        }
+
+        self.pending_history_cells
+            .extend(transcript.cells().iter().cloned());
     }
 }
 

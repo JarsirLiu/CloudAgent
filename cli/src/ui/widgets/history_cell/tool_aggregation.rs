@@ -1,5 +1,20 @@
 use super::{ExplorationAggregate, HistoryCell, HistoryKind, HistoryTone};
 
+pub(super) fn coalesce_agent_stream(prev: &mut HistoryCell, next: &HistoryCell) -> bool {
+    if prev.tone != HistoryTone::Agent || next.tone != HistoryTone::Agent {
+        return false;
+    }
+    if prev.kind() != HistoryKind::Message || next.kind() != HistoryKind::Message {
+        return false;
+    }
+    if prev.format() != next.format() || !next.is_stream_continuation() {
+        return false;
+    }
+
+    prev.append_body(next.body());
+    true
+}
+
 pub(super) fn coalesce_tool_like(
     prev: &mut HistoryCell,
     next: &HistoryCell,

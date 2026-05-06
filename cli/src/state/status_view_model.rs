@@ -11,6 +11,10 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     let fallback = status_text_from_mode(app.console_state.mode);
     let text = if let Some(notice) = app.run_state.current_system_notice() {
         notice.to_string()
+    } else if let Some(tool_title) = app.runtime_projection.active_tool_title.as_deref() {
+        animate_status(tool_title, app.run_state.live_animation_frame)
+    } else if let Some(live_label) = app.runtime_projection.live_label.as_deref() {
+        animate_status(live_label, app.run_state.live_animation_frame)
     } else {
         fallback.to_string()
     };
@@ -49,6 +53,11 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     }
 }
 
+fn animate_status(text: &str, frame: u64) -> String {
+    const FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+    format!("{} {}", FRAMES[(frame as usize) % FRAMES.len()], text)
+}
+
 fn compact_number(value: u64) -> String {
     if value >= 1_000_000 {
         format!("{:.1}m", value as f64 / 1_000_000.0)
@@ -61,4 +70,50 @@ fn compact_number(value: u64) -> String {
 
 fn format_tokens(value: u64) -> String {
     format!("{} tokens", compact_number(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_status_view_model;
+    use crate::app::TuiApp;
+    use agent_protocol::FrontendMode;
+    use std::path::PathBuf;
+
+    fn test_app() -> TuiApp {
+        TuiApp::new(
+            "default".to_string(),
+            "test",
+            PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+            PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+            false,
+            "ReadOnly".to_string(),
+        )
+    }
+
+    #[test]
+    fn active_tool_status_overrides_live_label() {
+        let mut app = test_app();
+        app.console_state.mode = FrontendMode::Running;
+        app.run_state.clear_system_notice();
+        app.run_state.live_animation_frame = 1;
+        app.runtime_projection.live_label = Some("assistant is responding".to_string());
+        app.runtime_projection.active_tool_title = Some("running command: rg cli".to_string());
+
+        let status = build_status_view_model(&app);
+
+        assert_eq!(status.text, "/ running command: rg cli");
+    }
+
+    #[test]
+    fn live_label_animates_when_no_active_tool_or_notice() {
+        let mut app = test_app();
+        app.console_state.mode = FrontendMode::Running;
+        app.run_state.clear_system_notice();
+        app.run_state.live_animation_frame = 2;
+        app.runtime_projection.live_label = Some("assistant is thinking".to_string());
+
+        let status = build_status_view_model(&app);
+
+        assert_eq!(status.text, "- assistant is thinking");
+    }
 }

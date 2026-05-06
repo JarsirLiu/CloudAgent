@@ -4,7 +4,8 @@ use crate::app::TuiApp;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
 use agent_protocol::CommandExecutionStatus;
 use agent_protocol::{
-    ConversationTurn, ReadFileEntry, ReadFileStatus, StructuredToolResult, TranscriptItem,
+    ConversationTurn, ReadFileEntry, ReadFileStatus, SearchWorkspaceMode,
+    SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult, TranscriptItem,
     TurnState,
 };
 use std::path::PathBuf;
@@ -75,6 +76,32 @@ fn read_file_result(id: &str, path: &str) -> TranscriptItem {
     }
 }
 
+fn search_workspace_result(id: &str, query: &str) -> TranscriptItem {
+    TranscriptItem::ToolResult {
+        id: id.to_string(),
+        tool_name: "search_workspace".to_string(),
+        content: String::new(),
+        summary: String::new(),
+        structured: Some(StructuredToolResult::SearchWorkspace {
+            session_id: "search:test:1".to_string(),
+            operation: SearchWorkspaceOperation::Search,
+            mode: SearchWorkspaceMode::Text,
+            status: SearchWorkspaceStatus::Active,
+            query: query.to_string(),
+            path_scope: None,
+            case_sensitive: false,
+            context_lines: 0,
+            max_results: 20,
+            offset: 0,
+            file_count: 2,
+            match_count: 3,
+            truncated: false,
+            next_offset: None,
+            hits: Vec::new(),
+        }),
+    }
+}
+
 fn turn(id: &str, state: TurnState, items: Vec<TranscriptItem>) -> ConversationTurn {
     ConversationTurn {
         id: id.to_string(),
@@ -116,16 +143,57 @@ fn transcript_owner_rebuilds_history_and_keeps_only_live_tail_active() {
     let pending = owner
         .pending_history_cells()
         .iter()
-        .map(|cell| cell.body().to_string())
+        .map(|cell| (cell.body().to_string(), cell.is_stream_continuation()))
         .collect::<Vec<_>>();
 
-    assert_eq!(pending, vec!["first", "done", "second"]);
+    assert_eq!(
+        pending,
+        vec![
+            ("first".to_string(), false),
+            ("done".to_string(), false),
+            ("second".to_string(), false)
+        ]
+    );
     let visible = owner
         .live_cells()
         .iter()
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>();
     assert_eq!(visible, vec!["thinking"]);
+}
+
+#[test]
+fn completed_turn_history_merges_only_adjacent_agent_message_runs() {
+    let mut owner = TranscriptOwner::default();
+    let history = vec![turn(
+        "turn-1",
+        TurnState::Completed,
+        vec![
+            user("u1", "first"),
+            agent("a1", "part one"),
+            agent("a2", "part two"),
+            reasoning("r1", "thinking"),
+            agent("a3", "done"),
+        ],
+    )];
+
+    owner.rebuild_from_history_snapshot(&history, false);
+
+    let cells = owner
+        .pending_history_cells()
+        .iter()
+        .map(|cell| (cell.body().to_string(), cell.is_stream_continuation()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        cells,
+        vec![
+            ("first".to_string(), false),
+            ("part onepart two".to_string(), false),
+            ("thinking".to_string(), false),
+            ("done".to_string(), false),
+        ]
+    );
 }
 
 #[test]
@@ -259,6 +327,66 @@ fn completing_older_item_does_not_flush_current_live_item() {
 }
 
 #[test]
+fn runtime_non_agent_cells_do_not_become_stream_continuations() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user("hello".to_string(), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        agent_protocol::TurnItemKind::Reasoning,
+        Some("Reasoning".to_string()),
+        false,
+    );
+    owner.append_reasoning_delta(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        "thinking".to_string(),
+        false,
+    );
+    owner.complete_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        reasoning("r1", "thinking"),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        agent_protocol::TurnItemKind::CommandExecution,
+        Some("Run command".to_string()),
+        false,
+    );
+    owner.append_output_delta(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        "rg cli".to_string(),
+        false,
+    );
+    owner.complete_item(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        command("c1", "rg cli"),
+        false,
+    );
+
+    let cells = owner
+        .pending_history_cells()
+        .iter()
+        .map(|cell| (cell.body().to_string(), cell.is_stream_continuation()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        cells,
+        vec![
+            ("hello".to_string(), false),
+            ("thinking".to_string(), false),
+            ("ran 1 inspect command".to_string(), false),
+        ]
+    );
+}
+
+#[test]
 fn tool_result_completion_replaces_matching_toolcall_placeholder() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user("hello".to_string(), false);
@@ -300,6 +428,43 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
     assert!(
         pending.iter().all(|entry| !entry.contains("Read file|running")),
         "pending: {pending:?}"
+    );
+}
+
+#[test]
+fn adjacent_exploration_history_cells_merge_without_crossing_reasoning_barrier() {
+    let mut owner = TranscriptOwner::default();
+    let history = vec![turn(
+        "turn-1",
+        TurnState::Completed,
+        vec![
+            user("u1", "hello"),
+            read_file_result("rf1", "D:\\learn\\gifti\\cloudagent\\README.md"),
+            search_workspace_result("sw1", "Interrupt"),
+            reasoning("r1", "thinking"),
+            read_file_result("rf2", "D:\\learn\\gifti\\cloudagent\\cli\\src\\main.rs"),
+        ],
+    )];
+
+    owner.rebuild_from_history_snapshot(&history, false);
+
+    let pending = owner
+        .pending_history_cells()
+        .iter()
+        .map(|cell| (cell.label().to_string(), cell.body().to_string()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        pending,
+        vec![
+            ("you".to_string(), "hello".to_string()),
+            (
+                "Explored workspace".to_string(),
+                "searched 1 time, read 1 file".to_string(),
+            ),
+            ("Reasoning".to_string(), "thinking".to_string()),
+            ("Explored workspace".to_string(), "read 1 file".to_string()),
+        ]
     );
 }
 
@@ -404,6 +569,52 @@ fn chat_surface_model_renders_streaming_visible_tail() {
         rendered.iter().any(|line| line.contains("thinking")),
         "rendered: {rendered:?}"
     );
+}
+
+#[test]
+fn streaming_reasoning_stays_fully_visible_until_completion() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.run_state.history_loaded = true;
+
+    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .bind_turn_id("turn-1".to_string(), false);
+    app.transcript_owner.start_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        agent_protocol::TurnItemKind::Reasoning,
+        Some("Reasoning".to_string()),
+        false,
+    );
+    app.transcript_owner.append_reasoning_delta(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        "First paragraph with enough text to wrap across multiple lines.\n\nSecond paragraph with another long explanation that should remain visible while reasoning is still active.".to_string(),
+        false,
+    );
+
+    let model = build_chat_surface_model(&mut app, 80, 40);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("First paragraph"));
+    assert!(rendered.contains("Second paragraph"));
+    assert!(!rendered.contains("Ctrl+T toggles details"));
 }
 
 #[test]

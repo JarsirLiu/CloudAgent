@@ -370,9 +370,13 @@ pub(crate) fn humanize_tool_label(tool_name: &str) -> String {
         "exec_command" | "tool" => "Run command".to_string(),
         "apply_patch" | "edit_file" => "Edit file".to_string(),
         "read_file" => "Read file".to_string(),
+        "read_directory" => "Read directory".to_string(),
         "search_workspace" => "Search workspace".to_string(),
         "get_metadata" => "File info".to_string(),
+        "create_directory" => "Create directory".to_string(),
         "write_file" => "Write file".to_string(),
+        "copy_path" => "Copy path".to_string(),
+        "remove_path" => "Remove path".to_string(),
         other => other.replace('_', " "),
     }
 }

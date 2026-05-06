@@ -63,7 +63,7 @@ fn visible_transcript_lines(
     max_lines: usize,
     status_line: Option<Line<'static>>,
 ) -> Vec<Line<'static>> {
-    let lines = transcript_lines(app.live_cells(), render_width, status_line);
+    let lines = transcript_lines(app.transcript_owner.active_cell(), render_width, status_line);
     app.transcript_state.note_total_lines(lines.len());
     app.transcript_state.set_viewport_height(max_lines);
     app.transcript_state.clamp_scroll();
@@ -78,15 +78,12 @@ fn visible_transcript_lines(
 }
 
 fn transcript_lines(
-    live_cells: &[HistoryCell],
+    active_cell: Option<&HistoryCell>,
     render_width: usize,
     status_line: Option<Line<'static>>,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    for (index, cell) in live_cells.iter().enumerate() {
-        if index > 0 {
-            lines.push(Line::from(""));
-        }
+    if let Some(cell) = active_cell {
         push_cell_lines(&mut lines, cell, render_width);
     }
     if let Some(line) = status_line {
@@ -100,6 +97,10 @@ fn transcript_lines(
 
 fn push_cell_lines(lines: &mut Vec<Line<'static>>, cell: &HistoryCell, render_width: usize) {
     if !cell.body().trim().is_empty() {
-        lines.extend(cell.to_lines_with_mode(render_width));
+        let mut render_cell = cell.clone();
+        if render_cell.tone == crate::ui::widgets::history_cell::HistoryTone::Reasoning {
+            render_cell.expanded = true;
+        }
+        lines.extend(render_cell.to_lines_with_mode(render_width));
     }
 }

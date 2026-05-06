@@ -1,7 +1,6 @@
 pub mod custom_terminal;
 mod draw_coordinator;
 pub mod events;
-mod inline_viewport;
 mod insert_history;
 
 use anyhow::Result;

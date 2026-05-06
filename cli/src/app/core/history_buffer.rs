@@ -6,9 +6,11 @@ impl TuiApp {
         self.transcript_owner.push_live_cell(cell);
     }
 
+    #[cfg(test)]
     pub(crate) fn live_cells(&self) -> &[HistoryCell] {
         self.transcript_owner.live_cells()
     }
+
     pub(crate) fn drain_pending_history_cells(
         &mut self,
     ) -> Vec<crate::ui::widgets::history_cell::HistoryCell> {

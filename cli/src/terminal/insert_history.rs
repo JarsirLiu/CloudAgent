@@ -30,8 +30,22 @@ where
     }
 
     let render_width = terminal.viewport_area.width.max(1) as usize;
+    let lines = history_cells_to_lines(
+        cells,
+        render_width,
+        terminal.visible_history_rows() > 0,
+    );
+
+    insert_history_lines_raw(terminal, lines)
+}
+
+fn history_cells_to_lines(
+    cells: Vec<HistoryCell>,
+    render_width: usize,
+    has_existing_history: bool,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let mut has_emitted_history = terminal.visible_history_rows() > 0;
+    let mut has_emitted_history = has_existing_history;
 
     for cell in cells {
         let mut display = cell.to_lines_with_mode(render_width);
@@ -45,7 +59,7 @@ where
         has_emitted_history = true;
     }
 
-    insert_history_lines_raw(terminal, lines)
+    lines
 }
 
 fn insert_history_lines_raw<B>(
@@ -338,7 +352,8 @@ impl crossterm::Command for ResetScrollRegion {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_history_line;
+    use super::{history_cells_to_lines, wrap_history_line};
+    use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
 
@@ -371,5 +386,44 @@ mod tests {
 
         assert!(wrapped.len() > 1);
         assert!(wrapped.iter().all(|line| line.width() <= 6));
+    }
+
+    #[test]
+    fn continuation_cells_do_not_insert_blank_separator() {
+        let first = HistoryCell::reasoning("Reasoning", "thinking");
+        let mut second = HistoryCell::info("Run command", "rg cli", HistoryTone::Control);
+        second.set_stream_continuation(true);
+
+        let lines = history_cells_to_lines(vec![first, second], 80, false);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered.iter().filter(|line| line.is_empty()).count(), 0);
+    }
+
+    #[test]
+    fn new_non_continuation_cell_inserts_blank_separator() {
+        let first = HistoryCell::user("hello");
+        let second = HistoryCell::reasoning("Reasoning", "thinking");
+
+        let lines = history_cells_to_lines(vec![first, second], 80, false);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(rendered.iter().any(|line| line.is_empty()));
     }
 }
