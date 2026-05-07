@@ -132,7 +132,7 @@ impl InputPane {
             .is_some_and(|view| view.requires_action())
         {
             let (widget, lines_before_composer, _) =
-                self.render_request_view(area.width, mode, status_text, status_meta);
+                self.render_request_view(mode, status_text, status_meta, area.width);
             frame.render_widget(widget, area);
             return InputPaneRenderResult {
                 cursor_position: self.cursor_position(area, lines_before_composer, mode),
@@ -148,12 +148,13 @@ impl InputPane {
             composer.completion_lines.clone()
         };
 
+        let status = status_line(mode, status_text, status_meta, inner_width);
+
         if completion_lines.is_empty() {
             let mut lines = Vec::new();
-            lines.push(status_line(mode, status_text, status_meta, inner_width));
+            lines.push(status);
             lines.push(Line::raw(""));
             lines.extend(composer.lines);
-            lines.push(Line::raw(""));
             lines.push(hint_line(mode, inner_width, hint_meta));
 
             let widget = input_block(lines, border_style);
@@ -172,11 +173,9 @@ impl InputPane {
         ])
         .areas(area);
 
-        let mut input_lines = vec![status_line(mode, status_text, status_meta, inner_width)];
+        let mut input_lines = vec![status];
         input_lines.push(Line::raw(""));
         input_lines.extend(composer.lines);
-        input_lines.push(Line::raw(""));
-        input_lines.push(hint_line(mode, inner_width, hint_meta));
         frame.render_widget(input_block(input_lines, border_style), input_area);
 
         let panel = Paragraph::new(Text::from(completion_lines)).block(
@@ -196,14 +195,15 @@ impl InputPane {
 
     fn render_request_view(
         &self,
-        area_width: u16,
         mode: FrontendMode,
         status_text: &str,
-        status_meta: &str,
+        _status_meta: &str,
+        area_width: u16,
     ) -> (Paragraph<'static>, u16, u16) {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let inner_width = area_width.saturating_sub(2) as usize;
-        lines.push(status_line(mode, status_text, status_meta, inner_width));
+        lines.push(status_line(mode, status_text, "", inner_width));
+
         let mut lines_before_composer = 1u16;
 
         if let Some(view) = self.view_stack.last() {
@@ -247,7 +247,7 @@ impl InputPane {
             .is_some_and(|view| view.requires_action())
         {
             let (widget, lines_before, _) =
-                self.render_request_view(area_width, mode, status_text, status_meta);
+                self.render_request_view(mode, status_text, status_meta, area_width);
             let text = format!("{widget:?}");
             return (vec![Line::raw(text)], lines_before);
         }
@@ -257,8 +257,6 @@ impl InputPane {
         let mut lines = vec![status_line(mode, status_text, status_meta, inner_width)];
         lines.push(Line::raw(""));
         lines.extend(composer.lines);
-        lines.push(Line::raw(""));
-        lines.push(hint_line(mode, inner_width, ""));
         if !composer.completion_lines.is_empty() {
             lines.extend(composer.completion_lines);
         }
@@ -281,10 +279,10 @@ impl InputPane {
         };
         if popup_height == 0 {
             // Border + status + spacer + input + hint.
-            (6 + composer.lines.len() as u16).max(7)
+            (5 + composer.lines.len() as u16).max(6)
         } else {
             // Small input surface with status plus an independent command panel below it.
-            (7 + composer.cursor_row).saturating_add(popup_height + 1)
+            (5 + composer.cursor_row).saturating_add(popup_height + 1)
         }
     }
 
@@ -568,7 +566,7 @@ mod tests {
     fn idle_composer_stays_compact_and_completion_gets_menu_space() {
         let mut pane = InputPane::new();
         let before = pane.desired_height(FrontendMode::Idle, 100);
-        assert_eq!(before, 7);
+        assert_eq!(before, 6);
 
         let _ = pane.handle_key(KeyEvent {
             code: KeyCode::Char('/'),

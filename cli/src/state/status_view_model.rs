@@ -2,22 +2,21 @@ use crate::app::TuiApp;
 use crate::state::selectors::status_text_from_mode;
 
 pub(crate) struct StatusViewModel {
-    pub(crate) live_text: String,
-    pub(crate) bar_text: String,
+    pub(crate) text: String,
     pub(crate) meta: String,
     pub(crate) hint_meta: String,
 }
 
 pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     let fallback = status_text_from_mode(app.console_state.mode);
-    let live_text = if let Some(notice) = app.run_state.current_system_notice() {
+    let text = if let Some(notice) = app.run_state.current_system_notice() {
         notice.to_string()
     } else if let Some(tool_title) = app.runtime_projection.active_tool_title.as_deref() {
         animate_status(tool_title, app.run_state.live_animation_frame)
     } else if let Some(live_label) = app.runtime_projection.live_label.as_deref() {
         animate_status(live_label, app.run_state.live_animation_frame)
     } else {
-        String::new()
+        fallback.to_string()
     };
 
     let mut parts = Vec::new();
@@ -48,8 +47,7 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
         parts.push(format!("context {percent}%"));
     }
     StatusViewModel {
-        live_text,
-        bar_text: fallback.to_string(),
+        text,
         meta: parts.join(" · "),
         hint_meta,
     }
@@ -103,8 +101,7 @@ mod tests {
 
         let status = build_status_view_model(&app);
 
-        assert_eq!(status.live_text, "/ running command: rg cli");
-        assert_eq!(status.bar_text, "Working");
+        assert_eq!(status.text, "/ running command: rg cli");
     }
 
     #[test]
@@ -117,7 +114,6 @@ mod tests {
 
         let status = build_status_view_model(&app);
 
-        assert_eq!(status.live_text, "- assistant is thinking");
-        assert_eq!(status.bar_text, "Working");
+        assert_eq!(status.text, "- assistant is thinking");
     }
 }

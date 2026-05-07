@@ -12,8 +12,6 @@ pub(crate) struct RuntimeController {
     render_gate: RenderGate,
 }
 
-const MAX_CLIENT_EVENTS_PER_BATCH: usize = 24;
-
 impl RuntimeController {
     pub(crate) fn new() -> Self {
         Self {
@@ -32,10 +30,7 @@ impl RuntimeController {
         first_event: AppServerEvent,
     ) -> bool {
         event_router::handle_client_event(app, first_event);
-        for _ in 1..MAX_CLIENT_EVENTS_PER_BATCH {
-            let Some(event) = client.try_next_event() else {
-                break;
-            };
+        while let Some(event) = client.try_next_event() {
             event_router::handle_client_event(app, event);
         }
         true

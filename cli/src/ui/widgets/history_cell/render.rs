@@ -77,7 +77,7 @@ pub fn render_active_item_placeholder(kind: TurnItemKind, title: &str) -> Histor
         ),
         TurnItemKind::ToolCall => HistoryCell::info(
             humanize_tool_label(title),
-            String::new(),
+            "running".to_string(),
             HistoryTone::Control,
         ),
         _ => HistoryCell::info(
@@ -185,19 +185,21 @@ fn render_tool_result(
         ..
     }) = structured
     {
-        let display_path = compact_path(path, 88);
+        let display_path = compact_path(path, 56);
         let range_suffix = format_line_range(read.start_line, read.end_line);
         let detail = format!(
             "{}{} • {} chars{}",
             display_path,
             range_suffix,
-            compact_count(*total_chars),
-            if read.truncated { ", truncated" } else { "" }
+            total_chars,
+            if read.truncated { " truncated" } else { "" }
         );
-        let cell = HistoryCell::edit(
-            humanize_tool_label(tool_name),
-            "read file".to_string(),
-            Some(detail),
+        let mut aggregate = ExplorationAggregate::new(detail);
+        aggregate.read_files = 1;
+        let cell = HistoryCell::exploration(
+            "Explored workspace",
+            "read 1 file".to_string(),
+            aggregate,
             HistoryTone::Control,
         );
         return cell;
@@ -236,10 +238,12 @@ fn render_tool_result(
                 format!("text search `{}`", compact_inline(query, 48))
             }
         };
-        let cell = HistoryCell::edit(
-            humanize_tool_label(tool_name),
+        let mut aggregate = ExplorationAggregate::new(detail);
+        aggregate.searches = 1;
+        let cell = HistoryCell::exploration(
+            "Explored workspace",
             summary,
-            Some(detail),
+            aggregate,
             HistoryTone::Control,
         );
         return cell;
@@ -251,16 +255,17 @@ fn render_tool_result(
         ..
     }) = structured
     {
-        let detail = format!(
+        let mut aggregate = ExplorationAggregate::new(format!(
             "{} • {} entries{}",
-            compact_path(path, 88),
+            compact_path(path, 56),
             entry_count,
             if *truncated { " truncated" } else { "" }
-        );
-        let cell = HistoryCell::edit(
-            humanize_tool_label(tool_name),
-            "listed directory".to_string(),
-            Some(detail),
+        ));
+        aggregate.listed_directories = 1;
+        let cell = HistoryCell::exploration(
+            "Explored workspace",
+            "listed 1 directory".to_string(),
+            aggregate,
             HistoryTone::Control,
         );
         return cell;
@@ -275,21 +280,22 @@ fn render_tool_result(
     {
         if *exists {
             let kind = if *is_file { "file" } else { "directory" };
-            let detail = format!(
+            let mut aggregate = ExplorationAggregate::new(format!(
                 "metadata {} • {kind} ({size} bytes)",
-                compact_path(path, 88)
-            );
-            let cell = HistoryCell::edit(
-                humanize_tool_label(tool_name),
+                compact_path(path, 56)
+            ));
+            aggregate.metadata_reads = 1;
+            let cell = HistoryCell::exploration(
+                "Explored workspace",
                 "checked 1 path".to_string(),
-                Some(detail),
+                aggregate,
                 HistoryTone::Control,
             );
             return cell;
         }
         return HistoryCell::info(
             humanize_tool_label(tool_name),
-            format!("metadata missing — {}", compact_path(path, 88)),
+            format!("metadata missing — {}", compact_path(path, 56)),
             HistoryTone::Warning,
         );
     }
@@ -391,33 +397,20 @@ fn compact_inline(input: &str, max_chars: usize) -> String {
     out
 }
 
-fn compact_count(value: usize) -> String {
-    match value {
-        0..=999 => value.to_string(),
-        1_000..=9_999 => format!("{:.1}k", value as f64 / 1_000.0),
-        10_000..=999_999 => format!("{}k", value / 1_000),
-        1_000_000..=9_999_999 => format!("{:.1}M", value as f64 / 1_000_000.0),
-        _ => format!("{}M", value / 1_000_000),
-    }
-}
-
 fn compact_path(path: &str, max_chars: usize) -> String {
     let path = path.replace('\\', "/");
     let chars: Vec<char> = path.chars().collect();
     if chars.len() <= max_chars {
         return path;
     }
-    if max_chars <= 3 {
+    if max_chars <= 1 {
         return "…".to_string();
     }
-    let visible = max_chars.saturating_sub(1);
-    let head_len = visible / 2;
-    let tail_len = visible.saturating_sub(head_len);
-    let head: String = chars[..head_len].iter().collect();
+    let tail_len = max_chars.saturating_sub(1);
     let tail: String = chars[chars.len().saturating_sub(tail_len)..]
         .iter()
         .collect();
-    format!("{head}…{tail}")
+    format!("…{tail}")
 }
 
 fn format_line_range(start_line: Option<usize>, end_line: Option<usize>) -> String {

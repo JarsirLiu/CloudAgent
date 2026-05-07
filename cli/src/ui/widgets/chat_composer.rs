@@ -347,10 +347,10 @@ impl ChatComposer {
             return;
         };
         if let Some(command) = selected.command {
-            self.textarea.set_text(format!("/{}", command.name()));
+            self.textarea.set_text(format!("/{} ", command.name()));
         } else if self.textarea.text().starts_with("/filter") {
             self.textarea
-                .set_text(format!("/filter {}", selected.insertion));
+                .set_text(format!("/filter {} ", selected.insertion));
         }
         self.completion.clear();
     }
@@ -421,7 +421,7 @@ mod tests {
 
         assert!(composer.completion.is_active());
         composer.handle_key(key(KeyCode::Tab));
-        assert_eq!(composer.textarea.text(), "/copy");
+        assert_eq!(composer.textarea.text(), "/copy ");
     }
 
     #[test]

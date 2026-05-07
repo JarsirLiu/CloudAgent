@@ -1,4 +1,4 @@
-use super::{HistoryCell, HistoryContent, HistoryKind, HistoryTone};
+use super::{ExplorationAggregate, HistoryCell, HistoryKind, HistoryTone};
 
 pub(super) fn coalesce_agent_stream(prev: &mut HistoryCell, next: &HistoryCell) -> bool {
     if prev.tone != HistoryTone::Agent || next.tone != HistoryTone::Agent {
@@ -15,7 +15,17 @@ pub(super) fn coalesce_agent_stream(prev: &mut HistoryCell, next: &HistoryCell) 
     true
 }
 
-pub(super) fn coalesce_tool_like(prev: &mut HistoryCell, next: &HistoryCell) -> bool {
+pub(super) fn coalesce_tool_like(
+    prev: &mut HistoryCell,
+    next: &HistoryCell,
+    allow_exploration: bool,
+) -> bool {
+    if allow_exploration
+        && prev.kind() == HistoryKind::Exploration
+        && next.kind() == HistoryKind::Exploration
+    {
+        return coalesce_exploration(prev, next);
+    }
     if !matches_tool_like(prev.tone) || prev.tone != next.tone {
         return false;
     }
@@ -28,42 +38,80 @@ pub(super) fn coalesce_tool_like(prev: &mut HistoryCell, next: &HistoryCell) -> 
     true
 }
 
-pub(super) fn group_adjacent_tool_results(prev: &mut HistoryCell, next: &HistoryCell) -> bool {
-    if prev.tone != next.tone || !matches!(prev.tone, HistoryTone::Control | HistoryTone::Tool) {
+fn coalesce_exploration(prev: &mut HistoryCell, next: &HistoryCell) -> bool {
+    let Some(prev_aggregate) = prev.aggregate().cloned() else {
         return false;
-    }
-    if prev.label() != next.label() || prev.kind() != HistoryKind::Tool || next.kind() != HistoryKind::Tool
-    {
+    };
+    let Some(next_aggregate) = next.aggregate().cloned() else {
         return false;
-    }
+    };
 
-    match &mut prev.content {
-        HistoryContent::ToolGroup(group) => {
-            if group.label != next.label() {
-                return false;
-            }
-            group.children.push(next.clone());
-            group.summary = summarize_group(&group.label, group.children.len());
-            prev.invalidate_cache();
-            true
-        }
-        HistoryContent::Edit(_) => {
-            let label = prev.label().to_string();
-            let children = vec![prev.clone(), next.clone()];
-            let expanded = prev.expanded;
-            let repeat_count = prev.repeat_count;
-            *prev = HistoryCell::tool_group(
-                label.clone(),
-                summarize_group(&label, children.len()),
-                children,
-                prev.tone,
-            );
-            prev.expanded = expanded;
-            prev.repeat_count = repeat_count;
-            true
-        }
-        _ => false,
+    let mut combined = ExplorationAggregate {
+        read_files: prev_aggregate.read_files + next_aggregate.read_files,
+        searches: prev_aggregate.searches + next_aggregate.searches,
+        inspect_commands: prev_aggregate.inspect_commands + next_aggregate.inspect_commands,
+        listed_directories: prev_aggregate.listed_directories + next_aggregate.listed_directories,
+        metadata_reads: prev_aggregate.metadata_reads + next_aggregate.metadata_reads,
+        details: prev_aggregate.details,
+    };
+    combined.details.extend(next_aggregate.details);
+
+    prev.set_summary(format_exploration_summary(&combined));
+    prev.set_aggregate(combined);
+    prev.repeat_count = prev.repeat_count.saturating_add(next.repeat_count.max(1));
+    true
+}
+
+fn format_exploration_summary(aggregate: &ExplorationAggregate) -> String {
+    let mut parts = Vec::new();
+    if aggregate.searches > 0 {
+        parts.push(format!(
+            "searched {} time{}",
+            aggregate.searches,
+            plural(aggregate.searches)
+        ));
     }
+    if aggregate.read_files > 0 {
+        parts.push(format!(
+            "read {} file{}",
+            aggregate.read_files,
+            plural(aggregate.read_files)
+        ));
+    }
+    if aggregate.listed_directories > 0 {
+        parts.push(format!(
+            "listed {} director{}",
+            aggregate.listed_directories,
+            if aggregate.listed_directories == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        ));
+    }
+    if aggregate.metadata_reads > 0 {
+        parts.push(format!(
+            "checked {} path{}",
+            aggregate.metadata_reads,
+            plural(aggregate.metadata_reads)
+        ));
+    }
+    if aggregate.inspect_commands > 0 {
+        parts.push(format!(
+            "ran {} inspect command{}",
+            aggregate.inspect_commands,
+            plural(aggregate.inspect_commands)
+        ));
+    }
+    if parts.is_empty() {
+        "explored workspace".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
 }
 
 fn matches_tool_like(tone: HistoryTone) -> bool {
@@ -71,15 +119,4 @@ fn matches_tool_like(tone: HistoryTone) -> bool {
         tone,
         HistoryTone::Tool | HistoryTone::Control | HistoryTone::Warning | HistoryTone::Error
     )
-}
-
-fn summarize_group(label: &str, count: usize) -> String {
-    match label {
-        "Search workspace" => format!("searched workspace {count} times"),
-        "Read file" => format!("read {count} files"),
-        "Read directory" => format!("listed {count} directories"),
-        "Write file" => format!("wrote {count} files"),
-        "Run command" => format!("ran {count} commands"),
-        other => format!("{other} {count} times"),
-    }
 }

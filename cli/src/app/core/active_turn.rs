@@ -273,14 +273,14 @@ impl ActiveTurnState {
         if self.live_item_id.as_deref() == Some(item_id) {
             return Vec::new();
         }
-        // Discard the live cell instead of flushing to replay.
-        // For overlapping tool calls, flushing the placeholder ("running")
-        // and later pushing the completed cell causes duplicate entries.
-        // The completed cell will be pushed when CompleteItem arrives.
-        let _ = self.live_item_id.take();
-        let _ = self.live_cell.take();
+        let flushed_item_id = self.live_item_id.take();
+        if let Some(flushed_item_id) = flushed_item_id.as_ref() {
+            self.replayed_item_ids.insert(flushed_item_id.clone());
+        }
+        let flushed = self.live_cell.take().into_iter().collect::<Vec<_>>();
+        self.live_item_id = None;
         self.live_item_kind = None;
-        Vec::new()
+        flushed
     }
 
     fn mark_runtime_replay_cells(&mut self, replay_cells: &mut [HistoryCell]) {
@@ -309,8 +309,7 @@ impl ActiveTurnState {
         let TranscriptItem::ToolResult { tool_name, .. } = item else {
             return false;
         };
-        matches!(live_cell.body().trim(), "" | "running")
-            && live_cell.label() == humanize_tool_label(tool_name)
+        live_cell.body().trim() == "running" && live_cell.label() == humanize_tool_label(tool_name)
     }
 
     fn snapshot_effects(&self) -> ActiveTurnEffects {

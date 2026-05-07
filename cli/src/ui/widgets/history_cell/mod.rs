@@ -488,26 +488,21 @@ impl Transcript {
     }
 
     pub fn push_live(&mut self, cell: HistoryCell) -> (usize, bool) {
-        self.push_with_policy(cell)
+        self.push_with_policy(cell, false)
     }
 
     pub fn push_aggregated(&mut self, cell: HistoryCell) -> (usize, bool) {
-        self.push_with_policy(cell)
+        self.push_with_policy(cell, true)
     }
 
-    fn push_with_policy(&mut self, cell: HistoryCell) -> (usize, bool) {
+    fn push_with_policy(&mut self, cell: HistoryCell, allow_exploration: bool) -> (usize, bool) {
         if let Some(last) = self.cells.last_mut()
             && tool_aggregation::coalesce_agent_stream(last, &cell)
         {
             return (self.cells.len().saturating_sub(1), false);
         }
         if let Some(last) = self.cells.last_mut()
-            && tool_aggregation::group_adjacent_tool_results(last, &cell)
-        {
-            return (self.cells.len().saturating_sub(1), false);
-        }
-        if let Some(last) = self.cells.last_mut()
-            && tool_aggregation::coalesce_tool_like(last, &cell)
+            && tool_aggregation::coalesce_tool_like(last, &cell, allow_exploration)
         {
             return (self.cells.len().saturating_sub(1), false);
         }
@@ -520,6 +515,26 @@ impl Transcript {
         for cell in cells {
             let _ = self.push_aggregated(cell);
         }
+    }
+
+    pub fn consolidate_trailing_exploration_run(&mut self) -> bool {
+        let end = self.cells.len();
+        let mut start = end;
+        while start > 0 && self.cells[start - 1].kind() == HistoryKind::Exploration {
+            start -= 1;
+        }
+        if end.saturating_sub(start) <= 1 {
+            return false;
+        }
+
+        let mut merged = self.cells[start].clone();
+        for cell in &self.cells[start + 1..end] {
+            if !tool_aggregation::coalesce_tool_like(&mut merged, cell, true) {
+                return false;
+            }
+        }
+        self.cells.splice(start..end, std::iter::once(merged));
+        true
     }
 
     pub fn set_tool_cells_expanded(&mut self, expanded: bool) {
@@ -662,7 +677,7 @@ fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     }) {
         out.pop();
     }
-    let max_lines = if cell.expanded { usize::MAX } else { 12usize };
+    let max_lines = if cell.expanded { 24usize } else { 12usize };
     let hidden_lines = out.len().saturating_sub(max_lines);
     if hidden_lines == 0 {
         return out;
