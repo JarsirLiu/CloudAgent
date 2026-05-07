@@ -1053,6 +1053,7 @@ fn fuzzy_match_indices(haystack: &str, needle: &str) -> Option<Vec<u32>> {
     Some(indices)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rank_text_hit(
     query_lower: &str,
     query_terms: &[String],

@@ -171,7 +171,10 @@ impl ChatComposer {
             if self.paste_burst.is_active() && self.paste_burst.append_newline_if_active(now) {
                 return Some(ComposerIntent::None);
             }
-            if self.paste_burst.newline_should_insert_instead_of_submit(now) {
+            if self
+                .paste_burst
+                .newline_should_insert_instead_of_submit(now)
+            {
                 self.textarea.insert_str("\n");
                 self.paste_burst.extend_window(now);
                 self.sync_completion();
@@ -203,8 +206,12 @@ impl ChatComposer {
                     return Some(ComposerIntent::None);
                 }
                 CharDecision::BeginBuffer { retro_chars } => {
-                    let before_cursor: String =
-                        self.textarea.text().chars().take(self.textarea.cursor()).collect();
+                    let before_cursor: String = self
+                        .textarea
+                        .text()
+                        .chars()
+                        .take(self.textarea.cursor())
+                        .collect();
                     if let Some(grab) = self.paste_burst.decide_begin_buffer(
                         now,
                         &before_cursor,
@@ -293,7 +300,9 @@ impl ChatComposer {
         };
 
         let full_height = if self.textarea.is_empty() {
-            self.textarea.wrapped_lines(body, layout.content_width).len() as u16
+            self.textarea
+                .wrapped_lines(body, layout.content_width)
+                .len() as u16
         } else {
             self.textarea.desired_height(layout.content_width)
         };
@@ -304,10 +313,7 @@ impl ChatComposer {
             let wrapped = self.textarea.wrapped_lines(body, layout.content_width);
             let visible_height_usize = visible_height as usize;
             let scroll_top = wrapped.len().saturating_sub(visible_height_usize);
-            let cursor_row = wrapped
-                .len()
-                .saturating_sub(scroll_top)
-                .saturating_sub(1) as u16;
+            let cursor_row = wrapped.len().saturating_sub(scroll_top).saturating_sub(1) as u16;
             (
                 wrapped
                     .into_iter()
@@ -367,14 +373,13 @@ impl ChatComposer {
                 ),
             ]));
         }
-        let completion_lines =
-            completion_popup_lines(&self.completion, width, layout.prompt_width);
+        let completion_lines = completion_popup_lines(&self.completion, width, layout.prompt_width);
 
         ComposerRender {
             lines,
             completion_lines,
             cursor_row,
-            height: visible_height as u16,
+            height: visible_height,
         }
     }
 
@@ -600,7 +605,11 @@ fn key_mutates_text(key: KeyEvent) -> bool {
             code: KeyCode::Char(ch),
             modifiers,
             ..
-        } if !ch.is_ascii_control() && (modifiers.is_empty() || modifiers == KeyModifiers::SHIFT) => true,
+        } if !ch.is_ascii_control()
+            && (modifiers.is_empty() || modifiers == KeyModifiers::SHIFT) =>
+        {
+            true
+        }
         KeyEvent {
             code: KeyCode::Char('h' | 'd' | 'k' | 'u' | 'w' | 'x' | 'y'),
             modifiers: KeyModifiers::CONTROL,
@@ -870,7 +879,10 @@ mod tests {
         type_text(&mut composer, "alpha\nbeta");
 
         composer.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
-        assert_eq!(composer.textarea.selected_text().as_deref(), Some("alpha\nbeta"));
+        assert_eq!(
+            composer.textarea.selected_text().as_deref(),
+            Some("alpha\nbeta")
+        );
     }
 
     #[test]
@@ -881,7 +893,10 @@ mod tests {
         composer.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
         let action = composer.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
 
-        assert_eq!(action, Some(ComposerIntent::CopyText("alpha\nbeta".to_string())));
+        assert_eq!(
+            action,
+            Some(ComposerIntent::CopyText("alpha\nbeta".to_string()))
+        );
         assert!(composer.textarea.is_empty());
     }
 

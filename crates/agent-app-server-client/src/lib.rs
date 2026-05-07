@@ -187,6 +187,7 @@ mod tests {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:1".to_string(),
+                call_id: Some("call-1".to_string()),
                 delta: delta.to_string(),
             },
         ))
@@ -198,6 +199,7 @@ mod tests {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
                 item_id: "tool:1".to_string(),
+                call_id: Some("call-1".to_string()),
                 kind: TurnItemKind::CommandExecution,
                 title: Some("pwd".to_string()),
             },
@@ -209,6 +211,7 @@ mod tests {
             AppServerNotification::ItemCompleted {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
+                call_id: Some("call-1".to_string()),
                 item: TranscriptItem::CommandExecution {
                     id: "tool:1".to_string(),
                     tool_name: "exec_command".to_string(),

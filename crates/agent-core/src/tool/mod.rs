@@ -12,8 +12,8 @@ mod execution;
 
 pub(crate) use batch::run_host_tool_batch;
 pub use execution::{
-    ParallelToolInvocation, ParallelToolResult, execute_tool_call_streaming,
-    run_parallel_tool_invocations,
+    ParallelToolInvocation, ParallelToolResult, ParallelToolRunOutcome,
+    execute_tool_call_streaming, run_parallel_tool_invocations,
 };
 
 #[derive(Clone, Debug)]

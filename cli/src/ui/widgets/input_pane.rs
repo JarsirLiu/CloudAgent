@@ -138,6 +138,7 @@ impl InputPane {
         self.view_stack.is_empty() && self.composer.flush_paste_burst_if_due()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render(
         &self,
         frame: &mut Frame,
@@ -154,15 +155,14 @@ impl InputPane {
             .last()
             .is_some_and(|view| view.requires_action())
         {
-            let (widget, lines_before_composer, _) =
-                self.render_request_view(
-                    mode,
-                    status_indicator,
-                    status_text,
-                    runtime_hint,
-                    status_meta,
-                    area.width,
-                );
+            let (widget, lines_before_composer, _) = self.render_request_view(
+                mode,
+                status_indicator,
+                status_text,
+                runtime_hint,
+                status_meta,
+                area.width,
+            );
             frame.render_widget(widget, area);
             return InputPaneRenderResult {
                 cursor_position: self.cursor_position(area, lines_before_composer, mode),
@@ -170,17 +170,16 @@ impl InputPane {
         }
 
         let inner_width = area.width.saturating_sub(2) as usize;
-        let snapshot =
-            self.build_snapshot(
-                area,
-                mode,
-                status_indicator,
-                status_text,
-                runtime_hint,
-                status_meta,
-                hint_meta,
-                inner_width,
-            );
+        let snapshot = self.build_snapshot(
+            area,
+            mode,
+            status_indicator,
+            status_text,
+            runtime_hint,
+            status_meta,
+            hint_meta,
+            inner_width,
+        );
         frame.render_widget(
             input_block(snapshot.input_lines, border_style(mode)),
             snapshot.layout.input_area,
@@ -279,10 +278,7 @@ impl InputPane {
             "",
             inner_width,
         );
-        let cursor_y = snapshot
-            .cursor_position
-            .map(|(_, y)| y)
-            .unwrap_or_default();
+        let cursor_y = snapshot.cursor_position.map(|(_, y)| y).unwrap_or_default();
         (snapshot.input_lines, cursor_y)
     }
 
@@ -427,6 +423,7 @@ impl InputPane {
         self.view_stack.is_empty() && self.composer.is_empty()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_snapshot(
         &self,
         area: Rect,
@@ -478,7 +475,11 @@ impl InputPane {
     }
 }
 
-fn compute_input_layout(area: Rect, composer_height: u16, completion_line_count: usize) -> InputPaneLayout {
+fn compute_input_layout(
+    area: Rect,
+    composer_height: u16,
+    completion_line_count: usize,
+) -> InputPaneLayout {
     let input_content_height = STATUS_ROW_HEIGHT
         .saturating_add(COMPOSER_TOP_SPACER_HEIGHT)
         .saturating_add(composer_height)

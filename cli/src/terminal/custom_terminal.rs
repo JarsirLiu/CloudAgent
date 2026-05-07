@@ -261,9 +261,10 @@ where
 
         self.resize(size);
 
-        if previous == Rect::ZERO || previous.height == 0 {
-            area.y = size.height.saturating_sub(area.height);
-        } else if area.height != previous.height && viewport_was_bottom_aligned {
+        if previous == Rect::ZERO
+            || previous.height == 0
+            || (area.height != previous.height && viewport_was_bottom_aligned)
+        {
             area.y = size.height.saturating_sub(area.height);
         }
 
@@ -289,11 +290,7 @@ where
         Ok(())
     }
 
-    fn scroll_region_up(
-        &mut self,
-        region: std::ops::Range<u16>,
-        scroll_by: u16,
-    ) -> Result<()> {
+    fn scroll_region_up(&mut self, region: std::ops::Range<u16>, scroll_by: u16) -> Result<()> {
         if scroll_by == 0 || region.is_empty() {
             return Ok(());
         }

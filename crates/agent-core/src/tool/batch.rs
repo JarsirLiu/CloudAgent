@@ -211,14 +211,22 @@ impl<'a> ToolBatchRunner<'a> {
 
         match self.batch_execution_strategy(&ready_calls) {
             ToolBatchExecutionStrategy::Parallel => {
-                self.run_parallel_ready_calls(
-                    ready_calls,
-                    &tool_ctx,
-                    context_manager,
-                    events,
-                    on_event,
-                )
-                .await?;
+                let cancelled = self
+                    .run_parallel_ready_calls(
+                        ready_calls,
+                        &tool_ctx,
+                        context_manager,
+                        events,
+                        on_event,
+                    )
+                    .await?;
+                if cancelled {
+                    self.emit_cancelled(events, on_event);
+                    return Ok(ToolBatchOutcome {
+                        cancelled: true,
+                        exposed_tools: Vec::new(),
+                    });
+                }
             }
             ToolBatchExecutionStrategy::Sequential => {
                 self.run_ready_calls_sequentially(
@@ -302,7 +310,7 @@ impl<'a> ToolBatchRunner<'a> {
         context_manager: &mut ContextManager,
         events: &mut Vec<EventMsg>,
         on_event: &mut (dyn for<'b> FnMut(&'b EventMsg) + Send + '_),
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let invocations = ready_calls
             .into_iter()
             .enumerate()
@@ -322,7 +330,7 @@ impl<'a> ToolBatchRunner<'a> {
         )
         .await?;
 
-        for finished in results {
+        for finished in results.results {
             self.emit_finished_tool(
                 &finished.call,
                 finished.delta_kind,
@@ -335,7 +343,7 @@ impl<'a> ToolBatchRunner<'a> {
             )
             .await?;
         }
-        Ok(())
+        Ok(results.cancelled)
     }
 
     #[allow(clippy::too_many_arguments)]

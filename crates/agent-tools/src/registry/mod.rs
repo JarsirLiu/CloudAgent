@@ -321,6 +321,31 @@ mod tests {
     }
 
     #[test]
+    fn workspace_write_keeps_repo_exploration_ahead_of_editing() {
+        let registry = ToolRegistry::new(4_096);
+        let resolved = registry
+            .resolve_regular_turn_tool_exposure(&PermissionProfile::WorkspaceWrite)
+            .default_tools;
+
+        let ordered_names = resolved
+            .iter()
+            .map(|spec| spec.name.as_str())
+            .take(5)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ordered_names,
+            vec![
+                "search_workspace",
+                "read_file",
+                "edit_file",
+                "exec_command",
+                "tool_search",
+            ]
+        );
+    }
+
+    #[test]
     fn regular_turn_hides_mcp_tools_without_a_configured_client() {
         let mut registry = ToolRegistry::new(4_096);
         registry.register_mcp_tool(McpToolDescriptor::new(

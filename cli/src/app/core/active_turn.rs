@@ -1,11 +1,12 @@
 use crate::ui::widgets::history_cell::{
-    HistoryCell, HistoryFormat, HistoryTone, humanize_tool_label,
-    render_active_item_placeholder, render_history_entry,
+    HistoryCell, HistoryFormat, HistoryTone, humanize_tool_label, render_active_item_placeholder,
+    render_history_entry,
 };
 use agent_protocol::{TranscriptItem, TurnId, TurnItemKind};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ActiveTurnAction {
     Clear,
     StartLocalUser {
@@ -151,10 +152,8 @@ impl ActiveTurnState {
                 delta,
             } => {
                 self.ensure_turn(&turn_id);
-                let replay_cells = self.ensure_live_tail(
-                    &item_id,
-                    HistoryCell::reasoning("Reasoning", "thinking"),
-                );
+                let replay_cells = self
+                    .ensure_live_tail(&item_id, HistoryCell::reasoning("Reasoning", "thinking"));
                 if let Some(cell) = self.live_cell.as_mut() {
                     if cell.body() == "thinking" {
                         cell.replace_body(delta.clone());
@@ -190,14 +189,9 @@ impl ActiveTurnState {
                 if let Some(text) = copyable_output(&item) {
                     self.last_copyable_output = Some(text);
                 }
-                if self.live_item_id.as_deref() == Some(item_id.as_str()) {
-                    self.live_item_id = None;
-                    self.live_item_kind = None;
-                    self.live_cell = None;
-                    if !cell.is_empty() {
-                        replay_cells.push(cell);
-                    }
-                } else if self.should_replace_live_tool_placeholder(&item) {
+                if self.live_item_id.as_deref() == Some(item_id.as_str())
+                    || self.should_replace_live_tool_placeholder(&item)
+                {
                     self.live_item_id = None;
                     self.live_item_kind = None;
                     self.live_cell = None;

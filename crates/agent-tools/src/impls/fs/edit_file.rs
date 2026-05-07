@@ -26,12 +26,13 @@ Use this for most code and text edits instead of writing a patch by hand.
 
 Provide:
 - `path`: a relative workspace path
-- `edits`: one or more exact replacements to apply in order
+- `edits`: one or more exact replacements to apply in order within that file
   - `old_string`: the exact text to replace
   - `new_string`: the replacement text
   - `replace_all`: optional, defaults to false
 
 Rules:
+- One `edit_file` call edits exactly one file; use multiple tool calls for multi-file changes
 - Use relative workspace paths only
 - Every edit's `old_string` and `new_string` must differ
 - If the target file does not exist, provide exactly one edit with `old_string: ""` to create it
@@ -52,7 +53,7 @@ impl EditFileTool {
             ToolPermissionTier::WorkspaceWrite,
             vec!["edit", "fs"],
             ToolUsageGuidance {
-                selection_priority: 30,
+                selection_priority: 20,
                 preferred_for: vec![
                     "single-file code edits",
                     "replacing exact text in known files",

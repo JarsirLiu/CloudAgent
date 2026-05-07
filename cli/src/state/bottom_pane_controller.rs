@@ -2,10 +2,12 @@ use crate::app::TuiApp;
 use crate::state::bottom_pane_runtime::BottomPaneRuntimeState;
 use crate::state::selectors::status_text_from_mode;
 use crate::terminal::Frame;
-use crate::ui::widgets::input_pane::{InputPane, InputPaneAction, InputPaneRenderResult, ServerRequestInlineState};
+use crate::ui::widgets::input_pane::{
+    InputPane, InputPaneAction, InputPaneRenderResult, ServerRequestInlineState,
+};
 use crate::ui::widgets::session_picker::SessionPickerMode;
-use agent_protocol::{FrontendMode, ModelRetryStage, TurnItemKind};
 use agent_protocol::{ConversationSummary, RequestId};
+use agent_protocol::{FrontendMode, ModelRetryStage, TurnItemKind};
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
@@ -51,7 +53,8 @@ impl BottomPaneController {
         attempt: u64,
         next_delay_ms: u64,
     ) {
-        self.runtime.on_model_retrying(stage, attempt, next_delay_ms);
+        self.runtime
+            .on_model_retrying(stage, attempt, next_delay_ms);
     }
 
     pub(crate) fn on_active_item_started(&mut self, kind: &TurnItemKind, title: Option<&str>) {
@@ -70,10 +73,9 @@ impl BottomPaneController {
         has_active_turn: bool,
         _has_live_cell: bool,
     ) -> FrontendMode {
-        let has_runtime_activity =
-            self.runtime.turn_active
-                || self.runtime.live_label.is_some()
-                || self.runtime.active_tool_title.is_some();
+        let has_runtime_activity = self.runtime.turn_active
+            || self.runtime.live_label.is_some()
+            || self.runtime.active_tool_title.is_some();
         if requires_action {
             FrontendMode::WaitingForServerRequest
         } else if has_runtime_activity || has_active_turn {
@@ -83,11 +85,7 @@ impl BottomPaneController {
         }
     }
 
-    pub(crate) fn current_mode(
-        &self,
-        has_active_turn: bool,
-        has_live_cell: bool,
-    ) -> FrontendMode {
+    pub(crate) fn current_mode(&self, has_active_turn: bool, has_live_cell: bool) -> FrontendMode {
         self.derive_mode(self.requires_action(), has_active_turn, has_live_cell)
     }
 
@@ -111,6 +109,7 @@ impl BottomPaneController {
         self.input_pane.composer_is_empty()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render(
         &self,
         frame: &mut Frame,
@@ -122,17 +121,16 @@ impl BottomPaneController {
         status_meta: &str,
         hint_meta: &str,
     ) -> InputPaneRenderResult {
-        self.input_pane
-            .render(
-                frame,
-                area,
-                mode,
-                status_indicator,
-                status_text,
-                runtime_hint,
-                status_meta,
-                hint_meta,
-            )
+        self.input_pane.render(
+            frame,
+            area,
+            mode,
+            status_indicator,
+            status_text,
+            runtime_hint,
+            status_meta,
+            hint_meta,
+        )
     }
 
     pub(crate) fn desired_height(&self, mode: FrontendMode, width: u16) -> u16 {
@@ -210,18 +208,18 @@ impl BottomPaneController {
     pub(crate) fn build_status_view_model(&self, app: &TuiApp) -> StatusViewModel {
         let mode = app.current_mode();
         let fallback = status_text_from_mode(mode);
-        let (text, live_banner) = if let Some(tool_title) = self.runtime.active_tool_title.as_deref()
-        {
-            (tool_title.to_string(), None)
-        } else if let Some(live_label) = self.runtime.live_label.as_deref() {
-            (live_label.to_string(), None)
-        } else {
-            (fallback.to_string(), None)
-        };
+        let (text, live_banner) =
+            if let Some(tool_title) = self.runtime.active_tool_title.as_deref() {
+                (tool_title.to_string(), None)
+            } else if let Some(live_label) = self.runtime.live_label.as_deref() {
+                (live_label.to_string(), None)
+            } else {
+                (fallback.to_string(), None)
+            };
         let indicator = match mode {
-            FrontendMode::Running | FrontendMode::WaitingForServerRequest => Some(
-                animated_indicator(app.run_state.live_animation_frame).to_string(),
-            ),
+            FrontendMode::Running | FrontendMode::WaitingForServerRequest => {
+                Some(animated_indicator(app.run_state.live_animation_frame).to_string())
+            }
             FrontendMode::Idle => None,
         };
         let runtime_hint = match mode {
@@ -339,7 +337,8 @@ mod tests {
     fn active_tool_status_overrides_live_label() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 1;
-        app.bottom_pane.live_label_override_for_test(Some("Working".to_string()));
+        app.bottom_pane
+            .live_label_override_for_test(Some("Working".to_string()));
         app.bottom_pane
             .active_tool_title_override_for_test(Some("running command: rg cli".to_string()));
 
@@ -348,7 +347,10 @@ mod tests {
         assert_eq!(status.text, "running command: rg cli");
         assert_eq!(status.indicator.as_deref(), Some("⠙"));
         assert_eq!(status.live_banner, None);
-        assert_eq!(status.runtime_hint.as_deref(), Some("0s • esc to interrupt"));
+        assert_eq!(
+            status.runtime_hint.as_deref(),
+            Some("0s • esc to interrupt")
+        );
     }
 
     #[test]
@@ -364,36 +366,46 @@ mod tests {
         assert_eq!(status.text, "reconnecting (stream retry 2, next in 1.0s)");
         assert_eq!(status.indicator.as_deref(), Some("⠹"));
         assert_eq!(status.live_banner, None);
-        assert_eq!(status.runtime_hint.as_deref(), Some("0s • esc to interrupt"));
+        assert_eq!(
+            status.runtime_hint.as_deref(),
+            Some("0s • esc to interrupt")
+        );
     }
 
     #[test]
     fn generic_live_label_hides_when_active_cell_is_visible() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 0;
-        app.bottom_pane.live_label_override_for_test(Some("Thinking".to_string()));
-        app.transcript_owner.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
-            "Reasoning",
-            "streaming body",
-        ));
+        app.bottom_pane
+            .live_label_override_for_test(Some("Thinking".to_string()));
+        app.transcript_owner.push_live_cell(
+            crate::ui::widgets::history_cell::HistoryCell::reasoning("Reasoning", "streaming body"),
+        );
 
         let status = app.bottom_pane.build_status_view_model(&app);
 
         assert_eq!(status.text, "Thinking");
         assert_eq!(status.live_banner, None);
-        assert_eq!(status.runtime_hint.as_deref(), Some("0s • esc to interrupt"));
+        assert_eq!(
+            status.runtime_hint.as_deref(),
+            Some("0s • esc to interrupt")
+        );
     }
 
     #[test]
     fn generic_live_label_does_not_render_external_banner_without_active_cell() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 0;
-        app.bottom_pane.live_label_override_for_test(Some("Thinking".to_string()));
+        app.bottom_pane
+            .live_label_override_for_test(Some("Thinking".to_string()));
 
         let status = app.bottom_pane.build_status_view_model(&app);
 
         assert_eq!(status.text, "Thinking");
         assert_eq!(status.live_banner, None);
-        assert_eq!(status.runtime_hint.as_deref(), Some("0s • esc to interrupt"));
+        assert_eq!(
+            status.runtime_hint.as_deref(),
+            Some("0s • esc to interrupt")
+        );
     }
 }

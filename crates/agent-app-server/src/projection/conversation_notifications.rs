@@ -718,7 +718,7 @@ impl ConversationNotificationProjector {
             if emitted.contains_key(item_id) {
                 continue;
             }
-            if self.items_by_item_id.get(item_id).is_none() {
+            if !self.items_by_item_id.contains_key(item_id) {
                 continue;
             }
             output.push(item_id.clone());
