@@ -8,9 +8,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::cell::RefCell;
 use std::time::Instant;
 
-use crate::ui::widgets::textarea::{TextArea, display_width, is_altgr};
+use crate::ui::widgets::textarea::{TextArea, TextAreaState, display_width, is_altgr};
 
 pub struct ComposerRender {
     pub lines: Vec<Line<'static>>,
@@ -18,6 +19,8 @@ pub struct ComposerRender {
     pub cursor_row: u16,
     pub height: u16,
 }
+
+const MAX_VISIBLE_COMPOSER_ROWS: usize = 8;
 
 struct ComposerLayout {
     prompt_prefix: String,
@@ -27,16 +30,24 @@ struct ComposerLayout {
 
 pub struct ChatComposer {
     textarea: TextArea,
+    textarea_state: RefCell<TextAreaState>,
     completion: CompletionState,
     paste_burst: PasteBurst,
+    history: Vec<String>,
+    history_cursor: Option<usize>,
+    last_history_text: Option<String>,
 }
 
 impl ChatComposer {
     pub fn new() -> Self {
         Self {
             textarea: TextArea::new(),
+            textarea_state: RefCell::new(TextAreaState::default()),
             completion: CompletionState::default(),
             paste_burst: PasteBurst::default(),
+            history: Vec::new(),
+            history_cursor: None,
+            last_history_text: None,
         }
     }
 
@@ -138,6 +149,22 @@ impl ChatComposer {
             }
         }
 
+        if self.should_handle_history_navigation(key) {
+            match key.code {
+                KeyCode::Up => {
+                    self.navigate_history_up();
+                    self.sync_completion();
+                    return Some(ComposerIntent::None);
+                }
+                KeyCode::Down => {
+                    self.navigate_history_down();
+                    self.sync_completion();
+                    return Some(ComposerIntent::None);
+                }
+                _ => {}
+            }
+        }
+
         if matches!(key.code, KeyCode::Enter)
             && key.modifiers.is_empty()
             && self.paste_burst.append_newline_if_active(Instant::now())
@@ -191,6 +218,9 @@ impl ChatComposer {
                 Some(self.submit())
             }
             _ => {
+                if key_mutates_text(key) {
+                    self.reset_history_navigation_if_needed();
+                }
                 self.textarea.handle_key(key);
                 self.sync_completion();
                 None
@@ -200,6 +230,7 @@ impl ChatComposer {
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> ComposerIntent {
         self.paste_burst.clear_after_explicit_paste();
+        self.reset_history_navigation_if_needed();
         self.textarea.insert_str(text);
         self.sync_completion();
         ComposerIntent::None
@@ -238,13 +269,50 @@ impl ChatComposer {
             self.textarea.text()
         };
 
-        let wrapped = self.textarea.wrapped_lines(body, layout.content_width);
+        let full_height = if self.textarea.is_empty() {
+            self.textarea.wrapped_lines(body, layout.content_width).len() as u16
+        } else {
+            self.textarea.desired_height(layout.content_width)
+        };
         let is_placeholder = self.textarea.is_empty();
         let mut lines = Vec::new();
-        let cursor_row = wrapped.len().saturating_sub(1) as u16;
+        let visible_height = full_height.clamp(1, MAX_VISIBLE_COMPOSER_ROWS as u16);
+        let (visible_lines, cursor_row, scroll_top) = if self.textarea.is_empty() {
+            let wrapped = self.textarea.wrapped_lines(body, layout.content_width);
+            let visible_height_usize = visible_height as usize;
+            let scroll_top = wrapped.len().saturating_sub(visible_height_usize);
+            let cursor_row = wrapped
+                .len()
+                .saturating_sub(scroll_top)
+                .saturating_sub(1) as u16;
+            (
+                wrapped
+                    .into_iter()
+                    .skip(scroll_top)
+                    .take(visible_height_usize)
+                    .collect::<Vec<_>>(),
+                cursor_row,
+                scroll_top,
+            )
+        } else {
+            let mut state = self.textarea_state.borrow_mut();
+            let visible_lines = self.textarea.visible_wrapped_lines(
+                body,
+                layout.content_width,
+                visible_height,
+                &mut state,
+            );
+            let (cursor_row, _) = self.textarea.visual_cursor_position_with_state(
+                layout.content_width,
+                visible_height,
+                &mut state,
+            );
+            (visible_lines, cursor_row as u16, state.scroll as usize)
+        };
 
-        for (index, wrapped_line) in wrapped.into_iter().enumerate() {
-            let indent = if index == 0 {
+        for (visible_index, wrapped_line) in visible_lines.into_iter().enumerate() {
+            let actual_index = scroll_top + visible_index;
+            let indent = if actual_index == 0 {
                 layout.prompt_prefix.clone()
             } else {
                 " ".repeat(layout.prompt_width)
@@ -253,7 +321,7 @@ impl ChatComposer {
                 let base = Style::default()
                     .fg(prompt_color)
                     .add_modifier(Modifier::BOLD);
-                if index == 0 {
+                if actual_index == 0 {
                     prompt_bg.map_or(base, |bg| base.bg(bg))
                 } else {
                     Style::default().fg(Color::Rgb(55, 55, 68))
@@ -283,12 +351,25 @@ impl ChatComposer {
             lines,
             completion_lines,
             cursor_row,
-            height: cursor_row.saturating_add(1),
+            height: visible_height as u16,
         }
     }
 
     pub fn desired_height(&self, mode: FrontendMode, width: usize) -> u16 {
-        self.render(mode, width).height
+        let layout = self.layout(mode, width);
+        let body = if self.textarea.is_empty() {
+            match mode {
+                FrontendMode::Idle => "Ask anything — e.g. \"check disk pressure\"",
+                FrontendMode::WaitingForServerRequest => "Type y / n, or enter a short reason",
+                FrontendMode::Running => "",
+            }
+        } else {
+            self.textarea.text()
+        };
+        self.textarea
+            .wrapped_lines(body, layout.content_width)
+            .len()
+            .clamp(1, MAX_VISIBLE_COMPOSER_ROWS) as u16
     }
 
     pub fn is_empty(&self) -> bool {
@@ -297,8 +378,11 @@ impl ChatComposer {
 
     pub fn clear(&mut self) {
         self.textarea.clear();
+        *self.textarea_state.borrow_mut() = TextAreaState::default();
         self.completion.clear();
         self.paste_burst.clear_after_explicit_paste();
+        self.history_cursor = None;
+        self.last_history_text = None;
     }
 
     pub fn has_selection(&self) -> bool {
@@ -311,7 +395,28 @@ impl ChatComposer {
 
     pub fn cursor_position(&self, area: Rect, mode: FrontendMode) -> (u16, u16) {
         let layout = self.layout(mode, area.width as usize);
-        let (cursor_row, cursor_col) = self.textarea.visual_cursor_position(layout.content_width);
+        let visible_height = self.desired_height(mode, area.width as usize);
+        let (cursor_row, cursor_col) = if self.textarea.is_empty() {
+            let body = match mode {
+                FrontendMode::Idle => "Ask anything — e.g. \"check disk pressure\"",
+                FrontendMode::WaitingForServerRequest => "Type y / n, or enter a short reason",
+                FrontendMode::Running => "",
+            };
+            let wrapped = self.textarea.wrapped_lines(body, layout.content_width);
+            let row = wrapped.len().saturating_sub(1);
+            let col = wrapped
+                .last()
+                .map(|line| display_width(line))
+                .unwrap_or_default();
+            (row, col)
+        } else {
+            let mut state = self.textarea_state.borrow_mut();
+            self.textarea.visual_cursor_position_with_state(
+                layout.content_width,
+                visible_height,
+                &mut state,
+            )
+        };
         let max_x_offset = area.width.saturating_sub(1) as usize;
         let x = area.x + (layout.prompt_width + cursor_col).min(max_x_offset) as u16;
         let y = area.y + cursor_row as u16;
@@ -338,9 +443,12 @@ impl ChatComposer {
         let leading_space_escape = raw.starts_with(' ');
         let text = self.textarea.take_trimmed();
         self.completion.clear();
+        self.history_cursor = None;
+        self.last_history_text = None;
         if text.is_empty() {
             ComposerIntent::None
         } else {
+            self.record_history_entry(text.clone());
             if !leading_space_escape && let Some(command_text) = text.strip_prefix('/') {
                 let mut parts = command_text.splitn(2, char::is_whitespace);
                 let name = parts.next().unwrap_or_default();
@@ -359,6 +467,82 @@ impl ChatComposer {
     fn sync_completion(&mut self) {
         self.completion
             .sync_from_input(self.textarea.text(), self.textarea.byte_cursor());
+    }
+
+    fn should_handle_history_navigation(&self, key: KeyEvent) -> bool {
+        if !matches!(key.kind, KeyEventKind::Press) {
+            return false;
+        }
+        if key.modifiers != KeyModifiers::NONE {
+            return false;
+        }
+        if !matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            return false;
+        }
+        if self.history.is_empty() {
+            return false;
+        }
+
+        let text = self.textarea.text();
+        if text.is_empty() {
+            return true;
+        }
+
+        let cursor = self.textarea.cursor();
+        if cursor != 0 && cursor != text.chars().count() {
+            return false;
+        }
+
+        matches!(&self.last_history_text, Some(prev) if prev == text)
+    }
+
+    fn navigate_history_up(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        let next = match self.history_cursor {
+            None => self.history.len().saturating_sub(1),
+            Some(0) => 0,
+            Some(idx) => idx.saturating_sub(1),
+        };
+        self.history_cursor = Some(next);
+        self.apply_history_entry(next);
+    }
+
+    fn navigate_history_down(&mut self) {
+        let Some(idx) = self.history_cursor else {
+            return;
+        };
+        if idx + 1 >= self.history.len() {
+            self.history_cursor = None;
+            self.last_history_text = None;
+            self.textarea.clear();
+            *self.textarea_state.borrow_mut() = TextAreaState::default();
+            return;
+        }
+        let next = idx + 1;
+        self.history_cursor = Some(next);
+        self.apply_history_entry(next);
+    }
+
+    fn apply_history_entry(&mut self, index: usize) {
+        if let Some(entry) = self.history.get(index).cloned() {
+            self.textarea.set_text(entry.clone());
+            *self.textarea_state.borrow_mut() = TextAreaState::default();
+            self.last_history_text = Some(entry);
+        }
+    }
+
+    fn reset_history_navigation_if_needed(&mut self) {
+        self.history_cursor = None;
+        self.last_history_text = None;
+    }
+
+    fn record_history_entry(&mut self, entry: String) {
+        if self.history.last().is_some_and(|last| last == &entry) {
+            return;
+        }
+        self.history.push(entry);
     }
 
     fn accept_selected_completion(&mut self) {
@@ -389,6 +573,39 @@ fn is_newline_shortcut(modifiers: KeyModifiers) -> bool {
     let shift_only = modifiers.contains(KeyModifiers::SHIFT)
         && !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
     shift_only || modifiers == KeyModifiers::ALT || modifiers == KeyModifiers::CONTROL
+}
+
+fn key_mutates_text(key: KeyEvent) -> bool {
+    if matches!(
+        key.code,
+        KeyCode::Backspace | KeyCode::Delete | KeyCode::Tab | KeyCode::Enter
+    ) {
+        return true;
+    }
+
+    match key {
+        KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers,
+            ..
+        } if !ch.is_ascii_control() && (modifiers.is_empty() || modifiers == KeyModifiers::SHIFT) => true,
+        KeyEvent {
+            code: KeyCode::Char('h' | 'd' | 'k' | 'u' | 'w' | 'x' | 'y'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        } => true,
+        KeyEvent {
+            code:
+                KeyCode::Char('d' | 'b' | 'f')
+                | KeyCode::Delete
+                | KeyCode::Backspace
+                | KeyCode::Left
+                | KeyCode::Right,
+            modifiers: KeyModifiers::ALT,
+            ..
+        } => true,
+        _ => false,
+    }
 }
 
 fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
@@ -566,6 +783,22 @@ mod tests {
     }
 
     #[test]
+    fn long_multiline_input_caps_visible_height() {
+        let mut composer = ChatComposer::new();
+        let text = (1..=20)
+            .map(|idx| format!("line {idx}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = composer.handle_paste(&text);
+
+        let rendered = composer.render(FrontendMode::Idle, 80);
+
+        assert_eq!(rendered.height, MAX_VISIBLE_COMPOSER_ROWS as u16);
+        assert_eq!(rendered.lines.len(), MAX_VISIBLE_COMPOSER_ROWS);
+        assert_eq!(rendered.cursor_row, MAX_VISIBLE_COMPOSER_ROWS as u16 - 1);
+    }
+
+    #[test]
     fn shift_enter_inserts_newline_without_submitting() {
         let mut composer = ChatComposer::new();
         type_text(&mut composer, "first");
@@ -620,15 +853,12 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_a_selects_all_and_replaces_text() {
+    fn ctrl_a_moves_to_current_line_start() {
         let mut composer = ChatComposer::new();
-        type_text(&mut composer, "alpha");
+        type_text(&mut composer, "alpha\nbeta");
 
         composer.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
-        type_text(&mut composer, "beta");
-
-        assert_eq!(composer.textarea.text(), "beta");
-        assert!(!composer.textarea.is_all_selected());
+        assert_eq!(composer.textarea.cursor(), 6);
     }
 
     #[test]
@@ -653,6 +883,43 @@ mod tests {
             composer.textarea.cursor(),
             composer.textarea.text().chars().count()
         );
+    }
+
+    #[test]
+    fn history_navigation_only_activates_for_empty_or_recalled_boundary_text() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "first");
+        let _ = composer.handle_key(key(KeyCode::Enter));
+        type_text(&mut composer, "second");
+        let _ = composer.handle_key(key(KeyCode::Enter));
+
+        composer.handle_key(key(KeyCode::Up));
+        assert_eq!(composer.textarea.text(), "second");
+
+        composer.handle_key(key(KeyCode::Home));
+        composer.handle_key(key(KeyCode::Up));
+        assert_eq!(composer.textarea.text(), "first");
+
+        composer.handle_key(key(KeyCode::Down));
+        assert_eq!(composer.textarea.text(), "second");
+
+        composer.handle_key(key(KeyCode::End));
+        type_text(&mut composer, "!");
+        composer.handle_key(key(KeyCode::Up));
+        assert_eq!(composer.textarea.text(), "second!");
+    }
+
+    #[test]
+    fn down_past_newest_history_clears_composer() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "first");
+        let _ = composer.handle_key(key(KeyCode::Enter));
+
+        composer.handle_key(key(KeyCode::Up));
+        assert_eq!(composer.textarea.text(), "first");
+
+        composer.handle_key(key(KeyCode::Down));
+        assert!(composer.textarea.is_empty());
     }
 
     #[test]
