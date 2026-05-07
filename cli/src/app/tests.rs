@@ -432,6 +432,53 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
 }
 
 #[test]
+fn parallel_toolcall_placeholders_do_not_commit_running_cards() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user("hello".to_string(), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+
+    owner.start_item(
+        "turn-1".to_string(),
+        "toolcall-1".to_string(),
+        agent_protocol::TurnItemKind::ToolCall,
+        Some("read_file".to_string()),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "toolcall-2".to_string(),
+        agent_protocol::TurnItemKind::ToolCall,
+        Some("read_file".to_string()),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "toolcall-3".to_string(),
+        agent_protocol::TurnItemKind::ToolCall,
+        Some("read_file".to_string()),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent_protocol::TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+
+    let pending = owner
+        .pending_history_cells()
+        .iter()
+        .map(|cell| format!("{}|{}", cell.label(), cell.body()))
+        .collect::<Vec<_>>();
+
+    assert!(
+        pending.iter().all(|entry| !entry.contains("Read file|running")),
+        "pending: {pending:?}"
+    );
+}
+
+#[test]
 fn adjacent_exploration_history_cells_merge_without_crossing_reasoning_barrier() {
     let mut owner = TranscriptOwner::default();
     let history = vec![turn(

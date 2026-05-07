@@ -219,7 +219,12 @@ impl ActiveTurnState {
                 if self.turn_id.as_deref() != Some(turn_id.as_str()) {
                     return self.clear();
                 }
-                let mut replay_cells = self.live_cell.take().into_iter().collect::<Vec<_>>();
+                let mut replay_cells = if self.should_discard_live_cell_on_flush() {
+                    self.live_cell.take();
+                    Vec::new()
+                } else {
+                    self.live_cell.take().into_iter().collect::<Vec<_>>()
+                };
                 self.mark_runtime_replay_cells(&mut replay_cells);
                 self.live_item_id = None;
                 self.live_item_kind = None;
@@ -277,7 +282,12 @@ impl ActiveTurnState {
         if let Some(flushed_item_id) = flushed_item_id.as_ref() {
             self.replayed_item_ids.insert(flushed_item_id.clone());
         }
-        let flushed = self.live_cell.take().into_iter().collect::<Vec<_>>();
+        let flushed = if self.should_discard_live_cell_on_flush() {
+            self.live_cell.take();
+            Vec::new()
+        } else {
+            self.live_cell.take().into_iter().collect::<Vec<_>>()
+        };
         self.live_item_id = None;
         self.live_item_kind = None;
         flushed
@@ -309,7 +319,16 @@ impl ActiveTurnState {
         let TranscriptItem::ToolResult { tool_name, .. } = item else {
             return false;
         };
-        live_cell.body().trim() == "running" && live_cell.label() == humanize_tool_label(tool_name)
+        matches!(live_cell.body().trim(), "" | "running")
+            && live_cell.label() == humanize_tool_label(tool_name)
+    }
+
+    fn should_discard_live_cell_on_flush(&self) -> bool {
+        let Some(live_cell) = self.live_cell.as_ref() else {
+            return false;
+        };
+        self.live_item_kind == Some(TurnItemKind::ToolCall)
+            && matches!(live_cell.body().trim(), "" | "running")
     }
 
     fn snapshot_effects(&self) -> ActiveTurnEffects {
