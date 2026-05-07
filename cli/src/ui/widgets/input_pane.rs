@@ -711,6 +711,42 @@ mod tests {
     }
 
     #[test]
+    fn esc_interrupts_even_when_composer_has_text() {
+        let mut pane = InputPane::new();
+        let _ = pane.handle_paste("draft message");
+
+        let action = pane.handle_key(KeyEvent {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+
+        assert!(matches!(
+            action,
+            Some(InputPaneAction::Composer(ComposerIntent::Interrupt))
+        ));
+    }
+
+    #[test]
+    fn ctrl_d_exits_even_when_composer_has_text() {
+        let mut pane = InputPane::new();
+        let _ = pane.handle_paste("draft message");
+
+        let action = pane.handle_key(KeyEvent {
+            code: KeyCode::Char('d'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+
+        assert!(matches!(
+            action,
+            Some(InputPaneAction::Composer(ComposerIntent::Exit))
+        ));
+    }
+
+    #[test]
     fn input_block_preserves_trailing_space_without_extra_wrapped_row() {
         let area = Rect::new(0, 0, 10, 4);
         let mut buf = Buffer::empty(area);

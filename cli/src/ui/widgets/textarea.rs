@@ -92,9 +92,8 @@ impl TextArea {
 
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
-                KeyCode::Char('a') => self.move_cursor_to_line_start(),
+                KeyCode::Char('a') => self.select_all(),
                 KeyCode::Char('b') => self.move_cursor_left(),
-                KeyCode::Char('d') => self.delete(),
                 KeyCode::Char('e') => self.move_cursor_to_line_end(),
                 KeyCode::Char('f') => self.move_cursor_right(),
                 KeyCode::Char('h') => self.backspace(),
@@ -277,6 +276,17 @@ impl TextArea {
         let at = byte_index_from_char_index(&self.text, self.cursor);
         self.text.insert_str(at, value);
         self.cursor += value.graphemes(true).count();
+        self.selection_anchor = None;
+        self.preferred_column = None;
+        self.last_wrap_width.set(None);
+    }
+
+    pub fn replace_char_range(&mut self, range: std::ops::Range<usize>, value: &str) {
+        self.push_undo_state();
+        let start = byte_index_from_char_index(&self.text, range.start);
+        let end = byte_index_from_char_index(&self.text, range.end);
+        self.text.replace_range(start..end, value);
+        self.cursor = range.start + value.chars().count();
         self.selection_anchor = None;
         self.preferred_column = None;
         self.last_wrap_width.set(None);
@@ -482,11 +492,6 @@ impl TextArea {
         self.preferred_column = Some(target_col);
     }
 
-    fn move_cursor_to_line_start(&mut self) {
-        let line_start = self.line_start_before(self.cursor);
-        self.apply_cursor_move(line_start, false);
-    }
-
     fn move_cursor_to_line_end(&mut self) {
         let line_end = self.line_end_after(self.cursor);
         self.apply_cursor_move(line_end, false);
@@ -535,6 +540,16 @@ impl TextArea {
         }
         let text = self.kill_buffer.clone();
         self.insert_str(&text);
+    }
+
+    fn select_all(&mut self) {
+        if self.text.is_empty() {
+            self.clear();
+            return;
+        }
+        self.selection_anchor = Some(0);
+        self.cursor = char_len(&self.text);
+        self.preferred_column = None;
     }
 
     fn move_cursor_left(&mut self) {
@@ -857,13 +872,11 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_a_moves_to_line_start() {
+    fn ctrl_a_selects_all() {
         let mut ta = TextArea::new();
         ta.set_text("hello\nworld");
-        ta.handle_key(key(KeyCode::End));
         ta.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
-
-        assert_eq!(ta.cursor(), 6);
+        assert_eq!(ta.selected_text().as_deref(), Some("hello\nworld"));
     }
 
     #[test]
@@ -893,6 +906,17 @@ mod tests {
 
         assert_eq!(ta.text(), "hel");
         assert_eq!(ta.cursor(), 3);
+    }
+
+    #[test]
+    fn ctrl_a_then_ctrl_x_cuts_entire_buffer() {
+        let mut ta = TextArea::new();
+        ta.set_text("hello\nworld");
+        ta.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        ta.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+
+        assert!(ta.text().is_empty());
+        assert_eq!(ta.cursor(), 0);
     }
 
     #[test]
@@ -953,7 +977,7 @@ mod tests {
         let mut ta = TextArea::new();
         ta.set_text("alpha beta");
 
-        ta.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        ta.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
         ta.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL));
         assert_eq!(ta.cursor(), 5);
 
@@ -971,11 +995,11 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_d_and_alt_d_delete_forward() {
+    fn delete_and_alt_d_delete_forward() {
         let mut ta = TextArea::new();
         ta.set_text("alpha beta");
         ta.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
-        ta.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        ta.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(ta.text(), "lpha beta");
 
         ta.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT));

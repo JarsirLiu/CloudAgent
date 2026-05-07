@@ -1472,6 +1472,20 @@ mod tests {
     }
 
     #[test]
+    fn user_cells_wrap_fully_without_intrinsic_truncation() {
+        let cell = HistoryCell::user(
+            "one two three four five six seven eight nine ten eleven twelve thirteen fourteen",
+        );
+
+        let rendered = joined(&cell, 14);
+        assert!(rendered.contains("› one two"));
+        assert!(rendered.contains("three four"));
+        assert!(rendered.contains("thirteen"));
+        assert!(!rendered.contains("... +"));
+        assert!(!rendered.contains("… +"));
+    }
+
+    #[test]
     fn exploration_cells_render_summary_with_nested_details() {
         let mut aggregate = ExplorationAggregate::new("file search `cli`".to_string());
         aggregate.searches = 8;

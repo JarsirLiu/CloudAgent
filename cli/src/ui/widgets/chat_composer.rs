@@ -84,6 +84,7 @@ impl ChatComposer {
                 let _ = self.handle_paste(&pasted);
             }
             return Some(match key.code {
+                KeyCode::Char('d') => ComposerIntent::Exit,
                 KeyCode::Char('q') => ComposerIntent::Exit,
                 KeyCode::Char('j') => self.submit(),
                 KeyCode::Char('x') => {
@@ -165,11 +166,17 @@ impl ChatComposer {
             }
         }
 
-        if matches!(key.code, KeyCode::Enter)
-            && key.modifiers.is_empty()
-            && self.paste_burst.append_newline_if_active(Instant::now())
-        {
-            return Some(ComposerIntent::None);
+        if matches!(key.code, KeyCode::Enter) && key.modifiers.is_empty() {
+            let now = Instant::now();
+            if self.paste_burst.is_active() && self.paste_burst.append_newline_if_active(now) {
+                return Some(ComposerIntent::None);
+            }
+            if self.paste_burst.newline_should_insert_instead_of_submit(now) {
+                self.textarea.insert_str("\n");
+                self.paste_burst.extend_window(now);
+                self.sync_completion();
+                return Some(ComposerIntent::None);
+            }
         }
 
         if let KeyEvent {
@@ -194,6 +201,22 @@ impl ChatComposer {
                 CharDecision::BufferAppend => {
                     self.paste_burst.append_char_to_buffer(ch, now);
                     return Some(ComposerIntent::None);
+                }
+                CharDecision::BeginBuffer { retro_chars } => {
+                    let before_cursor: String =
+                        self.textarea.text().chars().take(self.textarea.cursor()).collect();
+                    if let Some(grab) = self.paste_burst.decide_begin_buffer(
+                        now,
+                        &before_cursor,
+                        retro_chars as usize,
+                    ) {
+                        if !grab.grabbed.is_empty() {
+                            let end = self.textarea.cursor();
+                            self.textarea.replace_char_range(grab.start_char..end, "");
+                        }
+                        self.paste_burst.append_char_to_buffer(ch, now);
+                        return Some(ComposerIntent::None);
+                    }
                 }
                 CharDecision::BeginBufferFromPending => {
                     self.paste_burst.append_char_to_buffer(ch, now);
@@ -397,18 +420,7 @@ impl ChatComposer {
         let layout = self.layout(mode, area.width as usize);
         let visible_height = self.desired_height(mode, area.width as usize);
         let (cursor_row, cursor_col) = if self.textarea.is_empty() {
-            let body = match mode {
-                FrontendMode::Idle => "Ask anything — e.g. \"check disk pressure\"",
-                FrontendMode::WaitingForServerRequest => "Type y / n, or enter a short reason",
-                FrontendMode::Running => "",
-            };
-            let wrapped = self.textarea.wrapped_lines(body, layout.content_width);
-            let row = wrapped.len().saturating_sub(1);
-            let col = wrapped
-                .last()
-                .map(|line| display_width(line))
-                .unwrap_or_default();
-            (row, col)
+            (0, 0)
         } else {
             let mut state = self.textarea_state.borrow_mut();
             self.textarea.visual_cursor_position_with_state(
@@ -853,12 +865,54 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_a_moves_to_current_line_start() {
+    fn ctrl_a_selects_all_current_draft() {
         let mut composer = ChatComposer::new();
         type_text(&mut composer, "alpha\nbeta");
 
         composer.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
-        assert_eq!(composer.textarea.cursor(), 6);
+        assert_eq!(composer.textarea.selected_text().as_deref(), Some("alpha\nbeta"));
+    }
+
+    #[test]
+    fn ctrl_a_then_ctrl_x_cuts_entire_draft_and_returns_copy_intent() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "alpha\nbeta");
+
+        composer.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        let action = composer.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+
+        assert_eq!(action, Some(ComposerIntent::CopyText("alpha\nbeta".to_string())));
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn ctrl_d_still_exits_even_with_existing_text() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "alpha");
+
+        let action = composer.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+
+        assert_eq!(action, Some(ComposerIntent::Exit));
+        assert_eq!(composer.textarea.text(), "alpha");
+    }
+
+    #[test]
+    fn esc_with_existing_text_is_not_consumed_by_composer() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "alpha");
+
+        let action = composer.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert_eq!(action, None);
+        assert_eq!(composer.textarea.text(), "alpha");
+    }
+
+    #[test]
+    fn placeholder_cursor_stays_at_input_start() {
+        let composer = ChatComposer::new();
+        let (x, y) = composer.cursor_position(Rect::new(0, 10, 80, 5), FrontendMode::Idle);
+        assert_eq!(y, 10);
+        assert_eq!(x, 4);
     }
 
     #[test]
@@ -946,5 +1000,21 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(80));
         assert!(composer.flush_paste_burst_if_due());
         assert_eq!(composer.textarea.text(), "ab");
+    }
+
+    #[test]
+    fn enter_during_paste_burst_does_not_submit_multiline_text() {
+        let mut composer = ChatComposer::new();
+
+        let _ = composer.handle_key(key(KeyCode::Char('a')));
+        let _ = composer.handle_key(key(KeyCode::Char('b')));
+        let action = composer.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(action, Some(ComposerIntent::None));
+        assert_eq!(composer.textarea.text(), "");
+
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        assert!(composer.flush_paste_burst_if_due());
+        assert_eq!(composer.textarea.text(), "ab\n");
     }
 }
