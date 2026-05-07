@@ -73,7 +73,6 @@ impl ChatComposer {
                 let _ = self.handle_paste(&pasted);
             }
             return Some(match key.code {
-                KeyCode::Char('c') => ComposerIntent::Interrupt,
                 KeyCode::Char('q') => ComposerIntent::Exit,
                 KeyCode::Char('j') => self.submit(),
                 KeyCode::Char('x') => {
