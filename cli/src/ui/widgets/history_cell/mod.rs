@@ -502,6 +502,11 @@ impl Transcript {
             return (self.cells.len().saturating_sub(1), false);
         }
         if let Some(last) = self.cells.last_mut()
+            && tool_aggregation::group_adjacent_tool_results(last, &cell)
+        {
+            return (self.cells.len().saturating_sub(1), false);
+        }
+        if let Some(last) = self.cells.last_mut()
             && tool_aggregation::coalesce_tool_like(last, &cell)
         {
             return (self.cells.len().saturating_sub(1), false);

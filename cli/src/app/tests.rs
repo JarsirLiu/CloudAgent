@@ -422,7 +422,7 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
 
     assert_eq!(owner.live_cells().len(), 1);
     assert!(
-        pending.iter().any(|entry| entry.contains("Read file|read 1 file")),
+        pending.iter().any(|entry| entry.contains("Read file|read file")),
         "pending: {pending:?}"
     );
     assert!(
@@ -432,7 +432,7 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
 }
 
 #[test]
-fn adjacent_exploration_history_cells_remain_separate() {
+fn adjacent_tool_results_group_by_label() {
     let mut owner = TranscriptOwner::default();
     let history = vec![turn(
         "turn-1",
@@ -451,19 +451,52 @@ fn adjacent_exploration_history_cells_remain_separate() {
     let pending = owner
         .pending_history_cells()
         .iter()
-        .map(|cell| (cell.label().to_string(), cell.body().to_string()))
+        .map(|cell| {
+            (
+                cell.label().to_string(),
+                cell.body().to_string(),
+                cell.children().map(|children| children.len()).unwrap_or(0),
+            )
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(
         pending,
         vec![
-            ("you".to_string(), "hello".to_string()),
-            ("Read file".to_string(), "read 1 file".to_string()),
-            ("Search workspace".to_string(), "matched 3 hits in 2 files".to_string()),
-            ("Reasoning".to_string(), "thinking".to_string()),
-            ("Read file".to_string(), "read 1 file".to_string()),
+            ("you".to_string(), "hello".to_string(), 0),
+            ("Read file".to_string(), "read file".to_string(), 0),
+            (
+                "Search workspace".to_string(),
+                "matched 3 hits in 2 files".to_string(),
+                0,
+            ),
+            ("Reasoning".to_string(), "thinking".to_string(), 0),
+            ("Read file".to_string(), "read file".to_string(), 0),
         ]
     );
+}
+
+#[test]
+fn adjacent_same_tool_results_merge_into_group() {
+    let mut owner = TranscriptOwner::default();
+    let history = vec![turn(
+        "turn-1",
+        TurnState::Completed,
+        vec![
+            user("u1", "hello"),
+            search_workspace_result("sw1", "active_turn"),
+            search_workspace_result("sw2", "history_cell"),
+        ],
+    )];
+
+    owner.rebuild_from_history_snapshot(&history, false);
+
+    let pending = owner.pending_history_cells().iter().collect::<Vec<_>>();
+
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[1].label(), "Search workspace");
+    assert_eq!(pending[1].body(), "searched workspace 2 times");
+    assert_eq!(pending[1].children().map(|children| children.len()), Some(2));
 }
 
 #[test]
