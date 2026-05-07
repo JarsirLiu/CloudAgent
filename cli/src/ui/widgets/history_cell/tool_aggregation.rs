@@ -1,6 +1,6 @@
 use super::{ExplorationAggregate, HistoryCell, HistoryKind, HistoryTone};
 
-pub(super) fn coalesce_agent_stream(prev: &mut HistoryCell, next: &HistoryCell) -> bool {
+pub(crate) fn coalesce_agent_stream(prev: &mut HistoryCell, next: &HistoryCell) -> bool {
     if prev.tone != HistoryTone::Agent || next.tone != HistoryTone::Agent {
         return false;
     }
@@ -15,7 +15,7 @@ pub(super) fn coalesce_agent_stream(prev: &mut HistoryCell, next: &HistoryCell) 
     true
 }
 
-pub(super) fn coalesce_tool_like(
+pub(crate) fn coalesce_tool_like(
     prev: &mut HistoryCell,
     next: &HistoryCell,
     allow_exploration: bool,
@@ -33,8 +33,10 @@ pub(super) fn coalesce_tool_like(
     {
         return false;
     }
-    prev.repeat_count = prev.repeat_count.saturating_add(next.repeat_count.max(1));
-    prev.invalidate_cache();
+    prev.set_repeat_count(
+        prev.repeat_count()
+            .saturating_add(next.repeat_count().max(1)),
+    );
     true
 }
 
@@ -58,7 +60,10 @@ fn coalesce_exploration(prev: &mut HistoryCell, next: &HistoryCell) -> bool {
 
     prev.set_summary(format_exploration_summary(&combined));
     prev.set_aggregate(combined);
-    prev.repeat_count = prev.repeat_count.saturating_add(next.repeat_count.max(1));
+    prev.set_repeat_count(
+        prev.repeat_count()
+            .saturating_add(next.repeat_count().max(1)),
+    );
     true
 }
 

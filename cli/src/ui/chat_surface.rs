@@ -64,6 +64,7 @@ impl ChatSurface {
             frame,
             layout.bottom_area,
             mode,
+            status.indicator.as_deref(),
             &status.text,
             status.runtime_hint.as_deref(),
             &status.meta,

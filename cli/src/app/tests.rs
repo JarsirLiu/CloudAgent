@@ -791,7 +791,7 @@ fn reset_local_view_requests_history_replay() {
 
     let plan = app
         .terminal_projection
-        .build_plan(&mut app.transcript_owner, 5, 80);
+        .build_plan(&mut app.transcript_owner, 5, 80, false);
     match plan.history_update {
         crate::terminal::HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
         crate::terminal::HistoryUpdate::AppendTail(_) => panic!("expected replay-all after reset"),
@@ -1071,4 +1071,31 @@ fn active_transcript_tail_keeps_latest_reasoning_visible() {
         .join("\n");
 
     assert!(rendered.contains("upsilon") || rendered.contains("omega"));
+}
+
+#[test]
+fn active_body_height_tracks_wrapped_physical_rows_during_streaming() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+        "assistant",
+        "This is a single long streaming paragraph that should wrap into multiple physical rows inside the active viewport instead of being treated like a single logical line."
+            .to_string(),
+        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+    ));
+
+    let model = build_chat_surface_model(&mut app, 28, 20);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+
+    assert!(active.lines.len() > 1, "wrapped lines: {:?}", active.lines);
+    assert!(model.body_height >= active.lines.len() as u16);
 }

@@ -1,4 +1,3 @@
-use crate::app::conversation::projection::mark_turn_stream_continuations;
 use crate::app::core::active_turn::{ActiveTurnAction, ActiveTurnEffects, ActiveTurnState};
 use crate::ui::widgets::history_cell::{
     HistoryCell, HistoryTone, RenderContext, Transcript, render_history_entry,
@@ -34,7 +33,7 @@ impl ActiveCellController {
                     | HistoryTone::Warning
                     | HistoryTone::Error
             ) {
-                cell.expanded = expand_details;
+                cell.set_expanded(expand_details);
             }
         }
         self.live_transcript.replace_cells(cells);
@@ -225,7 +224,6 @@ impl ActiveCellController {
             live_cells.push(live_cell);
         }
 
-        mark_turn_stream_continuations(&mut replay_cells);
         self.replace_live_cells(live_cells, expand_details);
         self.set_last_copyable_output(last_copyable_output.take());
         replay_cells

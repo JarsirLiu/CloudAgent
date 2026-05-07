@@ -1,5 +1,5 @@
 use crate::ui::widgets::history_cell::{
-    HistoryCell, HistoryFormat, HistoryKind, HistoryTone, humanize_tool_label,
+    HistoryCell, HistoryFormat, HistoryTone, humanize_tool_label,
     render_active_item_placeholder, render_history_entry,
 };
 use agent_protocol::{TranscriptItem, TurnId, TurnItemKind};
@@ -59,7 +59,6 @@ pub(crate) struct ActiveTurnState {
     live_item_kind: Option<TurnItemKind>,
     live_cell: Option<HistoryCell>,
     last_copyable_output: Option<String>,
-    previous_committed_was_agent_message: bool,
     replayed_item_ids: HashSet<String>,
     pending_local_user_input: Option<String>,
 }
@@ -75,7 +74,6 @@ impl ActiveTurnState {
         self.live_item_kind = None;
         self.live_cell = None;
         self.last_copyable_output = None;
-        self.previous_committed_was_agent_message = false;
         self.replayed_item_ids.clear();
         self.pending_local_user_input = None;
         ActiveTurnEffects::default()
@@ -90,7 +88,6 @@ impl ActiveTurnState {
                 self.live_item_kind = None;
                 self.live_cell = None;
                 self.last_copyable_output = None;
-                self.previous_committed_was_agent_message = false;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = Some(user_input);
                 ActiveTurnEffects {
@@ -115,8 +112,7 @@ impl ActiveTurnState {
                 title,
             } => {
                 self.ensure_turn(&turn_id);
-                let mut replay_cells = self.flush_live_tail_if_different(&item_id);
-                self.mark_runtime_replay_cells(&mut replay_cells);
+                let replay_cells = self.flush_live_tail_if_different(&item_id);
                 self.live_item_id = Some(item_id);
                 self.live_item_kind = Some(kind.clone());
                 self.live_cell = Some(render_active_item_placeholder(
@@ -212,26 +208,23 @@ impl ActiveTurnState {
                     self.replayed_item_ids.insert(item_id.clone());
                     replay_cells.push(cell);
                 }
-                self.mark_runtime_replay_cells(&mut replay_cells);
                 self.snapshot_effects_with_replay(replay_cells)
             }
             ActiveTurnAction::CompleteTurn { turn_id } => {
                 if self.turn_id.as_deref() != Some(turn_id.as_str()) {
                     return self.clear();
                 }
-                let mut replay_cells = if self.should_discard_live_cell_on_flush() {
+                let replay_cells = if self.should_discard_live_cell_on_flush() {
                     self.live_cell.take();
                     Vec::new()
                 } else {
                     self.live_cell.take().into_iter().collect::<Vec<_>>()
                 };
-                self.mark_runtime_replay_cells(&mut replay_cells);
                 self.live_item_id = None;
                 self.live_item_kind = None;
                 let last_copyable_output = self.last_copyable_output.clone();
                 self.turn_id = None;
                 self.last_copyable_output = None;
-                self.previous_committed_was_agent_message = false;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = None;
                 ActiveTurnEffects {
@@ -252,7 +245,6 @@ impl ActiveTurnState {
                 self.live_item_kind = None;
                 self.live_cell = None;
                 self.last_copyable_output = None;
-                self.previous_committed_was_agent_message = false;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = None;
             }
@@ -291,22 +283,6 @@ impl ActiveTurnState {
         self.live_item_id = None;
         self.live_item_kind = None;
         flushed
-    }
-
-    fn mark_runtime_replay_cells(&mut self, replay_cells: &mut [HistoryCell]) {
-        for cell in replay_cells {
-            if cell.is_empty() {
-                cell.set_stream_continuation(false);
-                self.previous_committed_was_agent_message = false;
-                continue;
-            }
-            let is_agent_message =
-                cell.tone == HistoryTone::Agent && cell.kind() == HistoryKind::Message;
-            cell.set_stream_continuation(
-                is_agent_message && self.previous_committed_was_agent_message,
-            );
-            self.previous_committed_was_agent_message = is_agent_message;
-        }
     }
 
     fn should_replace_live_tool_placeholder(&self, item: &TranscriptItem) -> bool {

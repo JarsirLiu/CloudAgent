@@ -10,6 +10,7 @@ use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
 pub(crate) struct StatusViewModel {
+    pub(crate) indicator: Option<String>,
     pub(crate) text: String,
     pub(crate) runtime_hint: Option<String>,
     pub(crate) meta: String,
@@ -115,13 +116,23 @@ impl BottomPaneController {
         frame: &mut Frame,
         area: Rect,
         mode: FrontendMode,
+        status_indicator: Option<&str>,
         status_text: &str,
         runtime_hint: Option<&str>,
         status_meta: &str,
         hint_meta: &str,
     ) -> InputPaneRenderResult {
         self.input_pane
-            .render(frame, area, mode, status_text, runtime_hint, status_meta, hint_meta)
+            .render(
+                frame,
+                area,
+                mode,
+                status_indicator,
+                status_text,
+                runtime_hint,
+                status_meta,
+                hint_meta,
+            )
     }
 
     pub(crate) fn desired_height(&self, mode: FrontendMode, width: u16) -> u16 {
@@ -199,22 +210,20 @@ impl BottomPaneController {
     pub(crate) fn build_status_view_model(&self, app: &TuiApp) -> StatusViewModel {
         let mode = app.current_mode();
         let fallback = status_text_from_mode(mode);
-        let has_live_active_cell = app
-            .transcript_owner
-            .active_cell()
-            .is_some_and(|cell| !cell.body().trim().is_empty());
-        let (text, live_banner) =
-            if let Some(tool_title) = self.runtime.active_tool_title.as_deref() {
-                let animated = animate_status(tool_title, app.run_state.live_animation_frame);
-                (fallback.to_string(), Some(animated))
-            } else if let Some(live_label) = self.runtime.live_label.as_deref() {
-                let show_banner = live_label.starts_with("reconnecting") && !has_live_active_cell;
-                let animated =
-                    show_banner.then(|| animate_status(live_label, app.run_state.live_animation_frame));
-                (live_label.to_string(), animated)
-            } else {
-                (fallback.to_string(), None)
-            };
+        let (text, live_banner) = if let Some(tool_title) = self.runtime.active_tool_title.as_deref()
+        {
+            (tool_title.to_string(), None)
+        } else if let Some(live_label) = self.runtime.live_label.as_deref() {
+            (live_label.to_string(), None)
+        } else {
+            (fallback.to_string(), None)
+        };
+        let indicator = match mode {
+            FrontendMode::Running | FrontendMode::WaitingForServerRequest => Some(
+                animated_indicator(app.run_state.live_animation_frame).to_string(),
+            ),
+            FrontendMode::Idle => None,
+        };
         let runtime_hint = match mode {
             FrontendMode::Running | FrontendMode::WaitingForServerRequest => Some(format!(
                 "{} • esc to interrupt",
@@ -256,6 +265,7 @@ impl BottomPaneController {
             parts.push(format!("context {percent}%"));
         }
         StatusViewModel {
+            indicator,
             text,
             runtime_hint,
             meta: parts.join(" · "),
@@ -275,9 +285,9 @@ impl BottomPaneController {
     }
 }
 
-fn animate_status(text: &str, frame: u64) -> String {
-    const FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
-    format!("{} {}", FRAMES[(frame as usize) % FRAMES.len()], text)
+fn animated_indicator(frame: u64) -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    FRAMES[(frame as usize) % FRAMES.len()]
 }
 
 fn fmt_elapsed_compact(elapsed_secs: u64) -> String {
@@ -335,8 +345,9 @@ mod tests {
 
         let status = app.bottom_pane.build_status_view_model(&app);
 
-        assert_eq!(status.text, "Working");
-        assert_eq!(status.live_banner.as_deref(), Some("/ running command: rg cli"));
+        assert_eq!(status.text, "running command: rg cli");
+        assert_eq!(status.indicator.as_deref(), Some("⠙"));
+        assert_eq!(status.live_banner, None);
         assert_eq!(status.runtime_hint.as_deref(), Some("0s • esc to interrupt"));
     }
 
@@ -351,10 +362,8 @@ mod tests {
         let status = app.bottom_pane.build_status_view_model(&app);
 
         assert_eq!(status.text, "reconnecting (stream retry 2, next in 1.0s)");
-        assert_eq!(
-            status.live_banner.as_deref(),
-            Some("- reconnecting (stream retry 2, next in 1.0s)")
-        );
+        assert_eq!(status.indicator.as_deref(), Some("⠹"));
+        assert_eq!(status.live_banner, None);
         assert_eq!(status.runtime_hint.as_deref(), Some("0s • esc to interrupt"));
     }
 

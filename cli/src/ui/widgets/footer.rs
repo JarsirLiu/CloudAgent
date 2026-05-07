@@ -12,13 +12,14 @@ pub fn divider_line(width: usize) -> Line<'static> {
 
 pub fn status_line(
     mode: FrontendMode,
+    indicator: Option<&str>,
     status_text: &str,
     runtime_hint: Option<&str>,
     meta: &str,
     width: usize,
 ) -> Line<'static> {
     if mode != FrontendMode::Idle {
-        return running_status_line(status_text, runtime_hint, meta, width);
+        return running_status_line(indicator, status_text, runtime_hint, meta, width);
     }
 
     let (dot_color, mode_label, badge_bg) = match mode {
@@ -74,6 +75,7 @@ pub fn status_line(
 }
 
 fn running_status_line(
+    indicator: Option<&str>,
     status_text: &str,
     runtime_hint: Option<&str>,
     meta: &str,
@@ -85,7 +87,10 @@ fn running_status_line(
         status_text
     };
     let mut spans = vec![
-        Span::styled("• ", Style::default().fg(Color::Rgb(100, 160, 255))),
+        Span::styled(
+            format!("{} ", indicator.unwrap_or("•")),
+            Style::default().fg(Color::Rgb(100, 160, 255)),
+        ),
         Span::styled(
             header.to_string(),
             Style::default()
@@ -182,6 +187,7 @@ mod tests {
     fn status_line_never_exceeds_available_width() {
         let line = status_line(
             FrontendMode::Running,
+            Some("⠋"),
             "Request approved:",
             Some("0s • esc to interrupt"),
             "in 1.3k tokens · out 93 tokens · cached 0 tokens · total 1.4k tokens",

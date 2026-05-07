@@ -2,27 +2,40 @@ use crate::app::TuiApp;
 use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::terminal::HistoryProjection;
 use crate::terminal::HistoryUpdate;
+use crate::terminal::PreparedHistoryProjection;
+use crate::terminal::PreparedHistoryUpdate;
 use crate::terminal::TerminalGuard;
+use crate::terminal::prepare_history_lines;
 use crate::ui::chat_surface::ChatSurface;
 use anyhow::Result;
 use ratatui::layout::Rect;
 
 #[derive(Default)]
 pub(crate) struct TerminalProjectionController {
-    history_replay_required: bool,
-    last_history_replay_width: Option<u16>,
-    last_history_replay_viewport_height: Option<u16>,
+    reflow: TranscriptReflowState,
+}
+
+#[derive(Default)]
+struct TranscriptReflowState {
+    replay_requested: bool,
+    replay_requested_during_stream: bool,
+    last_observed_width: Option<u16>,
+    last_observed_viewport_height: Option<u16>,
+    last_replayed_width: Option<u16>,
+    last_replayed_viewport_height: Option<u16>,
 }
 
 impl TerminalProjectionController {
     pub(crate) fn request_history_replay(&mut self) {
-        self.history_replay_required = true;
+        self.reflow.request_replay();
     }
 
     pub(crate) fn reset(&mut self) {
-        self.history_replay_required = false;
-        self.last_history_replay_width = None;
-        self.last_history_replay_viewport_height = None;
+        self.reflow.reset();
+    }
+
+    pub(crate) fn on_stream_boundary(&mut self) {
+        self.reflow.on_stream_boundary();
     }
 
     pub(crate) fn build_plan(
@@ -30,14 +43,13 @@ impl TerminalProjectionController {
         transcript_owner: &mut TranscriptOwner,
         viewport_height: u16,
         terminal_width: u16,
+        has_active_stream: bool,
     ) -> HistoryProjection {
-        let replay_metrics_changed =
-            self.last_history_replay_width != Some(terminal_width)
-                || self.last_history_replay_viewport_height != Some(viewport_height);
-        let history_update = if self.history_replay_required || replay_metrics_changed {
-            self.history_replay_required = false;
-            self.last_history_replay_width = Some(terminal_width);
-            self.last_history_replay_viewport_height = Some(viewport_height);
+        let should_replay = self
+            .reflow
+            .begin_frame(terminal_width, viewport_height, has_active_stream);
+
+        let history_update = if should_replay {
             let committed = transcript_owner.committed_history_cells();
             transcript_owner.mark_committed_history_replayed();
             HistoryUpdate::ReplayAll(committed)
@@ -65,9 +77,42 @@ impl TerminalProjectionController {
         let size = terminal.terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
         let viewport_height = ChatSurface::desired_viewport_height(app, area);
-        let plan = self.build_plan(&mut app.transcript_owner, viewport_height, area.width);
-        terminal.draw_projection(plan, |frame| app.render(frame))?;
+        let has_active_stream = app.transcript_owner.active_turn_id().is_some();
+        let plan = self.build_plan(
+            &mut app.transcript_owner,
+            viewport_height,
+            area.width,
+            has_active_stream,
+        );
+        let prepared = self.prepare_projection(plan, terminal.terminal.visible_history_rows() > 0);
+        terminal.draw_projection(prepared, |frame| app.render(frame))?;
         Ok(())
+    }
+
+    fn prepare_projection(
+        &self,
+        projection: HistoryProjection,
+        has_existing_history: bool,
+    ) -> PreparedHistoryProjection {
+        let HistoryProjection {
+            viewport_height,
+            history_render_width,
+            history_update,
+        } = projection;
+
+        let history_update = match history_update {
+            HistoryUpdate::ReplayAll(cells) => PreparedHistoryUpdate::ReplayAll(
+                prepare_history_lines(cells, history_render_width, false),
+            ),
+            HistoryUpdate::AppendTail(cells) => PreparedHistoryUpdate::AppendTail(
+                prepare_history_lines(cells, history_render_width, has_existing_history),
+            ),
+        };
+
+        PreparedHistoryProjection {
+            viewport_height,
+            history_update,
+        }
     }
 }
 
@@ -79,6 +124,47 @@ pub(crate) fn draw_with_terminal_projection(
     let result = projection.draw_frame(app, terminal);
     app.terminal_projection = projection;
     result
+}
+
+impl TranscriptReflowState {
+    fn request_replay(&mut self) {
+        self.replay_requested = true;
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn on_stream_boundary(&mut self) {
+        if self.replay_requested_during_stream {
+            self.replay_requested = true;
+            self.replay_requested_during_stream = false;
+        }
+    }
+
+    fn begin_frame(&mut self, width: u16, viewport_height: u16, has_active_stream: bool) -> bool {
+        let replay_metrics_changed = self.last_replayed_width != Some(width)
+            || self.last_replayed_viewport_height != Some(viewport_height);
+        let observed_metrics_changed = self.last_observed_width != Some(width)
+            || self.last_observed_viewport_height != Some(viewport_height);
+
+        self.last_observed_width = Some(width);
+        self.last_observed_viewport_height = Some(viewport_height);
+
+        if has_active_stream && observed_metrics_changed {
+            self.replay_requested_during_stream = true;
+        }
+
+        if self.replay_requested || (!has_active_stream && replay_metrics_changed) {
+            self.replay_requested = false;
+            self.replay_requested_during_stream = false;
+            self.last_replayed_width = Some(width);
+            self.last_replayed_viewport_height = Some(viewport_height);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -93,7 +179,7 @@ mod tests {
         let mut transcript_owner = TranscriptOwner::default();
         controller.request_history_replay();
 
-        let plan = controller.build_plan(&mut transcript_owner, 5, 80);
+        let plan = controller.build_plan(&mut transcript_owner, 5, 80, false);
 
         match plan.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
@@ -106,16 +192,35 @@ mod tests {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
-        let first = controller.build_plan(&mut transcript_owner, 5, 80);
+        let first = controller.build_plan(&mut transcript_owner, 5, 80, false);
         match first.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
         }
 
-        let second = controller.build_plan(&mut transcript_owner, 6, 80);
+        let second = controller.build_plan(&mut transcript_owner, 6, 80, false);
         match second.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
+        }
+    }
+
+    #[test]
+    fn resize_during_stream_defers_replay_until_stream_boundary() {
+        let mut controller = TerminalProjectionController::default();
+        let mut transcript_owner = TranscriptOwner::default();
+
+        let first = controller.build_plan(&mut transcript_owner, 5, 80, true);
+        match first.history_update {
+            HistoryUpdate::AppendTail(cells) => assert!(cells.is_empty()),
+            HistoryUpdate::ReplayAll(_) => panic!("streaming frame should defer replay"),
+        }
+
+        controller.on_stream_boundary();
+        let second = controller.build_plan(&mut transcript_owner, 5, 80, false);
+        match second.history_update {
+            HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
+            HistoryUpdate::AppendTail(_) => panic!("expected replay after stream boundary"),
         }
     }
 }

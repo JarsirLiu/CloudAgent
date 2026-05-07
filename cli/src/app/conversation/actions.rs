@@ -404,6 +404,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 item,
                 app.run_state.expand_tool_details,
             );
+            app.terminal_projection.on_stream_boundary();
         }
         ServerAction::PushNoticeCell { label, message, level } => {
             if app.should_suppress_notice(&label, &message) {
@@ -422,6 +423,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         }
         ServerAction::TurnDispatch(dispatch) => {
             conversation_facade::apply_turn_dispatch(app, dispatch);
+            app.terminal_projection.on_stream_boundary();
         }
         ServerAction::ShowServerRequestPrompt {
             request_id,

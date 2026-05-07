@@ -48,28 +48,9 @@ fn find_last_copyable_output(history_snapshot: &[ConversationTurn]) -> Option<St
 
 fn render_turn_items(items: &[TranscriptItem]) -> Vec<HistoryCell> {
     let mut render_context = RenderContext;
-    let mut cells = items
+    items
         .iter()
         .map(|item| render_history_entry(item, &mut render_context))
         .filter(|cell| !cell.is_empty())
-        .collect::<Vec<_>>();
-    mark_turn_stream_continuations(&mut cells);
-    cells
-}
-
-pub(crate) fn mark_turn_stream_continuations(cells: &mut [HistoryCell]) {
-    let mut previous_was_agent_message = false;
-    for cell in cells {
-        if cell.is_empty() {
-            cell.set_stream_continuation(false);
-            previous_was_agent_message = false;
-            continue;
-        }
-        let is_agent_message = matches!(
-            cell.tone,
-            crate::ui::widgets::history_cell::HistoryTone::Agent
-        ) && matches!(cell.kind(), crate::ui::widgets::history_cell::HistoryKind::Message);
-        cell.set_stream_continuation(is_agent_message && previous_was_agent_message);
-        previous_was_agent_message = is_agent_message;
-    }
+        .collect::<Vec<_>>()
 }

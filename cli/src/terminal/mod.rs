@@ -9,6 +9,7 @@ use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
+use ratatui::text::Line;
 use std::io::{self, stdout};
 use std::panic;
 use std::sync::Once;
@@ -18,6 +19,7 @@ use crate::ui::widgets::history_cell::HistoryCell;
 pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
+pub(crate) use insert_history::{insert_history_lines_raw, prepare_history_lines};
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 
@@ -31,9 +33,19 @@ pub(crate) struct HistoryProjection {
     pub(crate) history_update: HistoryUpdate,
 }
 
+pub(crate) struct PreparedHistoryProjection {
+    pub(crate) viewport_height: u16,
+    pub(crate) history_update: PreparedHistoryUpdate,
+}
+
 pub(crate) enum HistoryUpdate {
     ReplayAll(Vec<HistoryCell>),
     AppendTail(Vec<HistoryCell>),
+}
+
+pub(crate) enum PreparedHistoryUpdate {
+    ReplayAll(Vec<Line<'static>>),
+    AppendTail(Vec<Line<'static>>),
 }
 
 pub(crate) fn init() -> Result<TerminalGuard> {
@@ -74,7 +86,7 @@ impl TerminalGuard {
 
     pub(crate) fn draw_projection(
         &mut self,
-        projection: HistoryProjection,
+        projection: PreparedHistoryProjection,
         render: impl FnOnce(&mut Frame),
     ) -> Result<()> {
         stdout().sync_update(|_| {

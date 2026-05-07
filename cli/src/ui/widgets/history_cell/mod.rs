@@ -1,6 +1,6 @@
 mod markdown;
 mod render;
-mod tool_aggregation;
+pub(crate) mod tool_aggregation;
 mod wrapping;
 
 use agent_protocol::{ConversationTurn, TranscriptItem};
@@ -134,10 +134,25 @@ pub enum HistoryTone {
 pub struct HistoryCell {
     pub tone: HistoryTone,
     content: HistoryContent,
-    pub expanded: bool,
-    pub repeat_count: usize,
-    stream_continuation: bool,
+    view: HistoryCellView,
     cache: RenderCache,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HistoryCellView {
+    expanded: bool,
+    repeat_count: usize,
+    stream_continuation: bool,
+}
+
+impl Default for HistoryCellView {
+    fn default() -> Self {
+        Self {
+            expanded: false,
+            repeat_count: 1,
+            stream_continuation: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,9 +172,7 @@ impl HistoryCell {
         Self {
             tone: HistoryTone::User,
             content: HistoryContent::User(UserCell { text: text.into() }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -172,9 +185,7 @@ impl HistoryCell {
                 text: text.into(),
                 format,
             }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -187,9 +198,7 @@ impl HistoryCell {
                 text: text.into(),
                 presentation: ReasoningPresentation::Detailed,
             }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -202,9 +211,7 @@ impl HistoryCell {
                 text: text.into(),
                 presentation: ReasoningPresentation::Summary,
             }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -222,9 +229,7 @@ impl HistoryCell {
                 summary: summary.into(),
                 aggregate,
             }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -242,9 +247,7 @@ impl HistoryCell {
                 summary: summary.into(),
                 detail,
             }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -262,9 +265,7 @@ impl HistoryCell {
                 summary: summary.into(),
                 detail,
             }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -276,9 +277,7 @@ impl HistoryCell {
                 label: label.into(),
                 text: text.into(),
             }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -296,9 +295,7 @@ impl HistoryCell {
                 summary: summary.into(),
                 children,
             }),
-            expanded: false,
-            repeat_count: 1,
-            stream_continuation: false,
+            view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -368,16 +365,34 @@ impl HistoryCell {
     }
 
     pub fn is_stream_continuation(&self) -> bool {
-        self.stream_continuation
+        self.view.stream_continuation
     }
 
     pub fn set_stream_continuation(&mut self, is_stream_continuation: bool) {
-        self.stream_continuation = is_stream_continuation;
+        self.view.stream_continuation = is_stream_continuation;
     }
 
     pub fn with_stream_continuation(mut self, is_stream_continuation: bool) -> Self {
-        self.stream_continuation = is_stream_continuation;
+        self.view.stream_continuation = is_stream_continuation;
         self
+    }
+
+    pub fn is_expanded(&self) -> bool {
+        self.view.expanded
+    }
+
+    pub fn set_expanded(&mut self, expanded: bool) {
+        self.view.expanded = expanded;
+        self.invalidate_cache();
+    }
+
+    pub fn repeat_count(&self) -> usize {
+        self.view.repeat_count
+    }
+
+    pub fn set_repeat_count(&mut self, repeat_count: usize) {
+        self.view.repeat_count = repeat_count.max(1);
+        self.invalidate_cache();
     }
 
     pub fn detail(&self) -> Option<&str> {
@@ -484,9 +499,7 @@ impl PartialEq for HistoryCell {
     fn eq(&self, other: &Self) -> bool {
         self.tone == other.tone
             && self.content == other.content
-            && self.expanded == other.expanded
-            && self.repeat_count == other.repeat_count
-            && self.stream_continuation == other.stream_continuation
+            && self.view == other.view
     }
 }
 
@@ -504,7 +517,7 @@ impl Transcript {
         for message in messages {
             let cell = render::render_history_entry(message, &mut context);
             if !cell.is_empty() {
-                let _ = self.push_aggregated(cell);
+                self.push(cell);
             }
         }
     }
@@ -516,60 +529,21 @@ impl Transcript {
             for message in &turn.items {
                 let cell = render_history_entry(message, &mut context);
                 if !cell.is_empty() {
-                    let _ = self.push_aggregated(cell);
+                    self.push(cell);
                 }
             }
         }
     }
 
-    pub fn push_live(&mut self, cell: HistoryCell) -> (usize, bool) {
-        self.push_with_policy(cell, false)
-    }
-
-    pub fn push_aggregated(&mut self, cell: HistoryCell) -> (usize, bool) {
-        self.push_with_policy(cell, true)
-    }
-
-    fn push_with_policy(&mut self, cell: HistoryCell, allow_exploration: bool) -> (usize, bool) {
-        if let Some(last) = self.cells.last_mut()
-            && tool_aggregation::coalesce_agent_stream(last, &cell)
-        {
-            return (self.cells.len().saturating_sub(1), false);
-        }
-        if let Some(last) = self.cells.last_mut()
-            && tool_aggregation::coalesce_tool_like(last, &cell, allow_exploration)
-        {
-            return (self.cells.len().saturating_sub(1), false);
-        }
+    pub fn push(&mut self, cell: HistoryCell) {
         self.cells.push(cell);
-        (self.cells.len().saturating_sub(1), true)
     }
 
     pub fn replace_cells(&mut self, cells: Vec<HistoryCell>) {
         self.cells.clear();
         for cell in cells {
-            let _ = self.push_aggregated(cell);
+            self.push(cell);
         }
-    }
-
-    pub fn consolidate_trailing_exploration_run(&mut self) -> bool {
-        let end = self.cells.len();
-        let mut start = end;
-        while start > 0 && self.cells[start - 1].kind() == HistoryKind::Exploration {
-            start -= 1;
-        }
-        if end.saturating_sub(start) <= 1 {
-            return false;
-        }
-
-        let mut merged = self.cells[start].clone();
-        for cell in &self.cells[start + 1..end] {
-            if !tool_aggregation::coalesce_tool_like(&mut merged, cell, true) {
-                return false;
-            }
-        }
-        self.cells.splice(start..end, std::iter::once(merged));
-        true
     }
 
     pub fn set_tool_cells_expanded(&mut self, expanded: bool) {
@@ -582,14 +556,17 @@ impl Transcript {
                     | HistoryTone::Warning
                     | HistoryTone::Error
             ) {
-                cell.expanded = expanded;
-                cell.invalidate_cache();
+                cell.set_expanded(expanded);
             }
         }
     }
 
     pub fn cells(&self) -> &[HistoryCell] {
         &self.cells
+    }
+
+    pub fn cells_mut(&mut self) -> &mut Vec<HistoryCell> {
+        &mut self.cells
     }
 
     pub fn is_empty(&self) -> bool {
@@ -738,7 +715,7 @@ fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     }) {
         out.pop();
     }
-    let max_lines = if cell.expanded { 24usize } else { 12usize };
+    let max_lines = if cell.is_expanded() { 24usize } else { 12usize };
     let hidden_lines = out.len().saturating_sub(max_lines);
     if hidden_lines == 0 {
         return out;
@@ -836,7 +813,7 @@ fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         .aggregate()
         .map(|aggregate| aggregate.details.as_slice())
         .unwrap_or(&[]);
-    let max_details = if cell.expanded { 8 } else { 2 };
+    let max_details = if cell.is_expanded() { 8 } else { 2 };
     let mut lines = vec![Line::from(vec![
         Span::raw("  "),
         Span::styled("◦ ", Style::default().fg(Color::Rgb(120, 170, 255))),
@@ -936,7 +913,7 @@ fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
                 )
             })
             .collect::<Vec<_>>();
-        let max_lines = if cell.expanded { 24usize } else { 5usize };
+        let max_lines = if cell.is_expanded() { 24usize } else { 5usize };
         let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_lines {
             raw_lines
         } else {
@@ -1003,7 +980,7 @@ fn render_tool_group(
         );
     }
 
-    if !cell.expanded {
+    if !cell.is_expanded() {
         let preview_count = group.children.len().min(2);
         for (index, child) in group.children.iter().take(preview_count).enumerate() {
             let step_title = if child.label().is_empty() {
@@ -1116,7 +1093,7 @@ fn render_tool_group_child(cell: &HistoryCell, width: usize, is_last: bool) -> V
                 )
             })
             .collect::<Vec<_>>();
-        let max_lines = if cell.expanded { 12usize } else { 3usize };
+        let max_lines = if cell.is_expanded() { 12usize } else { 3usize };
         let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_lines {
             raw_lines
         } else {
@@ -1147,8 +1124,8 @@ fn render_tool_like(
     dot: &str,
 ) -> Vec<Line<'static>> {
     let title = pretty_tool_title(cell.label());
-    let title = if cell.repeat_count > 1 {
-        format!("{title} x{}", cell.repeat_count)
+    let title = if cell.repeat_count() > 1 {
+        format!("{title} x{}", cell.repeat_count())
     } else {
         title
     };
@@ -1174,7 +1151,7 @@ fn render_tool_like(
                 Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
             ])),
     );
-    let max_lines = if cell.expanded { 24usize } else { 2usize };
+    let max_lines = if cell.is_expanded() { 24usize } else { 2usize };
     let mut output_lines: Vec<Line<'static>> = Vec::new();
     if wrapped.len() <= max_lines {
         output_lines.extend(wrapped);
@@ -1217,7 +1194,7 @@ fn render_tool_like(
                 )
             })
             .collect::<Vec<_>>();
-        let max_detail_lines = if cell.expanded { 12usize } else { 3usize };
+        let max_detail_lines = if cell.is_expanded() { 12usize } else { 3usize };
         let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_detail_lines {
             raw_lines
         } else {
@@ -1414,7 +1391,7 @@ fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone, Transcript};
+    use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone, tool_aggregation};
 
     fn joined(cell: &HistoryCell, width: usize) -> String {
         cell.to_lines_with_mode(width)
@@ -1518,38 +1495,39 @@ mod tests {
 
     #[test]
     fn transcript_merges_adjacent_agent_stream_continuations() {
-        let mut transcript = Transcript::default();
-        let first = HistoryCell::agent("", "hello", HistoryFormat::Markdown);
+        let mut first = HistoryCell::agent("", "hello", HistoryFormat::Markdown);
         let second =
             HistoryCell::agent("", " world", HistoryFormat::Markdown).with_stream_continuation(true);
 
-        let (_, inserted_first) = transcript.push_aggregated(first);
-        let (_, inserted_second) = transcript.push_aggregated(second);
-
-        assert!(inserted_first);
-        assert!(!inserted_second);
-        assert_eq!(transcript.cells().len(), 1);
-        assert_eq!(transcript.cells()[0].body(), "hello world");
+        assert!(tool_aggregation::coalesce_agent_stream(&mut first, &second));
+        assert_eq!(first.body(), "hello world");
     }
 
     #[test]
     fn transcript_does_not_merge_agent_cells_across_non_agent_boundaries() {
-        let mut transcript = Transcript::default();
         let first = HistoryCell::agent("", "hello", HistoryFormat::Markdown);
         let barrier = HistoryCell::reasoning("Reasoning", "thinking");
         let second =
             HistoryCell::agent("", " world", HistoryFormat::Markdown).with_stream_continuation(true);
 
-        let (_, inserted_first) = transcript.push_aggregated(first);
-        let (_, inserted_barrier) = transcript.push_aggregated(barrier);
-        let (_, inserted_second) = transcript.push_aggregated(second);
+        let mut cells = Vec::new();
+        for cell in [first, barrier, second] {
+            if let Some(last) = cells.last_mut()
+                && tool_aggregation::coalesce_agent_stream(last, &cell)
+            {
+                continue;
+            }
+            if let Some(last) = cells.last_mut()
+                && tool_aggregation::coalesce_tool_like(last, &cell, true)
+            {
+                continue;
+            }
+            cells.push(cell);
+        }
 
-        assert!(inserted_first);
-        assert!(inserted_barrier);
-        assert!(inserted_second);
-        assert_eq!(transcript.cells().len(), 3);
-        assert_eq!(transcript.cells()[0].body(), "hello");
-        assert_eq!(transcript.cells()[1].body(), "thinking");
-        assert_eq!(transcript.cells()[2].body(), " world");
+        assert_eq!(cells.len(), 3);
+        assert_eq!(cells[0].body(), "hello");
+        assert_eq!(cells[1].body(), "thinking");
+        assert_eq!(cells[2].body(), " world");
     }
 }

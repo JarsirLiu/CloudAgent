@@ -1,4 +1,4 @@
-use crate::ui::widgets::history_cell::{HistoryCell, Transcript};
+use crate::ui::widgets::history_cell::{HistoryCell, Transcript, tool_aggregation};
 
 #[derive(Default)]
 pub(crate) struct CommittedTranscriptStore {
@@ -26,7 +26,7 @@ impl CommittedTranscriptStore {
         }
 
         for cell in cells {
-            let _ = self.transcript.push_aggregated(cell);
+            self.append_cell(cell);
         }
     }
 
@@ -49,5 +49,42 @@ impl CommittedTranscriptStore {
             .collect::<Vec<_>>();
         self.rendered_len = all_cells.len();
         cells
+    }
+
+    fn append_cell(&mut self, cell: HistoryCell) {
+        let mut cell = cell;
+        self.apply_append_policy(&mut cell);
+        if let Some(last) = self.transcript.cells_mut().last_mut()
+            && tool_aggregation::coalesce_agent_stream(last, &cell)
+        {
+            return;
+        }
+        if let Some(last) = self.transcript.cells_mut().last_mut()
+            && tool_aggregation::coalesce_tool_like(last, &cell, true)
+        {
+            return;
+        }
+        self.transcript.push(cell);
+    }
+
+    fn apply_append_policy(&mut self, cell: &mut HistoryCell) {
+        if cell.is_empty() {
+            cell.set_stream_continuation(false);
+            return;
+        }
+
+        let is_agent_message = cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
+            && cell.kind() == crate::ui::widgets::history_cell::HistoryKind::Message;
+        let previous_was_agent_message = self
+            .transcript
+            .cells()
+            .last()
+            .map(|previous| {
+                previous.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
+                    && previous.kind()
+                        == crate::ui::widgets::history_cell::HistoryKind::Message
+            })
+            .unwrap_or(false);
+        cell.set_stream_continuation(is_agent_message && previous_was_agent_message);
     }
 }

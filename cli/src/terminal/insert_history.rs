@@ -18,28 +18,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::terminal::custom_terminal::Terminal;
 use crate::ui::widgets::history_cell::HistoryCell;
 
-pub(crate) fn insert_history_cells<B>(
-    terminal: &mut Terminal<B>,
-    cells: Vec<HistoryCell>,
-    render_width: usize,
-) -> Result<()>
-where
-    B: Backend + Write,
-{
-    if cells.is_empty() {
-        return Ok(());
-    }
-
-    let lines = history_cells_to_lines(
-        cells,
-        render_width.max(1),
-        terminal.visible_history_rows() > 0,
-    );
-
-    insert_history_lines_raw(terminal, lines)
-}
-
-fn history_cells_to_lines(
+pub(crate) fn prepare_history_lines(
     cells: Vec<HistoryCell>,
     render_width: usize,
     has_existing_history: bool,
@@ -62,7 +41,7 @@ fn history_cells_to_lines(
     lines
 }
 
-fn insert_history_lines_raw<B>(
+pub(crate) fn insert_history_lines_raw<B>(
     terminal: &mut Terminal<B>,
     lines: Vec<Line<'static>>,
 ) -> Result<()>
@@ -352,7 +331,7 @@ impl crossterm::Command for ResetScrollRegion {
 
 #[cfg(test)]
 mod tests {
-    use super::{history_cells_to_lines, wrap_history_line};
+    use super::{prepare_history_lines, wrap_history_line};
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
@@ -394,7 +373,7 @@ mod tests {
         let mut second = HistoryCell::info("Run command", "rg cli", HistoryTone::Control);
         second.set_stream_continuation(true);
 
-        let lines = history_cells_to_lines(vec![first, second], 80, false);
+        let lines = prepare_history_lines(vec![first, second], 80, false);
         let rendered = lines
             .iter()
             .map(|line| {
@@ -413,7 +392,7 @@ mod tests {
         let first = HistoryCell::user("hello");
         let second = HistoryCell::reasoning("Reasoning", "thinking");
 
-        let lines = history_cells_to_lines(vec![first, second], 80, false);
+        let lines = prepare_history_lines(vec![first, second], 80, false);
         let rendered = lines
             .iter()
             .map(|line| {
