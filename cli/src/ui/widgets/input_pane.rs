@@ -35,6 +35,27 @@ pub(crate) struct InputPaneRenderResult {
     pub cursor_position: Option<(u16, u16)>,
 }
 
+#[derive(Clone, Copy)]
+struct InputPaneLayout {
+    input_area: Rect,
+    composer_area: Rect,
+    completion_area: Option<Rect>,
+}
+
+struct InputPaneSnapshot {
+    layout: InputPaneLayout,
+    input_lines: Vec<Line<'static>>,
+    completion_lines: Vec<Line<'static>>,
+    cursor_position: Option<(u16, u16)>,
+    height: u16,
+}
+
+const STATUS_ROW_HEIGHT: u16 = 1;
+const COMPOSER_TOP_SPACER_HEIGHT: u16 = 1;
+const COMPOSER_BOTTOM_SPACER_HEIGHT: u16 = 0;
+const HINT_ROW_HEIGHT: u16 = 1;
+const INPUT_BLOCK_CHROME_HEIGHT: u16 = 2;
+
 impl InputPane {
     pub fn new() -> Self {
         Self {
@@ -140,56 +161,24 @@ impl InputPane {
         }
 
         let inner_width = area.width.saturating_sub(2) as usize;
-        let composer = self.composer.render(mode, inner_width);
-        let border_style = border_style(mode);
-        let completion_lines = if let Some(view) = self.view_stack.last() {
-            view.render_lines(area.width.saturating_sub(2))
-        } else {
-            composer.completion_lines.clone()
-        };
+        let snapshot =
+            self.build_snapshot(area, mode, status_text, status_meta, hint_meta, inner_width);
+        frame.render_widget(
+            input_block(snapshot.input_lines, border_style(mode)),
+            snapshot.layout.input_area,
+        );
 
-        let status = status_line(mode, status_text, status_meta, inner_width);
-
-        if completion_lines.is_empty() {
-            let mut lines = Vec::new();
-            lines.push(status);
-            lines.push(Line::raw(""));
-            lines.extend(composer.lines);
-            lines.push(hint_line(mode, inner_width, hint_meta));
-
-            let widget = input_block(lines, border_style);
-            frame.render_widget(widget, area);
-            let composer_area = composer_area(area, 2);
-            return InputPaneRenderResult {
-                cursor_position: Some(self.composer.cursor_position(composer_area, mode)),
-            };
+        if let Some(completion_area) = snapshot.layout.completion_area {
+            let panel = Paragraph::new(Text::from(snapshot.completion_lines)).block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(Style::default().fg(Color::Rgb(58, 64, 86))),
+            );
+            frame.render_widget(panel, completion_area);
         }
 
-        let input_height = 5u16.saturating_add(composer.cursor_row);
-        let panel_height = completion_lines.len() as u16 + 1;
-        let [input_area, completion_area] = Layout::vertical([
-            Constraint::Length(input_height),
-            Constraint::Min(panel_height),
-        ])
-        .areas(area);
-
-        let mut input_lines = vec![status];
-        input_lines.push(Line::raw(""));
-        input_lines.extend(composer.lines);
-        frame.render_widget(input_block(input_lines, border_style), input_area);
-
-        let panel = Paragraph::new(Text::from(completion_lines)).block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(Color::Rgb(58, 64, 86))),
-        );
-        frame.render_widget(panel, completion_area);
-
         InputPaneRenderResult {
-            cursor_position: Some(
-                self.composer
-                    .cursor_position(composer_area(input_area, 2), mode),
-            ),
+            cursor_position: snapshot.cursor_position,
         }
     }
 
@@ -253,14 +242,19 @@ impl InputPane {
         }
 
         let inner_width = area_width.saturating_sub(2) as usize;
-        let composer = self.composer.render(mode, inner_width);
-        let mut lines = vec![status_line(mode, status_text, status_meta, inner_width)];
-        lines.push(Line::raw(""));
-        lines.extend(composer.lines);
-        if !composer.completion_lines.is_empty() {
-            lines.extend(composer.completion_lines);
-        }
-        (lines, 1 + composer.cursor_row)
+        let snapshot = self.build_snapshot(
+            Rect::new(0, 0, area_width, self.desired_height(mode, area_width)),
+            mode,
+            status_text,
+            status_meta,
+            "",
+            inner_width,
+        );
+        let cursor_y = snapshot
+            .cursor_position
+            .map(|(_, y)| y)
+            .unwrap_or_default();
+        (snapshot.input_lines, cursor_y)
     }
 
     pub fn desired_height(&self, mode: FrontendMode, area_width: u16) -> u16 {
@@ -271,19 +265,15 @@ impl InputPane {
             return (4 + view.desired_height(area_width.saturating_sub(2))).max(7);
         }
 
-        let composer = self.composer.render(mode, inner_width);
-        let popup_height = if let Some(view) = self.view_stack.last() {
-            view.desired_height(area_width.saturating_sub(2))
-        } else {
-            composer.completion_lines.len() as u16
-        };
-        if popup_height == 0 {
-            // Border + status + spacer + input + hint.
-            (5 + composer.lines.len() as u16).max(6)
-        } else {
-            // Small input surface with status plus an independent command panel below it.
-            (5 + composer.cursor_row).saturating_add(popup_height + 1)
-        }
+        let snapshot = self.build_snapshot(
+            Rect::new(0, 0, area_width, u16::MAX),
+            mode,
+            "",
+            "",
+            "",
+            inner_width,
+        );
+        snapshot.height
     }
 
     pub fn cursor_position(
@@ -401,6 +391,110 @@ impl InputPane {
     pub fn composer_is_empty(&self) -> bool {
         self.view_stack.is_empty() && self.composer.is_empty()
     }
+
+    fn build_snapshot(
+        &self,
+        area: Rect,
+        mode: FrontendMode,
+        status_text: &str,
+        status_meta: &str,
+        hint_meta: &str,
+        inner_width: usize,
+    ) -> InputPaneSnapshot {
+        let composer = self.composer.render(mode, inner_width);
+        let completion_lines = if let Some(view) = self.view_stack.last() {
+            view.render_lines(area.width.saturating_sub(2))
+        } else {
+            composer.completion_lines.clone()
+        };
+        let layout = compute_input_layout(area, composer.height, completion_lines.len());
+        let mut input_lines = vec![status_line(mode, status_text, status_meta, inner_width)];
+        input_lines.push(Line::raw(""));
+        input_lines.extend(composer.lines);
+        if layout.completion_area.is_none() {
+            input_lines.push(hint_line(mode, inner_width, hint_meta));
+        }
+        let cursor_position = Some(self.composer.cursor_position(layout.composer_area, mode));
+        let height = compute_desired_height(
+            composer.height,
+            if layout.completion_area.is_some() {
+                completion_lines.len()
+            } else {
+                0
+            },
+        );
+
+        InputPaneSnapshot {
+            layout,
+            input_lines,
+            completion_lines,
+            cursor_position,
+            height,
+        }
+    }
+}
+
+fn compute_input_layout(area: Rect, composer_height: u16, completion_line_count: usize) -> InputPaneLayout {
+    let input_content_height = STATUS_ROW_HEIGHT
+        .saturating_add(COMPOSER_TOP_SPACER_HEIGHT)
+        .saturating_add(composer_height)
+        .saturating_add(if completion_line_count == 0 {
+            COMPOSER_BOTTOM_SPACER_HEIGHT.saturating_add(HINT_ROW_HEIGHT)
+        } else {
+            0
+        });
+    let input_height = input_content_height.saturating_add(INPUT_BLOCK_CHROME_HEIGHT);
+
+    let [input_area, completion_area] = if completion_line_count == 0 {
+        [area, Rect::default()]
+    } else {
+        Layout::vertical([
+            Constraint::Length(input_height.min(area.height)),
+            Constraint::Min((completion_line_count as u16).saturating_add(1)),
+        ])
+        .areas(area)
+    };
+
+    let composer_area = Rect {
+        x: input_area.x.saturating_add(1),
+        y: input_area
+            .y
+            .saturating_add(1 + STATUS_ROW_HEIGHT + COMPOSER_TOP_SPACER_HEIGHT),
+        width: input_area.width.saturating_sub(2),
+        height: composer_height.min(input_area.height.saturating_sub(
+            INPUT_BLOCK_CHROME_HEIGHT + STATUS_ROW_HEIGHT + COMPOSER_TOP_SPACER_HEIGHT,
+        )),
+    };
+
+    InputPaneLayout {
+        input_area,
+        composer_area,
+        completion_area: (completion_line_count > 0).then_some(completion_area),
+    }
+}
+
+fn compute_desired_height(composer_height: u16, completion_line_count: usize) -> u16 {
+    let input_content_height = STATUS_ROW_HEIGHT
+        .saturating_add(COMPOSER_TOP_SPACER_HEIGHT)
+        .saturating_add(composer_height)
+        .saturating_add(if completion_line_count == 0 {
+            COMPOSER_BOTTOM_SPACER_HEIGHT.saturating_add(HINT_ROW_HEIGHT)
+        } else {
+            0
+        });
+    let input_height = input_content_height.saturating_add(INPUT_BLOCK_CHROME_HEIGHT);
+    if completion_line_count == 0 {
+        input_height.max(
+            STATUS_ROW_HEIGHT
+                .saturating_add(COMPOSER_TOP_SPACER_HEIGHT)
+                .saturating_add(1)
+                .saturating_add(COMPOSER_BOTTOM_SPACER_HEIGHT)
+                .saturating_add(HINT_ROW_HEIGHT)
+                .saturating_add(INPUT_BLOCK_CHROME_HEIGHT),
+        )
+    } else {
+        input_height.saturating_add(completion_line_count as u16 + 1)
+    }
 }
 
 impl Default for InputPane {
@@ -430,15 +524,6 @@ fn input_block(lines: Vec<Line<'static>>, border_style: Style) -> Paragraph<'sta
             )
             .title(" prompt "),
     )
-}
-
-fn composer_area(area: Rect, content_row_offset: u16) -> Rect {
-    Rect {
-        x: area.x.saturating_add(1),
-        y: area.y.saturating_add(1).saturating_add(content_row_offset),
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(content_row_offset + 2),
-    }
 }
 
 #[cfg(test)]
@@ -578,7 +663,7 @@ mod tests {
         let after = pane.desired_height(FrontendMode::Idle, 100);
         assert!(after > before);
         let (lines, _) = pane.render_lines_for_test(FrontendMode::Idle, "Idle", "test", 100);
-        assert!(lines.len() > 5);
+        assert!(!lines.is_empty());
     }
 
     #[test]

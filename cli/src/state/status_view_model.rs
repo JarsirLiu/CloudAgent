@@ -5,18 +5,21 @@ pub(crate) struct StatusViewModel {
     pub(crate) text: String,
     pub(crate) meta: String,
     pub(crate) hint_meta: String,
+    pub(crate) live_banner: Option<String>,
 }
 
 pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
     let fallback = status_text_from_mode(app.console_state.mode);
-    let text = if let Some(notice) = app.run_state.current_system_notice() {
-        notice.to_string()
+    let (text, live_banner) = if let Some(notice) = app.run_state.current_system_notice() {
+        (notice.to_string(), None)
     } else if let Some(tool_title) = app.runtime_projection.active_tool_title.as_deref() {
-        animate_status(tool_title, app.run_state.live_animation_frame)
+        let animated = animate_status(tool_title, app.run_state.live_animation_frame);
+        (fallback.to_string(), Some(animated))
     } else if let Some(live_label) = app.runtime_projection.live_label.as_deref() {
-        animate_status(live_label, app.run_state.live_animation_frame)
+        let animated = animate_status(live_label, app.run_state.live_animation_frame);
+        (fallback.to_string(), Some(animated))
     } else {
-        fallback.to_string()
+        (fallback.to_string(), None)
     };
 
     let mut parts = Vec::new();
@@ -50,6 +53,7 @@ pub(crate) fn build_status_view_model(app: &TuiApp) -> StatusViewModel {
         text,
         meta: parts.join(" · "),
         hint_meta,
+        live_banner,
     }
 }
 
@@ -101,7 +105,8 @@ mod tests {
 
         let status = build_status_view_model(&app);
 
-        assert_eq!(status.text, "/ running command: rg cli");
+        assert_eq!(status.text, "Working");
+        assert_eq!(status.live_banner.as_deref(), Some("/ running command: rg cli"));
     }
 
     #[test]
@@ -114,6 +119,7 @@ mod tests {
 
         let status = build_status_view_model(&app);
 
-        assert_eq!(status.text, "- assistant is thinking");
+        assert_eq!(status.text, "Working");
+        assert_eq!(status.live_banner.as_deref(), Some("- assistant is thinking"));
     }
 }

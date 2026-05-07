@@ -16,6 +16,13 @@ pub struct ComposerRender {
     pub lines: Vec<Line<'static>>,
     pub completion_lines: Vec<Line<'static>>,
     pub cursor_row: u16,
+    pub height: u16,
+}
+
+struct ComposerLayout {
+    prompt_prefix: String,
+    prompt_width: usize,
+    content_width: usize,
 }
 
 pub struct ChatComposer {
@@ -215,15 +222,12 @@ impl ChatComposer {
     }
 
     pub fn render(&self, mode: FrontendMode, width: usize) -> ComposerRender {
-        let (prompt_text, prompt_color, prompt_bg) = match mode {
-            FrontendMode::WaitingForServerRequest => ("?", Color::Rgb(255, 184, 76), None),
-            FrontendMode::Running => (">", Color::Rgb(100, 160, 255), None),
-            FrontendMode::Idle => (">", Color::Rgb(150, 180, 255), None),
+        let (prompt_color, prompt_bg) = match mode {
+            FrontendMode::WaitingForServerRequest => (Color::Rgb(255, 184, 76), None),
+            FrontendMode::Running => (Color::Rgb(100, 160, 255), None),
+            FrontendMode::Idle => (Color::Rgb(150, 180, 255), None),
         };
-
-        let prefix = format!("  {prompt_text} ");
-        let prefix_width = display_width(&prefix);
-        let content_width = width.saturating_sub(prefix_width + 2).max(10);
+        let layout = self.layout(mode, width);
 
         let body = if self.textarea.is_empty() {
             match mode {
@@ -235,16 +239,16 @@ impl ChatComposer {
             self.textarea.text()
         };
 
-        let wrapped = self.textarea.wrapped_lines(body, content_width);
+        let wrapped = self.textarea.wrapped_lines(body, layout.content_width);
         let is_placeholder = self.textarea.is_empty();
         let mut lines = Vec::new();
         let cursor_row = wrapped.len().saturating_sub(1) as u16;
 
         for (index, wrapped_line) in wrapped.into_iter().enumerate() {
             let indent = if index == 0 {
-                prefix.clone()
+                layout.prompt_prefix.clone()
             } else {
-                " ".repeat(prefix_width)
+                " ".repeat(layout.prompt_width)
             };
             let prompt_style = {
                 let base = Style::default()
@@ -273,18 +277,19 @@ impl ChatComposer {
                 ),
             ]));
         }
-        let completion_lines = completion_popup_lines(&self.completion, width, prefix_width);
+        let completion_lines =
+            completion_popup_lines(&self.completion, width, layout.prompt_width);
 
         ComposerRender {
             lines,
             completion_lines,
             cursor_row,
+            height: cursor_row.saturating_add(1),
         }
     }
 
     pub fn desired_height(&self, mode: FrontendMode, width: usize) -> u16 {
-        let rendered = self.render(mode, width);
-        rendered.lines.len() as u16
+        self.render(mode, width).height
     }
 
     pub fn is_empty(&self) -> bool {
@@ -300,18 +305,27 @@ impl ChatComposer {
     }
 
     pub fn cursor_position(&self, area: Rect, mode: FrontendMode) -> (u16, u16) {
-        let prompt = match mode {
-            FrontendMode::WaitingForServerRequest => "  ? ",
-            _ => "  > ",
-        };
-        let prompt_width = display_width(prompt);
-        let composer_width = area.width as usize;
-        let content_width = composer_width.saturating_sub(prompt_width + 2).max(10);
-        let (cursor_row, cursor_col) = self.textarea.visual_cursor_position(content_width);
+        let layout = self.layout(mode, area.width as usize);
+        let (cursor_row, cursor_col) = self.textarea.visual_cursor_position(layout.content_width);
         let max_x_offset = area.width.saturating_sub(1) as usize;
-        let x = area.x + (prompt_width + cursor_col).min(max_x_offset) as u16;
+        let x = area.x + (layout.prompt_width + cursor_col).min(max_x_offset) as u16;
         let y = area.y + cursor_row as u16;
         (x, y)
+    }
+
+    fn layout(&self, mode: FrontendMode, width: usize) -> ComposerLayout {
+        let prompt_text = match mode {
+            FrontendMode::WaitingForServerRequest => "?",
+            FrontendMode::Running | FrontendMode::Idle => ">",
+        };
+        let prompt_prefix = format!("  {prompt_text} ");
+        let prompt_width = display_width(&prompt_prefix);
+        let content_width = width.saturating_sub(prompt_width + 2).max(10);
+        ComposerLayout {
+            prompt_prefix,
+            prompt_width,
+            content_width,
+        }
     }
 
     fn submit(&mut self) -> ComposerIntent {
