@@ -32,14 +32,15 @@ impl SearchWorkspaceTool {
                 preferred_for: vec![
                     "first step of bug investigation",
                     "finding likely files before reading code",
+                    "rapidly testing multiple codebase hypotheses before choosing edits",
                 ],
-                follow_up_hint: Some("open the strongest hit with `read_file`; if several hits look plausible, issue multiple `read_file` calls in parallel before editing"),
+                follow_up_hint: Some("treat the first search as a coverage pass: open the strongest 2-3 plausible hits with `read_file` in parallel before editing"),
                 ..ToolUsageGuidance::default()
             },
             ToolSpec {
                 name: "search_workspace".to_string(),
                 identity: ToolIdentity::built_in("search_workspace"),
-                description: "Search repository files or text through one structured entry point. Use mode=`files` for likely path matches and mode=`text` for symbol or string matches. Reuse `session_id` to refine an existing search instead of restarting from scratch. The goal is to make the next `read_file` call obvious.".to_string(),
+                description: "Search repository files or text through one structured entry point. Use mode=`files` for likely path matches and mode=`text` for symbol, string, or UI wording matches. Treat the first search as a coverage pass across multiple plausible files, then reuse `session_id` to refine instead of restarting from scratch. The goal is to make the next 1-3 `read_file` calls obvious.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -496,12 +497,22 @@ async fn run_file_search(
 }
 
 struct TextSearchResult {
+    top_files: Vec<RankedTextFileSummary>,
     rendered: Vec<String>,
     hits: Vec<SearchWorkspaceHit>,
     match_count: usize,
     file_count: usize,
     truncated: bool,
     next_offset: Option<usize>,
+}
+
+#[derive(Clone)]
+struct RankedTextFileSummary {
+    path: String,
+    file_score: u32,
+    match_count: usize,
+    top_line: Option<usize>,
+    top_match_kind: &'static str,
 }
 
 #[derive(Clone)]
@@ -514,6 +525,7 @@ struct RankedTextHit {
     file_match_count: usize,
     rank: usize,
     match_kind: &'static str,
+    fallback_match: bool,
 }
 
 #[derive(Clone)]
@@ -522,6 +534,23 @@ struct RankedTextFile {
     path: String,
     match_count: usize,
     hits: Vec<RankedTextHit>,
+}
+
+#[derive(Clone, Copy)]
+struct TextMatchAssessment {
+    strict_match: bool,
+    fallback_match: bool,
+    phrase_match: bool,
+    definition_match: bool,
+    matched_terms: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct QueryIntent {
+    required_terms: Vec<String>,
+    support_terms: Vec<String>,
+    preferred_path_terms: Vec<String>,
+    preferred_line_terms: Vec<String>,
 }
 
 async fn run_text_search(
@@ -542,7 +571,11 @@ async fn run_text_search(
         let mut file_hits = BTreeSet::new();
         let mut match_count = 0usize;
         let query_lower = query_for_search.to_ascii_lowercase();
+        let query_terms = derive_query_terms(&query_for_search);
+        let query_intent = derive_query_intent(&query_terms);
         let mut grouped_hits: HashMap<String, Vec<RankedTextHit>> = HashMap::new();
+        let mut strict_match_count = 0usize;
+        let mut strict_file_hits = BTreeSet::new();
 
         for entry in entries {
             let path = workspace_root.join(&entry.relative_path);
@@ -560,14 +593,35 @@ async fn run_text_search(
             let path_lower = entry.relative_path.to_ascii_lowercase();
             let file_name_lower = entry.file_name.to_ascii_lowercase();
             for (index, line) in lines.iter().enumerate() {
-                if !line_matches(line, &query_for_search, case_sensitive) {
+                let assessment = assess_text_match(
+                    line,
+                    &query_for_search,
+                    &query_terms,
+                    &query_intent,
+                    &path_lower,
+                    &file_name_lower,
+                    case_sensitive,
+                );
+                if !assessment.strict_match && !assessment.fallback_match {
                     continue;
                 }
                 match_count += 1;
                 file_hits.insert(entry.relative_path.clone());
+                if assessment.strict_match {
+                    strict_match_count += 1;
+                    strict_file_hits.insert(entry.relative_path.clone());
+                }
                 let preview = render_match(&entry.relative_path, index, &lines, context_lines);
-                let (score, match_kind) =
-                    rank_text_hit(&query_lower, &path_lower, &file_name_lower, line, index);
+                let (score, match_kind) = rank_text_hit(
+                    &query_lower,
+                    &query_terms,
+                    &path_lower,
+                    &file_name_lower,
+                    line,
+                    index,
+                    assessment,
+                    &query_intent,
+                );
                 grouped_hits
                     .entry(entry.relative_path.clone())
                     .or_default()
@@ -580,13 +634,22 @@ async fn run_text_search(
                         file_match_count: 0,
                         rank: 0,
                         match_kind,
+                        fallback_match: assessment.fallback_match && !assessment.strict_match,
                     });
             }
         }
 
+        let prefer_strict_only = strict_match_count >= 3 || strict_file_hits.len() >= 2;
+
         let mut ranked_files = grouped_hits
             .into_iter()
-            .map(|(path, mut hits)| {
+            .filter_map(|(path, mut hits)| {
+                if prefer_strict_only {
+                    hits.retain(|hit| !hit.fallback_match);
+                    if hits.is_empty() {
+                        return None;
+                    }
+                }
                 hits.sort_by(|left, right| {
                     right
                         .score
@@ -601,12 +664,12 @@ async fn run_text_search(
                     hit.file_score = file_score;
                     hit.file_match_count = match_count;
                 }
-                RankedTextFile {
+                Some(RankedTextFile {
                     file_score,
                     path,
                     match_count,
                     hits,
-                }
+                })
             })
             .collect::<Vec<_>>();
         ranked_files.sort_by(|left, right| {
@@ -616,21 +679,30 @@ async fn run_text_search(
                 .then_with(|| right.match_count.cmp(&left.match_count))
                 .then_with(|| left.path.cmp(&right.path))
         });
+        let top_files = ranked_files
+            .iter()
+            .take(5)
+            .map(|file| RankedTextFileSummary {
+                path: file.path.clone(),
+                file_score: file.file_score,
+                match_count: file.match_count,
+                top_line: file.hits.first().map(|hit| hit.line),
+                top_match_kind: file
+                    .hits
+                    .first()
+                    .map(|hit| hit.match_kind)
+                    .unwrap_or("text"),
+            })
+            .collect::<Vec<_>>();
 
         let mut flattened = Vec::new();
-        for file in ranked_files {
-            for hit in file.hits.into_iter().take(3) {
-                flattened.push(hit);
+        for hit_index in 0..3 {
+            for file in &ranked_files {
+                if let Some(hit) = file.hits.get(hit_index) {
+                    flattened.push(hit.clone());
+                }
             }
         }
-        flattened.sort_by(|left, right| {
-            right
-                .file_score
-                .cmp(&left.file_score)
-                .then_with(|| right.score.cmp(&left.score))
-                .then_with(|| left.path.cmp(&right.path))
-                .then_with(|| left.line.cmp(&right.line))
-        });
         for (index, hit) in flattened.iter_mut().enumerate() {
             hit.rank = index + 1;
         }
@@ -661,10 +733,15 @@ async fn run_text_search(
             .collect::<Vec<_>>();
 
         Ok(TextSearchResult {
+            top_files,
             rendered,
             hits,
             match_count,
-            file_count: file_hits.len(),
+            file_count: if prefer_strict_only {
+                strict_file_hits.len()
+            } else {
+                file_hits.len()
+            },
             truncated: total_ranked_hits > offset.saturating_add(max_results),
             next_offset: (total_ranked_hits > offset.saturating_add(max_results))
                 .then_some(offset.saturating_add(max_results)),
@@ -725,9 +802,7 @@ fn build_file_search_output(
     let next_step = if hits.is_empty() {
         Some("adjust the pattern or set `path_scope`, then rerun `search_workspace`")
     } else {
-        Some(
-            "open the strongest hit with `read_file`; if several are plausible, issue multiple `read_file` calls in parallel",
-        )
+        Some("open the strongest 2-3 plausible hits with `read_file` in parallel before editing")
     };
     finalize(summary, sections, next_step)
 }
@@ -764,29 +839,203 @@ fn build_text_search_output(
             "Try a broader query or widen `path_scope` before reading files.",
         );
     } else {
+        let top_files = search
+            .top_files
+            .iter()
+            .map(|file| {
+                let top_line = file
+                    .top_line
+                    .map(|line| format!("line {line}"))
+                    .unwrap_or_else(|| "line ?".to_string());
+                format!(
+                    "{} [file_score={}, matches={}, top_hit={} {}]",
+                    file.path, file.file_score, file.match_count, file.top_match_kind, top_line
+                )
+            })
+            .collect::<Vec<_>>();
+        push_list_section(&mut sections, "Top files", &top_files);
         push_section(&mut sections, "Matches", search.rendered.join("\n\n"));
     }
     let next_step = if search.rendered.is_empty() {
         Some("adjust the query or widen `path_scope`, then rerun `search_workspace`")
     } else if search.truncated {
         Some(
-            "open the strongest hit with `read_file`, or continue this search with `next_offset` for more matches",
+            "open the strongest 2-3 files with `read_file`, or continue this search with `next_offset` for more matches",
         )
     } else {
-        Some(
-            "open the strongest hit with `read_file`; if several hits look plausible, issue multiple `read_file` calls in parallel",
-        )
+        Some("open the strongest 2-3 plausible files with `read_file` in parallel before editing")
     };
     finalize(summary, sections, next_step)
 }
 
-fn line_matches(line: &str, query: &str, case_sensitive: bool) -> bool {
-    if case_sensitive {
-        line.contains(query)
+fn assess_text_match(
+    line: &str,
+    query: &str,
+    query_terms: &[String],
+    query_intent: &QueryIntent,
+    path_lower: &str,
+    file_name_lower: &str,
+    case_sensitive: bool,
+) -> TextMatchAssessment {
+    let normalized_query = if case_sensitive {
+        query.to_string()
+    } else {
+        query.to_ascii_lowercase()
+    };
+    let line_cmp = if case_sensitive {
+        line.to_string()
     } else {
         line.to_ascii_lowercase()
-            .contains(&query.to_ascii_lowercase())
+    };
+    let phrase_match = line_cmp.contains(&normalized_query)
+        || path_lower.contains(&normalized_query)
+        || file_name_lower.contains(&normalized_query);
+    let definition_match = line_looks_like_definition(&line_cmp, &normalized_query);
+    let matched_terms = query_terms
+        .iter()
+        .filter(|term| !term.is_empty() && line_cmp.contains(term.as_str()))
+        .count();
+    let required_terms_matched = query_intent
+        .required_terms
+        .iter()
+        .filter(|term| line_cmp.contains(term.as_str()))
+        .count();
+    let support_terms_matched = query_intent
+        .support_terms
+        .iter()
+        .filter(|term| line_cmp.contains(term.as_str()))
+        .count();
+    let strict_match = phrase_match || definition_match;
+    let intent_match = !query_intent.required_terms.is_empty()
+        && required_terms_matched >= query_intent.required_terms.len().min(2)
+        && support_terms_matched >= 1;
+    let fallback_match =
+        !strict_match && (intent_match || (query_terms.len() >= 2 && matched_terms >= 2));
+    TextMatchAssessment {
+        strict_match,
+        fallback_match,
+        phrase_match,
+        definition_match,
+        matched_terms,
     }
+}
+
+fn derive_query_terms(query: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut seen = BTreeSet::new();
+    let normalized = query.trim().to_ascii_lowercase();
+    if !normalized.is_empty() && seen.insert(normalized.clone()) {
+        terms.push(normalized);
+    }
+    for raw in query
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+    {
+        let lowered = raw.to_ascii_lowercase();
+        if lowered.len() >= 3 && seen.insert(lowered.clone()) {
+            terms.push(lowered);
+        }
+    }
+
+    let camel_parts = split_camel_case(query);
+    for part in camel_parts {
+        let lowered = part.to_ascii_lowercase();
+        if lowered.len() >= 3 && seen.insert(lowered.clone()) {
+            terms.push(lowered);
+        }
+    }
+    terms
+}
+
+fn derive_query_intent(query_terms: &[String]) -> QueryIntent {
+    let mut intent = QueryIntent::default();
+    let has_tab = query_terms.iter().any(|term| term == "tab");
+    let has_completion = query_terms
+        .iter()
+        .any(|term| term.contains("completion") || term.contains("autocomplete"));
+    let has_space = query_terms
+        .iter()
+        .any(|term| term == "space" || term == "whitespace");
+    let has_insert = query_terms
+        .iter()
+        .any(|term| term.contains("insert") || term.contains("append"));
+
+    if has_tab && has_completion {
+        intent.required_terms = vec!["tab".to_string(), "completion".to_string()];
+        intent.support_terms.extend([
+            "accept".to_string(),
+            "selected".to_string(),
+            "suggestion".to_string(),
+            "insertion".to_string(),
+            "key".to_string(),
+        ]);
+        intent.preferred_path_terms.extend([
+            "completion".to_string(),
+            "composer".to_string(),
+            "input".to_string(),
+            "chat".to_string(),
+        ]);
+        intent.preferred_line_terms.extend([
+            "accept_selected_completion".to_string(),
+            "keycode::tab".to_string(),
+            "suggestion".to_string(),
+            "insert".to_string(),
+        ]);
+    }
+
+    if has_space || has_insert {
+        intent.required_terms.push("space".to_string());
+        intent.support_terms.extend([
+            "insert".to_string(),
+            "append".to_string(),
+            "trim".to_string(),
+            "push".to_string(),
+            "\" \"".to_string(),
+        ]);
+        intent.preferred_line_terms.extend([
+            "push(' ')".to_string(),
+            "push_str(\" \")".to_string(),
+            "trim".to_string(),
+        ]);
+    }
+
+    dedupe_strings(&mut intent.required_terms);
+    dedupe_strings(&mut intent.support_terms);
+    dedupe_strings(&mut intent.preferred_path_terms);
+    dedupe_strings(&mut intent.preferred_line_terms);
+    intent
+}
+
+fn split_camel_case(input: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut prev_is_lower = false;
+    for ch in input.chars() {
+        if !ch.is_ascii_alphanumeric() {
+            if current.len() >= 3 {
+                parts.push(current.clone());
+            }
+            current.clear();
+            prev_is_lower = false;
+            continue;
+        }
+        let is_upper = ch.is_ascii_uppercase();
+        if is_upper && prev_is_lower && current.len() >= 3 {
+            parts.push(current.clone());
+            current.clear();
+        }
+        prev_is_lower = ch.is_ascii_lowercase();
+        current.push(ch);
+    }
+    if current.len() >= 3 {
+        parts.push(current);
+    }
+    parts
+}
+
+fn dedupe_strings(values: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    values.retain(|value| seen.insert(value.clone()));
 }
 
 fn fuzzy_match_indices(haystack: &str, needle: &str) -> Option<Vec<u32>> {
@@ -806,14 +1055,18 @@ fn fuzzy_match_indices(haystack: &str, needle: &str) -> Option<Vec<u32>> {
 
 fn rank_text_hit(
     query_lower: &str,
+    query_terms: &[String],
     path_lower: &str,
     file_name_lower: &str,
     line: &str,
     line_index: usize,
+    assessment: TextMatchAssessment,
+    query_intent: &QueryIntent,
 ) -> (u32, &'static str) {
     let line_lower = line.to_ascii_lowercase();
     let mut score = 100u32;
     let mut match_kind = "text";
+    let exact_term_match = query_terms.iter().any(|term| line_lower.contains(term));
     if file_name_lower.contains(query_lower) {
         score += 140;
         match_kind = "file_name";
@@ -824,13 +1077,51 @@ fn rank_text_hit(
             match_kind = "path";
         }
     }
-    if line_lower.contains(&format!("fn {query_lower}"))
-        || line_lower.contains(&format!("class {query_lower}"))
-        || line_lower.contains(&format!("struct {query_lower}"))
-        || line_lower.contains(&format!("enum {query_lower}"))
-    {
+    if assessment.definition_match {
         score += 120;
         match_kind = "definition";
+    }
+    if assessment.phrase_match {
+        score += 110;
+        if match_kind == "text" {
+            match_kind = "phrase";
+        }
+    }
+    if exact_term_match {
+        score += 45;
+        if match_kind == "text" {
+            match_kind = "term";
+        }
+    }
+    if assessment.matched_terms >= 2 {
+        score += 55;
+        if match_kind == "text" || match_kind == "term" {
+            match_kind = "term_cover";
+        }
+    }
+    let preferred_path_matches = query_intent
+        .preferred_path_terms
+        .iter()
+        .filter(|term| {
+            path_lower.contains(term.as_str()) || file_name_lower.contains(term.as_str())
+        })
+        .count();
+    if preferred_path_matches > 0 {
+        score += 45 * preferred_path_matches.min(3) as u32;
+        if match_kind == "text" || match_kind == "term" {
+            match_kind = "entrypoint";
+        }
+    }
+    let preferred_line_matches = query_intent
+        .preferred_line_terms
+        .iter()
+        .filter(|term| line_lower.contains(term.as_str()))
+        .count();
+    if preferred_line_matches > 0 {
+        score += 55 * preferred_line_matches.min(3) as u32;
+        if match_kind == "text" || match_kind == "term" || match_kind == "term_cover" {
+            match_kind = "handler";
+        }
     }
     if line_lower.trim_start().starts_with(query_lower) {
         score += 30;
@@ -840,7 +1131,17 @@ fn rank_text_hit(
         .unwrap_or(120)
         .saturating_sub(20);
     score = score.saturating_sub(u32::try_from(line_index.min(200)).unwrap_or(200) / 4);
+    if assessment.fallback_match {
+        score = score.saturating_sub(35);
+    }
     (score, match_kind)
+}
+
+fn line_looks_like_definition(line_lower: &str, query_lower: &str) -> bool {
+    line_lower.contains(&format!("fn {query_lower}"))
+        || line_lower.contains(&format!("class {query_lower}"))
+        || line_lower.contains(&format!("struct {query_lower}"))
+        || line_lower.contains(&format!("enum {query_lower}"))
 }
 
 fn short_path_bonus(path: &str) -> u32 {

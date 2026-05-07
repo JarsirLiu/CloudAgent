@@ -89,7 +89,7 @@ mod tests {
         assert!(
             output
                 .content
-                .contains("Next step: open the strongest hit with `read_file`")
+                .contains("Next step: open the strongest 2-3 plausible hits with `read_file` in parallel before editing")
         );
         assert!(matches!(
             output.structured.as_ref(),
@@ -167,6 +167,7 @@ mod tests {
                 .content
                 .contains("Summary: Found 2 text matches in 1 files for `render_`.")
         );
+        assert!(output.content.contains("Top files:"));
         assert!(output.content.contains("Matches:"));
         assert!(
             output
@@ -217,6 +218,183 @@ mod tests {
             hits.first().and_then(|hit| hit.match_kind.as_deref()),
             Some("definition")
         );
+    }
+
+    #[tokio::test]
+    async fn search_workspace_text_prefers_phrase_matches_over_single_term_noise() {
+        let base =
+            test_workspace("search_workspace_text_prefers_phrase_matches_over_single_term_noise");
+        fs::create_dir_all(base.join("cli/src/input"))
+            .await
+            .expect("create input dir");
+        fs::create_dir_all(base.join("cli/src/ui/widgets"))
+            .await
+            .expect("create widgets dir");
+        fs::write(
+            base.join("cli/src/input/completion.rs"),
+            "pub fn show_tab_completion_popup() {}\n",
+        )
+        .await
+        .expect("write completion file");
+        fs::write(
+            base.join("cli/src/ui/widgets/chat_composer.rs"),
+            "fn accept_selected_completion() {}\n",
+        )
+        .await
+        .expect("write composer file");
+
+        let tool = SearchWorkspaceLocalTool::new();
+        let ctx = tool_context(&base);
+        let output = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "mode": "text",
+                    "query": "tab completion",
+                    "path_scope": "cli",
+                    "max_results": 10
+                })),
+                &ctx,
+            )
+            .await
+            .expect("search_workspace works");
+
+        assert!(output.content.contains("Top files:"));
+        assert!(output.content.contains("cli/src/input/completion.rs"));
+        assert!(
+            !output
+                .content
+                .contains("cli/src/ui/widgets/chat_composer.rs")
+        );
+    }
+
+    #[tokio::test]
+    async fn search_workspace_text_falls_back_to_multi_term_coverage_when_phrase_is_absent() {
+        let base = test_workspace(
+            "search_workspace_text_falls_back_to_multi_term_coverage_when_phrase_is_absent",
+        );
+        fs::create_dir_all(base.join("cli/src/input"))
+            .await
+            .expect("create input dir");
+        fs::write(
+            base.join("cli/src/input/completion.rs"),
+            "fn handle_tab_key_for_completion_menu() {}\n",
+        )
+        .await
+        .expect("write completion file");
+
+        let tool = SearchWorkspaceLocalTool::new();
+        let ctx = tool_context(&base);
+        let output = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "mode": "text",
+                    "query": "tab completion",
+                    "path_scope": "cli",
+                    "max_results": 10
+                })),
+                &ctx,
+            )
+            .await
+            .expect("search_workspace works");
+
+        assert!(output.content.contains("cli/src/input/completion.rs"));
+        assert!(matches!(
+            output.structured.as_ref(),
+            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. })
+                if hits.first().and_then(|hit| hit.match_kind.as_deref()) == Some("term_cover")
+        ));
+    }
+
+    #[tokio::test]
+    async fn search_workspace_text_truncation_preserves_file_diversity() {
+        let base = test_workspace("search_workspace_text_truncation_preserves_file_diversity");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(
+            base.join("src/a.rs"),
+            "fn render_alpha() {}\nfn render_beta() {}\nfn render_gamma() {}\n",
+        )
+        .await
+        .expect("write a");
+        fs::write(base.join("src/b.rs"), "fn render_shell() {}\n")
+            .await
+            .expect("write b");
+
+        let tool = SearchWorkspaceLocalTool::new();
+        let ctx = tool_context(&base);
+        let output = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "mode": "text",
+                    "query": "render",
+                    "path_scope": "src",
+                    "max_results": 2
+                })),
+                &ctx,
+            )
+            .await
+            .expect("search_workspace works");
+
+        let hits = match output.structured.as_ref() {
+            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
+            other => panic!("expected structured hits, got {other:?}"),
+        };
+        assert_eq!(hits.len(), 2);
+        assert_ne!(hits[0].path, hits[1].path);
+    }
+
+    #[tokio::test]
+    async fn search_workspace_text_prefers_semantic_handler_signals_for_tab_completion() {
+        let base = test_workspace(
+            "search_workspace_text_prefers_semantic_handler_signals_for_tab_completion",
+        );
+        fs::create_dir_all(base.join("cli/src/input"))
+            .await
+            .expect("create input dir");
+        fs::create_dir_all(base.join("cli/src/ui/widgets"))
+            .await
+            .expect("create widgets dir");
+        fs::write(
+            base.join("cli/src/input/completion.rs"),
+            "pub fn completion_menu() {}\n",
+        )
+        .await
+        .expect("write completion file");
+        fs::write(
+            base.join("cli/src/ui/widgets/chat_composer.rs"),
+            "fn accept_selected_completion() {}\nmatch key { KeyCode::Tab => accept_selected_completion(), _ => {} }\n",
+        )
+        .await
+        .expect("write composer file");
+
+        let tool = SearchWorkspaceLocalTool::new();
+        let ctx = tool_context(&base);
+        let output = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "mode": "text",
+                    "query": "tab completion",
+                    "path_scope": "cli",
+                    "max_results": 5
+                })),
+                &ctx,
+            )
+            .await
+            .expect("search_workspace works");
+
+        let hits = match output.structured.as_ref() {
+            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
+            other => panic!("expected structured hits, got {other:?}"),
+        };
+        assert_eq!(
+            hits.first().map(|hit| hit.path.as_str()),
+            Some("cli/src/ui/widgets/chat_composer.rs")
+        );
+        assert!(matches!(
+            hits.first().and_then(|hit| hit.match_kind.as_deref()),
+            Some("handler" | "entrypoint")
+        ));
     }
 
     #[tokio::test]
