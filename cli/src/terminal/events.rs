@@ -1,4 +1,6 @@
 use crossterm::event::{self, Event as CEvent, KeyEvent};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -8,10 +10,33 @@ pub(crate) enum UiEvent {
     Paste(String),
     Resize,
     Tick,
+    Draw,
 }
 
-pub(crate) fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
+#[derive(Clone)]
+pub(crate) struct FrameRequester {
+    tx: mpsc::UnboundedSender<UiEvent>,
+    draw_pending: Arc<AtomicBool>,
+}
+
+impl FrameRequester {
+    pub(crate) fn schedule_frame(&self) {
+        if !self.draw_pending.swap(true, Ordering::AcqRel) {
+            let _ = self.tx.send(UiEvent::Draw);
+        }
+    }
+
+    pub(crate) fn finish_draw(&self) {
+        self.draw_pending.store(false, Ordering::Release);
+    }
+}
+
+pub(crate) fn spawn_tui_event_loop() -> (mpsc::UnboundedReceiver<UiEvent>, FrameRequester) {
     let (tx, rx) = mpsc::unbounded_channel();
+    let frame_requester = FrameRequester {
+        tx: tx.clone(),
+        draw_pending: Arc::new(AtomicBool::new(false)),
+    };
     std::thread::spawn(move || {
         loop {
             match event::poll(Duration::from_millis(120)) {
@@ -48,5 +73,5 @@ pub(crate) fn spawn_tui_event_loop() -> mpsc::UnboundedReceiver<UiEvent> {
             }
         }
     });
-    rx
+    (rx, frame_requester)
 }

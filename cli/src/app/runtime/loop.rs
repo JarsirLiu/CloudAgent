@@ -10,28 +10,27 @@ pub(crate) async fn run_tui_event_loop(
     client: &mut AppServerClient,
 ) -> Result<()> {
     let mut terminal = TerminalGuard::new()?;
-    let mut events = spawn_tui_event_loop();
-    let mut needs_redraw = true;
+    let (mut events, frame_requester) = spawn_tui_event_loop();
     let mut controller = RuntimeController::new();
+    frame_requester.schedule_frame();
 
     loop {
-        if controller.should_draw(needs_redraw) {
-            draw_app_frame(app, &mut terminal)?;
-        }
-
-        let redraw_after_event = tokio::select! {
+        let control = tokio::select! {
             Some(event) = client.next_event() => {
-                controller.handle_client_event_batch(app, client, event)
+                controller.handle_client_event(app, event, &frame_requester);
+                RuntimeControl::Continue
             }
             Some(event) = events.recv() => {
-                match controller.handle_ui_event_batch(app, client, &mut events, event)? {
-                    RuntimeControl::Continue(redraw) => redraw,
-                    RuntimeControl::Break => break,
-                }
+                controller.handle_ui_event(app, client, event, &frame_requester)?
             }
             else => break,
         };
-        needs_redraw = redraw_after_event;
+
+        match control {
+            RuntimeControl::Continue => {}
+            RuntimeControl::Draw => draw_app_frame(app, &mut terminal)?,
+            RuntimeControl::Break => break,
+        }
 
         if app.run_state.should_exit {
             break;

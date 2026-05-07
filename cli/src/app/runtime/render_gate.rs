@@ -23,8 +23,8 @@ impl RenderGate {
         }
     }
 
-    pub(crate) fn should_draw(&self, needs_redraw: bool) -> bool {
-        needs_redraw && !self.scrollback_browse.is_active()
+    pub(crate) fn allows_draw(&self) -> bool {
+        !self.scrollback_browse.is_active()
     }
 }
 
@@ -36,9 +36,9 @@ mod tests {
     fn scrollback_input_temporarily_blocks_redraw() {
         let mut gate = RenderGate::default();
 
-        assert!(gate.should_draw(true));
+        assert!(gate.allows_draw());
         gate.apply_intent(RenderGateIntent::TerminalScrollbackBrowse);
-        assert!(!gate.should_draw(true));
+        assert!(!gate.allows_draw());
     }
 
     #[test]
@@ -46,10 +46,10 @@ mod tests {
         let mut gate = RenderGate::default();
 
         gate.apply_intent(RenderGateIntent::TerminalScrollbackBrowse);
-        assert!(!gate.should_draw(true));
+        assert!(!gate.allows_draw());
 
         gate.apply_intent(RenderGateIntent::AppInput);
-        assert!(gate.should_draw(true));
+        assert!(gate.allows_draw());
     }
 
     #[test]
@@ -59,6 +59,6 @@ mod tests {
         gate.apply_intent(RenderGateIntent::TerminalScrollbackBrowse);
         gate.apply_intent(RenderGateIntent::Resize);
 
-        assert!(gate.should_draw(true));
+        assert!(gate.allows_draw());
     }
 }

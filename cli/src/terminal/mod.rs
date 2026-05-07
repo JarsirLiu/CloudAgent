@@ -17,7 +17,7 @@ use crate::ui::widgets::history_cell::HistoryCell;
 
 pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
-pub(crate) use events::{UiEvent, spawn_tui_event_loop};
+pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 

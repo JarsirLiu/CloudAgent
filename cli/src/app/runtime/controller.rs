@@ -3,10 +3,9 @@ use crate::app::conversation::actions::handle_tui_input;
 use crate::app::conversation::event_router;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
 use crate::app::runtime::render_gate::{RenderGate, RenderGateIntent};
-use crate::terminal::UiEvent;
+use crate::terminal::{FrameRequester, UiEvent};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
 use anyhow::Result;
-use tokio::sync::mpsc;
 
 pub(crate) struct RuntimeController {
     render_gate: RenderGate,
@@ -19,54 +18,22 @@ impl RuntimeController {
         }
     }
 
-    pub(crate) fn should_draw(&self, needs_redraw: bool) -> bool {
-        self.render_gate.should_draw(needs_redraw)
-    }
-
-    pub(crate) fn handle_client_event_batch(
+    pub(crate) fn handle_client_event(
         &mut self,
         app: &mut TuiApp,
-        client: &mut AppServerClient,
-        first_event: AppServerEvent,
-    ) -> bool {
-        event_router::handle_client_event(app, first_event);
-        while let Some(event) = client.try_next_event() {
-            event_router::handle_client_event(app, event);
-        }
-        true
+        event: AppServerEvent,
+        frame_requester: &FrameRequester,
+    ) {
+        event_router::handle_client_event(app, event);
+        frame_requester.schedule_frame();
     }
 
-    pub(crate) fn handle_ui_event_batch(
-        &mut self,
-        app: &mut TuiApp,
-        client: &mut AppServerClient,
-        events: &mut mpsc::UnboundedReceiver<UiEvent>,
-        first_event: UiEvent,
-    ) -> Result<RuntimeControl> {
-        let mut needs_redraw = self.handle_single_ui_event(app, client, first_event)?;
-        if matches!(needs_redraw, RuntimeControl::Break) {
-            return Ok(RuntimeControl::Break);
-        }
-
-        while let Ok(event) = events.try_recv() {
-            match self.handle_single_ui_event(app, client, event)? {
-                RuntimeControl::Continue(redraw) => {
-                    needs_redraw = RuntimeControl::Continue(
-                        matches!(needs_redraw, RuntimeControl::Continue(true)) || redraw,
-                    );
-                }
-                RuntimeControl::Break => return Ok(RuntimeControl::Break),
-            }
-        }
-
-        Ok(needs_redraw)
-    }
-
-    fn handle_single_ui_event(
+    pub(crate) fn handle_ui_event(
         &mut self,
         app: &mut TuiApp,
         client: &mut AppServerClient,
         event: UiEvent,
+        frame_requester: &FrameRequester,
     ) -> Result<RuntimeControl> {
         let outcome = match event {
             UiEvent::Key(key) => {
@@ -77,30 +44,47 @@ impl RuntimeController {
                 {
                     return Ok(RuntimeControl::Break);
                 }
-                true
+                frame_requester.schedule_frame();
+                RuntimeControl::Continue
             }
             UiEvent::Paste(text) => {
                 self.render_gate.apply_intent(RenderGateIntent::AppInput);
                 pause_welcome_animation_for_input(app);
                 let _ = app.input_pane.handle_paste(&text);
-                true
+                frame_requester.schedule_frame();
+                RuntimeControl::Continue
             }
             UiEvent::ScrollbackBrowse => {
                 self.render_gate
                     .apply_intent(RenderGateIntent::TerminalScrollbackBrowse);
-                false
+                RuntimeControl::Continue
             }
             UiEvent::Resize => {
                 self.render_gate.apply_intent(RenderGateIntent::Resize);
-                true
+                frame_requester.schedule_frame();
+                RuntimeControl::Continue
             }
-            UiEvent::Tick => handle_animation_tick(app),
+            UiEvent::Tick => {
+                if handle_animation_tick(app) {
+                    frame_requester.schedule_frame();
+                }
+                RuntimeControl::Continue
+            }
+            UiEvent::Draw => {
+                frame_requester.finish_draw();
+                if self.render_gate.allows_draw() {
+                    RuntimeControl::Draw
+                } else {
+                    RuntimeControl::Continue
+                }
+            }
         };
-        Ok(RuntimeControl::Continue(outcome))
+        Ok(outcome)
     }
 }
 
 pub(crate) enum RuntimeControl {
-    Continue(bool),
+    Continue,
+    Draw,
     Break,
 }
