@@ -295,6 +295,12 @@ impl ChatComposer {
         self.textarea.is_empty()
     }
 
+    pub fn clear(&mut self) {
+        self.textarea.clear();
+        self.completion.clear();
+        self.paste_burst.clear_after_explicit_paste();
+    }
+
     pub fn has_selection(&self) -> bool {
         self.textarea.has_selection()
     }

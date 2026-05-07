@@ -5,32 +5,25 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 
 pub struct WelcomeScreen {
-    pub history_loaded: bool,
     pub status_text: String,
     pub animation_frame: u64,
 }
 
 impl WelcomeScreen {
-    pub fn new(history_loaded: bool, status_text: String, animation_frame: u64) -> Self {
+    pub fn new(status_text: String, animation_frame: u64) -> Self {
         Self {
-            history_loaded,
             status_text,
             animation_frame,
         }
     }
 
     pub fn render(&self, _area: Rect) -> Paragraph<'static> {
-        let logo_color = Color::Rgb(100, 140, 255);
         let dim = Color::Rgb(70, 70, 90);
         let accent = Color::Rgb(140, 160, 230);
         let mascot_color = Color::Rgb(120, 130, 200);
         let soft = Color::Rgb(120, 120, 145);
 
-        let subtitle = if self.history_loaded {
-            self.status_text.clone()
-        } else {
-            "Loading your workspace context...".to_string()
-        };
+        let subtitle = self.status_text.clone();
 
         let mut lines: Vec<Line<'static>> = vec![
             Line::raw(""),
@@ -68,14 +61,7 @@ impl WelcomeScreen {
             Line::raw(""),
         ];
 
-        let title_spans = if self.history_loaded {
-            shimmer_spans_for_frame("CloudAgent", self.animation_frame)
-        } else {
-            vec![Span::styled(
-                "CloudAgent",
-                Style::default().fg(logo_color).add_modifier(Modifier::BOLD),
-            )]
-        };
+        let title_spans = shimmer_spans_for_frame("CloudAgent", self.animation_frame);
 
         let mut title_line = vec![Span::raw("  > ")];
         title_line.extend(title_spans);

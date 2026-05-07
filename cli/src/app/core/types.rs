@@ -1,7 +1,7 @@
 use crate::app::core::transcript_owner::TranscriptOwner;
-use crate::state::runtime_projection::RuntimeProjection;
-use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
-use crate::ui::widgets::input_pane::InputPane;
+use crate::app::runtime::terminal_projection::TerminalProjectionController;
+use crate::state::bottom_pane_controller::BottomPaneController;
+use crate::state::RunState;
 use agent_core::AgentHost;
 use agent_protocol::ConversationSummary;
 use std::ffi::OsString;
@@ -44,17 +44,13 @@ pub(crate) struct TuiApp {
     pub(crate) conversation_id: String,
     pub(crate) conversation_summaries: Vec<ConversationSummary>,
     pub(crate) connection_label: String,
-    pub(crate) console_state: ConsoleState,
-    pub(crate) server_request_state: ServerRequestState,
-    pub(crate) transcript_state: TranscriptState,
     pub(crate) transcript_owner: TranscriptOwner,
     pub(crate) run_state: RunState,
-    pub(crate) runtime_projection: RuntimeProjection,
-    pub(crate) input_pane: InputPane,
+    pub(crate) bottom_pane: BottomPaneController,
+    pub(crate) terminal_projection: TerminalProjectionController,
+    pub(crate) suppress_next_reset_notice: bool,
     pub(crate) welcome_animation_frame: u64,
     pub(crate) welcome_animation_pause_ticks: u8,
-    pub(crate) session_picker_requested: bool,
-    pub(crate) delete_picker_requested: bool,
     pub(crate) workspace_root: PathBuf,
     pub(crate) conversation_store_dir: PathBuf,
 }

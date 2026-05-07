@@ -144,6 +144,7 @@ impl InputPane {
         area: Rect,
         mode: FrontendMode,
         status_text: &str,
+        runtime_hint: Option<&str>,
         status_meta: &str,
         hint_meta: &str,
     ) -> InputPaneRenderResult {
@@ -153,7 +154,7 @@ impl InputPane {
             .is_some_and(|view| view.requires_action())
         {
             let (widget, lines_before_composer, _) =
-                self.render_request_view(mode, status_text, status_meta, area.width);
+                self.render_request_view(mode, status_text, runtime_hint, status_meta, area.width);
             frame.render_widget(widget, area);
             return InputPaneRenderResult {
                 cursor_position: self.cursor_position(area, lines_before_composer, mode),
@@ -162,7 +163,15 @@ impl InputPane {
 
         let inner_width = area.width.saturating_sub(2) as usize;
         let snapshot =
-            self.build_snapshot(area, mode, status_text, status_meta, hint_meta, inner_width);
+            self.build_snapshot(
+                area,
+                mode,
+                status_text,
+                runtime_hint,
+                status_meta,
+                hint_meta,
+                inner_width,
+            );
         frame.render_widget(
             input_block(snapshot.input_lines, border_style(mode)),
             snapshot.layout.input_area,
@@ -186,12 +195,13 @@ impl InputPane {
         &self,
         mode: FrontendMode,
         status_text: &str,
+        runtime_hint: Option<&str>,
         _status_meta: &str,
         area_width: u16,
     ) -> (Paragraph<'static>, u16, u16) {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let inner_width = area_width.saturating_sub(2) as usize;
-        lines.push(status_line(mode, status_text, "", inner_width));
+        lines.push(status_line(mode, status_text, runtime_hint, "", inner_width));
 
         let mut lines_before_composer = 1u16;
 
@@ -236,7 +246,7 @@ impl InputPane {
             .is_some_and(|view| view.requires_action())
         {
             let (widget, lines_before, _) =
-                self.render_request_view(mode, status_text, status_meta, area_width);
+                self.render_request_view(mode, status_text, None, status_meta, area_width);
             let text = format!("{widget:?}");
             return (vec![Line::raw(text)], lines_before);
         }
@@ -246,6 +256,7 @@ impl InputPane {
             Rect::new(0, 0, area_width, self.desired_height(mode, area_width)),
             mode,
             status_text,
+            None,
             status_meta,
             "",
             inner_width,
@@ -269,6 +280,7 @@ impl InputPane {
             Rect::new(0, 0, area_width, u16::MAX),
             mode,
             "",
+            None,
             "",
             "",
             inner_width,
@@ -302,6 +314,10 @@ impl InputPane {
 
     pub fn clear_views(&mut self) {
         self.view_stack.clear();
+    }
+
+    pub fn clear_composer(&mut self) {
+        self.composer.clear();
     }
 
     pub fn set_server_request(&mut self, request: ServerRequestInlineState) {
@@ -397,6 +413,7 @@ impl InputPane {
         area: Rect,
         mode: FrontendMode,
         status_text: &str,
+        runtime_hint: Option<&str>,
         status_meta: &str,
         hint_meta: &str,
         inner_width: usize,
@@ -408,7 +425,13 @@ impl InputPane {
             composer.completion_lines.clone()
         };
         let layout = compute_input_layout(area, composer.height, completion_lines.len());
-        let mut input_lines = vec![status_line(mode, status_text, status_meta, inner_width)];
+        let mut input_lines = vec![status_line(
+            mode,
+            status_text,
+            runtime_hint,
+            status_meta,
+            inner_width,
+        )];
         input_lines.push(Line::raw(""));
         input_lines.extend(composer.lines);
         if layout.completion_area.is_none() {

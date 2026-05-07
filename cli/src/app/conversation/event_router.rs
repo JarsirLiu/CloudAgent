@@ -1,6 +1,5 @@
 use crate::app::TuiApp;
 use crate::app::conversation::actions::execute_server_action;
-use crate::state::NoticeLevel;
 use crate::state::reducer::apply_server_message;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerEvent;
@@ -10,10 +9,11 @@ pub(crate) fn handle_client_event(app: &mut TuiApp, event: AppServerEvent) {
     match event {
         AppServerEvent::Message(message) => handle_server_message(app, &message),
         AppServerEvent::Lagged { skipped } => {
-            app.run_state.set_system_notice_level(
+            app.push_live_cell(HistoryCell::info(
+                "conversation",
                 format!("UI skipped {skipped} non-critical events while catching up"),
-                NoticeLevel::Warn,
-            );
+                HistoryTone::Warning,
+            ));
         }
         AppServerEvent::Disconnected { message } => {
             app.push_live_cell(HistoryCell::info(

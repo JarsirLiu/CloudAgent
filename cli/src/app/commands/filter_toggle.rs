@@ -6,10 +6,6 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
     match arg.as_str() {
         "on" => {
             app.run_state.pre_llm_filter_enabled = true;
-            app.run_state.set_system_notice(
-                "Pre-LLM input filter: enabled",
-                Some(std::time::Duration::from_secs(4)),
-            );
             app.push_live_cell(HistoryCell::info(
                 "context",
                 "Pre-LLM input filter enabled for this project.",
@@ -19,10 +15,6 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
         }
         "off" => {
             app.run_state.pre_llm_filter_enabled = false;
-            app.run_state.set_system_notice(
-                "Pre-LLM input filter: disabled",
-                Some(std::time::Duration::from_secs(4)),
-            );
             app.push_live_cell(HistoryCell::info(
                 "context",
                 "Pre-LLM input filter disabled for this project.",
@@ -36,10 +28,6 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
             } else {
                 "off"
             };
-            app.run_state.set_system_notice(
-                format!("Pre-LLM input filter: {state}"),
-                Some(std::time::Duration::from_secs(4)),
-            );
             app.push_live_cell(HistoryCell::info(
                 "context",
                 format!("Pre-LLM input filter is currently `{state}`."),

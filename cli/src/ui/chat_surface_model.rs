@@ -10,7 +10,6 @@ pub(crate) enum ChatSurfaceBody {
 
 pub(crate) struct ActiveCellSurface {
     pub(crate) lines: Vec<Line<'static>>,
-    pub(crate) height: u16,
 }
 
 pub(crate) struct ChatSurfaceModel {
@@ -29,18 +28,10 @@ pub(crate) fn build_chat_surface_model(
             body_height: max_body_height.min(u16::MAX as usize) as u16,
         }
     } else {
-        let lines = visible_transcript_lines(
-            app,
-            render_width,
-            max_body_height,
-            None,
-        );
+        let lines = visible_transcript_lines(app, render_width, max_body_height);
         let body_height = transcript_container_height(lines.len(), max_body_height);
         ChatSurfaceModel {
-            body: ChatSurfaceBody::ActiveCell(ActiveCellSurface {
-                lines,
-                height: body_height,
-            }),
+            body: ChatSurfaceBody::ActiveCell(ActiveCellSurface { lines }),
             body_height,
         }
     }
@@ -61,46 +52,25 @@ fn visible_transcript_lines(
     app: &mut TuiApp,
     render_width: usize,
     max_lines: usize,
-    status_line: Option<Line<'static>>,
 ) -> Vec<Line<'static>> {
-    let lines = transcript_lines(app.transcript_owner.active_cell(), render_width, status_line);
-    app.transcript_state.note_total_lines(lines.len());
-    app.transcript_state.set_viewport_height(max_lines);
-    app.transcript_state.clamp_scroll();
+    let lines = transcript_lines(app.transcript_owner.active_cell(), render_width);
     if lines.len() > max_lines {
-        let offset = app.transcript_state.scroll_offset_lines;
-        let start = lines.len().saturating_sub(max_lines).saturating_sub(offset);
-        lines[start..start + max_lines].to_vec()
+        lines[lines.len().saturating_sub(max_lines)..].to_vec()
     } else {
-        app.transcript_state.jump_to_bottom();
         lines
     }
 }
 
-fn transcript_lines(
-    active_cell: Option<&HistoryCell>,
-    render_width: usize,
-    status_line: Option<Line<'static>>,
-) -> Vec<Line<'static>> {
+fn transcript_lines(active_cell: Option<&HistoryCell>, render_width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if let Some(cell) = active_cell {
         push_cell_lines(&mut lines, cell, render_width);
-    }
-    if let Some(line) = status_line {
-        if !lines.is_empty() {
-            lines.push(Line::from(""));
-        }
-        lines.push(line);
     }
     lines
 }
 
 fn push_cell_lines(lines: &mut Vec<Line<'static>>, cell: &HistoryCell, render_width: usize) {
     if !cell.body().trim().is_empty() {
-        let mut render_cell = cell.clone();
-        if render_cell.tone == crate::ui::widgets::history_cell::HistoryTone::Reasoning {
-            render_cell.expanded = true;
-        }
-        lines.extend(render_cell.to_lines_with_mode(render_width));
+        lines.extend(cell.to_transcript_lines(render_width));
     }
 }

@@ -9,12 +9,13 @@ pub(crate) fn apply_permission_mode(app: &mut TuiApp, mode: &str) -> Result<(), 
     }
     let canonical = canonical_permission_mode(mode);
     app.run_state.permission_mode = canonical.to_string();
-    app.run_state.set_system_notice(
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+        "context",
         format!(
-            "Project permission mode: {canonical} ({})",
+            "Project permission mode set to `{canonical}` ({}).",
             permission_mode_label(canonical)
         ),
-        Some(std::time::Duration::from_secs(4)),
-    );
+        crate::ui::widgets::history_cell::HistoryTone::Control,
+    ));
     Ok(())
 }

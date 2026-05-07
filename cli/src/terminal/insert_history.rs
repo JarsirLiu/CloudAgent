@@ -21,6 +21,7 @@ use crate::ui::widgets::history_cell::HistoryCell;
 pub(crate) fn insert_history_cells<B>(
     terminal: &mut Terminal<B>,
     cells: Vec<HistoryCell>,
+    render_width: usize,
 ) -> Result<()>
 where
     B: Backend + Write,
@@ -29,10 +30,9 @@ where
         return Ok(());
     }
 
-    let render_width = terminal.viewport_area.width.max(1) as usize;
     let lines = history_cells_to_lines(
         cells,
-        render_width,
+        render_width.max(1),
         terminal.visible_history_rows() > 0,
     );
 

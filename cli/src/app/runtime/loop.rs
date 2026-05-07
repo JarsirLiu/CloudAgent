@@ -1,6 +1,6 @@
 use crate::app::TuiApp;
 use crate::app::runtime::controller::{RuntimeControl, RuntimeController};
-use crate::app::runtime::render_pass::draw_app_frame;
+use crate::app::runtime::terminal_projection::draw_with_terminal_projection;
 use crate::terminal::{TerminalGuard, spawn_tui_event_loop};
 use agent_app_server_client::AppServerClient;
 use anyhow::Result;
@@ -28,7 +28,7 @@ pub(crate) async fn run_tui_event_loop(
 
         match control {
             RuntimeControl::Continue => {}
-            RuntimeControl::Draw => draw_app_frame(app, &mut terminal)?,
+            RuntimeControl::Draw => draw_with_terminal_projection(app, &mut terminal)?,
             RuntimeControl::Break => break,
         }
 

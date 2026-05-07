@@ -2,13 +2,13 @@ use crate::app::TuiApp;
 use agent_protocol::ConversationTurn;
 
 pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
-    app.transcript_state = crate::state::TranscriptState::default();
-    app.input_pane.clear_views();
+    app.bottom_pane.clear_views();
+    app.bottom_pane.clear_composer();
 
     let history_snapshot = app.run_state.history_snapshot.clone().unwrap_or_default();
     app.transcript_owner
         .rebuild_from_history_snapshot(&history_snapshot, app.run_state.expand_tool_details);
-    app.run_state.history_loaded = app.run_state.history_snapshot.is_some();
+    app.terminal_projection.request_history_replay();
 }
 
 pub(crate) fn upsert_turn_snapshot(app: &mut TuiApp, turn: ConversationTurn) {

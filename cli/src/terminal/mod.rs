@@ -25,6 +25,17 @@ pub(crate) struct TerminalGuard {
     pub(crate) terminal: custom_terminal::Terminal<CrosstermBackend<io::Stdout>>,
 }
 
+pub(crate) struct HistoryProjection {
+    pub(crate) viewport_height: u16,
+    pub(crate) history_render_width: usize,
+    pub(crate) history_update: HistoryUpdate,
+}
+
+pub(crate) enum HistoryUpdate {
+    ReplayAll(Vec<HistoryCell>),
+    AppendTail(Vec<HistoryCell>),
+}
+
 pub(crate) fn init() -> Result<TerminalGuard> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -61,15 +72,14 @@ impl TerminalGuard {
         init()
     }
 
-    pub(crate) fn draw_with_history(
+    pub(crate) fn draw_projection(
         &mut self,
-        height: u16,
-        pending_history_cells: Vec<HistoryCell>,
+        projection: HistoryProjection,
         render: impl FnOnce(&mut Frame),
     ) -> Result<()> {
         stdout().sync_update(|_| {
             let mut coordinator = DrawCoordinator::new(&mut self.terminal);
-            coordinator.draw_frame(height, pending_history_cells, render)?;
+            coordinator.draw_frame(projection, render)?;
             Ok::<(), anyhow::Error>(())
         })??;
         Ok(())

@@ -1,10 +1,11 @@
 use crate::app::TuiApp;
 use crate::app::core::transcript_owner::TranscriptOwner;
+use crate::app::runtime::terminal_projection::TerminalProjectionController;
+use crate::state::bottom_pane_controller::BottomPaneController;
 use crate::state::reducer::TurnDispatch;
-use crate::state::runtime_projection::RuntimeProjection;
-use crate::state::{ConsoleState, RunState, ServerRequestState, TranscriptState};
+use crate::state::RunState;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
-use agent_protocol::FrontendMode;
+use agent_protocol::{ConversationSummary, FrontendMode};
 
 impl TuiApp {
     pub(crate) fn new(
@@ -22,17 +23,13 @@ impl TuiApp {
             conversation_id,
             conversation_summaries: Vec::new(),
             connection_label: connection_label.to_string(),
-            console_state: ConsoleState::new(),
-            server_request_state: ServerRequestState::default(),
-            transcript_state: TranscriptState::default(),
             transcript_owner: TranscriptOwner::default(),
             run_state,
-            runtime_projection: RuntimeProjection::new(),
-            input_pane: crate::ui::widgets::input_pane::InputPane::new(),
+            bottom_pane: BottomPaneController::new(),
+            terminal_projection: TerminalProjectionController::default(),
+            suppress_next_reset_notice: false,
             welcome_animation_frame: 0,
             welcome_animation_pause_ticks: 0,
-            session_picker_requested: false,
-            delete_picker_requested: false,
             workspace_root,
             conversation_store_dir,
         }
@@ -41,19 +38,31 @@ impl TuiApp {
     pub(crate) fn reset_local_view(&mut self) {
         let filter_enabled = self.run_state.pre_llm_filter_enabled;
         let permission_mode = self.run_state.permission_mode.clone();
-        self.console_state = ConsoleState::new();
-        self.server_request_state = ServerRequestState::default();
-        self.transcript_state = TranscriptState::default();
-        self.transcript_state.reset_scroll();
         self.transcript_owner.clear();
         self.run_state = RunState::new(&self.connection_label);
         self.run_state.pre_llm_filter_enabled = filter_enabled;
         self.run_state.permission_mode = permission_mode;
-        self.runtime_projection = RuntimeProjection::new();
-        self.run_state.history_loaded = true;
-        self.input_pane.clear_views();
+        self.bottom_pane = BottomPaneController::new();
+        self.terminal_projection.reset();
+        self.terminal_projection.request_history_replay();
+        self.bottom_pane.clear_views();
         self.welcome_animation_frame = 0;
         self.welcome_animation_pause_ticks = 0;
+    }
+
+    pub(crate) fn arm_reset_notice_suppression(&mut self) {
+        self.suppress_next_reset_notice = true;
+    }
+
+    pub(crate) fn should_suppress_notice(&mut self, label: &str, message: &str) -> bool {
+        if self.suppress_next_reset_notice
+            && label == "conversation"
+            && message.trim().eq_ignore_ascii_case("conversation reset")
+        {
+            self.suppress_next_reset_notice = false;
+            return true;
+        }
+        false
     }
 
     pub(crate) fn switch_conversation(&mut self, conversation_id: String) {
@@ -61,21 +70,71 @@ impl TuiApp {
         self.reset_local_view();
     }
 
-    pub(crate) fn set_conversation_summaries(
+    pub(crate) fn handle_conversation_list(
         &mut self,
-        conversation_summaries: Vec<agent_protocol::ConversationSummary>,
+        conversation_summaries: Vec<ConversationSummary>,
     ) {
-        self.conversation_summaries = conversation_summaries;
+        self.conversation_summaries = conversation_summaries.clone();
+        let _ = self
+            .bottom_pane
+            .present_requested_session_picker(conversation_summaries, &self.conversation_id);
     }
 
-    pub(crate) fn set_mode(&mut self, mode: FrontendMode) {
-        self.console_state.mode = mode;
-        if mode == FrontendMode::Idle {
-            self.transcript_state.clear_inline_viewport_height_lock();
-        }
+    pub(crate) fn on_server_turn_started(&mut self) {
+        self.run_state.last_turn_usage = None;
+        self.run_state.total_turn_usage = None;
+        self.run_state.model_context_window = None;
+        self.bottom_pane.on_turn_started();
+    }
+
+    pub(crate) fn on_server_tool_finished(&mut self) {
+        self.bottom_pane.on_tool_finished();
+    }
+
+    pub(crate) fn on_server_retrying(
+        &mut self,
+        stage: agent_protocol::ModelRetryStage,
+        attempt: u64,
+        next_delay_ms: u64,
+    ) {
+        self.bottom_pane
+            .on_model_retrying(stage, attempt, next_delay_ms);
+    }
+
+    pub(crate) fn on_server_active_item_started(
+        &mut self,
+        kind: &agent_protocol::TurnItemKind,
+        title: Option<&str>,
+    ) {
+        self.bottom_pane.on_active_item_started(kind, title);
+    }
+
+    pub(crate) fn show_server_request_prompt(
+        &mut self,
+        request: crate::ui::widgets::input_pane::ServerRequestInlineState,
+    ) {
+        self.bottom_pane.set_server_request(request);
+    }
+
+    pub(crate) fn clear_server_request_view(&mut self) {
+        self.bottom_pane.clear_server_request();
+    }
+
+    pub(crate) fn dismiss_server_request_view(&mut self, request_id: &agent_protocol::RequestId) {
+        self.bottom_pane.dismiss_server_request(request_id);
+    }
+
+    pub(crate) fn prepare_submitted_turn(&mut self, content: &str) {
+        self.run_state.last_turn_usage = None;
+        self.run_state.total_turn_usage = None;
+        self.run_state.model_context_window = None;
+        self.bottom_pane.prepare_for_submit();
+        self.transcript_owner
+            .start_local_user(content.to_string(), self.run_state.expand_tool_details);
     }
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
+        self.bottom_pane.on_turn_finished();
         match dispatch {
             TurnDispatch::Completed => {
                 if let Some(turn_id) = self.transcript_owner.active_turn_id().map(str::to_owned) {
@@ -87,6 +146,8 @@ impl TuiApp {
                 }
             }
             TurnDispatch::Failed { error } => {
+                self.transcript_owner
+                    .clear_active_turn(self.run_state.expand_tool_details);
                 self.push_live_cell(HistoryCell::info(
                     "turn",
                     format!("failed: {error}"),
@@ -94,8 +155,29 @@ impl TuiApp {
                 ));
             }
             TurnDispatch::Cancelled { reason } => {
+                self.transcript_owner
+                    .clear_active_turn(self.run_state.expand_tool_details);
                 self.push_live_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));
             }
         }
+    }
+
+    pub(crate) fn push_live_cell(&mut self, cell: HistoryCell) {
+        self.transcript_owner.push_live_cell(cell);
+    }
+
+    pub(crate) fn current_mode(&self) -> FrontendMode {
+        let has_active_turn = self.transcript_owner.active_turn_id().is_some();
+        let has_live_cell = !self.transcript_owner.live_is_empty();
+        self.bottom_pane.current_mode(has_active_turn, has_live_cell)
+    }
+
+    pub(crate) fn can_submit_turn(&self) -> bool {
+        self.current_mode() == FrontendMode::Idle
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_cells(&self) -> &[HistoryCell] {
+        self.transcript_owner.live_cells()
     }
 }

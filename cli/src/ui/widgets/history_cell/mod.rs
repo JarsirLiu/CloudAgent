@@ -36,6 +36,13 @@ pub struct AgentCell {
 pub struct ReasoningCell {
     pub label: String,
     pub text: String,
+    pub presentation: ReasoningPresentation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReasoningPresentation {
+    Detailed,
+    Summary,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,6 +185,22 @@ impl HistoryCell {
             content: HistoryContent::Reasoning(ReasoningCell {
                 label: label.into(),
                 text: text.into(),
+                presentation: ReasoningPresentation::Detailed,
+            }),
+            expanded: false,
+            repeat_count: 1,
+            stream_continuation: false,
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    pub fn reasoning_summary(label: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            tone: HistoryTone::Reasoning,
+            content: HistoryContent::Reasoning(ReasoningCell {
+                label: label.into(),
+                text: text.into(),
+                presentation: ReasoningPresentation::Summary,
             }),
             expanded: false,
             repeat_count: 1,
@@ -443,6 +466,18 @@ impl HistoryCell {
             HistoryKind::Notice => render_notice(self, width),
         }
     }
+
+    pub fn to_transcript_lines(&self, width: usize) -> Vec<Line<'static>> {
+        match self.kind() {
+            HistoryKind::Message if self.tone == HistoryTone::User => render_user(self, width),
+            HistoryKind::Message => render_agent_transcript(self, width),
+            HistoryKind::Reasoning => render_reasoning(self, width),
+            HistoryKind::Exploration => render_compact_transcript(self, width, "◦"),
+            HistoryKind::Command => render_compact_transcript(self, width, "›"),
+            HistoryKind::Tool => render_compact_transcript(self, width, "•"),
+            HistoryKind::Notice => render_notice_transcript(self, width),
+        }
+    }
 }
 
 impl PartialEq for HistoryCell {
@@ -631,7 +666,33 @@ fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     out
 }
 
+fn render_agent_transcript(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    let inner = width.saturating_sub(2).max(8);
+    let md_lines = match cell.format() {
+        HistoryFormat::Markdown => markdown::render_markdown(cell.body(), inner),
+        HistoryFormat::PlainText => markdown::render_plaintext(cell.body(), inner),
+    };
+    let mut out = Vec::new();
+    for (i, line) in md_lines.into_iter().enumerate() {
+        let mut spans = Vec::new();
+        if i == 0 {
+            spans.push(Span::styled("• ", Style::default().fg(Color::Rgb(100, 180, 255))));
+        } else {
+            spans.push(Span::raw("  "));
+        }
+        spans.extend(line.spans);
+        out.push(Line::from(spans));
+    }
+    out
+}
+
 fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    let HistoryContent::Reasoning(reasoning) = &cell.content else {
+        return Vec::new();
+    };
+    if reasoning.presentation == ReasoningPresentation::Summary {
+        return render_reasoning_summary(cell, width);
+    }
     let header = Line::from(vec![
         Span::raw("  "),
         Span::styled("≈ ", Style::default().fg(Color::Rgb(170, 140, 255))),
@@ -692,6 +753,51 @@ fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         ),
     ]));
     kept
+}
+
+fn render_reasoning_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    render_reasoning_lines(
+        cell.body(),
+        width,
+        Style::default()
+            .fg(Color::Rgb(148, 152, 164))
+            .add_modifier(Modifier::ITALIC),
+    )
+}
+
+fn render_reasoning_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    let paragraphs = reasoning_paragraphs(text);
+    let mut lines = Vec::new();
+
+    for (index, paragraph) in paragraphs.into_iter().enumerate() {
+        let initial_indent = if index == 0 {
+            Line::from(vec![Span::styled(
+                "• ",
+                Style::default().fg(Color::Rgb(170, 140, 255)),
+            )])
+        } else {
+            Line::from("  ")
+        };
+        let wrapped = word_wrap_text(
+            &paragraph,
+            WrapOptions::new(width)
+                .initial_indent(initial_indent)
+                .subsequent_indent(Line::from("  ")),
+        )
+        .into_iter()
+        .map(|mut line| {
+            line.spans = line
+                .spans
+                .into_iter()
+                .map(|span| span.patch_style(style))
+                .collect();
+            line
+        })
+        .collect::<Vec<_>>();
+        lines.extend(wrapped);
+    }
+
+    lines
 }
 
 fn reasoning_paragraphs(text: &str) -> Vec<String> {
@@ -1158,6 +1264,77 @@ fn render_notice(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         HistoryTone::Meta => render_meta(cell, width),
         _ => render_tool_like(cell, width, Color::Rgb(120, 170, 255), "•"),
     }
+}
+
+fn render_notice_transcript(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    let accent = match cell.tone {
+        HistoryTone::Error => Color::Rgb(255, 120, 120),
+        HistoryTone::Warning => Color::Rgb(255, 196, 108),
+        HistoryTone::Control => Color::Rgb(132, 138, 150),
+        _ => Color::Rgb(132, 138, 150),
+    };
+    let mut title = cell.label().to_string();
+    if title.is_empty() {
+        title = "Notice".to_string();
+    }
+    let body_lines = word_wrap_text(
+        cell.body(),
+        WrapOptions::new(width)
+            .initial_indent(Line::from("  "))
+            .subsequent_indent(Line::from("  ")),
+    )
+    .into_iter()
+    .map(tint_tail_rgb(190, 200, 216))
+    .collect::<Vec<_>>();
+
+    let mut lines = vec![Line::from(vec![
+        Span::styled("• ", Style::default().fg(accent)),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(210, 215, 225))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    lines.extend(body_lines);
+    lines
+}
+
+fn render_compact_transcript(cell: &HistoryCell, width: usize, bullet: &str) -> Vec<Line<'static>> {
+    let title = if cell.label().is_empty() {
+        match cell.kind() {
+            HistoryKind::Exploration => "Explored workspace".to_string(),
+            HistoryKind::Command => "Command".to_string(),
+            HistoryKind::Tool => "Tool".to_string(),
+            _ => "Step".to_string(),
+        }
+    } else {
+        cell.label().to_string()
+    };
+
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            format!("{bullet} "),
+            Style::default().fg(Color::Rgb(120, 170, 255)),
+        ),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(210, 215, 225))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    lines.extend(
+        word_wrap_text(
+            cell.body(),
+            WrapOptions::new(width)
+                .initial_indent(Line::from("  "))
+                .subsequent_indent(Line::from("  ")),
+        )
+        .into_iter()
+        .map(tint_tail_rgb(190, 200, 216)),
+    );
+    lines
 }
 
 fn pretty_tool_title(label: &str) -> String {

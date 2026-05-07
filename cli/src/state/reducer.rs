@@ -1,7 +1,7 @@
 use crate::state::NoticeLevel;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
-    FrontendMode, ModelRetryStage, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind,
+    ModelRetryStage, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind,
     TranscriptItem, TurnId, TurnItemKind,
 };
 
@@ -46,13 +46,6 @@ pub(crate) struct ServerMessageReduce {
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ServerAction {
-    SetMode(FrontendMode),
-    SetSystemNotice {
-        text: String,
-        level: NoticeLevel,
-    },
-    ClearSystemNotice,
-    SetHistoryLoaded(bool),
     SetConversationList(Vec<agent_protocol::ConversationSummary>),
     SwitchConversation(String),
     ClearCurrentTurnUsage,
@@ -99,6 +92,11 @@ pub(crate) enum ServerAction {
         item_id: String,
         item: TranscriptItem,
     },
+    PushNoticeCell {
+        label: String,
+        message: String,
+        level: NoticeLevel,
+    },
     PushErrorCell(String),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
@@ -113,26 +111,16 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     let mut actions = Vec::new();
     match message {
         AppServerMessage::Notification(notification) => match notification {
-            AppServerNotification::FrontendStateChanged { mode, .. } => {
-                actions.push(ServerAction::SetMode(*mode));
-            }
+            AppServerNotification::FrontendStateChanged { .. } => {}
             AppServerNotification::TurnStarted { turn_id, .. } => {
                 actions.push(ServerAction::ClearCurrentTurnUsage);
                 actions.push(ServerAction::BindActiveTurn(turn_id.clone()));
             }
-            AppServerNotification::ConversationStatus { .. } => {
-                actions.push(ServerAction::ClearSystemNotice);
-            }
+            AppServerNotification::ConversationStatus { .. } => {}
             AppServerNotification::ConversationHistory { turns, .. } => {
-                actions.push(ServerAction::SetSystemNotice {
-                    text: "Workspace context ready".to_string(),
-                    level: NoticeLevel::Info,
-                });
-                actions.push(ServerAction::SetHistoryLoaded(true));
                 actions.push(ServerAction::ReplaceHistory(turns.clone()));
             }
             AppServerNotification::TurnSnapshot { turn, .. } => {
-                actions.push(ServerAction::SetHistoryLoaded(true));
                 actions.push(ServerAction::UpsertTurnSnapshot(turn.clone()));
             }
             AppServerNotification::ItemStarted {
@@ -215,14 +203,16 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             AppServerNotification::ConversationSwitched { conversation_id } => {
                 actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
-                actions.push(ServerAction::SetSystemNotice {
-                    text: format!("Switched to `{conversation_id}`"),
+                actions.push(ServerAction::PushNoticeCell {
+                    label: "conversation".to_string(),
+                    message: format!("Switched to `{conversation_id}`"),
                     level: NoticeLevel::Info,
                 });
             }
             AppServerNotification::Info { message, .. } => {
-                actions.push(ServerAction::SetSystemNotice {
-                    text: message.clone(),
+                actions.push(ServerAction::PushNoticeCell {
+                    label: "conversation".to_string(),
+                    message: message.clone(),
                     level: NoticeLevel::Info,
                 });
             }
@@ -259,8 +249,9 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     "Context compacted: ~{} -> ~{} tokens",
                     pre_context_tokens_estimate, post_context_tokens_estimate
                 );
-                actions.push(ServerAction::SetSystemNotice {
-                    text: summary.clone(),
+                actions.push(ServerAction::PushNoticeCell {
+                    label: "context".to_string(),
+                    message: summary.clone(),
                     level: NoticeLevel::Warn,
                 });
                 actions.push(ServerAction::ClearLastToolName);
@@ -269,41 +260,27 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 estimated_tokens, ..
             } => {
                 let summary = format!("Compacting context... (~{} tokens)", estimated_tokens);
-                actions.push(ServerAction::SetSystemNotice {
-                    text: summary.clone(),
+                actions.push(ServerAction::PushNoticeCell {
+                    label: "context".to_string(),
+                    message: summary.clone(),
                     level: NoticeLevel::Warn,
                 });
             }
             AppServerNotification::Error { message, .. } => {
-                actions.push(ServerAction::SetSystemNotice {
-                    text: message.clone(),
-                    level: NoticeLevel::Error,
-                });
                 actions.push(ServerAction::PushErrorCell(message.clone()));
             }
             AppServerNotification::ServerRequestRequested { request, .. } => {
-                let notice = match request {
-                    ServerRequest::CommandApproval { request } => {
-                        format!("Command approval required for {}", request.tool_name)
-                    }
-                    ServerRequest::FileChangeApproval { request } => {
-                        format!("Action required for {}", request.tool_name)
-                    }
-                };
-                actions.push(ServerAction::SetSystemNotice {
-                    text: notice,
-                    level: NoticeLevel::Warn,
-                });
+                let _ = request;
             }
             AppServerNotification::ServerRequestResolved {
                 request_id,
                 decision,
                 ..
             } => {
-                actions.push(ServerAction::SetMode(FrontendMode::Running));
                 actions.push(ServerAction::DismissServerRequestView(request_id.clone()));
-                actions.push(ServerAction::SetSystemNotice {
-                    text: format!(
+                actions.push(ServerAction::PushNoticeCell {
+                    label: "request".to_string(),
+                    message: format!(
                         "Request {}{}",
                         decision.label(),
                         decision
@@ -316,18 +293,12 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 });
             }
             AppServerNotification::TurnCompleted { .. } => {
-                actions.push(ServerAction::SetMode(FrontendMode::Idle));
                 actions.push(ServerAction::ClearServerRequestStatus);
                 actions.push(ServerAction::ClearServerRequestView);
                 actions.push(ServerAction::ClearLastToolName);
-                actions.push(ServerAction::SetSystemNotice {
-                    text: "Turn complete".to_string(),
-                    level: NoticeLevel::Info,
-                });
                 actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
             }
             AppServerNotification::TurnFailed { error, .. } => {
-                actions.push(ServerAction::SetMode(FrontendMode::Idle));
                 actions.push(ServerAction::ClearServerRequestStatus);
                 actions.push(ServerAction::ClearServerRequestView);
                 actions.push(ServerAction::ClearLastToolName);
@@ -336,7 +307,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }));
             }
             AppServerNotification::TurnCancelled { reason, .. } => {
-                actions.push(ServerAction::SetMode(FrontendMode::Idle));
                 actions.push(ServerAction::ClearServerRequestStatus);
                 actions.push(ServerAction::ClearServerRequestView);
                 actions.push(ServerAction::ClearLastToolName);
@@ -353,7 +323,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
         }) => match request {
             ServerRequest::CommandApproval { request } => {
                 let args_hint = summarize_args_preview(&request.command_preview);
-                actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
                 actions.push(ServerAction::ShowServerRequestPrompt {
                     request_id: request_id.clone(),
                     title: format!(
@@ -367,7 +336,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             ServerRequest::FileChangeApproval { request } => {
                 let change_hint = summarize_args_preview(&request.change_preview);
-                actions.push(ServerAction::SetMode(FrontendMode::WaitingForServerRequest));
                 actions.push(ServerAction::ShowServerRequestPrompt {
                     request_id: request_id.clone(),
                     title: format!(

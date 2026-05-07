@@ -6,7 +6,6 @@ use tokio::sync::mpsc;
 
 pub(crate) enum UiEvent {
     Key(KeyEvent),
-    ScrollbackBrowse,
     Paste(String),
     Resize,
     Tick,
@@ -51,11 +50,7 @@ pub(crate) fn spawn_tui_event_loop() -> (mpsc::UnboundedReceiver<UiEvent>, Frame
                             break;
                         }
                     }
-                    Ok(CEvent::Mouse(_)) => {
-                        if tx.send(UiEvent::ScrollbackBrowse).is_err() {
-                            break;
-                        }
-                    }
+                    Ok(CEvent::Mouse(_)) => {}
                     Ok(CEvent::Resize(_, _)) => {
                         if tx.send(UiEvent::Resize).is_err() {
                             break;

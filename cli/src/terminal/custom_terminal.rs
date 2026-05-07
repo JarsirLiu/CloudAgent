@@ -193,6 +193,26 @@ where
         Ok(())
     }
 
+    pub(crate) fn clear_scrollback_and_visible_screen_ansi(&mut self) -> io::Result<()> {
+        queue!(
+            self.backend,
+            SetAttribute(Attribute::Reset),
+            SetForegroundColor(CrosstermColor::Reset),
+            SetBackgroundColor(CrosstermColor::Reset),
+            Print("\x1b[r"),
+            Print("\x1b[H"),
+            Clear(CrosstermClearType::All),
+            Print("\x1b[3J"),
+            MoveTo(0, 0)
+        )?;
+        self.previous_buffer_mut().reset();
+        self.current_buffer_mut().reset();
+        self.visible_history_rows = 0;
+        self.viewport_area = Rect::ZERO;
+        std::io::Write::flush(&mut self.backend)?;
+        Ok(())
+    }
+
     pub(crate) fn note_history_rows_inserted(&mut self, inserted_rows: u16) {
         self.visible_history_rows = self
             .visible_history_rows
@@ -230,21 +250,36 @@ where
 
     pub(crate) fn ensure_viewport_height(&mut self, height: u16) -> Result<()> {
         let size = self.size()?;
+        let terminal_height_shrank = size.height < self.last_known_screen_size.height;
+        let terminal_height_grew = size.height > self.last_known_screen_size.height;
+        let viewport_was_bottom_aligned =
+            self.viewport_area.bottom() == self.last_known_screen_size.height;
         let previous = self.viewport_area;
         let mut area = previous;
         area.height = height.clamp(1, size.height.max(1));
         area.width = size.width;
-        area.y = size.height.saturating_sub(area.height);
+
+        self.resize(size);
+
+        if previous == Rect::ZERO || previous.height == 0 {
+            area.y = size.height.saturating_sub(area.height);
+        } else if area.height != previous.height && viewport_was_bottom_aligned {
+            area.y = size.height.saturating_sub(area.height);
+        }
 
         if area.y < previous.y {
             let grow_by = previous.y - area.y;
-            self.scroll_region_up(0..previous.top(), grow_by)?;
+            if !terminal_height_shrank {
+                self.scroll_region_up(0..previous.top(), grow_by)?;
+            }
         }
 
         if area.bottom() > size.height {
             let scroll_by = area.bottom() - size.height;
             self.scroll_region_up(0..area.top(), scroll_by)?;
             area.y = size.height - area.height;
+        } else if terminal_height_grew && viewport_was_bottom_aligned {
+            area.y = size.height.saturating_sub(area.height);
         }
 
         if area != previous {

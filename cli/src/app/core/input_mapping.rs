@@ -3,17 +3,17 @@ use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permission_profile::turn_policy_for_mode;
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::input_pane::InputPaneAction;
-use agent_protocol::{AppClientCommand, FrontendMode};
+use agent_protocol::AppClientCommand;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl TuiApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
         if matches_ctrl_char(key, 'c') {
-            if self.console_state.mode == FrontendMode::Idle
-                && self.input_pane.composer_has_selection()
+            if self.current_mode() == agent_protocol::FrontendMode::Idle
+                && self.bottom_pane.composer_has_selection()
             {
                 return Some(ParsedInput::LocalCopyText(
-                    self.input_pane
+                    self.bottom_pane
                         .handle_key(KeyEvent::new(
                             KeyCode::Char('C'),
                             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
@@ -28,7 +28,8 @@ impl TuiApp {
         }
 
         if matches_ctrl_char(key, 'd') {
-            if self.console_state.mode == FrontendMode::Idle && self.input_pane.composer_is_empty()
+            if self.current_mode() == agent_protocol::FrontendMode::Idle
+                && self.bottom_pane.composer_is_empty()
             {
                 self.run_state.should_exit = true;
                 return Some(ParsedInput::Command(AppClientCommand::Exit));
@@ -40,17 +41,18 @@ impl TuiApp {
             self.run_state.expand_tool_details = !self.run_state.expand_tool_details;
             self.transcript_owner
                 .set_expand_details(self.run_state.expand_tool_details);
-            self.run_state.set_system_notice(
+            self.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+                "conversation",
                 if self.run_state.expand_tool_details {
                     "Tool details expanded"
                 } else {
                     "Tool details collapsed"
                 },
-                Some(std::time::Duration::from_secs(4)),
-            );
+                crate::ui::widgets::history_cell::HistoryTone::Control,
+            ));
             return None;
         }
-        match self.input_pane.handle_key(key)? {
+        match self.bottom_pane.handle_key(key)? {
             InputPaneAction::Composer(ComposerIntent::Submit(text)) => Some(ParsedInput::Command(
                 AppClientCommand::SubmitTurn(agent_protocol::UserTurnInput {
                     conversation_id: self.conversation_id.clone(),
@@ -59,7 +61,7 @@ impl TuiApp {
                 }),
             )),
             InputPaneAction::Composer(ComposerIntent::Interrupt) => {
-                if self.console_state.mode == FrontendMode::Idle {
+                if self.current_mode() == agent_protocol::FrontendMode::Idle {
                     None
                 } else {
                     Some(ParsedInput::Command(AppClientCommand::InterruptTurn {
@@ -73,8 +75,8 @@ impl TuiApp {
                 },
             )),
             InputPaneAction::Composer(ComposerIntent::Session) => {
-                self.session_picker_requested = true;
-                self.delete_picker_requested = false;
+                self.bottom_pane
+                    .request_session_picker(crate::ui::widgets::session_picker::SessionPickerMode::Switch);
                 Some(ParsedInput::Command(AppClientCommand::ListConversations))
             }
             InputPaneAction::Composer(ComposerIntent::NewConversation(conversation_id)) => {

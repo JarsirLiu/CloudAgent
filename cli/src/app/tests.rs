@@ -1,7 +1,10 @@
 use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::conversation::facade as conversation_facade;
+use crate::app::conversation::actions::execute_server_action;
 use crate::app::TuiApp;
+use crate::app::runtime::display::should_show_welcome;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
+use crate::ui::chat_surface::ChatSurface;
 use agent_protocol::CommandExecutionStatus;
 use agent_protocol::{
     ConversationTurn, ReadFileEntry, ReadFileStatus, SearchWorkspaceMode,
@@ -124,6 +127,26 @@ fn transcript_owner_shows_local_user_immediately() {
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>();
     assert_eq!(pending, vec!["hello"]);
+}
+
+#[test]
+fn local_live_cells_replace_previous_active_notice() {
+    let mut owner = TranscriptOwner::default();
+    owner.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+        "conversation",
+        "first notice",
+        crate::ui::widgets::history_cell::HistoryTone::Warning,
+    ));
+    owner.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+        "conversation",
+        "second notice",
+        crate::ui::widgets::history_cell::HistoryTone::Warning,
+    ));
+
+    let live = owner.live_cells();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].body(), "second notice");
+    assert_eq!(owner.active_cell().map(|cell| cell.body()), Some("second notice"));
 }
 
 #[test]
@@ -525,8 +548,6 @@ fn running_snapshot_updates_history_cache_without_touching_live_transcript() {
         false,
         "ReadOnly".to_string(),
     );
-    app.run_state.history_loaded = true;
-
     app.transcript_owner.start_local_user("hello".to_string(), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
@@ -582,8 +603,6 @@ fn chat_surface_model_renders_streaming_visible_tail() {
         false,
         "ReadOnly".to_string(),
     );
-    app.run_state.history_loaded = true;
-
     app.transcript_owner.start_local_user("hello".to_string(), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
@@ -628,8 +647,6 @@ fn streaming_reasoning_stays_fully_visible_until_completion() {
         false,
         "ReadOnly".to_string(),
     );
-    app.run_state.history_loaded = true;
-
     app.transcript_owner.start_local_user("hello".to_string(), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
@@ -674,8 +691,6 @@ fn chat_surface_model_renders_placeholder_before_first_delta() {
         false,
         "ReadOnly".to_string(),
     );
-    app.run_state.history_loaded = true;
-
     app.transcript_owner.start_local_user("hello".to_string(), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
@@ -702,4 +717,358 @@ fn chat_surface_model_renders_placeholder_before_first_delta() {
         rendered.iter().any(|line| line.contains("thinking")),
         "rendered: {rendered:?}"
     );
+}
+
+#[test]
+fn committed_history_without_active_cell_does_not_allocate_active_body_lines() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.transcript_owner.start_local_user("hello".to_string(), false);
+
+    let model = build_chat_surface_model(&mut app, 80, 20);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+
+    assert!(active.lines.is_empty(), "lines: {:?}", active.lines);
+    assert_eq!(model.body_height, 0);
+}
+
+#[test]
+fn committed_history_without_active_cell_keeps_viewport_compact() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.transcript_owner.start_local_user("hello".to_string(), false);
+
+    let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let desired = ChatSurface::desired_viewport_height(&mut app, terminal_area);
+    let bottom_only = app.bottom_pane.desired_height(app.current_mode(), 120).max(1);
+
+    assert_eq!(desired, bottom_only.saturating_add(2));
+}
+
+#[test]
+fn welcome_stays_visible_while_composer_has_draft_text() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    let _ = app.bottom_pane.handle_paste("draft message");
+
+    assert!(should_show_welcome(&app));
+    let model = build_chat_surface_model(&mut app, 80, 20);
+    assert!(matches!(model.body, ChatSurfaceBody::Welcome));
+}
+
+#[test]
+fn reset_local_view_requests_history_replay() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.reset_local_view();
+
+    let plan = app
+        .terminal_projection
+        .build_plan(&mut app.transcript_owner, 5, 80);
+    match plan.history_update {
+        crate::terminal::HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
+        crate::terminal::HistoryUpdate::AppendTail(_) => panic!("expected replay-all after reset"),
+    }
+}
+
+#[test]
+fn reset_notice_is_suppressed_after_local_clear() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.reset_local_view();
+    app.arm_reset_notice_suppression();
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::PushNoticeCell {
+            label: "conversation".to_string(),
+            message: "conversation reset".to_string(),
+            level: crate::state::NoticeLevel::Info,
+        },
+    );
+
+    assert!(should_show_welcome(&app));
+    assert!(app.transcript_owner.active_cell().is_none());
+    assert!(!app.transcript_owner.has_transcript_content());
+}
+
+#[test]
+fn generic_live_notice_does_not_keep_mode_running() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+        "conversation",
+        "no active turn",
+        crate::ui::widgets::history_cell::HistoryTone::Warning,
+    ));
+
+    assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Idle);
+    assert!(app.can_submit_turn());
+}
+
+#[test]
+fn cancelled_turn_clears_running_state_and_reenables_submit() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.prepare_submitted_turn("hello");
+    assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Running);
+    assert!(!app.can_submit_turn());
+
+    app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Cancelled {
+        reason: "interrupted".to_string(),
+    });
+
+    assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Idle);
+    assert!(app.can_submit_turn());
+    assert!(app.transcript_owner.active_turn_id().is_none());
+    assert_eq!(
+        app.transcript_owner.active_cell().map(|cell| cell.body()),
+        Some("interrupted")
+    );
+}
+
+#[test]
+fn active_reasoning_transcript_matches_reasoning_card_ui() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+        "Reasoning",
+        "Let me inspect the code path carefully.".to_string(),
+    ));
+
+    let model = build_chat_surface_model(&mut app, 80, 20);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("≈ "));
+    assert!(rendered.contains("Reasoning"));
+    assert!(rendered.contains("│ "));
+    assert!(rendered.contains("Let me inspect the code path carefully."));
+}
+
+#[test]
+fn active_notice_transcript_does_not_render_history_rails() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+        "conversation",
+        "conversation reset",
+        crate::ui::widgets::history_cell::HistoryTone::Control,
+    ));
+
+    let model = build_chat_surface_model(&mut app, 80, 20);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("conversation"));
+    assert!(!rendered.contains("│ "));
+}
+
+#[test]
+fn finalized_reasoning_history_matches_live_reasoning_card_ui() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner.bind_turn_id("turn-1".to_string(), false);
+    app.transcript_owner.start_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        agent_protocol::TurnItemKind::Reasoning,
+        Some("Reasoning".to_string()),
+        false,
+    );
+    app.transcript_owner.append_reasoning_delta(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        "First paragraph with enough text to wrap.\n\nSecond paragraph for summary.".to_string(),
+        false,
+    );
+    app.transcript_owner.complete_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        reasoning(
+            "r1",
+            "First paragraph with enough text to wrap.\n\nSecond paragraph for summary.",
+        ),
+        false,
+    );
+
+    let committed = app.transcript_owner.committed_history_cells();
+    let rendered = committed
+        .iter()
+        .find(|cell| cell.tone == crate::ui::widgets::history_cell::HistoryTone::Reasoning)
+        .expect("reasoning cell should exist")
+        .to_lines_with_mode(80)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("≈ "));
+    assert!(rendered.contains("Reasoning"));
+    assert!(rendered.contains("│ "));
+}
+
+#[test]
+fn long_active_reasoning_does_not_expand_viewport_beyond_bottom_pane_stack() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+        "Reasoning",
+        "This is a very long reasoning paragraph that should wrap across many lines without forcing the input pane off screen. "
+            .repeat(40),
+    ));
+
+    let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let desired = ChatSurface::desired_viewport_height(&mut app, terminal_area);
+    let bottom_only = app.bottom_pane.desired_height(app.current_mode(), 120).max(1);
+
+    assert!(desired > bottom_only);
+    assert!(desired <= terminal_area.height);
+}
+
+#[test]
+fn active_body_height_is_capped_by_remaining_space_above_bottom_pane() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+        "Reasoning",
+        "This is a very long reasoning paragraph that should wrap across many lines without forcing the input pane off screen. "
+            .repeat(40),
+    ));
+
+    let small_terminal = ratatui::layout::Rect::new(0, 0, 120, 20);
+    let tall_terminal = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let desired_small = ChatSurface::desired_viewport_height(&mut app, small_terminal);
+    let desired_tall = ChatSurface::desired_viewport_height(&mut app, tall_terminal);
+    let bottom = app.bottom_pane.desired_height(app.current_mode(), 120).max(1);
+
+    assert!(desired_small > bottom);
+    assert!(desired_tall > bottom);
+    assert!(desired_small <= small_terminal.height);
+    assert!(desired_tall <= tall_terminal.height);
+    assert!(desired_tall >= desired_small);
+}
+
+#[test]
+fn active_transcript_tail_keeps_latest_reasoning_visible() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+        "Reasoning",
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
+            .to_string(),
+    ));
+
+    let model = build_chat_surface_model(&mut app, 24, 4);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("upsilon") || rendered.contains("omega"));
 }

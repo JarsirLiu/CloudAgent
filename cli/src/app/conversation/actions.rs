@@ -5,14 +5,13 @@ use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permissions_mode::apply_permission_mode;
 use crate::app::conversation::facade as conversation_facade;
 use crate::app::effects::copy_text_to_clipboard;
-use crate::app::runtime::projection::apply_runtime_projection_update;
 use crate::input::slash_command::slash_command_help_text;
 use crate::state::NoticeLevel;
 use crate::state::reducer::ServerAction;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
-    AppClientCommand, FrontendMode, ServerRequestDecision, ServerRequestDecisionKind, UserTurnInput,
+    AppClientCommand, ServerRequestDecision, ServerRequestDecisionKind, UserTurnInput,
 };
 use anyhow::Result;
 use config::AgentConfig;
@@ -35,10 +34,11 @@ pub(crate) fn handle_tui_input(
             };
             match copy_text_to_clipboard(text) {
                 Ok(()) => {
-                    app.run_state.set_system_notice_level(
+                    app.push_live_cell(HistoryCell::info(
+                        "conversation",
                         "Copied latest assistant output",
-                        NoticeLevel::Info,
-                    );
+                        HistoryTone::Control,
+                    ));
                 }
                 Err(err) => {
                     app.push_live_cell(HistoryCell::info(
@@ -51,8 +51,11 @@ pub(crate) fn handle_tui_input(
         }
         ParsedInput::LocalCopyText(text) => match copy_text_to_clipboard(&text) {
             Ok(()) => {
-                app.run_state
-                    .set_system_notice_level("Copied selected input text", NoticeLevel::Info);
+                app.push_live_cell(HistoryCell::info(
+                    "conversation",
+                    "Copied selected input text",
+                    HistoryTone::Control,
+                ));
             }
             Err(err) => {
                 app.push_live_cell(HistoryCell::info(
@@ -79,7 +82,7 @@ pub(crate) fn handle_tui_input(
         ParsedInput::LocalPermissionMode(mode) => {
             if mode.trim().is_empty() {
                 let current = app.run_state.permission_mode.clone();
-                app.input_pane.set_permissions_picker(&current);
+                app.bottom_pane.set_permissions_picker(&current);
                 return Ok(false);
             }
             if let Err(err) = apply_permission_mode(app, mode.trim()) {
@@ -100,7 +103,7 @@ pub(crate) fn handle_tui_input(
         } => {
             if api_key.is_empty() && base_url.is_empty() && model.is_empty() {
                 let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
-                app.input_pane
+                app.bottom_pane
                     .set_config_panel(cfg.llm.api_key, cfg.llm.base_url, cfg.llm.model);
                 return Ok(false);
             }
@@ -113,19 +116,15 @@ pub(crate) fn handle_tui_input(
                 return Ok(false);
             }
             save_user_llm_config(&api_key, &base_url, &model)?;
-            app.run_state.set_system_notice_level(
-                "Config updated in ~/.cloudagent/config.toml",
-                NoticeLevel::Info,
-            );
             app.push_live_cell(HistoryCell::info(
                 "config",
-                "Saved API Key / Base URL / Model.",
+                "Saved API Key / Base URL / Model to ~/.cloudagent/config.toml.",
                 HistoryTone::Control,
             ));
             return Ok(false);
         }
         ParsedInput::LocalConversationCreate(new_conversation_id) => {
-            app.input_pane.clear_session_picker();
+            app.bottom_pane.clear_session_picker();
             let trimmed = new_conversation_id.trim();
             let conversation_id = if trimmed.is_empty() {
                 let millis = std::time::SystemTime::now()
@@ -144,7 +143,7 @@ pub(crate) fn handle_tui_input(
             })?;
         }
         ParsedInput::LocalConversationSwitch(target_conversation_id) => {
-            app.input_pane.clear_session_picker();
+            app.bottom_pane.clear_session_picker();
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
                 app.push_live_cell(HistoryCell::info(
@@ -190,8 +189,8 @@ pub(crate) fn handle_tui_input(
         ParsedInput::LocalConversationDelete(target_conversation_id) => {
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
-                app.delete_picker_requested = true;
-                app.session_picker_requested = false;
+                app.bottom_pane
+                    .request_session_picker(crate::ui::widgets::session_picker::SessionPickerMode::Delete);
                 client.send_command(AppClientCommand::ListConversations)?;
                 return Ok(false);
             }
@@ -201,7 +200,7 @@ pub(crate) fn handle_tui_input(
         }
         ParsedInput::LocalFilterToggle(raw_args) => {
             if raw_args.trim().is_empty() {
-                app.input_pane.set_filter_picker();
+                app.bottom_pane.set_filter_picker();
                 return Ok(false);
             }
             if let Err(usage) = apply_filter_toggle(app, &raw_args) {
@@ -221,7 +220,7 @@ pub(crate) fn handle_tui_input(
         }
         ParsedInput::Command(command) => {
             if let AppClientCommand::Exit = command {
-                if app.console_state.mode != FrontendMode::Idle {
+                if app.current_mode() != agent_protocol::FrontendMode::Idle {
                     client.send_command(AppClientCommand::InterruptTurn {
                         conversation_id: app.conversation_id.clone(),
                     })?;
@@ -231,7 +230,7 @@ pub(crate) fn handle_tui_input(
             }
 
             if matches!(command, AppClientCommand::SubmitTurn(_))
-                && !app.console_state.can_submit_turn()
+                && !app.can_submit_turn()
             {
                 app.push_live_cell(HistoryCell::info(
                     "conversation",
@@ -252,20 +251,11 @@ pub(crate) fn handle_tui_input(
             if let AppClientCommand::ResetConversation { .. } = &command {
                 app.reset_local_view();
                 client.send_command(command)?;
+                app.arm_reset_notice_suppression();
                 return Ok(false);
             }
             if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
-                app.console_state.mode = FrontendMode::Running;
-                app.run_state
-                    .set_system_notice_level("Submitting turn", NoticeLevel::Info);
-                app.run_state.last_turn_usage = None;
-                app.run_state.total_turn_usage = None;
-                app.run_state.model_context_window = None;
-                app.input_pane.clear_views();
-                app.transcript_owner.start_local_user(
-                    content.clone(),
-                    app.run_state.expand_tool_details,
-                );
+                app.prepare_submitted_turn(content);
             }
             client.send_command(command)?;
         }
@@ -274,11 +264,11 @@ pub(crate) fn handle_tui_input(
             decision,
             reason,
         } => {
-            sync_mode_after_server_request_view(app);
-            app.run_state.set_system_notice_level(
+            app.push_live_cell(HistoryCell::info(
+                "request",
                 format!("Request {}", decision_label(&decision)),
-                NoticeLevel::Info,
-            );
+                HistoryTone::Control,
+            ));
             client.send_command(AppClientCommand::ResolveServerRequest {
                 conversation_id: app.conversation_id.clone(),
                 request_id,
@@ -302,46 +292,16 @@ fn decision_label(decision: &ServerRequestDecisionKind) -> &'static str {
 }
 
 pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
-    apply_runtime_projection_update(app, &action);
     match action {
-        ServerAction::SetMode(mode) => {
-            app.set_mode(mode);
-        }
-        ServerAction::SetSystemNotice { text, level } => {
-            app.run_state.set_system_notice_level(text, level);
-        }
-        ServerAction::ClearSystemNotice => app.run_state.clear_system_notice(),
         ServerAction::SetConversationList(conversations) => {
-            app.set_conversation_summaries(conversations.clone());
-            if app.session_picker_requested {
-                app.input_pane.set_session_picker(
-                    conversations,
-                    &app.conversation_id,
-                    crate::ui::widgets::session_picker::SessionPickerMode::Switch,
-                );
-                app.session_picker_requested = false;
-                app.delete_picker_requested = false;
-            } else if app.delete_picker_requested {
-                app.input_pane.set_session_picker(
-                    conversations,
-                    &app.conversation_id,
-                    crate::ui::widgets::session_picker::SessionPickerMode::Delete,
-                );
-                app.delete_picker_requested = false;
-            }
+            app.handle_conversation_list(conversations);
         }
         ServerAction::SwitchConversation(conversation_id) => {
-            app.input_pane.clear_session_picker();
+            app.bottom_pane.clear_session_picker();
             app.switch_conversation(conversation_id);
-            app.session_picker_requested = false;
-        }
-        ServerAction::SetHistoryLoaded(loaded) => {
-            app.run_state.history_loaded = loaded;
         }
         ServerAction::ClearCurrentTurnUsage => {
-            app.run_state.last_turn_usage = None;
-            app.run_state.total_turn_usage = None;
-            app.run_state.model_context_window = None;
+            app.on_server_turn_started();
         }
         ServerAction::SetTokenUsage {
             last_usage,
@@ -352,23 +312,27 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.run_state.total_turn_usage = Some(total_usage);
             app.run_state.model_context_window = model_context_window;
         }
-        ServerAction::SetRetryStatus { .. } => {}
+        ServerAction::SetRetryStatus {
+            stage,
+            attempt,
+            next_delay_ms,
+        } => {
+            app.on_server_retrying(stage, attempt, next_delay_ms);
+        }
         ServerAction::ClearServerRequestView => {
-            app.input_pane.clear_server_request();
+            app.clear_server_request_view();
         }
         ServerAction::DismissServerRequestView(request_id) => {
-            app.input_pane.dismiss_server_request(&request_id);
-            sync_mode_after_server_request_view(app);
+            app.dismiss_server_request_view(&request_id);
         }
         ServerAction::ClearServerRequestStatus => {
-            app.server_request_state.active_request_id = None;
-            app.server_request_state.action_required = false;
+            app.bottom_pane.clear_server_request();
         }
-        ServerAction::ClearLastToolName => {}
+        ServerAction::ClearLastToolName => {
+            app.on_server_tool_finished();
+        }
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
-            app.transcript_state.reset_scroll();
-            app.transcript_owner.clear_pending_history();
             conversation_facade::rebuild_transcript_from_history(app);
         }
         ServerAction::UpsertTurnSnapshot(turn) => {
@@ -384,6 +348,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             kind,
             title,
         } => {
+            app.on_server_active_item_started(&kind, title.as_deref());
             app.transcript_owner.start_item(
                 turn_id,
                 item_id,
@@ -440,12 +405,23 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 app.run_state.expand_tool_details,
             );
         }
+        ServerAction::PushNoticeCell { label, message, level } => {
+            if app.should_suppress_notice(&label, &message) {
+                return;
+            }
+            let tone = match level {
+                NoticeLevel::Info => HistoryTone::Control,
+                NoticeLevel::Warn => HistoryTone::Warning,
+                NoticeLevel::Error => HistoryTone::Error,
+            };
+            app.push_live_cell(HistoryCell::info(label, message, tone));
+        }
         ServerAction::PushErrorCell(message) => {
-            app.input_pane.clear_views();
+            app.bottom_pane.clear_views();
             app.push_live_cell(HistoryCell::info("error", message, HistoryTone::Error));
         }
         ServerAction::TurnDispatch(dispatch) => {
-            conversation_facade::apply_turn_dispatch(app, dispatch)
+            conversation_facade::apply_turn_dispatch(app, dispatch);
         }
         ServerAction::ShowServerRequestPrompt {
             request_id,
@@ -453,29 +429,15 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             detail,
             notice,
         } => {
-            app.input_pane.set_server_request(
+            app.show_server_request_prompt(
                 crate::ui::widgets::input_pane::ServerRequestInlineState {
                     request_id,
                     title,
                     detail,
                 },
             );
-            sync_mode_after_server_request_view(app);
-            app.run_state
-                .set_system_notice_level(notice, NoticeLevel::Warn);
+            app.push_live_cell(HistoryCell::info("request", notice, HistoryTone::Warning));
         }
-    }
-}
-
-fn sync_mode_after_server_request_view(app: &mut TuiApp) {
-    if app.input_pane.requires_action() {
-        app.console_state.mode = FrontendMode::WaitingForServerRequest;
-        app.server_request_state.active_request_id = app.input_pane.active_server_request_id();
-        app.server_request_state.action_required = true;
-    } else {
-        app.console_state.mode = FrontendMode::Running;
-        app.server_request_state.active_request_id = None;
-        app.server_request_state.action_required = false;
     }
 }
 

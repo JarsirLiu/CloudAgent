@@ -13,9 +13,14 @@ pub fn divider_line(width: usize) -> Line<'static> {
 pub fn status_line(
     mode: FrontendMode,
     status_text: &str,
+    runtime_hint: Option<&str>,
     meta: &str,
     width: usize,
 ) -> Line<'static> {
+    if mode != FrontendMode::Idle {
+        return running_status_line(status_text, runtime_hint, meta, width);
+    }
+
     let (dot_color, mode_label, badge_bg) = match mode {
         FrontendMode::Idle => (Color::Rgb(80, 200, 120), "ready", Color::Rgb(18, 34, 24)),
         FrontendMode::Running => (Color::Rgb(100, 160, 255), "working", Color::Rgb(18, 28, 45)),
@@ -64,6 +69,56 @@ pub fn status_line(
             truncate_single_line(meta, available_meta),
             Style::default().fg(Color::Rgb(95, 105, 120)),
         ));
+    }
+    Line::from(spans)
+}
+
+fn running_status_line(
+    status_text: &str,
+    runtime_hint: Option<&str>,
+    meta: &str,
+    width: usize,
+) -> Line<'static> {
+    let header = if status_text.trim().is_empty() {
+        "Working"
+    } else {
+        status_text
+    };
+    let mut spans = vec![
+        Span::styled("• ", Style::default().fg(Color::Rgb(100, 160, 255))),
+        Span::styled(
+            header.to_string(),
+            Style::default()
+                .fg(Color::Rgb(210, 215, 225))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if let Some(runtime_hint) = runtime_hint.filter(|hint| !hint.trim().is_empty()) {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!("({runtime_hint})"),
+            Style::default().fg(Color::Rgb(132, 138, 150)),
+        ));
+    }
+    if !meta.is_empty() {
+        let current_width: usize = spans
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
+        let separator_width = 3usize;
+        let terminal_wrap_guard = 1usize;
+        let available_meta =
+            width.saturating_sub(current_width + separator_width + terminal_wrap_guard);
+        if available_meta > 0 {
+            spans.push(Span::styled(
+                " · ",
+                Style::default().fg(Color::Rgb(60, 60, 70)),
+            ));
+            spans.push(Span::styled(
+                truncate_single_line(meta, available_meta),
+                Style::default().fg(Color::Rgb(95, 105, 120)),
+            ));
+        }
     }
     Line::from(spans)
 }
@@ -128,6 +183,7 @@ mod tests {
         let line = status_line(
             FrontendMode::Running,
             "Request approved:",
+            Some("0s • esc to interrupt"),
             "in 1.3k tokens · out 93 tokens · cached 0 tokens · total 1.4k tokens",
             58,
         );
