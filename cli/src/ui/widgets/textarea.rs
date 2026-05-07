@@ -1,5 +1,5 @@
-use std::cell::Cell;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::cell::Cell;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -215,7 +215,12 @@ impl TextArea {
         state: &mut TextAreaState,
     ) -> (usize, usize) {
         let (row, col) = self.visual_cursor_position(width);
-        let scroll = self.effective_scroll(viewport_height, self.desired_height(width) as usize, state.scroll, width);
+        let scroll = self.effective_scroll(
+            viewport_height,
+            self.desired_height(width) as usize,
+            state.scroll,
+            width,
+        );
         state.scroll = scroll;
         (row.saturating_sub(scroll as usize), col)
     }
@@ -414,16 +419,20 @@ impl TextArea {
             let lines = wrapped_line_ranges(&self.text, width);
             if let Some(idx) = wrapped_line_index_by_start(&lines, self.cursor) {
                 let (start, _) = lines[idx];
-                let target_col = self.preferred_column.unwrap_or_else(|| display_width(
-                    &self.text.graphemes(true).skip(start).take(self.cursor.saturating_sub(start)).collect::<String>()
-                ));
+                let target_col = self.preferred_column.unwrap_or_else(|| {
+                    display_width(
+                        &self
+                            .text
+                            .graphemes(true)
+                            .skip(start)
+                            .take(self.cursor.saturating_sub(start))
+                            .collect::<String>(),
+                    )
+                });
                 if idx > 0 {
                     let (prev_start, prev_end) = lines[idx - 1];
                     self.cursor = move_to_display_col_on_wrapped_line(
-                        &self.text,
-                        prev_start,
-                        prev_end,
-                        target_col,
+                        &self.text, prev_start, prev_end, target_col,
                     );
                     self.preferred_column = Some(target_col);
                 } else {
@@ -453,16 +462,20 @@ impl TextArea {
             let lines = wrapped_line_ranges(&self.text, width);
             if let Some(idx) = wrapped_line_index_by_start(&lines, self.cursor) {
                 let (start, _) = lines[idx];
-                let target_col = self.preferred_column.unwrap_or_else(|| display_width(
-                    &self.text.graphemes(true).skip(start).take(self.cursor.saturating_sub(start)).collect::<String>()
-                ));
+                let target_col = self.preferred_column.unwrap_or_else(|| {
+                    display_width(
+                        &self
+                            .text
+                            .graphemes(true)
+                            .skip(start)
+                            .take(self.cursor.saturating_sub(start))
+                            .collect::<String>(),
+                    )
+                });
                 if idx + 1 < lines.len() {
                     let (next_start, next_end) = lines[idx + 1];
                     self.cursor = move_to_display_col_on_wrapped_line(
-                        &self.text,
-                        next_start,
-                        next_end,
-                        target_col,
+                        &self.text, next_start, next_end, target_col,
                     );
                     self.preferred_column = Some(target_col);
                 } else {
@@ -663,7 +676,9 @@ impl TextArea {
         if cursor_line_idx < scroll {
             scroll = cursor_line_idx;
         } else if cursor_line_idx >= scroll.saturating_add(viewport_height) {
-            scroll = cursor_line_idx.saturating_add(1).saturating_sub(viewport_height);
+            scroll = cursor_line_idx
+                .saturating_add(1)
+                .saturating_sub(viewport_height);
         }
 
         scroll.min(max_scroll)

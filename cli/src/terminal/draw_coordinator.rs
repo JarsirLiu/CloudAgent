@@ -2,9 +2,9 @@ use anyhow::Result;
 use ratatui::backend::CrosstermBackend;
 use std::io;
 
+use crate::terminal::Frame;
 use crate::terminal::PreparedHistoryProjection;
 use crate::terminal::PreparedHistoryUpdate;
-use crate::terminal::Frame;
 use crate::terminal::custom_terminal::Terminal;
 use crate::terminal::insert_history_lines_raw;
 

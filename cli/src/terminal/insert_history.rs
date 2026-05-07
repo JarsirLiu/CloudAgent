@@ -70,14 +70,14 @@ where
         let max_reserved_rows = screen_size.height.saturating_sub(viewport_height);
         let reserved_rows = wrapped_rows.min(max_reserved_rows);
 
-            if reserved_rows > 0 {
-                queue!(writer, MoveTo(0, screen_size.height.saturating_sub(1)))?;
-                for _ in 0..reserved_rows {
-                    queue!(writer, Print("\n"))?;
-                }
-                area.y = reserved_rows;
-                should_update_area = true;
+        if reserved_rows > 0 {
+            queue!(writer, MoveTo(0, screen_size.height.saturating_sub(1)))?;
+            for _ in 0..reserved_rows {
+                queue!(writer, Print("\n"))?;
             }
+            area.y = reserved_rows;
+            should_update_area = true;
+        }
         0
     } else if area.bottom() < screen_size.height {
         let scroll_amount = wrapped_rows.min(screen_size.height - area.bottom());

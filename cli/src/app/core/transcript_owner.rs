@@ -46,7 +46,8 @@ impl TranscriptOwner {
     }
 
     pub(crate) fn set_expand_details(&mut self, expand_details: bool) {
-        self.active_cell_controller.set_expand_details(expand_details);
+        self.active_cell_controller
+            .set_expand_details(expand_details);
     }
 
     pub(crate) fn last_copyable_output(&self) -> Option<&str> {
@@ -130,13 +131,9 @@ impl TranscriptOwner {
         title: Option<String>,
         expand_details: bool,
     ) {
-        let replay_cells = self.active_cell_controller.start_item(
-            turn_id,
-            item_id,
-            kind,
-            title,
-            expand_details,
-        );
+        let replay_cells =
+            self.active_cell_controller
+                .start_item(turn_id, item_id, kind, title, expand_details);
         self.queue_history_cells(replay_cells);
     }
 
@@ -147,12 +144,9 @@ impl TranscriptOwner {
         delta: String,
         expand_details: bool,
     ) {
-        let replay_cells = self.active_cell_controller.append_agent_delta(
-            turn_id,
-            item_id,
-            delta,
-            expand_details,
-        );
+        let replay_cells =
+            self.active_cell_controller
+                .append_agent_delta(turn_id, item_id, delta, expand_details);
         self.queue_history_cells(replay_cells);
     }
 
@@ -195,12 +189,9 @@ impl TranscriptOwner {
         item: TranscriptItem,
         expand_details: bool,
     ) {
-        let replay_cells = self.active_cell_controller.complete_item(
-            turn_id,
-            item_id,
-            item,
-            expand_details,
-        );
+        let replay_cells =
+            self.active_cell_controller
+                .complete_item(turn_id, item_id, item, expand_details);
         self.queue_history_cells(replay_cells);
     }
 

@@ -45,9 +45,9 @@ impl TerminalProjectionController {
         terminal_width: u16,
         has_active_stream: bool,
     ) -> HistoryProjection {
-        let should_replay = self
-            .reflow
-            .begin_frame(terminal_width, viewport_height, has_active_stream);
+        let should_replay =
+            self.reflow
+                .begin_frame(terminal_width, viewport_height, has_active_stream);
 
         let history_update = if should_replay {
             let committed = transcript_owner.committed_history_cells();

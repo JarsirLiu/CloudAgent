@@ -1,15 +1,14 @@
-use crate::app::core::transcript_owner::TranscriptOwner;
-use crate::app::conversation::facade as conversation_facade;
-use crate::app::conversation::actions::execute_server_action;
 use crate::app::TuiApp;
+use crate::app::conversation::actions::execute_server_action;
+use crate::app::conversation::facade as conversation_facade;
+use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::runtime::display::should_show_welcome;
-use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
 use crate::ui::chat_surface::ChatSurface;
+use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
 use agent_protocol::CommandExecutionStatus;
 use agent_protocol::{
-    ConversationTurn, ReadFileEntry, ReadFileStatus, SearchWorkspaceMode,
-    SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult, TranscriptItem,
-    TurnState,
+    ConversationTurn, ReadFileEntry, ReadFileStatus, SearchWorkspaceMode, SearchWorkspaceOperation,
+    SearchWorkspaceStatus, StructuredToolResult, TranscriptItem, TurnState,
 };
 use std::path::PathBuf;
 
@@ -146,14 +145,21 @@ fn local_live_cells_replace_previous_active_notice() {
     let live = owner.live_cells();
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].body(), "second notice");
-    assert_eq!(owner.active_cell().map(|cell| cell.body()), Some("second notice"));
+    assert_eq!(
+        owner.active_cell().map(|cell| cell.body()),
+        Some("second notice")
+    );
 }
 
 #[test]
 fn transcript_owner_rebuilds_history_and_keeps_only_live_tail_active() {
     let mut owner = TranscriptOwner::default();
     let history = vec![
-        turn("turn-1", TurnState::Completed, vec![user("u1", "first"), agent("a1", "done")]),
+        turn(
+            "turn-1",
+            TurnState::Completed,
+            vec![user("u1", "first"), agent("a1", "done")],
+        ),
         turn(
             "turn-2",
             TurnState::Running,
@@ -445,11 +451,15 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
 
     assert_eq!(owner.live_cells().len(), 1);
     assert!(
-        pending.iter().any(|entry| entry.contains("Explored workspace|read 1 file")),
+        pending
+            .iter()
+            .any(|entry| entry.contains("Explored workspace|read 1 file")),
         "pending: {pending:?}"
     );
     assert!(
-        pending.iter().all(|entry| !entry.contains("Read file|running")),
+        pending
+            .iter()
+            .all(|entry| !entry.contains("Read file|running")),
         "pending: {pending:?}"
     );
 }
@@ -496,7 +506,9 @@ fn parallel_toolcall_placeholders_do_not_commit_running_cards() {
         .collect::<Vec<_>>();
 
     assert!(
-        pending.iter().all(|entry| !entry.contains("Read file|running")),
+        pending
+            .iter()
+            .all(|entry| !entry.contains("Read file|running")),
         "pending: {pending:?}"
     );
 }
@@ -548,7 +560,8 @@ fn running_snapshot_updates_history_cache_without_touching_live_transcript() {
         false,
         "ReadOnly".to_string(),
     );
-    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .start_local_user("hello".to_string(), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
@@ -576,7 +589,10 @@ fn running_snapshot_updates_history_cache_without_touching_live_transcript() {
         turn(
             "turn-1",
             TurnState::Running,
-            vec![user("u1", "hello"), reasoning("r1", "thinking from snapshot")],
+            vec![
+                user("u1", "hello"),
+                reasoning("r1", "thinking from snapshot"),
+            ],
         ),
     );
 
@@ -603,7 +619,8 @@ fn chat_surface_model_renders_streaming_visible_tail() {
         false,
         "ReadOnly".to_string(),
     );
-    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .start_local_user("hello".to_string(), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
@@ -647,7 +664,8 @@ fn streaming_reasoning_stays_fully_visible_until_completion() {
         false,
         "ReadOnly".to_string(),
     );
-    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .start_local_user("hello".to_string(), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
@@ -691,7 +709,8 @@ fn chat_surface_model_renders_placeholder_before_first_delta() {
         false,
         "ReadOnly".to_string(),
     );
-    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .start_local_user("hello".to_string(), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
@@ -729,7 +748,8 @@ fn committed_history_without_active_cell_does_not_allocate_active_body_lines() {
         false,
         "ReadOnly".to_string(),
     );
-    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .start_local_user("hello".to_string(), false);
 
     let model = build_chat_surface_model(&mut app, 80, 20);
     let ChatSurfaceBody::ActiveCell(active) = model.body else {
@@ -750,11 +770,15 @@ fn committed_history_without_active_cell_keeps_viewport_compact() {
         false,
         "ReadOnly".to_string(),
     );
-    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .start_local_user("hello".to_string(), false);
 
     let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
     let desired = ChatSurface::desired_viewport_height(&mut app, terminal_area);
-    let bottom_only = app.bottom_pane.desired_height(app.current_mode(), 120).max(1);
+    let bottom_only = app
+        .bottom_pane
+        .desired_height(app.current_mode(), 120)
+        .max(1);
 
     assert_eq!(desired, bottom_only.saturating_add(2));
 }
@@ -786,7 +810,8 @@ fn reset_local_view_requests_history_replay() {
         false,
         "ReadOnly".to_string(),
     );
-    app.transcript_owner.start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .start_local_user("hello".to_string(), false);
     app.reset_local_view();
 
     let plan = app
@@ -946,8 +971,10 @@ fn finalized_reasoning_history_matches_live_reasoning_card_ui() {
         false,
         "ReadOnly".to_string(),
     );
-    app.transcript_owner.start_local_user("hello".to_string(), false);
-    app.transcript_owner.bind_turn_id("turn-1".to_string(), false);
+    app.transcript_owner
+        .start_local_user("hello".to_string(), false);
+    app.transcript_owner
+        .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
         "turn-1".to_string(),
         "r1".to_string(),
@@ -1006,7 +1033,10 @@ fn long_active_reasoning_does_not_expand_viewport_beyond_bottom_pane_stack() {
 
     let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
     let desired = ChatSurface::desired_viewport_height(&mut app, terminal_area);
-    let bottom_only = app.bottom_pane.desired_height(app.current_mode(), 120).max(1);
+    let bottom_only = app
+        .bottom_pane
+        .desired_height(app.current_mode(), 120)
+        .max(1);
 
     assert!(desired > bottom_only);
     assert!(desired <= terminal_area.height);
@@ -1033,7 +1063,10 @@ fn active_body_height_is_capped_by_remaining_space_above_bottom_pane() {
     let tall_terminal = ratatui::layout::Rect::new(0, 0, 120, 40);
     let desired_small = ChatSurface::desired_viewport_height(&mut app, small_terminal);
     let desired_tall = ChatSurface::desired_viewport_height(&mut app, tall_terminal);
-    let bottom = app.bottom_pane.desired_height(app.current_mode(), 120).max(1);
+    let bottom = app
+        .bottom_pane
+        .desired_height(app.current_mode(), 120)
+        .max(1);
 
     assert!(desired_small > bottom);
     assert!(desired_tall > bottom);

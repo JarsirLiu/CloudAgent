@@ -40,11 +40,16 @@ impl ChatSurface {
         let status = app.bottom_pane.build_status_view_model(app);
         let content = centered_column(surface_area, MAX_CONTENT_WIDTH);
         let render_width = Self::render_width_for_area(surface_area);
-        let bottom_height = bottom_pane_height(app, content.width).min(content.height).max(1);
+        let bottom_height = bottom_pane_height(app, content.width)
+            .min(content.height)
+            .max(1);
         let status_height = if status.live_banner.is_some() { 1 } else { 0 };
-        let max_body_height =
-            available_body_height(content, bottom_height, status_height, BODY_BOTTOM_GAP_HEIGHT)
-                as usize;
+        let max_body_height = available_body_height(
+            content,
+            bottom_height,
+            status_height,
+            BODY_BOTTOM_GAP_HEIGHT,
+        ) as usize;
         let surface_model = build_chat_surface_model(app, render_width, max_body_height);
         let layout = compute_layout(
             app,
@@ -55,11 +60,7 @@ impl ChatSurface {
         );
 
         render_body_area(app, frame, layout.body_area, surface_model);
-        render_status_area(
-            frame,
-            layout.status_area,
-            status.live_banner.as_deref(),
-        );
+        render_status_area(frame, layout.status_area, status.live_banner.as_deref());
         let bottom = app.bottom_pane.render(
             frame,
             layout.bottom_area,
@@ -83,11 +84,16 @@ impl ChatSurface {
         let status = app.bottom_pane.build_status_view_model(app);
         let content = centered_column(surface_area, MAX_CONTENT_WIDTH);
         let render_width = Self::render_width_for_area(surface_area);
-        let bottom_height = bottom_pane_height(app, content.width).min(content.height).max(1);
+        let bottom_height = bottom_pane_height(app, content.width)
+            .min(content.height)
+            .max(1);
         let status_height = if status.live_banner.is_some() { 1 } else { 0 };
-        let max_body_height =
-            available_body_height(content, bottom_height, status_height, BODY_BOTTOM_GAP_HEIGHT)
-                as usize;
+        let max_body_height = available_body_height(
+            content,
+            bottom_height,
+            status_height,
+            BODY_BOTTOM_GAP_HEIGHT,
+        ) as usize;
         let surface_model = build_chat_surface_model(app, render_width, max_body_height);
         desired_stack_height(
             app,
@@ -96,7 +102,11 @@ impl ChatSurface {
             status.live_banner.is_some(),
             matches!(surface_model.body, ChatSurfaceBody::Welcome),
         )
-        .saturating_add(if shows_welcome { 0 } else { VIEWPORT_TOP_GUTTER_HEIGHT })
+        .saturating_add(if shows_welcome {
+            0
+        } else {
+            VIEWPORT_TOP_GUTTER_HEIGHT
+        })
         .max(1)
     }
 }
@@ -122,7 +132,9 @@ fn compute_layout(
     is_welcome: bool,
 ) -> ChatSurfaceLayout {
     let content = centered_column(area, MAX_CONTENT_WIDTH);
-    let bottom_height = bottom_pane_height(app, content.width).min(content.height).max(1);
+    let bottom_height = bottom_pane_height(app, content.width)
+        .min(content.height)
+        .max(1);
 
     if is_welcome {
         let status_height = if has_status_banner { 1 } else { 0 };
@@ -197,14 +209,20 @@ fn desired_stack_height(
     is_welcome: bool,
 ) -> u16 {
     let content = centered_column(area, MAX_CONTENT_WIDTH);
-    let bottom_height = bottom_pane_height(app, content.width).min(content.height).max(1);
+    let bottom_height = bottom_pane_height(app, content.width)
+        .min(content.height)
+        .max(1);
     if is_welcome {
         return content.height.max(1);
     }
     let status_height = if has_status_banner { 1 } else { 0 };
     let gap_height = BODY_BOTTOM_GAP_HEIGHT;
-    let visible_body =
-        body_height.min(available_body_height(content, bottom_height, status_height, gap_height));
+    let visible_body = body_height.min(available_body_height(
+        content,
+        bottom_height,
+        status_height,
+        gap_height,
+    ));
     visible_body
         .saturating_add(status_height)
         .saturating_add(gap_height)
@@ -235,15 +253,13 @@ fn available_body_height(
 fn render_body_area(app: &TuiApp, frame: &mut Frame, area: Rect, model: ChatSurfaceModel) {
     match model.body {
         ChatSurfaceBody::Welcome => render_welcome(app, frame, area),
-        ChatSurfaceBody::ActiveCell(active_cell) => render_active_cell(frame, area, active_cell.lines),
+        ChatSurfaceBody::ActiveCell(active_cell) => {
+            render_active_cell(frame, area, active_cell.lines)
+        }
     }
 }
 
-fn render_status_area(
-    frame: &mut Frame,
-    area: Rect,
-    live_banner: Option<&str>,
-) {
+fn render_status_area(frame: &mut Frame, area: Rect, live_banner: Option<&str>) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -259,11 +275,7 @@ fn render_status_area(
     );
 }
 
-fn render_active_cell(
-    frame: &mut Frame,
-    area: Rect,
-    lines: Vec<Line<'static>>,
-) {
+fn render_active_cell(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
     if area.height == 0 || area.width == 0 || lines.is_empty() {
         return;
     }

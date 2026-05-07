@@ -78,7 +78,10 @@ impl ActiveCellController {
         user_input: String,
         expand_details: bool,
     ) -> Vec<HistoryCell> {
-        self.apply_active_turn(ActiveTurnAction::StartLocalUser { user_input }, expand_details)
+        self.apply_active_turn(
+            ActiveTurnAction::StartLocalUser { user_input },
+            expand_details,
+        )
     }
 
     pub(crate) fn bind_turn_id(

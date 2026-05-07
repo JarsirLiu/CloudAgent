@@ -497,9 +497,7 @@ impl HistoryCell {
 
 impl PartialEq for HistoryCell {
     fn eq(&self, other: &Self) -> bool {
-        self.tone == other.tone
-            && self.content == other.content
-            && self.view == other.view
+        self.tone == other.tone && self.content == other.content && self.view == other.view
     }
 }
 
@@ -653,7 +651,10 @@ fn render_agent_transcript(cell: &HistoryCell, width: usize) -> Vec<Line<'static
     for (i, line) in md_lines.into_iter().enumerate() {
         let mut spans = Vec::new();
         if i == 0 {
-            spans.push(Span::styled("• ", Style::default().fg(Color::Rgb(100, 180, 255))));
+            spans.push(Span::styled(
+                "• ",
+                Style::default().fg(Color::Rgb(100, 180, 255)),
+            ));
         } else {
             spans.push(Span::raw("  "));
         }
@@ -827,19 +828,19 @@ fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
 
     lines.extend(
         word_wrap_text(
-        cell.body(),
-        WrapOptions::new(width)
-            .initial_indent(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
-            ]))
-            .subsequent_indent(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
-            ])),
-    )
-    .into_iter()
-    .map(tint_tail_rgb(190, 200, 216)),
+            cell.body(),
+            WrapOptions::new(width)
+                .initial_indent(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                ]))
+                .subsequent_indent(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
+                ])),
+        )
+        .into_iter()
+        .map(tint_tail_rgb(190, 200, 216)),
     );
 
     for (index, detail) in details.iter().take(max_details).enumerate() {
@@ -1161,10 +1162,7 @@ fn render_tool_like(
             Span::raw("    "),
             Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
             Span::styled(
-                format!(
-                    "… +{} lines",
-                    wrapped.len().saturating_sub(max_lines)
-                ),
+                format!("… +{} lines", wrapped.len().saturating_sub(max_lines)),
                 Style::default().fg(Color::Rgb(148, 152, 164)),
             ),
         ]));
@@ -1510,8 +1508,8 @@ mod tests {
     #[test]
     fn transcript_merges_adjacent_agent_stream_continuations() {
         let mut first = HistoryCell::agent("", "hello", HistoryFormat::Markdown);
-        let second =
-            HistoryCell::agent("", " world", HistoryFormat::Markdown).with_stream_continuation(true);
+        let second = HistoryCell::agent("", " world", HistoryFormat::Markdown)
+            .with_stream_continuation(true);
 
         assert!(tool_aggregation::coalesce_agent_stream(&mut first, &second));
         assert_eq!(first.body(), "hello world");
@@ -1521,8 +1519,8 @@ mod tests {
     fn transcript_does_not_merge_agent_cells_across_non_agent_boundaries() {
         let first = HistoryCell::agent("", "hello", HistoryFormat::Markdown);
         let barrier = HistoryCell::reasoning("Reasoning", "thinking");
-        let second =
-            HistoryCell::agent("", " world", HistoryFormat::Markdown).with_stream_continuation(true);
+        let second = HistoryCell::agent("", " world", HistoryFormat::Markdown)
+            .with_stream_continuation(true);
 
         let mut cells = Vec::new();
         for cell in [first, barrier, second] {

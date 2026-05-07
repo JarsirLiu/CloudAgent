@@ -189,8 +189,9 @@ pub(crate) fn handle_tui_input(
         ParsedInput::LocalConversationDelete(target_conversation_id) => {
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
-                app.bottom_pane
-                    .request_session_picker(crate::ui::widgets::session_picker::SessionPickerMode::Delete);
+                app.bottom_pane.request_session_picker(
+                    crate::ui::widgets::session_picker::SessionPickerMode::Delete,
+                );
                 client.send_command(AppClientCommand::ListConversations)?;
                 return Ok(false);
             }
@@ -229,9 +230,7 @@ pub(crate) fn handle_tui_input(
                 return Ok(true);
             }
 
-            if matches!(command, AppClientCommand::SubmitTurn(_))
-                && !app.can_submit_turn()
-            {
+            if matches!(command, AppClientCommand::SubmitTurn(_)) && !app.can_submit_turn() {
                 app.push_live_cell(HistoryCell::info(
                     "conversation",
                     "turn already running; wait, answer the pending request, or interrupt first",
@@ -406,7 +405,11 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             );
             app.terminal_projection.on_stream_boundary();
         }
-        ServerAction::PushNoticeCell { label, message, level } => {
+        ServerAction::PushNoticeCell {
+            label,
+            message,
+            level,
+        } => {
             if app.should_suppress_notice(&label, &message) {
                 return;
             }

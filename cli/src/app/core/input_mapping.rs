@@ -75,8 +75,9 @@ impl TuiApp {
                 },
             )),
             InputPaneAction::Composer(ComposerIntent::Session) => {
-                self.bottom_pane
-                    .request_session_picker(crate::ui::widgets::session_picker::SessionPickerMode::Switch);
+                self.bottom_pane.request_session_picker(
+                    crate::ui::widgets::session_picker::SessionPickerMode::Switch,
+                );
                 Some(ParsedInput::Command(AppClientCommand::ListConversations))
             }
             InputPaneAction::Composer(ComposerIntent::NewConversation(conversation_id)) => {

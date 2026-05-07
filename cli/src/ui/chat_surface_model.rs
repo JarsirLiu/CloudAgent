@@ -55,7 +55,10 @@ fn visible_transcript_lines(
     render_width: usize,
     max_lines: usize,
 ) -> Vec<Line<'static>> {
-    let lines = wrap_transcript_lines(transcript_lines(app.transcript_owner.active_cell(), render_width), render_width);
+    let lines = wrap_transcript_lines(
+        transcript_lines(app.transcript_owner.active_cell(), render_width),
+        render_width,
+    );
     if lines.len() > max_lines {
         lines[lines.len().saturating_sub(max_lines)..].to_vec()
     } else {

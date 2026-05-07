@@ -81,8 +81,7 @@ impl CommittedTranscriptStore {
             .last()
             .map(|previous| {
                 previous.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
-                    && previous.kind()
-                        == crate::ui::widgets::history_cell::HistoryKind::Message
+                    && previous.kind() == crate::ui::widgets::history_cell::HistoryKind::Message
             })
             .unwrap_or(false);
         cell.set_stream_continuation(is_agent_message && previous_was_agent_message);

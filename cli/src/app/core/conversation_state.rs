@@ -1,9 +1,9 @@
 use crate::app::TuiApp;
 use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::runtime::terminal_projection::TerminalProjectionController;
+use crate::state::RunState;
 use crate::state::bottom_pane_controller::BottomPaneController;
 use crate::state::reducer::TurnDispatch;
-use crate::state::RunState;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_protocol::{ConversationSummary, FrontendMode};
 
@@ -169,7 +169,8 @@ impl TuiApp {
     pub(crate) fn current_mode(&self) -> FrontendMode {
         let has_active_turn = self.transcript_owner.active_turn_id().is_some();
         let has_live_cell = !self.transcript_owner.live_is_empty();
-        self.bottom_pane.current_mode(has_active_turn, has_live_cell)
+        self.bottom_pane
+            .current_mode(has_active_turn, has_live_cell)
     }
 
     pub(crate) fn can_submit_turn(&self) -> bool {

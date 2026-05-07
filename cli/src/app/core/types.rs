@@ -1,7 +1,7 @@
 use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::runtime::terminal_projection::TerminalProjectionController;
-use crate::state::bottom_pane_controller::BottomPaneController;
 use crate::state::RunState;
+use crate::state::bottom_pane_controller::BottomPaneController;
 use agent_core::AgentHost;
 use agent_protocol::ConversationSummary;
 use std::ffi::OsString;

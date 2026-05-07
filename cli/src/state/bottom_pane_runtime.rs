@@ -63,21 +63,24 @@ impl BottomPaneRuntimeState {
                 self.live_label = Some("Thinking".to_string());
             }
             TurnItemKind::CommandExecution => {
-                self.active_tool_title = Some(match title.map(str::trim).filter(|s| !s.is_empty()) {
-                    Some(command) => format!("running command: {command}"),
-                    None => "running command".to_string(),
-                });
+                self.active_tool_title =
+                    Some(match title.map(str::trim).filter(|s| !s.is_empty()) {
+                        Some(command) => format!("running command: {command}"),
+                        None => "running command".to_string(),
+                    });
                 self.live_label = Some("Working".to_string());
             }
             TurnItemKind::ToolCall => {
-                self.active_tool_title = Some(match title.map(str::trim).filter(|s| !s.is_empty()) {
-                    Some(tool) => format!("executing tool: {}", humanize_runtime_title(tool)),
-                    None => "executing tool".to_string(),
-                });
+                self.active_tool_title =
+                    Some(match title.map(str::trim).filter(|s| !s.is_empty()) {
+                        Some(tool) => format!("executing tool: {}", humanize_runtime_title(tool)),
+                        None => "executing tool".to_string(),
+                    });
                 self.live_label = Some("Working".to_string());
             }
             _ => {
-                self.active_tool_title = title.map(humanize_runtime_title).filter(|s| !s.is_empty());
+                self.active_tool_title =
+                    title.map(humanize_runtime_title).filter(|s| !s.is_empty());
             }
         }
     }
