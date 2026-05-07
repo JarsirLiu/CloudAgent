@@ -725,7 +725,7 @@ fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         Span::raw("    "),
         Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
         Span::styled(
-            format!("… +{} lines (Ctrl+T toggles details)", hidden_lines),
+            format!("… +{} lines", hidden_lines),
             Style::default().fg(Color::Rgb(132, 138, 150)),
         ),
     ]));
@@ -923,7 +923,7 @@ fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
                 Span::styled("↳ ", Style::default().fg(Color::Rgb(90, 96, 108))),
                 Span::styled(
                     format!(
-                        "… +{} lines (Ctrl+T toggles details)",
+                        "… +{} lines",
                         detail.lines().count().saturating_sub(max_lines)
                     ),
                     Style::default().fg(Color::Rgb(132, 138, 150)),
@@ -1017,7 +1017,7 @@ fn render_tool_group(
                 Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
                 Span::styled(
                     format!(
-                        "{} more step{} hidden (Ctrl+T toggles details)",
+                        "{} more step{}",
                         hidden_count,
                         if hidden_count == 1 { "" } else { "s" }
                     ),
@@ -1162,7 +1162,7 @@ fn render_tool_like(
             Span::styled("│ ", Style::default().fg(Color::Rgb(90, 96, 108))),
             Span::styled(
                 format!(
-                    "… +{} lines (Ctrl+T toggles details)",
+                    "… +{} lines",
                     wrapped.len().saturating_sub(max_lines)
                 ),
                 Style::default().fg(Color::Rgb(148, 152, 164)),
@@ -1206,7 +1206,7 @@ fn render_tool_like(
                 Span::raw("      "),
                 Span::styled(
                     format!(
-                        "… +{} more lines (Ctrl+T toggles details)",
+                        "… +{} more lines",
                         detail.lines().count().saturating_sub(max_detail_lines)
                     ),
                     Style::default().fg(Color::Rgb(132, 138, 150)),
