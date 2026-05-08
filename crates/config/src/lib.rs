@@ -198,8 +198,10 @@ impl AgentConfig {
     }
 
     fn defaults(workspace_root: PathBuf) -> Self {
-        let mut memory = MemoryConfig::default();
-        memory.root_dir = workspace_root.join("data").join("state").join("memory");
+        let memory = MemoryConfig {
+            root_dir: workspace_root.join("data").join("state").join("memory"),
+            ..MemoryConfig::default()
+        };
         Self {
             runtime: RuntimeConfig {
                 system_prompt: default_system_prompt(),

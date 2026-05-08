@@ -507,15 +507,9 @@ fn compute_input_layout(
             .y
             .saturating_add(1 + STATUS_ROW_HEIGHT + COMPOSER_TOP_SPACER_HEIGHT),
         width: input_area.width.saturating_sub(2),
-        height: composer_height.min(
-            input_area
-                .height
-                .saturating_sub(
-                    INPUT_BLOCK_CHROME_HEIGHT
-                        + STATUS_ROW_HEIGHT
-                        + COMPOSER_TOP_SPACER_HEIGHT,
-                ),
-        ),
+        height: composer_height.min(input_area.height.saturating_sub(
+            INPUT_BLOCK_CHROME_HEIGHT + STATUS_ROW_HEIGHT + COMPOSER_TOP_SPACER_HEIGHT,
+        )),
     };
 
     InputPaneLayout {

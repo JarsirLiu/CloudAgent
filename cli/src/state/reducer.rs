@@ -503,9 +503,12 @@ mod tests {
                     if *estimated_tokens == 12_345
             )
         }));
-        assert!(!reduced.actions.iter().any(
-            |action| matches!(action, ServerAction::PushNoticeCell { .. })
-        ));
+        assert!(
+            !reduced
+                .actions
+                .iter()
+                .any(|action| matches!(action, ServerAction::PushNoticeCell { .. }))
+        );
     }
 
     #[test]

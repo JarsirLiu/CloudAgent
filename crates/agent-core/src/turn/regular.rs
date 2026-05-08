@@ -3,9 +3,8 @@ use super::loop_guard::LoopGuard;
 use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
 use crate::context::{ContextFragment, ContextInjectionStrategy, MemoryBudgetSource};
 use crate::{
-    ContextBudgetLogEntry, ContextFacade, ContextManager, FilterPolicy,
-    ModelStreamObserver, ModelUsage, RolloutItem, append_context_budget_log,
-    emit_assistant_message_item, emit_event,
+    ContextBudgetLogEntry, ContextFacade, ContextManager, FilterPolicy, ModelStreamObserver,
+    ModelUsage, RolloutItem, append_context_budget_log, emit_assistant_message_item, emit_event,
 };
 use crate::{EventMsg, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState};
 use anyhow::Result;
@@ -753,9 +752,8 @@ mod tests {
     };
     use crate::{
         ContextFacade, ContextManager, ConversationHistory, EventMsg, FilterPolicy, ModelRequest,
-        ModelResponse, ModelStreamObserver, ModelUsage, RolloutItem, ToolCall,
-        ToolExecutionPolicy, ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind,
-        TurnItemKind, TurnOutcome,
+        ModelResponse, ModelStreamObserver, ModelUsage, RolloutItem, ToolCall, ToolExecutionPolicy,
+        ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind, TurnOutcome,
     };
     use anyhow::Result;
     use async_trait::async_trait;
@@ -774,10 +772,8 @@ mod tests {
 
     impl TestWorkspace {
         fn new() -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "cloudagent-agent-core-test-{}",
-                Uuid::now_v7()
-            ));
+            let root =
+                std::env::temp_dir().join(format!("cloudagent-agent-core-test-{}", Uuid::now_v7()));
             std::fs::create_dir_all(&root).expect("create test workspace");
             Self { root }
         }
@@ -1219,7 +1215,10 @@ mod tests {
                 "x".repeat(4_000)
             ));
             history.push_assistant_message(
-                Some(format!("historic assistant reply {index} {}", "y".repeat(4_000))),
+                Some(format!(
+                    "historic assistant reply {index} {}",
+                    "y".repeat(4_000)
+                )),
                 Vec::new(),
             );
         }
@@ -1267,7 +1266,10 @@ mod tests {
                 "x".repeat(4_000)
             ));
             history.push_assistant_message(
-                Some(format!("historic assistant reply {index} {}", "y".repeat(4_000))),
+                Some(format!(
+                    "historic assistant reply {index} {}",
+                    "y".repeat(4_000)
+                )),
                 Vec::new(),
             );
         }
@@ -1352,5 +1354,4 @@ mod tests {
             matches!(item, crate::ResponseItem::User { content } if content.contains("<long_term_memory>"))
         }));
     }
-
 }

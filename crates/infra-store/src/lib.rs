@@ -683,7 +683,11 @@ mod tests {
                 .expect("check draft visibility")
         );
         assert!(
-            store.list_conversations().await.expect("list conversations").is_empty(),
+            store
+                .list_conversations()
+                .await
+                .expect("list conversations")
+                .is_empty(),
             "draft conversations should not appear in the session list before first message"
         );
 
@@ -716,7 +720,10 @@ mod tests {
                 .await
                 .expect("check promoted conversation")
         );
-        let summaries = store.list_conversations().await.expect("list conversations");
+        let summaries = store
+            .list_conversations()
+            .await
+            .expect("list conversations");
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].conversation_id, conversation_id);
 

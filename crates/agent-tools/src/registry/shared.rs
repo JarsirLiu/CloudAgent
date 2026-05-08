@@ -132,9 +132,14 @@ pub(crate) fn resolve_workspace_path(
     if input.as_os_str().is_empty() {
         return Ok(root);
     }
-    let absolute_base = input.is_absolute().then(|| absolute_path_base(input)).transpose()?;
+    let absolute_base = input
+        .is_absolute()
+        .then(|| absolute_path_base(input))
+        .transpose()?;
     let mut candidate = if input.is_absolute() {
-        absolute_base.clone().expect("absolute paths must have a base")
+        absolute_base
+            .clone()
+            .expect("absolute paths must have a base")
     } else {
         root.clone()
     };
@@ -316,9 +321,7 @@ pub(crate) fn structured_failure_result(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        normalize_existing_ancestor_path, resolve_workspace_path, resolve_write_path,
-    };
+    use super::{normalize_existing_ancestor_path, resolve_workspace_path, resolve_write_path};
     use agent_core::PermissionProfile;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -408,12 +411,14 @@ mod tests {
             normalize_existing_ancestor_path(&full_access),
             normalize_existing_ancestor_path(&outside_target)
         );
-        assert!(resolve_write_path(
-            &workspace,
-            &PermissionProfile::WorkspaceWrite,
-            Some(&path_string(&outside_target)),
-        )
-        .is_err());
+        assert!(
+            resolve_write_path(
+                &workspace,
+                &PermissionProfile::WorkspaceWrite,
+                Some(&path_string(&outside_target)),
+            )
+            .is_err()
+        );
         let _ = fs::remove_dir_all(base);
     }
 }

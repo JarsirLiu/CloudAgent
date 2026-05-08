@@ -1,6 +1,4 @@
-use super::fragments::{
-    ContextFragment, ContextInjectionStrategy, insert_context_fragments,
-};
+use super::fragments::{ContextFragment, ContextInjectionStrategy, insert_context_fragments};
 use crate::conversation::{ConversationHistory, ResponseItem};
 use crate::model::ModelRequest;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
@@ -211,13 +209,12 @@ mod tests {
             "2026-04-30T19:16:01+08:00",
             "+08:00",
         );
-        let request =
-            manager.build_current_model_request_with_fragments(
-                &[environment],
-                ContextInjectionStrategy::Standard,
-                Vec::new(),
-                0.0,
-            );
+        let request = manager.build_current_model_request_with_fragments(
+            &[environment],
+            ContextInjectionStrategy::Standard,
+            Vec::new(),
+            0.0,
+        );
 
         assert_eq!(manager.history().messages.len(), 2);
         assert_eq!(request.messages.len(), 3);
@@ -261,13 +258,12 @@ mod tests {
             "+08:00",
         );
 
-        let request =
-            manager.build_current_model_request_with_fragments(
-                &[environment],
-                ContextInjectionStrategy::MidTurnCompactionContinuation,
-                Vec::new(),
-                0.0,
-            );
+        let request = manager.build_current_model_request_with_fragments(
+            &[environment],
+            ContextInjectionStrategy::MidTurnCompactionContinuation,
+            Vec::new(),
+            0.0,
+        );
 
         assert!(matches!(
             &request.messages[..],

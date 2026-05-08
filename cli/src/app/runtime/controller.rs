@@ -3,8 +3,8 @@ use crate::app::conversation::actions::handle_tui_input;
 use crate::app::conversation::event_router;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
 use crate::terminal::{FrameRequester, UiEvent};
-use agent_protocol::{AppServerMessage, AppServerNotification};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
+use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 
 pub(crate) struct RuntimeController;
@@ -78,7 +78,10 @@ pub(crate) enum RuntimeControl {
     Break,
 }
 
-fn collect_client_events(client: &mut AppServerClient, first: AppServerEvent) -> Vec<AppServerEvent> {
+fn collect_client_events(
+    client: &mut AppServerClient,
+    first: AppServerEvent,
+) -> Vec<AppServerEvent> {
     let mut events = vec![first];
     while let Some(event) = client.try_next_event() {
         events.push(event);
@@ -96,14 +99,20 @@ fn coalesce_client_events(events: Vec<AppServerEvent>) -> Vec<AppServerEvent> {
             }
             AppServerEvent::Disconnected { .. } => {
                 if skipped > 0 {
-                    tracing::warn!(skipped, "app-server event consumer lagged; dropping ignored events");
+                    tracing::warn!(
+                        skipped,
+                        "app-server event consumer lagged; dropping ignored events"
+                    );
                     skipped = 0;
                 }
                 coalesced.push(event);
             }
             AppServerEvent::Message(message) => {
                 if skipped > 0 {
-                    tracing::warn!(skipped, "app-server event consumer lagged; dropping ignored events");
+                    tracing::warn!(
+                        skipped,
+                        "app-server event consumer lagged; dropping ignored events"
+                    );
                     skipped = 0;
                 }
                 if let Some(last) = coalesced.last_mut()
@@ -116,7 +125,10 @@ fn coalesce_client_events(events: Vec<AppServerEvent>) -> Vec<AppServerEvent> {
         }
     }
     if skipped > 0 {
-        tracing::warn!(skipped, "app-server event consumer lagged; dropping ignored events");
+        tracing::warn!(
+            skipped,
+            "app-server event consumer lagged; dropping ignored events"
+        );
     }
     coalesced
 }

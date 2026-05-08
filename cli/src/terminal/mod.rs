@@ -1,5 +1,5 @@
-pub mod custom_terminal;
 mod color_compat;
+pub mod custom_terminal;
 mod draw_coordinator;
 pub mod events;
 mod insert_history;
@@ -17,9 +17,9 @@ use std::sync::Once;
 
 use crate::ui::widgets::history_cell::HistoryCell;
 
-pub(crate) use custom_terminal::Frame;
-pub use color_compat::apply_color_cli_preference;
 use color_compat::TerminalCapabilities;
+pub use color_compat::apply_color_cli_preference;
+pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
 pub(crate) use insert_history::{insert_history_lines_raw, prepare_history_lines};

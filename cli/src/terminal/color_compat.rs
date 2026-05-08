@@ -34,14 +34,14 @@ impl TerminalCapabilities {
             };
         }
 
-        if let Some(value) = std::env::var_os("CLOUDAGENT_COLOR_DEPTH") {
-            if let Some(depth) = parse_color_depth_override(value.to_string_lossy().trim()) {
-                return Self {
-                    color_depth: depth,
-                    supports_synchronized_update: detect_synchronized_update_support(),
-                    background_tone: detect_background_tone(),
-                };
-            }
+        if let Some(value) = std::env::var_os("CLOUDAGENT_COLOR_DEPTH")
+            && let Some(depth) = parse_color_depth_override(value.to_string_lossy().trim())
+        {
+            return Self {
+                color_depth: depth,
+                supports_synchronized_update: detect_synchronized_update_support(),
+                background_tone: detect_background_tone(),
+            };
         }
 
         if force_color_disabled() {
@@ -76,21 +76,15 @@ impl TerminalCapabilities {
 pub fn apply_color_cli_preference(args: &[std::ffi::OsString]) {
     let preference = color_cli_preference(args);
     match preference {
-        Some(ColorCliPreference::Always) => {
-            unsafe {
-                std::env::set_var("CLOUDAGENT_COLOR_MODE", "always");
-            }
-        }
-        Some(ColorCliPreference::Never) => {
-            unsafe {
-                std::env::set_var("CLOUDAGENT_COLOR_MODE", "never");
-            }
-        }
-        Some(ColorCliPreference::Auto) => {
-            unsafe {
-                std::env::set_var("CLOUDAGENT_COLOR_MODE", "auto");
-            }
-        }
+        Some(ColorCliPreference::Always) => unsafe {
+            std::env::set_var("CLOUDAGENT_COLOR_MODE", "always");
+        },
+        Some(ColorCliPreference::Never) => unsafe {
+            std::env::set_var("CLOUDAGENT_COLOR_MODE", "never");
+        },
+        Some(ColorCliPreference::Auto) => unsafe {
+            std::env::set_var("CLOUDAGENT_COLOR_MODE", "auto");
+        },
         None => {}
     }
 }
@@ -106,9 +100,7 @@ fn color_cli_preference(args: &[std::ffi::OsString]) -> Option<ColorCliPreferenc
     if args.iter().any(|arg| arg == "--no-color") {
         return Some(ColorCliPreference::Never);
     }
-    let Some(value) = arg_value(args, "--color") else {
-        return None;
-    };
+    let value = arg_value(args, "--color")?;
     match value.to_string_lossy().trim().to_ascii_lowercase().as_str() {
         "always" => Some(ColorCliPreference::Always),
         "never" => Some(ColorCliPreference::Never),
@@ -186,7 +178,9 @@ pub(crate) fn adapt_bg(color: Color, capabilities: TerminalCapabilities) -> Colo
 }
 
 fn env_lowercase(name: &str) -> Option<String> {
-    std::env::var(name).ok().map(|value| value.to_ascii_lowercase())
+    std::env::var(name)
+        .ok()
+        .map(|value| value.to_ascii_lowercase())
 }
 
 fn matches_colorterm(needle: &str) -> bool {
@@ -211,7 +205,7 @@ fn detect_background_tone() -> BackgroundTone {
     let Ok(index) = last.trim().parse::<u8>() else {
         return BackgroundTone::Unknown;
     };
-    let (r, g, blue) = ansi256_rgb(index.min(255));
+    let (r, g, blue) = ansi256_rgb(index);
     let luminance = perceived_luminance((r, g, blue));
     if luminance >= 160.0 {
         BackgroundTone::Light
@@ -442,10 +436,7 @@ mod tests {
     #[test]
     fn cli_color_flags_prefer_explicit_values() {
         assert_eq!(
-            color_cli_preference(&[
-                OsString::from("--color"),
-                OsString::from("always"),
-            ]),
+            color_cli_preference(&[OsString::from("--color"), OsString::from("always"),]),
             Some(ColorCliPreference::Always)
         );
         assert_eq!(
@@ -490,8 +481,12 @@ mod tests {
         let bg = adapt_bg(Color::Rgb(26, 34, 50), capabilities);
         assert!(matches!(fg, Color::Rgb(_, _, _)));
         assert!(matches!(bg, Color::Rgb(_, _, _)));
-        let Color::Rgb(_, _, fg_b) = fg else { unreachable!() };
-        let Color::Rgb(_, _, bg_b) = bg else { unreachable!() };
+        let Color::Rgb(_, _, fg_b) = fg else {
+            unreachable!()
+        };
+        let Color::Rgb(_, _, bg_b) = bg else {
+            unreachable!()
+        };
         assert!(fg_b < 225);
         assert!(bg_b > 50);
     }

@@ -224,10 +224,12 @@ impl BottomPaneController {
             }
             FrontendMode::Idle => None,
         };
-        let runtime_hint = self
-            .runtime
-            .turn_started_at
-            .map(|started| format!("{} • esc to interrupt", fmt_elapsed_compact(started.elapsed().as_secs())));
+        let runtime_hint = self.runtime.turn_started_at.map(|started| {
+            format!(
+                "{} • esc to interrupt",
+                fmt_elapsed_compact(started.elapsed().as_secs())
+            )
+        });
 
         let mut parts = Vec::new();
         let hint_meta = format!(
@@ -352,7 +354,10 @@ mod tests {
 
         assert_eq!(status.text, "Working");
         assert_eq!(status.indicator.as_deref(), Some("⠙"));
-        assert_eq!(status.live_banner.as_deref(), Some("running command: rg cli"));
+        assert_eq!(
+            status.live_banner.as_deref(),
+            Some("running command: rg cli")
+        );
         assert_eq!(
             status.runtime_hint.as_deref(),
             Some("0s • esc to interrupt")
