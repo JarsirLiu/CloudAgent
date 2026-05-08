@@ -198,6 +198,8 @@ impl AgentConfig {
     }
 
     fn defaults(workspace_root: PathBuf) -> Self {
+        let mut memory = MemoryConfig::default();
+        memory.root_dir = workspace_root.join("data").join("state").join("memory");
         Self {
             runtime: RuntimeConfig {
                 system_prompt: default_system_prompt(),
@@ -210,7 +212,7 @@ impl AgentConfig {
                 context_compaction_preserved_user_turns: 3,
                 context_compaction_preserved_tail_tokens: 12_000,
                 context_compaction_summary_source_tokens: 24_000,
-                memory: MemoryConfig::default(),
+                memory,
                 enable_skill_bucket: false,
                 enable_mcp_bucket: false,
                 post_compact_token_budget: 50_000,
