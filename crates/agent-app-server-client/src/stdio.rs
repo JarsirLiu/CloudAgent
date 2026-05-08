@@ -144,6 +144,17 @@ pub(crate) async fn read_events_from<R>(
 where
     R: AsyncBufRead + Unpin,
 {
+    read_events_from_with_disconnect_message(reader, event_tx, "stdio app server closed").await
+}
+
+pub(crate) async fn read_events_from_with_disconnect_message<R>(
+    reader: R,
+    event_tx: mpsc::Sender<AppServerEvent>,
+    disconnect_message: &str,
+) -> Result<()>
+where
+    R: AsyncBufRead + Unpin,
+{
     let mut lines = reader.lines();
     let mut skipped_events = 0usize;
     let mut last_seq_by_conversation: HashMap<String, u64> = HashMap::new();
@@ -179,7 +190,7 @@ where
         &event_tx,
         &mut skipped_events,
         AppServerEvent::Disconnected {
-            message: "stdio app server closed".to_string(),
+            message: disconnect_message.to_string(),
         },
     )
     .await;
