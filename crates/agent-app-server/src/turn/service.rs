@@ -26,6 +26,13 @@ pub(crate) async fn submit_turn(
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) {
+    let created_conversation = runtime
+        .ensure_conversation_persisted(&conversation_id)
+        .await
+        .unwrap_or(false);
+    if created_conversation {
+        let _ = session_service::list_conversations(&runtime, event_tx, state).await;
+    }
     session_service::maybe_spawn_auto_title_job(
         runtime.clone(),
         event_tx.clone(),

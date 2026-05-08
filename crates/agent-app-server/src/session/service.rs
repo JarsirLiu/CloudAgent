@@ -164,7 +164,7 @@ pub(crate) async fn archive_conversation(
     conversation_id: String,
 ) -> Result<()> {
     runtime.archive_conversation(&conversation_id).await?;
-    let next_conversation_id = runtime.create_fresh_conversation().await?;
+    let next_conversation_id = runtime.create_draft_conversation().await?;
     let transition =
         session_state::apply_archive_transition(state, &conversation_id, &next_conversation_id)
             .await;
@@ -184,7 +184,7 @@ pub(crate) async fn archive_conversation(
         },
     )
     .await;
-    if active_session_id != conversation_id {
+    if active_session_id != conversation_id && !switched_active {
         send_notification(
             event_tx,
             state,
@@ -251,7 +251,7 @@ pub(crate) async fn delete_conversation(
     };
     runtime.reset_conversation(&conversation_id).await?;
     if was_active {
-        let next_conversation_id = runtime.create_fresh_conversation().await?;
+        let next_conversation_id = runtime.create_draft_conversation().await?;
         session_state::apply_active_conversation(state, next_conversation_id.clone()).await;
         session_state::persist_active_conversation(runtime, &next_conversation_id).await;
         publish_switched_conversation_state(runtime, event_tx, state, &next_conversation_id)
@@ -271,15 +271,17 @@ pub(crate) async fn delete_conversation(
         },
     )
     .await;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::Info {
-            conversation_id: active_session_id,
-            message: format!("Deleted conversation `{conversation_id}`"),
-        },
-    )
-    .await;
+    if !was_active {
+        send_notification(
+            event_tx,
+            state,
+            AppServerNotification::Info {
+                conversation_id: active_session_id,
+                message: format!("Deleted conversation `{conversation_id}`"),
+            },
+        )
+        .await;
+    }
     Ok(())
 }
 

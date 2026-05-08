@@ -73,6 +73,7 @@ pub trait AgentHostExt {
 #[async_trait]
 pub trait ConversationStoreBackend: Send + Sync {
     async fn create_conversation(&self, conversation_id: &str) -> Result<()>;
+    async fn has_conversation(&self, conversation_id: &str) -> Result<bool>;
     async fn archive_conversation(&self, conversation_id: &str) -> Result<()>;
     async fn delete_conversation(&self, conversation_id: &str) -> Result<()>;
     async fn delete_events(&self, conversation_id: &str) -> Result<()>;

@@ -93,9 +93,12 @@ impl AgentHost {
         &self.metadata.cli_permission_mode
     }
 
-    pub async fn create_fresh_conversation(&self) -> Result<String> {
-        let id = Uuid::now_v7().to_string();
-        self.store.create_conversation(&id).await?;
+    pub fn new_conversation_id(&self) -> String {
+        Uuid::now_v7().to_string()
+    }
+
+    pub async fn create_draft_conversation(&self) -> Result<String> {
+        let id = self.new_conversation_id();
         self.store.mark_active_conversation(&id).await?;
         Ok(id)
     }
@@ -106,7 +109,7 @@ impl AgentHost {
         {
             return Ok(id);
         }
-        self.create_fresh_conversation().await
+        self.create_draft_conversation().await
     }
 
     pub async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {
@@ -126,6 +129,18 @@ impl AgentHost {
 
     pub async fn create_conversation(&self, conversation_id: &str) -> Result<()> {
         self.store.create_conversation(conversation_id).await
+    }
+
+    pub async fn has_conversation(&self, conversation_id: &str) -> Result<bool> {
+        self.store.has_conversation(conversation_id).await
+    }
+
+    pub async fn ensure_conversation_persisted(&self, conversation_id: &str) -> Result<bool> {
+        if self.has_conversation(conversation_id).await? {
+            return Ok(false);
+        }
+        self.create_conversation(conversation_id).await?;
+        Ok(true)
     }
 
     pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {

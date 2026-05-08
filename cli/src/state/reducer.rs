@@ -203,11 +203,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             AppServerNotification::ConversationSwitched { conversation_id } => {
                 actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
-                actions.push(ServerAction::PushNoticeCell {
-                    label: "conversation".to_string(),
-                    message: format!("Switched to `{conversation_id}`"),
-                    level: NoticeLevel::Info,
-                });
             }
             AppServerNotification::Info { message, .. } => {
                 actions.push(ServerAction::PushNoticeCell {
@@ -481,5 +476,21 @@ mod tests {
                     && *next_delay_ms == 500
             )
         }));
+    }
+
+    #[test]
+    fn conversation_switched_only_updates_active_conversation() {
+        let message = AppServerMessage::Notification(AppServerNotification::ConversationSwitched {
+            conversation_id: "draft-1".to_string(),
+        });
+
+        let reduced = apply_server_message(&message);
+
+        assert_eq!(reduced.actions.len(), 1);
+        assert!(matches!(
+            reduced.actions.first(),
+            Some(ServerAction::SwitchConversation(conversation_id))
+                if conversation_id == "draft-1"
+        ));
     }
 }

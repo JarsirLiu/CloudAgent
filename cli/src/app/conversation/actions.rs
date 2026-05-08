@@ -135,9 +135,6 @@ pub(crate) fn handle_tui_input(
             } else {
                 trimmed.to_string()
             };
-            client.send_command(AppClientCommand::CreateConversation {
-                conversation_id: conversation_id.clone(),
-            })?;
             client.send_command(AppClientCommand::SwitchConversation {
                 conversation_id: conversation_id.clone(),
             })?;

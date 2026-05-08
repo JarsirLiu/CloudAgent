@@ -4,6 +4,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -127,23 +128,43 @@ pub(crate) fn resolve_workspace_path(
     let Some(value) = value else {
         return Ok(root);
     };
-    let input = Path::new(value);
-    if input.is_absolute() {
-        bail!("absolute paths are not allowed; use workspace-relative paths");
+    let input = Path::new(value.trim());
+    if input.as_os_str().is_empty() {
+        return Ok(root);
     }
-    let mut candidate = root.clone();
-    for component in input.components() {
+    let absolute_base = input.is_absolute().then(|| absolute_path_base(input)).transpose()?;
+    let mut candidate = if input.is_absolute() {
+        absolute_base.clone().expect("absolute paths must have a base")
+    } else {
+        root.clone()
+    };
+    let mut components = input.components().peekable();
+    if input.is_absolute() {
+        if matches!(components.peek(), Some(Component::Prefix(_))) {
+            components.next();
+        }
+        if matches!(components.peek(), Some(Component::RootDir)) {
+            components.next();
+        }
+    }
+    for component in components {
         match component {
             Component::CurDir => {}
             Component::Normal(segment) => candidate.push(segment),
             Component::ParentDir => {
-                if !candidate.pop() || !candidate.starts_with(&root) {
+                if !candidate.pop()
+                    || (input.is_absolute() && candidate == absolute_base.clone().unwrap())
+                {
+                    bail!("path escapes the workspace root");
+                }
+                if !input.is_absolute() && !candidate.starts_with(&root) {
                     bail!("path escapes the workspace root");
                 }
             }
             Component::Prefix(_) | Component::RootDir => bail!("unsupported path component"),
         }
     }
+    let candidate = normalize_existing_ancestor_path(&candidate);
     if !candidate.starts_with(&root) {
         bail!("path escapes the workspace root");
     }
@@ -200,6 +221,52 @@ fn resolve_full_access_path(workspace_root: &Path, value: Option<&str>) -> Resul
     Ok(candidate)
 }
 
+fn absolute_path_base(input: &Path) -> Result<PathBuf> {
+    let mut components = input.components();
+    match components.next() {
+        Some(Component::Prefix(prefix)) => {
+            let mut base = PathBuf::from(format!(
+                "{}{}",
+                prefix.as_os_str().to_string_lossy(),
+                std::path::MAIN_SEPARATOR
+            ));
+            if matches!(components.next(), Some(Component::RootDir)) {
+                return Ok(base);
+            }
+            base.pop();
+            Ok(base)
+        }
+        Some(Component::RootDir) => Ok(PathBuf::from(std::path::MAIN_SEPARATOR_STR)),
+        _ => bail!("unsupported path component"),
+    }
+}
+
+fn normalize_existing_ancestor_path(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+
+    let mut suffix = Vec::<OsString>::new();
+    let mut current = path;
+    loop {
+        let Some(name) = current.file_name() else {
+            return path.to_path_buf();
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = current.parent() else {
+            return path.to_path_buf();
+        };
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            let mut normalized = canonical_parent;
+            for segment in suffix.iter().rev() {
+                normalized.push(segment);
+            }
+            return normalized;
+        }
+        current = parent;
+    }
+}
+
 pub(crate) fn resolve_write_path(
     workspace_root: &Path,
     permission_profile: &PermissionProfile,
@@ -244,5 +311,109 @@ pub(crate) fn structured_failure_result(
                 message: "tool execution failed".to_string(),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        normalize_existing_ancestor_path, resolve_workspace_path, resolve_write_path,
+    };
+    use agent_core::PermissionProfile;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("agent-tools-{label}-{suffix}"))
+    }
+
+    fn create_workspace() -> (PathBuf, PathBuf, PathBuf) {
+        let base = unique_test_dir("shared-paths");
+        let workspace = base.join("workspace");
+        let nested = workspace.join("nested");
+        let outside = base.join("outside");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        (base, workspace, outside)
+    }
+
+    fn path_string(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn resolve_workspace_path_accepts_absolute_path_inside_workspace() {
+        let (base, workspace, _) = create_workspace();
+        let target = workspace.join("nested").join("file.txt");
+
+        let resolved = resolve_workspace_path(&workspace, Some(&path_string(&target))).unwrap();
+
+        assert_eq!(
+            normalize_existing_ancestor_path(&resolved),
+            normalize_existing_ancestor_path(&target)
+        );
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn resolve_workspace_path_rejects_absolute_path_outside_workspace() {
+        let (base, workspace, outside) = create_workspace();
+        let target = outside.join("file.txt");
+
+        let err = resolve_workspace_path(&workspace, Some(&path_string(&target))).unwrap_err();
+
+        assert!(err.to_string().contains("path escapes the workspace root"));
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn resolve_write_path_respects_permission_profile_boundaries() {
+        let (base, workspace, outside) = create_workspace();
+        let inside = workspace.join("nested").join("file.txt");
+        let outside_target = outside.join("file.txt");
+
+        let readonly = resolve_write_path(
+            &workspace,
+            &PermissionProfile::ReadOnly,
+            Some(&path_string(&inside)),
+        )
+        .unwrap();
+        let workspace_write = resolve_write_path(
+            &workspace,
+            &PermissionProfile::WorkspaceWrite,
+            Some(&path_string(&inside)),
+        )
+        .unwrap();
+        let full_access = resolve_write_path(
+            &workspace,
+            &PermissionProfile::FullAccess,
+            Some(&path_string(&outside_target)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            normalize_existing_ancestor_path(&readonly),
+            normalize_existing_ancestor_path(&inside)
+        );
+        assert_eq!(
+            normalize_existing_ancestor_path(&workspace_write),
+            normalize_existing_ancestor_path(&inside)
+        );
+        assert_eq!(
+            normalize_existing_ancestor_path(&full_access),
+            normalize_existing_ancestor_path(&outside_target)
+        );
+        assert!(resolve_write_path(
+            &workspace,
+            &PermissionProfile::WorkspaceWrite,
+            Some(&path_string(&outside_target)),
+        )
+        .is_err());
+        let _ = fs::remove_dir_all(base);
     }
 }

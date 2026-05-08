@@ -37,6 +37,10 @@ impl ConversationStoreBackend for JsonConversationStore {
         JsonConversationStore::create_conversation(self, conversation_id).await
     }
 
+    async fn has_conversation(&self, conversation_id: &str) -> Result<bool> {
+        JsonConversationStore::has_conversation(self, conversation_id).await
+    }
+
     async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {
         JsonConversationStore::archive_conversation(self, conversation_id).await
     }
@@ -233,6 +237,15 @@ impl JsonConversationStore {
             now,
         );
         Ok(())
+    }
+
+    pub async fn has_conversation(&self, conversation_id: &str) -> Result<bool> {
+        Ok(session_index::list_sessions(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+        )?
+        .into_iter()
+        .any(|row| row.conversation_id == conversation_id))
     }
 
     pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {
@@ -636,6 +649,76 @@ mod tests {
                 .expect("load approval grant"),
             "approval grant should survive reopening the store"
         );
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn marking_active_conversation_does_not_create_empty_session() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cloudagent-draft-session-{unique}"));
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "draft-only";
+        store.ensure_root_dir().await.expect("create root");
+
+        store
+            .mark_active_conversation(conversation_id)
+            .await
+            .expect("mark active conversation");
+
+        assert_eq!(
+            store
+                .load_active_conversation()
+                .await
+                .expect("load active conversation"),
+            Some(conversation_id.to_string())
+        );
+        assert!(
+            !store
+                .has_conversation(conversation_id)
+                .await
+                .expect("check draft visibility")
+        );
+        assert!(
+            store.list_conversations().await.expect("list conversations").is_empty(),
+            "draft conversations should not appear in the session list before first message"
+        );
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn create_conversation_promotes_existing_draft_to_visible_session() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cloudagent-draft-promote-{unique}"));
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "draft-promote";
+        store.ensure_root_dir().await.expect("create root");
+
+        store
+            .mark_active_conversation(conversation_id)
+            .await
+            .expect("mark active conversation");
+        store
+            .create_conversation(conversation_id)
+            .await
+            .expect("create conversation");
+
+        assert!(
+            store
+                .has_conversation(conversation_id)
+                .await
+                .expect("check promoted conversation")
+        );
+        let summaries = store.list_conversations().await.expect("list conversations");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].conversation_id, conversation_id);
 
         let _ = fs::remove_dir_all(root).await;
     }
