@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast, mpsc};
-use tokio::time::Instant;
+use tokio::time::{Duration, Instant};
+
+const IDLE_WORKER_TTL: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
 pub(crate) struct WorkerManager {
@@ -25,7 +27,7 @@ impl WorkerManager {
         &self,
         conversation_id: &str,
     ) -> Result<broadcast::Receiver<NodeEvent>> {
-        self.prune_finished_workers().await?;
+        self.prune_workers().await?;
         let mut state = self.state.lock().await;
         let handle = self.ensure_worker(&mut state, conversation_id).await?;
         Ok(handle.events_tx.subscribe())
@@ -36,7 +38,7 @@ impl WorkerManager {
         conversation_id: &str,
         command: AppClientCommand,
     ) -> Result<()> {
-        self.prune_finished_workers().await?;
+        self.prune_workers().await?;
         match self
             .send_command_inner(conversation_id, command.clone())
             .await
@@ -147,21 +149,22 @@ impl WorkerManager {
             .ok_or_else(|| anyhow!("worker handle missing for {conversation_id}"))
     }
 
-    async fn prune_finished_workers(&self) -> Result<()> {
-        let finished = {
+    async fn prune_workers(&self) -> Result<()> {
+        self.prune_workers_at(Instant::now()).await
+    }
+
+    async fn prune_workers_at(&self, now: Instant) -> Result<()> {
+        let evicted = {
             let mut state = self.state.lock().await;
-            let finished: Vec<String> = state
+            let evicted: Vec<String> = state
                 .workers
                 .iter()
                 .filter_map(|(conversation_id, handle)| {
-                    handle
-                        .worker
-                        .is_finished()
-                        .then(|| conversation_id.to_string())
+                    should_evict_worker(handle, now).then(|| conversation_id.to_string())
                 })
                 .collect();
 
-            finished
+            evicted
                 .into_iter()
                 .filter_map(|conversation_id| {
                     state
@@ -172,7 +175,8 @@ impl WorkerManager {
                 .collect::<Vec<_>>()
         };
 
-        for (_, handle) in finished {
+        for (_, handle) in evicted {
+            drop(handle.command_tx);
             handle.worker.await??;
         }
         Ok(())
@@ -203,6 +207,10 @@ struct WorkerHandle {
     last_active_at: Instant,
 }
 
+fn should_evict_worker(handle: &WorkerHandle, now: Instant) -> bool {
+    handle.worker.is_finished() || now.duration_since(handle.last_active_at) >= IDLE_WORKER_TTL
+}
+
 fn worker_stdio_args(conversation_id: &str) -> Vec<OsString> {
     vec![
         OsString::from("app-server-stdio"),
@@ -213,7 +221,10 @@ fn worker_stdio_args(conversation_id: &str) -> Vec<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NodeEvent, WorkerHandle, WorkerManager, worker_stdio_args};
+    use super::{
+        IDLE_WORKER_TTL, NodeEvent, WorkerHandle, WorkerManager, should_evict_worker,
+        worker_stdio_args,
+    };
     use anyhow::Result;
     use std::ffi::OsString;
     use tokio::sync::{broadcast, mpsc};
@@ -252,7 +263,7 @@ mod tests {
         }
 
         tokio::task::yield_now().await;
-        manager.prune_finished_workers().await?;
+        manager.prune_workers().await?;
         assert!(manager.state.lock().await.workers.is_empty());
         Ok(())
     }
@@ -300,6 +311,73 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn prune_workers_evicts_idle_handles() -> Result<()> {
+        let manager = WorkerManager::new(OsString::from("agentd.exe"));
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let worker = tokio::spawn(async {
+            std::future::pending::<()>().await;
+            #[allow(unreachable_code)]
+            Result::<()>::Ok(())
+        });
+        {
+            let mut state = manager.state.lock().await;
+            let (events_tx, _) = broadcast::channel(8);
+            state.workers.insert(
+                "conversation-1".to_string(),
+                WorkerHandle {
+                    command_tx: tx,
+                    events_tx,
+                    worker,
+                    last_active_at: Instant::now() - IDLE_WORKER_TTL,
+                },
+            );
+        }
+
+        manager.prune_workers_at(Instant::now()).await?;
+        assert!(manager.state.lock().await.workers.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn prune_workers_keeps_recent_handles() -> Result<()> {
+        let manager = WorkerManager::new(OsString::from("agentd.exe"));
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let worker = tokio::spawn(async {
+            std::future::pending::<()>().await;
+            #[allow(unreachable_code)]
+            Result::<()>::Ok(())
+        });
+        {
+            let mut state = manager.state.lock().await;
+            let (events_tx, _) = broadcast::channel(8);
+            state.workers.insert(
+                "conversation-1".to_string(),
+                WorkerHandle {
+                    command_tx: tx,
+                    events_tx,
+                    worker,
+                    last_active_at: Instant::now(),
+                },
+            );
+            let handle = state.workers.get("conversation-1").expect("worker handle");
+            assert!(!should_evict_worker(handle, Instant::now()));
+        }
+
+        manager.prune_workers_at(Instant::now()).await?;
+        assert!(
+            manager
+                .state
+                .lock()
+                .await
+                .workers
+                .contains_key("conversation-1")
+        );
         Ok(())
     }
 }
