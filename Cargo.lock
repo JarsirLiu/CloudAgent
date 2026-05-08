@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-app-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-core",
  "agent-protocol",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "agent-app-server-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-app-server",
  "agent-core",
@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "agent-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "agent-gateway"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-core",
  "shared",
@@ -59,7 +59,7 @@ dependencies = [
 
 [[package]]
 name = "agent-memory"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "agent-model-provider"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "agent-protocol"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -95,7 +95,7 @@ dependencies = [
 
 [[package]]
 name = "agent-scheduler"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-core",
  "shared",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "agent-tools"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-core",
  "agent-protocol",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "agentd"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-app-server",
  "agent-core",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-app-server-client",
  "agent-core",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "serde",
@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "gatewayd"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-gateway",
  "anyhow",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "infra-http"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -1180,21 +1180,21 @@ dependencies = [
 
 [[package]]
 name = "infra-shell"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "shared",
 ]
 
 [[package]]
 name = "infra-ssh"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "shared",
 ]
 
 [[package]]
 name = "infra-store"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-core",
  "agent-protocol",
@@ -2135,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
 ]
