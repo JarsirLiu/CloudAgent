@@ -243,9 +243,9 @@ impl BottomPaneController {
             parts.push(format!(
                 "in {} · out {} · cached {} · total {}",
                 format_tokens(usage.input_tokens),
-                format_tokens(usage.output_tokens),
+                format_tokens(usage.total_output_tokens()),
                 format_tokens(usage.cached_input_tokens),
-                format_tokens(usage.total_tokens)
+                format_tokens(usage.total_consumed_tokens())
             ));
         }
         if let (Some(last), Some(window)) = (
@@ -253,7 +253,7 @@ impl BottomPaneController {
             app.run_state.model_context_window,
         ) && window > 0
         {
-            let percent = last.total_tokens.saturating_mul(100) / window;
+            let percent = last.total_consumed_tokens().saturating_mul(100) / window;
             parts.push(format!("context {percent}%"));
         }
         StatusViewModel {

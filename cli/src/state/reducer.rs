@@ -450,7 +450,8 @@ mod tests {
                     last_usage,
                     total_usage,
                     model_context_window,
-                } if last_usage.total_tokens == 13
+                } if last_usage.total_output_tokens() == 4
+                    && last_usage.total_tokens == 13
                     && total_usage.cached_input_tokens == 4
                     && *model_context_window == Some(100)
             )

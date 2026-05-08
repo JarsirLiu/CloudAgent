@@ -38,6 +38,17 @@ pub struct ModelUsage {
 }
 
 impl ModelUsage {
+    pub fn total_output_tokens(&self) -> u64 {
+        self.output_tokens
+            .saturating_add(self.reasoning_output_tokens)
+    }
+
+    pub fn total_consumed_tokens(&self) -> u64 {
+        self.input_tokens
+            .saturating_add(self.output_tokens)
+            .saturating_add(self.reasoning_output_tokens)
+    }
+
     pub fn add_assign(&mut self, other: &Self) {
         self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
         self.cached_input_tokens = self
@@ -111,5 +122,36 @@ pub trait ChatModel: Send + Sync {
             observer.on_text_delta(content);
         }
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModelUsage;
+
+    #[test]
+    fn total_output_tokens_includes_reasoning_tokens() {
+        let usage = ModelUsage {
+            input_tokens: 1,
+            cached_input_tokens: 2,
+            output_tokens: 3,
+            reasoning_output_tokens: 4,
+            total_tokens: 10,
+        };
+
+        assert_eq!(usage.total_output_tokens(), 7);
+    }
+
+    #[test]
+    fn total_consumed_tokens_includes_reasoning_and_input() {
+        let usage = ModelUsage {
+            input_tokens: 11,
+            cached_input_tokens: 2,
+            output_tokens: 3,
+            reasoning_output_tokens: 4,
+            total_tokens: 99,
+        };
+
+        assert_eq!(usage.total_consumed_tokens(), 18);
     }
 }
