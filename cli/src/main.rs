@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use cli::agent_host::build_agent_host;
 use cli::app::cli_settings::load_cli_settings;
 use cli::terminal::apply_color_cli_preference;
-use cli::{ConsoleConfig, ConsoleConnection, run_console};
+use cli::{AppServerTarget, ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
 use std::ffi::OsString;
 use std::fs;
@@ -53,36 +53,7 @@ async fn main() -> Result<()> {
     };
     runtime.run_startup_retention_cleanup().await;
     let conversation_id = runtime.ensure_active_conversation().await?;
-    let transport = arg_value(&args, "--transport")
-        .or_else(|| std::env::var_os("CLOUDAGENT_CLIENT_TRANSPORT"))
-        .and_then(|value| value.into_string().ok());
-
-    let connection = if transport.as_deref() == Some("stdio") {
-        let program = arg_value(&args, "--app-server-bin")
-            .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_BIN"))
-            .unwrap_or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|path| path.parent().map(|parent| parent.join(exe_name("agentd"))))
-                    .map(|path| path.into_os_string())
-                    .unwrap_or_else(|| OsString::from(exe_name("agentd")))
-            });
-        let remote_conversation = arg_value(&args, "--conversation")
-            .and_then(|value| value.into_string().ok())
-            .unwrap_or_else(|| conversation_id.clone());
-        ConsoleConnection::Stdio {
-            program,
-            args: vec![
-                OsString::from("app-server-stdio"),
-                OsString::from("--conversation"),
-                OsString::from(remote_conversation),
-            ],
-        }
-    } else {
-        ConsoleConnection::InProcess {
-            runtime: runtime.clone(),
-        }
-    };
+    let (target, bootstrap) = resolve_console_target(&args, &conversation_id, Some(&runtime))?;
 
     run_console(ConsoleConfig {
         conversation_id: conversation_id.clone(),
@@ -92,7 +63,8 @@ async fn main() -> Result<()> {
         initial_permission_mode: runtime.cli_permission_mode().to_string(),
         auto_approve: false,
         auto_approve_reason: None,
-        connection,
+        target,
+        bootstrap,
     })
     .await
 }
@@ -153,6 +125,61 @@ fn normalize_cli_args(args: Vec<OsString>) -> Vec<OsString> {
     }
 }
 
+fn resolve_console_target(
+    args: &[OsString],
+    conversation_id: &str,
+    runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
+) -> Result<(AppServerTarget, ConsoleBootstrap)> {
+    let target = arg_value(args, "--target")
+        .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_TARGET"))
+        .and_then(|value| value.into_string().ok())
+        .unwrap_or_else(|| "embedded".to_string());
+
+    match target.as_str() {
+        "embedded" => Ok((
+            AppServerTarget::Embedded,
+            ConsoleBootstrap::Embedded {
+                runtime: runtime
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("embedded target requires a local runtime"))?,
+            },
+        )),
+        "worker-stdio" => {
+            let program = arg_value(args, "--app-server-bin")
+                .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_BIN"))
+                .unwrap_or_else(|| {
+                    std::env::current_exe()
+                        .ok()
+                        .and_then(|path| {
+                            path.parent().map(|parent| parent.join(exe_name("agentd")))
+                        })
+                        .map(|path| path.into_os_string())
+                        .unwrap_or_else(|| OsString::from(exe_name("agentd")))
+                });
+            let remote_conversation = arg_value(args, "--conversation")
+                .and_then(|value| value.into_string().ok())
+                .unwrap_or_else(|| conversation_id.to_string());
+            Ok((
+                AppServerTarget::WorkerStdio,
+                ConsoleBootstrap::WorkerStdio {
+                    program,
+                    args: vec![
+                        OsString::from("app-server-stdio"),
+                        OsString::from("--conversation"),
+                        OsString::from(remote_conversation),
+                    ],
+                },
+            ))
+        }
+        "local-node" => bail!(
+            "target 'local-node' is reserved for the direct-mode migration and is not implemented yet"
+        ),
+        other => bail!(
+            "unknown target '{other}'. supported targets in this migration stage: embedded, worker-stdio, local-node"
+        ),
+    }
+}
+
 fn wants_help(args: &[OsString]) -> bool {
     args.iter().any(|arg| arg == "--help" || arg == "-h")
 }
@@ -167,17 +194,17 @@ fn print_help() {
 cloudagent cli
 
 Usage:
-  cloudagent start [--transport stdio] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
-  cloudagent [--transport stdio] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
+  cloudagent start [--target TARGET] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
+  cloudagent [--target TARGET] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent --help
   cloudagent --version
 
 Options:
   -h, --help                 Show this help text
   -V, --version              Show the CLI version
-      --transport MODE       Client transport: in-process (default) or stdio
-      --app-server-bin PATH  app-server binary path when using stdio transport
-      --conversation ID      Conversation id for stdio transport
+      --target TARGET        Target selection: embedded (temporary), worker-stdio (temporary), or local-node (reserved)
+      --app-server-bin PATH  worker binary path when using worker-stdio
+      --conversation ID      Conversation id for worker-stdio
       --color WHEN           Color output: auto, always, or never
       --no-color             Disable color output
 "
@@ -190,7 +217,8 @@ fn print_version() {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_cli_args;
+    use super::{normalize_cli_args, resolve_console_target};
+    use cli::{AppServerTarget, ConsoleBootstrap};
     use std::ffi::OsString;
 
     #[test]
@@ -212,5 +240,51 @@ mod tests {
         let args = vec![OsString::from("--version")];
         let normalized = normalize_cli_args(args.clone());
         assert_eq!(normalized, args);
+    }
+
+    #[test]
+    fn worker_stdio_target_maps_to_worker_bootstrap() {
+        let args = vec![
+            OsString::from("--target"),
+            OsString::from("worker-stdio"),
+            OsString::from("--app-server-bin"),
+            OsString::from("custom-agentd.exe"),
+            OsString::from("--conversation"),
+            OsString::from("remote-conversation"),
+        ];
+        let (target, bootstrap) = resolve_console_target(&args, "local-conversation", None)
+            .expect("worker-stdio target should resolve");
+
+        assert!(matches!(target, AppServerTarget::WorkerStdio));
+        match bootstrap {
+            ConsoleBootstrap::WorkerStdio { program, args } => {
+                assert_eq!(program, OsString::from("custom-agentd.exe"));
+                assert_eq!(
+                    args,
+                    vec![
+                        OsString::from("app-server-stdio"),
+                        OsString::from("--conversation"),
+                        OsString::from("remote-conversation"),
+                    ]
+                );
+            }
+            other => panic!(
+                "unexpected bootstrap: {}",
+                std::any::type_name_of_val(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn local_node_target_is_reserved_until_node_exists() {
+        let args = vec![OsString::from("--target"), OsString::from("local-node")];
+        match resolve_console_target(&args, "local-conversation", None) {
+            Ok(_) => panic!("local-node should not resolve before node exists"),
+            Err(error) => assert!(
+                error
+                    .to_string()
+                    .contains("target 'local-node' is reserved")
+            ),
+        }
     }
 }

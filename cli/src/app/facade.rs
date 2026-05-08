@@ -17,7 +17,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
     let mut client = create_client(&config, conversation_id.clone()).await?;
     let mut app = TuiApp::new(
         conversation_id.clone(),
-        config.connection.label(),
+        config.target.label(),
         config.workspace_root.clone(),
         config.conversation_store_dir.clone(),
         config.initial_filter_enabled,

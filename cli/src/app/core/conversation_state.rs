@@ -12,19 +12,19 @@ use agent_protocol::{FrontendMode, RequestId};
 impl TuiApp {
     pub(crate) fn new(
         conversation_id: String,
-        connection_label: &str,
+        target_label: &str,
         workspace_root: std::path::PathBuf,
         conversation_store_dir: std::path::PathBuf,
         initial_filter_enabled: bool,
         initial_permission_mode: String,
     ) -> Self {
-        let mut run_state = RunState::new(connection_label);
+        let mut run_state = RunState::new(target_label);
         run_state.pre_llm_filter_enabled = initial_filter_enabled;
         run_state.permission_mode = initial_permission_mode;
         Self {
             conversation_id,
             conversation_summaries: Vec::new(),
-            connection_label: connection_label.to_string(),
+            target_label: target_label.to_string(),
             transcript_owner: TranscriptOwner::default(),
             run_state,
             bottom_pane: BottomPaneController::new(),
@@ -41,7 +41,7 @@ impl TuiApp {
         let filter_enabled = self.run_state.pre_llm_filter_enabled;
         let permission_mode = self.run_state.permission_mode.clone();
         self.transcript_owner.clear();
-        self.run_state = RunState::new(&self.connection_label);
+        self.run_state = RunState::new(&self.target_label);
         self.run_state.pre_llm_filter_enabled = filter_enabled;
         self.run_state.permission_mode = permission_mode;
         self.bottom_pane = BottomPaneController::new();

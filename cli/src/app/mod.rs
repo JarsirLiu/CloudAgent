@@ -8,7 +8,7 @@ mod facade;
 pub(crate) mod runtime;
 
 pub(crate) use crate::app::core::types::TuiApp;
-pub use crate::app::core::types::{ConsoleConfig, ConsoleConnection};
+pub use crate::app::core::types::{AppServerTarget, ConsoleBootstrap, ConsoleConfig};
 pub use crate::app::facade::run_console;
 
 #[cfg(test)]

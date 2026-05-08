@@ -17,33 +17,44 @@ pub struct ConsoleConfig {
     pub initial_permission_mode: String,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
-    pub connection: ConsoleConnection,
+    pub target: AppServerTarget,
+    pub bootstrap: ConsoleBootstrap,
 }
 
 #[derive(Clone)]
-pub enum ConsoleConnection {
-    InProcess {
+pub enum AppServerTarget {
+    LocalNode,
+    #[doc(hidden)]
+    Embedded,
+    #[doc(hidden)]
+    WorkerStdio,
+}
+
+impl AppServerTarget {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::LocalNode => "local-node",
+            Self::Embedded => "embedded",
+            Self::WorkerStdio => "worker-stdio",
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum ConsoleBootstrap {
+    Embedded {
         runtime: Arc<AgentHost>,
     },
-    Stdio {
+    WorkerStdio {
         program: OsString,
         args: Vec<OsString>,
     },
 }
 
-impl ConsoleConnection {
-    pub(crate) fn label(&self) -> &'static str {
-        match self {
-            Self::InProcess { .. } => "in-process",
-            Self::Stdio { .. } => "stdio-bridge",
-        }
-    }
-}
-
 pub(crate) struct TuiApp {
     pub(crate) conversation_id: String,
     pub(crate) conversation_summaries: Vec<ConversationSummary>,
-    pub(crate) connection_label: String,
+    pub(crate) target_label: String,
     pub(crate) transcript_owner: TranscriptOwner,
     pub(crate) run_state: RunState,
     pub(crate) bottom_pane: BottomPaneController,

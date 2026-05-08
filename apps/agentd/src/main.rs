@@ -2,7 +2,7 @@ use agent_app_server::run_stdio_server;
 use agent_core::AgentHost;
 use anyhow::Result;
 use cli::agent_host::build_agent_host;
-use cli::{ConsoleConfig, ConsoleConnection, run_console};
+use cli::{AppServerTarget, ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
 use std::sync::Arc;
 
@@ -50,7 +50,8 @@ async fn run_console_mode(runtime: Arc<AgentHost>) -> Result<()> {
         initial_permission_mode: runtime.cli_permission_mode().to_string(),
         auto_approve: true,
         auto_approve_reason: Some("auto-approved in local daemon console".to_string()),
-        connection: ConsoleConnection::InProcess { runtime },
+        target: AppServerTarget::Embedded,
+        bootstrap: ConsoleBootstrap::Embedded { runtime },
     })
     .await
 }
