@@ -83,7 +83,6 @@ jobs:
           export NFPM_VERSION="${VERSION:-manual}"
           export NFPM_ARCH="${{ matrix.linux_arch }}"
           export NFPM_HOMEPAGE="https://github.com/${{ github.repository }}"
-          export NFPM_SOURCE_DIR="${GITHUB_WORKSPACE}/${PKGROOT}"
           nfpm pkg --config packaging/nfpm.yaml --packager deb --target "dist/cloudagent-${NFPM_VERSION}-${{ matrix.target }}.deb"
           nfpm pkg --config packaging/nfpm.yaml --packager rpm --target "dist/cloudagent-${NFPM_VERSION}-${{ matrix.target }}.rpm"
 

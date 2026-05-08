@@ -12,15 +12,15 @@ vendor: Liu Felix
 homepage: ${NFPM_HOMEPAGE}
 license: MIT
 contents:
-  - src: ${NFPM_SOURCE_DIR}/cloudagent
+  - src: dist/linux-root/cloudagent
     dst: /usr/local/bin/cloudagent
     file_info:
       mode: 0755
-  - src: ${NFPM_SOURCE_DIR}/agentd
+  - src: dist/linux-root/agentd
     dst: /usr/local/bin/agentd
     file_info:
       mode: 0755
-  - src: ${NFPM_SOURCE_DIR}/README.md
+  - src: dist/linux-root/README.md
     dst: /usr/share/doc/cloudagent/README.md
     file_info:
       mode: 0644
