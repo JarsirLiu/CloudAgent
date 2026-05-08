@@ -707,9 +707,36 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::collections::HashSet;
-    use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
     use tokio_util::sync::CancellationToken;
+    use uuid::Uuid;
+
+    #[derive(Debug)]
+    struct TestWorkspace {
+        root: PathBuf,
+    }
+
+    impl TestWorkspace {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "cloudagent-agent-core-test-{}",
+                Uuid::now_v7()
+            ));
+            std::fs::create_dir_all(&root).expect("create test workspace");
+            Self { root }
+        }
+
+        fn path(&self) -> &Path {
+            &self.root
+        }
+    }
+
+    impl Drop for TestWorkspace {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
 
     fn demo_spec(name: &str) -> ToolSpec {
         ToolSpec {
@@ -817,12 +844,14 @@ mod tests {
 
     struct MockTurnHost {
         responses: Mutex<Vec<ModelResponse>>,
+        workspace: Arc<TestWorkspace>,
     }
 
     impl MockTurnHost {
         fn new(responses: Vec<ModelResponse>) -> Self {
             Self {
                 responses: Mutex::new(responses),
+                workspace: Arc::new(TestWorkspace::new()),
             }
         }
     }
@@ -838,7 +867,7 @@ mod tests {
 
         fn regular_turn_settings(&self) -> RegularTurnSettings {
             RegularTurnSettings {
-                workspace_root: PathBuf::from("."),
+                workspace_root: self.workspace.path().to_path_buf(),
                 llm_temperature: 0.0,
                 pre_llm_filter_enabled: false,
                 max_tool_roundtrips: Some(4),
