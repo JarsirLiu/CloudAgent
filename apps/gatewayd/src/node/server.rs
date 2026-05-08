@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use std::ffi::OsString;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     let listen_address = arg_value(args, "--listen")
@@ -23,91 +23,143 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
         .await
         .with_context(|| format!("failed to bind local node listener on {listen_address}"))?;
     tracing::info!("gatewayd local node listening on {listen_address}");
+    let workers = WorkerManager::new(worker_program);
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
         tracing::debug!("accepted local node client from {peer_addr}");
-        let worker_program = worker_program.clone();
+        let workers = workers.clone();
         tokio::spawn(async move {
             let (reader, writer) = stream.into_split();
-            if let Err(error) = run_connection(BufReader::new(reader), writer, worker_program).await
-            {
+            if let Err(error) = run_connection(BufReader::new(reader), writer, workers).await {
                 tracing::warn!("local node connection failed: {error}");
             }
         });
     }
 }
 
-async fn run_connection<R, W>(reader: R, mut writer: W, worker_program: OsString) -> Result<()>
+async fn run_connection<R, W>(reader: R, mut writer: W, workers: WorkerManager) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     let mut input_lines = reader.lines();
-    let (event_tx, mut event_rx) = mpsc::channel(128);
-
     let mut registry = ConversationRegistry::new("default".to_string());
-    let mut workers = WorkerManager::new(worker_program);
+    let mut active_subscription: Option<broadcast::Receiver<NodeEvent>> = None;
 
     loop {
-        tokio::select! {
-            maybe_line = input_lines.next_line() => {
-                match maybe_line.context("failed to read local node command line")? {
-                    Some(line) => {
-                        let rpc: JsonRpcMessage = serde_json::from_str(&line)
-                            .context("failed to parse local node jsonrpc command")?;
-                        let envelope = AppClientCommandEnvelope::try_from(rpc)?;
-                        if matches!(envelope.command, AppClientCommand::Exit) {
-                            break;
+        if let Some(subscription) = active_subscription.as_mut() {
+            tokio::select! {
+                maybe_line = input_lines.next_line() => {
+                    match maybe_line.context("failed to read local node command line")? {
+                        Some(line) => {
+                            if !handle_command_line(
+                                &line,
+                                &mut registry,
+                                &workers,
+                                &mut active_subscription,
+                            )
+                            .await? {
+                                break;
+                            }
                         }
-                        let target_conversation = target_conversation_id(&mut registry, &envelope.command);
-                        workers
-                            .send_command(&target_conversation, envelope.command, event_tx.clone())
-                            .await?;
+                        None => break,
                     }
-                    None => break,
+                }
+                maybe_event = subscription.recv() => {
+                    match maybe_event {
+                        Ok(event) => write_node_event(&mut writer, event).await?,
+                        Err(broadcast::error::RecvError::Closed) => {
+                            active_subscription = None;
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            write_node_event(&mut writer, NodeEvent::Diagnostic {
+                                conversation_id: registry.active_conversation_id().to_string(),
+                                message: format!("local node subscriber lagged; skipped {skipped} events"),
+                                is_error: false,
+                            }).await?;
+                        }
+                    }
                 }
             }
-            maybe_event = event_rx.recv() => {
-                match maybe_event {
-                    Some(event) => {
-                        let envelope = match event {
-                            NodeEvent::Message { message } => AppServerMessageEnvelope {
-                                message,
-                                event_seq: None,
-                            },
-                            NodeEvent::Diagnostic {
-                                conversation_id,
-                                message,
-                                is_error,
-                            } => AppServerMessageEnvelope {
-                                message: AppServerMessage::Notification(if is_error {
-                                    AppServerNotification::Error {
-                                        conversation_id,
-                                        message,
-                                    }
-                                } else {
-                                    AppServerNotification::Info {
-                                        conversation_id,
-                                        message,
-                                    }
-                                }),
-                                event_seq: None,
-                            },
-                        };
-                        let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
-                        writer.write_all(payload.as_bytes()).await?;
-                        writer.write_all(b"\n").await?;
-                        writer.flush().await?;
+        } else {
+            match input_lines
+                .next_line()
+                .await
+                .context("failed to read local node command line")?
+            {
+                Some(line) => {
+                    if !handle_command_line(
+                        &line,
+                        &mut registry,
+                        &workers,
+                        &mut active_subscription,
+                    )
+                    .await?
+                    {
+                        break;
                     }
-                    None => break,
                 }
+                None => break,
             }
         }
     }
 
-    drop(event_tx);
-    workers.shutdown().await?;
+    Ok(())
+}
+
+async fn handle_command_line(
+    line: &str,
+    registry: &mut ConversationRegistry,
+    workers: &WorkerManager,
+    active_subscription: &mut Option<broadcast::Receiver<NodeEvent>>,
+) -> Result<bool> {
+    let rpc: JsonRpcMessage =
+        serde_json::from_str(line).context("failed to parse local node jsonrpc command")?;
+    let envelope = AppClientCommandEnvelope::try_from(rpc)?;
+    if matches!(envelope.command, AppClientCommand::Exit) {
+        return Ok(false);
+    }
+    let target_conversation = target_conversation_id(registry, &envelope.command);
+    *active_subscription = Some(workers.subscribe(&target_conversation).await?);
+    workers
+        .send_command(&target_conversation, envelope.command)
+        .await?;
+    Ok(true)
+}
+
+async fn write_node_event<W>(writer: &mut W, event: NodeEvent) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let envelope = match event {
+        NodeEvent::Message { message } => AppServerMessageEnvelope {
+            message,
+            event_seq: None,
+        },
+        NodeEvent::Diagnostic {
+            conversation_id,
+            message,
+            is_error,
+        } => AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(if is_error {
+                AppServerNotification::Error {
+                    conversation_id,
+                    message,
+                }
+            } else {
+                AppServerNotification::Info {
+                    conversation_id,
+                    message,
+                }
+            }),
+            event_seq: None,
+        },
+    };
+    let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
+    writer.write_all(payload.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
     Ok(())
 }
 

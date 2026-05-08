@@ -3,31 +3,42 @@ use agent_protocol::AppClientCommand;
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
 use std::ffi::OsString;
-use tokio::sync::mpsc;
+use std::sync::Arc;
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::time::Instant;
 
+#[derive(Clone)]
 pub(crate) struct WorkerManager {
     worker_program: OsString,
-    workers: HashMap<String, WorkerHandle>,
+    state: Arc<Mutex<WorkerManagerState>>,
 }
 
 impl WorkerManager {
     pub(crate) fn new(worker_program: OsString) -> Self {
         Self {
             worker_program,
-            workers: HashMap::new(),
+            state: Arc::new(Mutex::new(WorkerManagerState::default())),
         }
     }
 
+    pub(crate) async fn subscribe(
+        &self,
+        conversation_id: &str,
+    ) -> Result<broadcast::Receiver<NodeEvent>> {
+        self.prune_finished_workers().await?;
+        let mut state = self.state.lock().await;
+        let handle = self.ensure_worker(&mut state, conversation_id).await?;
+        Ok(handle.events_tx.subscribe())
+    }
+
     pub(crate) async fn send_command(
-        &mut self,
+        &self,
         conversation_id: &str,
         command: AppClientCommand,
-        event_tx: mpsc::Sender<NodeEvent>,
     ) -> Result<()> {
         self.prune_finished_workers().await?;
         match self
-            .send_command_inner(conversation_id, command.clone(), event_tx.clone())
+            .send_command_inner(conversation_id, command.clone())
             .await
         {
             Ok(()) => Ok(()),
@@ -36,21 +47,22 @@ impl WorkerManager {
                     .to_string()
                     .contains("worker command channel closed for") =>
             {
-                self.workers.remove(conversation_id);
-                self.send_command_inner(conversation_id, command, event_tx)
-                    .await
+                let mut state = self.state.lock().await;
+                state.workers.remove(conversation_id);
+                drop(state);
+                self.send_command_inner(conversation_id, command).await
             }
             Err(error) => Err(error),
         }
     }
 
     async fn send_command_inner(
-        &mut self,
+        &self,
         conversation_id: &str,
         command: AppClientCommand,
-        event_tx: mpsc::Sender<NodeEvent>,
     ) -> Result<()> {
-        let handle = self.ensure_worker(conversation_id, event_tx).await?;
+        let mut state = self.state.lock().await;
+        let handle = self.ensure_worker(&mut state, conversation_id).await?;
         handle.last_active_at = Instant::now();
         handle
             .command_tx
@@ -58,12 +70,12 @@ impl WorkerManager {
             .map_err(|_| anyhow!("worker command channel closed for {conversation_id}"))
     }
 
-    async fn ensure_worker(
-        &mut self,
+    async fn ensure_worker<'a>(
+        &self,
+        state: &'a mut WorkerManagerState,
         conversation_id: &str,
-        event_tx: mpsc::Sender<NodeEvent>,
-    ) -> Result<&mut WorkerHandle> {
-        if !self.workers.contains_key(conversation_id) {
+    ) -> Result<&'a mut WorkerHandle> {
+        if !state.workers.contains_key(conversation_id) {
             let mut client = AppServerClient::stdio(StdioClientConfig {
                 program: self.worker_program.clone(),
                 args: worker_stdio_args(conversation_id),
@@ -71,7 +83,9 @@ impl WorkerManager {
             .await
             .with_context(|| format!("failed to start worker for {conversation_id}"))?;
             let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+            let (events_tx, _) = broadcast::channel(128);
             let conversation_id_owned = conversation_id.to_string();
+            let events_tx_for_worker = events_tx.clone();
             let worker = tokio::spawn(async move {
                 loop {
                     tokio::select! {
@@ -87,43 +101,29 @@ impl WorkerManager {
                         maybe_event = client.next_event() => {
                             match maybe_event {
                                 Some(AppServerEvent::Message(message)) => {
-                                    if event_tx
-                                        .send(NodeEvent::Message { message })
-                                        .await
-                                        .is_err()
-                                    {
-                                        client.shutdown().await?;
-                                        return Result::<()>::Ok(());
-                                    }
+                                    let _ = events_tx_for_worker.send(NodeEvent::Message { message });
                                 }
                                 Some(AppServerEvent::Lagged { skipped }) => {
-                                    if event_tx
-                                        .send(NodeEvent::Diagnostic {
-                                            conversation_id: conversation_id_owned.clone(),
-                                            message: format!("worker event channel lagged; skipped {skipped} events"),
-                                            is_error: false,
-                                        })
-                                        .await
-                                        .is_err()
-                                    {
-                                        client.shutdown().await?;
-                                        return Result::<()>::Ok(());
-                                    }
+                                    let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
+                                        conversation_id: conversation_id_owned.clone(),
+                                        message: format!("worker event channel lagged; skipped {skipped} events"),
+                                        is_error: false,
+                                    });
                                 }
                                 Some(AppServerEvent::Disconnected { message }) => {
-                                    let _ = event_tx.send(NodeEvent::Diagnostic {
+                                    let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: conversation_id_owned.clone(),
                                         message,
                                         is_error: true,
-                                    }).await;
+                                    });
                                     return Result::<()>::Ok(());
                                 }
                                 None => {
-                                    let _ = event_tx.send(NodeEvent::Diagnostic {
+                                    let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: conversation_id_owned.clone(),
                                         message: "worker event stream ended".to_string(),
                                         is_error: true,
-                                    }).await;
+                                    });
                                     return Result::<()>::Ok(());
                                 }
                             }
@@ -131,49 +131,60 @@ impl WorkerManager {
                     }
                 }
             });
-            self.workers.insert(
+            state.workers.insert(
                 conversation_id.to_string(),
                 WorkerHandle {
                     command_tx,
+                    events_tx,
                     worker,
                     last_active_at: Instant::now(),
                 },
             );
         }
-        self.workers
+        state
+            .workers
             .get_mut(conversation_id)
             .ok_or_else(|| anyhow!("worker handle missing for {conversation_id}"))
     }
 
-    async fn prune_finished_workers(&mut self) -> Result<()> {
-        let finished: Vec<String> = self
-            .workers
-            .iter()
-            .filter_map(|(conversation_id, handle)| {
-                handle
-                    .worker
-                    .is_finished()
-                    .then(|| conversation_id.to_string())
-            })
-            .collect();
+    async fn prune_finished_workers(&self) -> Result<()> {
+        let finished = {
+            let mut state = self.state.lock().await;
+            let finished: Vec<String> = state
+                .workers
+                .iter()
+                .filter_map(|(conversation_id, handle)| {
+                    handle
+                        .worker
+                        .is_finished()
+                        .then(|| conversation_id.to_string())
+                })
+                .collect();
 
-        for conversation_id in finished {
-            if let Some(handle) = self.workers.remove(&conversation_id) {
-                handle.worker.await??;
-            }
-        }
-        Ok(())
-    }
+            finished
+                .into_iter()
+                .filter_map(|conversation_id| {
+                    state
+                        .workers
+                        .remove(&conversation_id)
+                        .map(|handle| (conversation_id, handle))
+                })
+                .collect::<Vec<_>>()
+        };
 
-    pub(crate) async fn shutdown(self) -> Result<()> {
-        for (_, handle) in self.workers {
-            drop(handle.command_tx);
+        for (_, handle) in finished {
             handle.worker.await??;
         }
         Ok(())
     }
 }
 
+#[derive(Default)]
+struct WorkerManagerState {
+    workers: HashMap<String, WorkerHandle>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) enum NodeEvent {
     Message {
         message: agent_protocol::AppServerMessage,
@@ -187,6 +198,7 @@ pub(crate) enum NodeEvent {
 
 struct WorkerHandle {
     command_tx: mpsc::UnboundedSender<AppClientCommand>,
+    events_tx: broadcast::Sender<NodeEvent>,
     worker: tokio::task::JoinHandle<Result<()>>,
     last_active_at: Instant,
 }
@@ -201,10 +213,10 @@ fn worker_stdio_args(conversation_id: &str) -> Vec<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkerHandle, WorkerManager, worker_stdio_args};
+    use super::{NodeEvent, WorkerHandle, WorkerManager, worker_stdio_args};
     use anyhow::Result;
     use std::ffi::OsString;
-    use tokio::sync::mpsc;
+    use tokio::sync::{broadcast, mpsc};
     use tokio::time::Instant;
 
     #[test]
@@ -221,22 +233,73 @@ mod tests {
 
     #[tokio::test]
     async fn prune_finished_workers_removes_completed_handles() -> Result<()> {
-        let mut manager = WorkerManager::new(OsString::from("agentd.exe"));
+        let manager = WorkerManager::new(OsString::from("agentd.exe"));
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
         let worker = tokio::spawn(async { Result::<()>::Ok(()) });
-        manager.workers.insert(
-            "conversation-1".to_string(),
-            WorkerHandle {
-                command_tx: tx,
-                worker,
-                last_active_at: Instant::now(),
-            },
-        );
+        {
+            let mut state = manager.state.lock().await;
+            let (events_tx, _) = broadcast::channel(8);
+            state.workers.insert(
+                "conversation-1".to_string(),
+                WorkerHandle {
+                    command_tx: tx,
+                    events_tx,
+                    worker,
+                    last_active_at: Instant::now(),
+                },
+            );
+        }
 
         tokio::task::yield_now().await;
         manager.prune_finished_workers().await?;
-        assert!(manager.workers.is_empty());
+        assert!(manager.state.lock().await.workers.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subscribe_receives_broadcast_events_from_existing_worker() -> Result<()> {
+        let manager = WorkerManager::new(OsString::from("agentd.exe"));
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let worker = tokio::spawn(async {
+            std::future::pending::<()>().await;
+            #[allow(unreachable_code)]
+            Result::<()>::Ok(())
+        });
+        let (events_tx, _) = broadcast::channel(8);
+        {
+            let mut state = manager.state.lock().await;
+            state.workers.insert(
+                "conversation-1".to_string(),
+                WorkerHandle {
+                    command_tx: tx,
+                    events_tx: events_tx.clone(),
+                    worker,
+                    last_active_at: Instant::now(),
+                },
+            );
+        }
+
+        let mut receiver = manager.subscribe("conversation-1").await?;
+        let _ = events_tx.send(NodeEvent::Diagnostic {
+            conversation_id: "conversation-1".to_string(),
+            message: "hello".to_string(),
+            is_error: false,
+        });
+
+        match receiver.recv().await? {
+            NodeEvent::Diagnostic {
+                conversation_id,
+                message,
+                is_error,
+            } => {
+                assert_eq!(conversation_id, "conversation-1");
+                assert_eq!(message, "hello");
+                assert!(!is_error);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
         Ok(())
     }
 }
