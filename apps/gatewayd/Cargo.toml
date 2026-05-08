@@ -7,5 +7,6 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 agent-gateway = { path = "../../crates/agent-gateway" }
+tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
