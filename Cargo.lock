@@ -778,8 +778,11 @@ dependencies = [
 name = "gatewayd"
 version = "0.1.31"
 dependencies = [
+ "agent-app-server-client",
  "agent-gateway",
+ "agent-protocol",
  "anyhow",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
