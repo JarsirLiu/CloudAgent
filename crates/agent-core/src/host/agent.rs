@@ -23,7 +23,8 @@ use crate::{
     ActiveTurnHandle, AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy,
     ChatModel, ContextManager, ConversationTurn, ExecutionPolicy, PermissionProfile,
     RegularTurnSettings, ResponseItem, build_turns_from_rollout_items, complete_model_request,
-    complete_model_request_streaming, paginate_turns, visible_message_count,
+    complete_model_request_streaming, input_items_attachment_count, input_items_preview_text,
+    paginate_turns, visible_message_count,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -159,7 +160,10 @@ impl AgentHost {
             .await
     }
 
-    pub async fn suggest_conversation_title(&self, user_input: &str) -> Result<String> {
+    pub async fn suggest_conversation_title(
+        &self,
+        user_input: &[crate::InputItem],
+    ) -> Result<String> {
         let request = crate::ModelRequest {
             messages: vec![
                 ResponseItem::System {
@@ -168,7 +172,7 @@ impl AgentHost {
                             .to_string(),
                 },
                 ResponseItem::User {
-                    content: user_input.to_string(),
+                    content: user_input.to_vec(),
                 },
             ],
             tools: Vec::new(),
@@ -261,7 +265,11 @@ impl AgentHost {
         core_compact_conversation(self, conversation_id, minimum_history_tokens).await
     }
 
-    pub async fn chat(&self, conversation_id: &str, user_input: &str) -> Result<AgentTurnOutput> {
+    pub async fn chat(
+        &self,
+        conversation_id: &str,
+        user_input: &[crate::InputItem],
+    ) -> Result<AgentTurnOutput> {
         core_chat(
             self,
             conversation_id,
@@ -275,7 +283,7 @@ impl AgentHost {
     pub async fn chat_with_approval<F, Fut>(
         &self,
         conversation_id: &str,
-        user_input: &str,
+        user_input: &[crate::InputItem],
         permission_profile: &PermissionProfile,
         approval_policy: &ApprovalPolicy,
         approval: F,
@@ -298,7 +306,7 @@ impl AgentHost {
     pub async fn chat_with_approval_and_events<E, F, Fut>(
         &self,
         conversation_id: &str,
-        user_input: &str,
+        user_input: &[crate::InputItem],
         permission_profile: &PermissionProfile,
         approval_policy: &ApprovalPolicy,
         mut on_event: E,
@@ -698,13 +706,17 @@ impl TurnHost for AgentHost {
         .await
     }
 
-    fn audit_turn_started(&self, conversation_id: &str, user_input: &str) {
+    fn audit_turn_started(&self, conversation_id: &str, user_input: &[crate::InputItem]) {
         self.append_audit(
             conversation_id,
             None,
             "turn.started",
             "info",
-            json!({ "input_preview": user_input.chars().take(300).collect::<String>() }),
+            json!({
+                "input_preview": input_items_preview_text(user_input, 300),
+                "input_items_count": user_input.len(),
+                "attachment_count": input_items_attachment_count(user_input),
+            }),
         );
     }
     fn audit_turn_completed(

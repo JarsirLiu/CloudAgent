@@ -3,7 +3,10 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
-use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
+use agent_core::{
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
+    TurnItemDeltaKind, TurnItemKind, WriteFileStatus,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -82,8 +85,8 @@ impl ApplyPatchTool {
                 mutating: true,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: true,
-                item_kind: agent_protocol::TurnItemKind::FileChange,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::FileChange,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: Some("Applying patches can modify workspace files.".to_string()),
             },
         )
@@ -173,10 +176,10 @@ impl LocalTool for ApplyPatchLocalTool {
 
         Ok(ToolInvocationOutput {
             content: format!("Applied patch. files_changed={files_changed}"),
-            structured: Some(agent_protocol::StructuredToolResult::EditFile {
+            structured: Some(StructuredToolResult::EditFile {
                 changed_paths,
                 files_changed,
-                status: agent_protocol::WriteFileStatus::Completed,
+                status: WriteFileStatus::Completed,
                 version_token: None,
             }),
         })

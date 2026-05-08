@@ -1107,7 +1107,7 @@ mod tests {
             })
         }
 
-        fn audit_turn_started(&self, _conversation_id: &str, _user_input: &str) {}
+        fn audit_turn_started(&self, _conversation_id: &str, _user_input: &[crate::InputItem]) {}
         fn audit_turn_completed(
             &self,
             _conversation_id: &str,
@@ -1210,10 +1210,10 @@ mod tests {
         let host = MockTurnHost::new(vec![]);
         let mut history = ConversationHistory::new("default".to_string(), "system".to_string());
         for index in 0..8 {
-            history.push_user_message(format!(
+            history.push_user_message(crate::text_input_items(format!(
                 "historic user message {index} {}",
                 "x".repeat(4_000)
-            ));
+            )));
             history.push_assistant_message(
                 Some(format!(
                     "historic assistant reply {index} {}",
@@ -1261,10 +1261,10 @@ mod tests {
         let host = MockTurnHost::new(vec![]);
         let mut history = ConversationHistory::new("default".to_string(), "system".to_string());
         for index in 0..4 {
-            history.push_user_message(format!(
+            history.push_user_message(crate::text_input_items(format!(
                 "historic user message {index} {}",
                 "x".repeat(4_000)
-            ));
+            )));
             history.push_assistant_message(
                 Some(format!(
                     "historic assistant reply {index} {}",
@@ -1321,7 +1321,9 @@ mod tests {
 
         let mut context_manager =
             ContextManager::from_history(ConversationHistory::new("default", "system"));
-        context_manager.history_mut().push_user_message("hello");
+        context_manager
+            .history_mut()
+            .push_user_message(crate::text_input_items("hello"));
         context_manager
             .history_mut()
             .push_assistant_message(Some("A".repeat(24_000)), Vec::new());
@@ -1335,11 +1337,11 @@ mod tests {
             host.raw_memory_fragment(),
         );
         assert!(!before.fragments.iter().any(|item| {
-            matches!(item, crate::ResponseItem::User { content } if content.contains("<long_term_memory>"))
+            matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(content).contains("<long_term_memory>"))
         }));
 
         let mut compacted_history = ConversationHistory::new("default".to_string(), "system");
-        compacted_history.push_user_message("hello");
+        compacted_history.push_user_message(crate::text_input_items("hello"));
         context_manager = ContextManager::from_history(compacted_history);
         let after = build_budgeted_fragments_for_current_history(
             &ContextFacade::new(),
@@ -1351,7 +1353,7 @@ mod tests {
             host.raw_memory_fragment(),
         );
         assert!(after.fragments.iter().any(|item| {
-            matches!(item, crate::ResponseItem::User { content } if content.contains("<long_term_memory>"))
+            matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(content).contains("<long_term_memory>"))
         }));
     }
 }

@@ -6,14 +6,15 @@ pub(crate) mod shared;
 
 use crate::spec::ToolDescriptor;
 use agent_core::{
-    ApprovalPolicy, ApprovalRequirement, PermissionProfile, RegularTurnToolExposure, ToolBackend,
-    ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
+    ApprovalPolicy, ApprovalRequirement, PermissionProfile, RegularTurnToolExposure,
+    StructuredToolResult, ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext,
+    ToolExecutor, ToolResult, ToolSpec,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::policy::{approval_grant_key_for_tool, approval_requirement_for_tool};
-use agent_protocol::TranscriptItem;
+use agent_core::TranscriptItem;
 use catalog::{LocalToolMap, build_descriptors, build_tools};
 use mcp::McpRegistry;
 pub use mcp::{McpToolClient, McpToolDescriptor, McpToolInvocation, McpToolResponse};
@@ -204,7 +205,7 @@ impl ToolRegistry {
         tool_name: &str,
         arguments: &serde_json::Value,
         reason: String,
-    ) -> Option<agent_protocol::StructuredToolResult> {
+    ) -> Option<StructuredToolResult> {
         presentation::denied_tool_result(tool_name, arguments, reason)
     }
 
@@ -637,8 +638,8 @@ impl ToolExecutor for ToolRegistry {
             Err(err) => {
                 let message = format!("Tool execution failed: {err:#}");
                 let structured = match structured_failure_result(&route.invocation) {
-                    Some(agent_protocol::StructuredToolResult::ToolError { .. }) => {
-                        Some(agent_protocol::StructuredToolResult::ToolError {
+                    Some(StructuredToolResult::ToolError { .. }) => {
+                        Some(StructuredToolResult::ToolError {
                             tool_name: call_name.clone(),
                             message: message.clone(),
                         })

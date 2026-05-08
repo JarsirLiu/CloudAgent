@@ -19,9 +19,11 @@ pub use context::{
     plan_manual_history_compaction,
 };
 pub use conversation::{
-    ActiveConversationTurn, ConversationHistory, ConversationSnapshot, ConversationState,
-    ConversationStatus, ConversationSummary, ConversationTurn, PendingConversationRequest,
-    ResponseItem, TranscriptItem, visible_message_count,
+    ActiveConversationTurn, AttachmentRef, ConversationHistory, ConversationSnapshot,
+    ConversationState, ConversationStatus, ConversationSummary, ConversationTurn, ImageDetail,
+    InputItem, PendingConversationRequest, ResponseItem, TranscriptItem, input_items_are_blank,
+    input_items_attachment_count, input_items_display_text, input_items_preview_text,
+    input_items_text_len, input_items_to_plain_text, text_input_items, visible_message_count,
 };
 pub use host::{
     AgentHost, AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend,

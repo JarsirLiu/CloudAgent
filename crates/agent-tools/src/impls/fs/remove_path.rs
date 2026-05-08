@@ -6,7 +6,8 @@ use crate::spec::{
     ToolUsageGuidance,
 };
 use agent_core::{
-    ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec, WriteFileStatus,
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
+    TurnItemDeltaKind, TurnItemKind, WriteFileStatus,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -50,8 +51,8 @@ impl RemovePathTool {
                 mutating: true,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
         )
@@ -96,7 +97,7 @@ impl LocalTool for RemovePathLocalTool {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound && force => {
                 return Ok(ToolInvocationOutput {
                     content: format!("Path `{}` was already absent.", path.display()),
-                    structured: Some(agent_protocol::StructuredToolResult::RemovePath {
+                    structured: Some(StructuredToolResult::RemovePath {
                         path: path.display().to_string(),
                         recursive,
                         force,
@@ -122,7 +123,7 @@ impl LocalTool for RemovePathLocalTool {
 
         Ok(ToolInvocationOutput {
             content: format!("Removed `{}`.", path.display()),
-            structured: Some(agent_protocol::StructuredToolResult::RemovePath {
+            structured: Some(StructuredToolResult::RemovePath {
                 path: path.display().to_string(),
                 recursive,
                 force,

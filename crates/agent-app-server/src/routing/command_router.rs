@@ -6,7 +6,8 @@ use crate::session::subscriptions::ConversationSubscriptions;
 use crate::turn::service as turn_service;
 use agent_core::AgentHost;
 use agent_core::ConversationTurn;
-use agent_protocol::{AppClientCommand, AppServerMessage, ServerRequestDecision};
+use agent_core::{ServerRequest, ServerRequestDecision};
+use agent_protocol::{AppClientCommand, AppServerMessage};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -114,7 +115,7 @@ impl ServerState {
     ) -> Vec<(
         agent_protocol::RequestId,
         String,
-        agent_protocol::ServerRequest,
+        ServerRequest,
         ServerRequestDecision,
     )> {
         self.server_requests.drain_turn(turn_id, decision)
@@ -127,7 +128,7 @@ impl ServerState {
     ) -> Vec<(
         agent_protocol::RequestId,
         String,
-        agent_protocol::ServerRequest,
+        ServerRequest,
         ServerRequestDecision,
     )> {
         self.server_requests
@@ -137,7 +138,7 @@ impl ServerState {
     pub(crate) fn pending_server_requests_for_conversation(
         &self,
         conversation_id: &str,
-    ) -> Vec<(agent_protocol::RequestId, agent_protocol::ServerRequest)> {
+    ) -> Vec<(agent_protocol::RequestId, ServerRequest)> {
         self.server_requests
             .pending_for_conversation(conversation_id)
     }
@@ -151,7 +152,7 @@ impl ServerState {
         request_id: agent_protocol::RequestId,
         conversation_id: String,
         turn_id: String,
-        request: agent_protocol::ServerRequest,
+        request: ServerRequest,
         reply_tx: oneshot::Sender<ServerRequestDecision>,
     ) {
         self.server_requests.insert_pending(
@@ -340,8 +341,7 @@ pub(crate) fn merge_active_turn(
 #[cfg(test)]
 mod tests {
     use super::merge_active_turn;
-    use agent_core::{ConversationTurn, TranscriptItem};
-    use agent_protocol::TurnState;
+    use agent_core::{ConversationTurn, TranscriptItem, TurnState};
 
     #[test]
     fn active_turn_snapshot_replaces_matching_rollout_turn() {

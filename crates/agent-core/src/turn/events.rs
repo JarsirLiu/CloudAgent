@@ -1,5 +1,5 @@
 use super::compaction::CompactionContinuation;
-use crate::conversation::TranscriptItem;
+use crate::conversation::{InputItem, TranscriptItem};
 use crate::model::ModelUsage;
 use crate::turn::RequestId;
 use serde::{Deserialize, Serialize};
@@ -134,7 +134,7 @@ pub enum EventMsg {
     TurnStarted {
         turn_id: TurnId,
         conversation_id: String,
-        user_input: String,
+        user_input: Vec<InputItem>,
     },
     ModelRequestStarted {
         turn_id: TurnId,
@@ -227,4 +227,35 @@ pub enum ModelRetryStage {
 pub struct PendingTurnRequest {
     pub request_id: RequestId,
     pub request: ServerRequest,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turn_started_preserves_structured_user_input() {
+        let value = serde_json::json!({
+            "type": "turn_started",
+            "turn_id": "turn-1",
+            "conversation_id": "default",
+            "user_input": [
+                { "type": "text", "text": "look at this" },
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "remote_url",
+                        "url": "https://example.com/diagram.png"
+                    },
+                    "detail": "high",
+                    "alt": "diagram"
+                }
+            ]
+        });
+
+        let parsed: EventMsg = serde_json::from_value(value.clone()).expect("parse event");
+        let reserialized = serde_json::to_value(parsed).expect("serialize event");
+
+        assert_eq!(reserialized, value);
+    }
 }

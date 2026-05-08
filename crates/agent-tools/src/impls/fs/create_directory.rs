@@ -5,7 +5,10 @@ use crate::spec::{
     ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolLayer, ToolPermissionTier, ToolRisk,
     ToolUsageGuidance,
 };
-use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
+use agent_core::{
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
+    TurnItemDeltaKind, TurnItemKind,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -50,8 +53,8 @@ impl CreateDirectoryTool {
                 mutating: true,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
         )
@@ -96,7 +99,7 @@ impl LocalTool for CreateDirectoryLocalTool {
 
         Ok(ToolInvocationOutput {
             content: format!("Created directory `{}`.", path.display()),
-            structured: Some(agent_protocol::StructuredToolResult::CreateDirectory {
+            structured: Some(StructuredToolResult::CreateDirectory {
                 path: path.display().to_string(),
                 recursive,
                 created: true,

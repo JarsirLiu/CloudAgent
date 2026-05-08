@@ -5,8 +5,11 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
-use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
-use agent_protocol::SearchWorkspaceHit;
+use agent_core::{
+    SearchWorkspaceHit, SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus,
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
+    TurnItemDeltaKind, TurnItemKind,
+};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
@@ -65,8 +68,8 @@ impl SearchWorkspaceTool {
                 mutating: false,
                 execution_policy: ToolExecutionPolicy::ParallelSafe,
                 requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
         )
@@ -184,10 +187,10 @@ impl LocalTool for SearchWorkspaceLocalTool {
             let closed_mode = removed
                 .as_ref()
                 .map(|session| match session.mode {
-                    SearchMode::Files => agent_protocol::SearchWorkspaceMode::Files,
-                    SearchMode::Text => agent_protocol::SearchWorkspaceMode::Text,
+                    SearchMode::Files => SearchWorkspaceMode::Files,
+                    SearchMode::Text => SearchWorkspaceMode::Text,
                 })
-                .unwrap_or(agent_protocol::SearchWorkspaceMode::Text);
+                .unwrap_or(SearchWorkspaceMode::Text);
             let message = if removed.is_some() {
                 format!("Closed search session `{session_id}`.")
             } else {
@@ -195,14 +198,14 @@ impl LocalTool for SearchWorkspaceLocalTool {
             };
             return Ok(ToolInvocationOutput {
                 content: message,
-                structured: Some(agent_protocol::StructuredToolResult::SearchWorkspace {
+                structured: Some(StructuredToolResult::SearchWorkspace {
                     session_id: session_id.to_string(),
-                    operation: agent_protocol::SearchWorkspaceOperation::Close,
+                    operation: SearchWorkspaceOperation::Close,
                     mode: closed_mode,
                     status: if removed.is_some() {
-                        agent_protocol::SearchWorkspaceStatus::Closed
+                        SearchWorkspaceStatus::Closed
                     } else {
-                        agent_protocol::SearchWorkspaceStatus::NotFound
+                        SearchWorkspaceStatus::NotFound
                     },
                     query: String::new(),
                     path_scope: None,
@@ -277,14 +280,14 @@ impl LocalTool for SearchWorkspaceLocalTool {
 
         Ok(ToolInvocationOutput {
             content,
-            structured: Some(agent_protocol::StructuredToolResult::SearchWorkspace {
+            structured: Some(StructuredToolResult::SearchWorkspace {
                 session_id,
-                operation: agent_protocol::SearchWorkspaceOperation::Search,
+                operation: SearchWorkspaceOperation::Search,
                 mode: match resolved.mode {
-                    SearchMode::Files => agent_protocol::SearchWorkspaceMode::Files,
-                    SearchMode::Text => agent_protocol::SearchWorkspaceMode::Text,
+                    SearchMode::Files => SearchWorkspaceMode::Files,
+                    SearchMode::Text => SearchWorkspaceMode::Text,
                 },
-                status: agent_protocol::SearchWorkspaceStatus::Active,
+                status: SearchWorkspaceStatus::Active,
                 query: resolved.query,
                 path_scope: resolved.path_scope,
                 case_sensitive: resolved.case_sensitive,

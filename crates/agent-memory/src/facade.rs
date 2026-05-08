@@ -2,7 +2,8 @@ use crate::load_plan::build_load_plan;
 use crate::model::{LoadPlan, MemoryConfig};
 use crate::service::MemoryService;
 use crate::trigger::should_persist;
-use agent_core::{ConversationHistory, MemoryBackend, ResponseItem};
+use agent_core::conversation::{ConversationHistory, ResponseItem};
+use agent_core::host::MemoryBackend;
 use anyhow::Result;
 
 pub struct LongTermMemoryFacade {

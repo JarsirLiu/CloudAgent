@@ -1,5 +1,5 @@
 use crate::context::{FilterPolicy, facade::ContextFacade};
-use crate::conversation::ResponseItem;
+use crate::conversation::{ResponseItem, text_input_items};
 use crate::tool::ToolSpec;
 use std::path::Path;
 
@@ -82,7 +82,10 @@ pub fn build_memory_budgeted_fragments(
         .max(32);
     if let Some(memory) = fit_bucket(source.memory.as_deref(), memory_floor_cap) {
         fragments.push(ResponseItem::User {
-            content: format!("<long_term_memory>\n{}\n</long_term_memory>", memory.0),
+            content: text_input_items(format!(
+                "<long_term_memory>\n{}\n</long_term_memory>",
+                memory.0
+            )),
         });
         let used = estimate_text_tokens(&memory.0).max(1);
         audit.memory_after = used;
@@ -95,7 +98,10 @@ pub fn build_memory_budgeted_fragments(
             .max(32),
     ) {
         fragments.push(ResponseItem::User {
-            content: format!("<long_term_memory>\n{}\n</long_term_memory>", memory.0),
+            content: text_input_items(format!(
+                "<long_term_memory>\n{}\n</long_term_memory>",
+                memory.0
+            )),
         });
         let used = estimate_text_tokens(&memory.0).max(1);
         audit.memory_after = used;
@@ -107,7 +113,10 @@ pub fn build_memory_budgeted_fragments(
             .min(source.post_compact_max_tokens_per_skill);
         if let Some(skills) = fit_bucket(source.skills.as_deref(), skill_budget) {
             fragments.push(ResponseItem::User {
-                content: format!("<skills_context>\n{}\n</skills_context>", skills.0),
+                content: text_input_items(format!(
+                    "<skills_context>\n{}\n</skills_context>",
+                    skills.0
+                )),
             });
             let used = estimate_text_tokens(&skills.0).max(1);
             audit.skills_after = used;
@@ -120,7 +129,7 @@ pub fn build_memory_budgeted_fragments(
             .min(source.post_compact_max_tokens_per_mcp);
         if let Some(mcp) = fit_bucket(source.mcp.as_deref(), mcp_budget) {
             fragments.push(ResponseItem::User {
-                content: format!("<mcp_context>\n{}\n</mcp_context>", mcp.0),
+                content: text_input_items(format!("<mcp_context>\n{}\n</mcp_context>", mcp.0)),
             });
             audit.mcp_after = estimate_text_tokens(&mcp.0).max(1);
         }

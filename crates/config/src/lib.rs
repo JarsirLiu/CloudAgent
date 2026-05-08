@@ -5,6 +5,17 @@ use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputModality {
+    Text,
+    Image,
+}
+
+pub fn default_input_modalities() -> Vec<InputModality> {
+    vec![InputModality::Text, InputModality::Image]
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub workspace_root: PathBuf,
@@ -19,6 +30,8 @@ pub struct LlmConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    #[serde(default = "default_input_modalities")]
+    pub input_modalities: Vec<InputModality>,
     pub temperature: f32,
     pub request_max_retries: u64,
     pub stream_max_retries: u64,
@@ -88,6 +101,7 @@ struct PartialLlmConfig {
     base_url: Option<String>,
     api_key: Option<String>,
     model: Option<String>,
+    input_modalities: Option<Vec<InputModality>>,
     temperature: Option<f32>,
     request_max_retries: Option<u64>,
     stream_max_retries: Option<u64>,
@@ -230,6 +244,7 @@ impl AgentConfig {
                 base_url: "https://api.openai.com/v1".to_string(),
                 api_key: String::new(),
                 model: "gpt-5.4".to_string(),
+                input_modalities: default_input_modalities(),
                 temperature: 0.2,
                 request_max_retries: 0,
                 stream_max_retries: 0,
@@ -258,6 +273,9 @@ impl AgentConfig {
             }
             if let Some(value) = llm.model {
                 self.llm.model = value;
+            }
+            if let Some(value) = llm.input_modalities {
+                self.llm.input_modalities = normalize_input_modalities(value);
             }
             if let Some(value) = llm.temperature {
                 self.llm.temperature = value;
@@ -428,6 +446,9 @@ impl AgentConfig {
         }
         if let Ok(value) = env::var("CLOUDAGENT_LLM_MODEL") {
             self.llm.model = value;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_LLM_INPUT_MODALITIES") {
+            self.llm.input_modalities = parse_input_modalities(&value);
         }
         if let Ok(value) = env::var("CLOUDAGENT_LLM_TEMPERATURE")
             && let Ok(parsed) = value.parse::<f32>()
@@ -611,6 +632,32 @@ impl AgentConfig {
     }
 }
 
+fn normalize_input_modalities(value: Vec<InputModality>) -> Vec<InputModality> {
+    let mut normalized = Vec::new();
+    for modality in value {
+        if !normalized.contains(&modality) {
+            normalized.push(modality);
+        }
+    }
+    if !normalized.contains(&InputModality::Text) {
+        normalized.insert(0, InputModality::Text);
+    }
+    normalized
+}
+
+fn parse_input_modalities(value: &str) -> Vec<InputModality> {
+    let parsed = value
+        .split(',')
+        .filter_map(|token| match token.trim().to_ascii_lowercase().as_str() {
+            "" => None,
+            "text" => Some(InputModality::Text),
+            "image" => Some(InputModality::Image),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    normalize_input_modalities(parsed)
+}
+
 fn config_search_paths(workspace_root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(home) = user_home_dir() {
@@ -704,4 +751,27 @@ fn default_system_prompt() -> String {
         "After making changes, run the most relevant narrow validation available (tests, build, or lint) when feasible, then expand only if needed.",
     ]
     .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InputModality, normalize_input_modalities, parse_input_modalities};
+
+    #[test]
+    fn normalize_input_modalities_keeps_text_and_deduplicates() {
+        let got = normalize_input_modalities(vec![
+            InputModality::Image,
+            InputModality::Image,
+            InputModality::Text,
+        ]);
+
+        assert_eq!(got, vec![InputModality::Image, InputModality::Text]);
+    }
+
+    #[test]
+    fn parse_input_modalities_defaults_text_when_only_image_is_configured() {
+        let got = parse_input_modalities("image");
+
+        assert_eq!(got, vec![InputModality::Text, InputModality::Image]);
+    }
 }

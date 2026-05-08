@@ -1,3 +1,4 @@
+use crate::InputItem;
 use crate::context::{ContextManager, EnvironmentContext};
 use crate::conversation::ConversationHistory;
 use crate::model::{ModelRequest, ModelResponse, ModelStreamObserver};
@@ -136,7 +137,7 @@ pub trait TurnHost: Send + Sync {
         denied_requests: &mut HashSet<String>,
     ) -> Result<ToolBatchOutcome>;
 
-    fn audit_turn_started(&self, conversation_id: &str, user_input: &str);
+    fn audit_turn_started(&self, conversation_id: &str, user_input: &[InputItem]);
     fn audit_turn_completed(
         &self,
         conversation_id: &str,

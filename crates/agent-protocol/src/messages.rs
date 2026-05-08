@@ -1,8 +1,9 @@
-use crate::types::{ConversationSnapshot, FrontendMode, NotificationDelivery, NotificationStream};
-use crate::{
-    CompactionContinuation, ConversationSummary, ConversationTurn, ModelRetryStage, ModelUsage,
-    RequestId, ServerRequest, ServerRequestDecision, TranscriptItem, TurnId, TurnItemKind,
-    UserTurnInput,
+use crate::types::{FrontendMode, NotificationDelivery, NotificationStream};
+use crate::{RequestId, UserTurnInput};
+use agent_core::{
+    CompactionContinuation, ConversationSnapshot, ConversationSummary, ConversationTurn,
+    ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision, TranscriptItem, TurnId,
+    TurnItemKind,
 };
 use serde::{Deserialize, Serialize};
 

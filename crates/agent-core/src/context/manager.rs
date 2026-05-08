@@ -1,5 +1,5 @@
 use super::fragments::{ContextFragment, ContextInjectionStrategy, insert_context_fragments};
-use crate::conversation::{ConversationHistory, ResponseItem};
+use crate::conversation::{ConversationHistory, InputItem, ResponseItem};
 use crate::model::ModelRequest;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 use serde::{Deserialize, Serialize};
@@ -67,7 +67,7 @@ impl ContextManager {
         self.history.ensure_system_prompt(system_prompt);
     }
 
-    pub fn record_user_message(&mut self, content: impl Into<String>) -> ResponseItem {
+    pub fn record_user_message(&mut self, content: Vec<InputItem>) -> ResponseItem {
         self.history.push_user_message(content)
     }
 
@@ -195,11 +195,12 @@ fn render_context_fragments(fragments: &[impl ContextFragment]) -> Vec<ResponseI
 mod tests {
     use super::*;
     use crate::context::EnvironmentContext;
+    use crate::{input_items_to_plain_text, text_input_items};
 
     #[test]
     fn contextual_fragments_are_model_request_only_and_before_latest_user() {
         let mut manager = ContextManager::new("default", "system");
-        manager.record_user_message("hello");
+        manager.record_user_message(crate::text_input_items("hello"));
 
         let environment = EnvironmentContext::new(
             r"D:\learn\gifti\cloudagent",
@@ -220,10 +221,10 @@ mod tests {
         assert_eq!(request.messages.len(), 3);
         assert!(matches!(request.messages[0], ResponseItem::System { .. }));
         assert!(
-            matches!(request.messages[1], ResponseItem::User { ref content } if content.starts_with("<environment_context>"))
+            matches!(request.messages[1], ResponseItem::User { ref content } if input_items_to_plain_text(content).starts_with("<environment_context>"))
         );
         assert!(
-            matches!(request.messages[2], ResponseItem::User { ref content } if content == "hello")
+            matches!(request.messages[2], ResponseItem::User { ref content } if content == &text_input_items("hello"))
         );
     }
 
@@ -240,7 +241,7 @@ mod tests {
                     content: "[Context Summary]\nprevious work".to_string(),
                 },
                 ResponseItem::User {
-                    content: "latest user".to_string(),
+                    content: text_input_items("latest user"),
                 },
                 ResponseItem::Assistant {
                     content: Some("latest assistant".to_string()),
@@ -275,8 +276,8 @@ mod tests {
                 ResponseItem::Assistant { content: Some(latest_assistant), .. },
             ] if system == "system"
                 && summary == "[Context Summary]\nprevious work"
-                && env.starts_with("<environment_context>")
-                && latest_user == "latest user"
+                && input_items_to_plain_text(env).starts_with("<environment_context>")
+                && latest_user == &text_input_items("latest user")
                 && latest_assistant == "latest assistant"
         ));
     }

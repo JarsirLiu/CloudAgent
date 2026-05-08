@@ -1,9 +1,15 @@
 mod history;
+mod input;
 mod items;
 mod metrics;
 mod state;
 
 pub use history::{ConversationHistory, ResponseItem};
+pub use input::{
+    AttachmentRef, ImageDetail, InputItem, input_items_are_blank, input_items_attachment_count,
+    input_items_display_text, input_items_preview_text, input_items_text_len,
+    input_items_to_plain_text, text_input_items,
+};
 pub use items::{ConversationTurn, TranscriptItem};
 pub use metrics::visible_message_count;
 use serde::{Deserialize, Serialize};

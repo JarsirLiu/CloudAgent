@@ -3,11 +3,11 @@ use crate::routing::command_router::{ServerState, TurnSpawnDependencies};
 use crate::server_request::service as server_request_service;
 use crate::session::listener::start_conversation_listener;
 use crate::session::service as session_service;
-use agent_core::AgentHost;
-use agent_protocol::{
-    AppServerMessage, AppServerNotification, AppServerRequest, ApprovalPolicy,
-    CompactionContinuation, PermissionProfile, ServerRequest, ServerRequestDecision,
+use agent_core::{
+    AgentHost, ApprovalPolicy, CompactionContinuation, EventMsg, InputItem, PermissionProfile,
+    ServerRequest, ServerRequestDecision, TurnState, input_items_text_len,
 };
+use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -20,7 +20,7 @@ pub(crate) async fn submit_turn(
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
-    content: String,
+    content: Vec<InputItem>,
     permission_profile: PermissionProfile,
     approval_policy: ApprovalPolicy,
     auto_approve: bool,
@@ -178,8 +178,8 @@ fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
     messages
         .iter()
         .map(|item| match item {
-            agent_core::ResponseItem::System { content }
-            | agent_core::ResponseItem::User { content } => content.chars().count(),
+            agent_core::ResponseItem::System { content } => content.chars().count(),
+            agent_core::ResponseItem::User { content } => input_items_text_len(content),
             agent_core::ResponseItem::Assistant {
                 content,
                 tool_calls,
@@ -205,7 +205,7 @@ fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
 fn spawn_turn(
     runtime: Arc<AgentHost>,
     conversation_id: String,
-    user_input: String,
+    user_input: Vec<InputItem>,
     permission_profile: PermissionProfile,
     approval_policy: ApprovalPolicy,
     deps: TurnSpawnDependencies,
@@ -236,7 +236,7 @@ fn spawn_turn(
                 move |event| {
                     let event = event.clone();
                     let active_turn_id = active_turn_id_for_events.clone();
-                    if let agent_protocol::EventMsg::TurnStarted { turn_id, .. } = &event
+                    if let EventMsg::TurnStarted { turn_id, .. } = &event
                         && let Ok(mut active) = active_turn_id.lock()
                     {
                         *active = Some(turn_id.clone());
@@ -365,9 +365,7 @@ fn spawn_turn(
                     },
                 )
                 .await;
-                listener
-                    .finish_turn(agent_protocol::TurnState::Failed)
-                    .await;
+                listener.finish_turn(TurnState::Failed).await;
             }
         }
         let _ = listener_task.await;

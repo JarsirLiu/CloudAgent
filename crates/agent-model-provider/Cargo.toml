@@ -8,6 +8,7 @@ license.workspace = true
 agent-core = { path = "../agent-core" }
 anyhow.workspace = true
 async-trait.workspace = true
+base64 = "0.22"
 config = { path = "../config" }
 infra-http = { path = "../infra-http" }
 reqwest.workspace = true

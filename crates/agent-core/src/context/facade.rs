@@ -225,9 +225,8 @@ fn estimate_history_tokens(messages: &[ResponseItem]) -> usize {
     messages
         .iter()
         .map(|item| match item {
-            ResponseItem::System { content } | ResponseItem::User { content } => {
-                content.chars().count()
-            }
+            ResponseItem::System { content } => content.chars().count(),
+            ResponseItem::User { content } => crate::input_items_text_len(content),
             ResponseItem::Assistant {
                 content,
                 tool_calls,
@@ -363,7 +362,7 @@ mod tests {
                     content: "system".to_string(),
                 },
                 ResponseItem::User {
-                    content: "user".to_string(),
+                    content: crate::text_input_items("user"),
                 },
             ],
             tools: vec![ToolSpec {
@@ -390,7 +389,7 @@ mod tests {
         let facade = ContextFacade::new();
         let request = ModelRequest {
             messages: vec![ResponseItem::User {
-                content: "x".repeat(2_400),
+                content: crate::text_input_items("x".repeat(2_400)),
             }],
             tools: Vec::new(),
             temperature: 0.0,

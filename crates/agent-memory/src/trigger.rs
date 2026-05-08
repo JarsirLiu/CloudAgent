@@ -1,5 +1,5 @@
 use crate::model::{MemoryConfig, MemoryMode};
-use agent_core::{ConversationHistory, ResponseItem};
+use agent_core::conversation::{ConversationHistory, ResponseItem};
 
 pub fn should_persist(config: &MemoryConfig, history: &ConversationHistory) -> bool {
     if !config.enabled || config.mode != MemoryMode::Evolve {

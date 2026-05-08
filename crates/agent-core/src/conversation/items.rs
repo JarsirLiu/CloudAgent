@@ -2,6 +2,8 @@ use crate::tool::{CommandExecutionStatus, StructuredToolResult, WriteFileStatus}
 use crate::turn::TurnState;
 use serde::{Deserialize, Serialize};
 
+use super::InputItem;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TranscriptItem {
@@ -11,7 +13,7 @@ pub enum TranscriptItem {
     },
     UserMessage {
         id: String,
-        text: String,
+        content: Vec<InputItem>,
     },
     AgentMessage {
         id: String,
@@ -62,6 +64,13 @@ impl TranscriptItem {
             | Self::FileChange { id, .. }
             | Self::ToolResult { id, .. }
             | Self::Reasoning { id, .. } => id,
+        }
+    }
+
+    pub fn user_message(id: impl Into<String>, content: Vec<InputItem>) -> Self {
+        Self::UserMessage {
+            id: id.into(),
+            content,
         }
     }
 }

@@ -1,7 +1,6 @@
 use super::shared::{LocalToolInvocation, LocalToolPayload, LocalToolSource, ToolInvocationOutput};
 use crate::spec::{ToolDefaultVisibility, ToolPermissionTier};
-use agent_core::ToolSpec;
-use agent_protocol::StructuredToolResult;
+use agent_core::{StructuredToolResult, ToolSpec};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde_json::Value;

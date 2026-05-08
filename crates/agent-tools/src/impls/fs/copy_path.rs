@@ -6,7 +6,8 @@ use crate::spec::{
     ToolUsageGuidance,
 };
 use agent_core::{
-    ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec, WriteFileStatus,
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
+    TurnItemDeltaKind, TurnItemKind, WriteFileStatus,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -50,8 +51,8 @@ impl CopyPathTool {
                 mutating: true,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
         )
@@ -115,7 +116,7 @@ impl LocalTool for CopyPathLocalTool {
                 source_path.display(),
                 destination_path.display()
             ),
-            structured: Some(agent_protocol::StructuredToolResult::CopyPath {
+            structured: Some(StructuredToolResult::CopyPath {
                 source_path: source_path.display().to_string(),
                 destination_path: destination_path.display().to_string(),
                 recursive,

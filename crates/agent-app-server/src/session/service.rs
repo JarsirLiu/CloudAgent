@@ -1,8 +1,8 @@
 use crate::app::notification::send_notification;
 use crate::routing::command_router::{ServerState, merge_active_turn};
 use crate::session::state as session_state;
-use agent_core::AgentHost;
-use agent_protocol::{AppServerMessage, AppServerNotification, ConversationStatus, FrontendMode};
+use agent_core::{AgentHost, ConversationStatus, InputItem, input_items_preview_text};
+use agent_protocol::{AppServerMessage, AppServerNotification, FrontendMode};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -290,7 +290,7 @@ pub(crate) async fn maybe_spawn_auto_title_job(
     event_tx: mpsc::UnboundedSender<AppServerMessage>,
     state: Arc<Mutex<ServerState>>,
     conversation_id: String,
-    first_user_message: String,
+    first_user_message: Vec<InputItem>,
 ) {
     if runtime.llm_model_name() == "fake-model" {
         return;
@@ -345,9 +345,8 @@ pub(crate) async fn maybe_spawn_auto_title_job(
     });
 }
 
-fn derive_title(input: &str) -> String {
-    let single = input.split_whitespace().collect::<Vec<_>>().join(" ");
-    truncate_with_ellipsis(single.trim(), 40)
+fn derive_title(input: &[InputItem]) -> String {
+    truncate_with_ellipsis(&input_items_preview_text(input, 40), 40)
 }
 
 fn normalize_title_candidate(raw: &str) -> Option<String> {

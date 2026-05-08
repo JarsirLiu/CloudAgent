@@ -7,10 +7,10 @@ use crate::config::ProviderRuntimeConfig;
 use crate::error::{ProviderRequestError, ProviderStreamError};
 use crate::event::{ProviderCompletion, ProviderStreamEvent};
 use crate::request::ProviderRequest;
-use agent_core::{
+use agent_core::model::{
     ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelStreamObserver, ModelUsage,
-    ToolCall, ToolIdentity, ToolSpec,
 };
+use agent_core::tool::{ToolCall, ToolIdentity, ToolSpec};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use config::LlmConfig;
@@ -74,7 +74,12 @@ impl OpenAiCompatibleModel {
         &self,
         request: &ModelRequest,
     ) -> Result<ProviderEventStream, ProviderStreamError> {
-        let provider_request = ProviderRequest::from_model_request(request);
+        let provider_request =
+            ProviderRequest::from_model_request(request, self.runtime.supports_image_input())
+                .await
+                .map_err(|err| ProviderStreamError::Transport {
+                    message: format!("failed to prepare LLM request: {err}"),
+                })?;
         let payload = ChatCompletionRequest {
             model: self.config.model.clone(),
             messages: provider_request
@@ -160,7 +165,9 @@ impl OpenAiCompatibleModel {
 #[async_trait]
 impl ChatModel for OpenAiCompatibleModel {
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
-        let provider_request = ProviderRequest::from_model_request(&request);
+        let provider_request =
+            ProviderRequest::from_model_request(&request, self.runtime.supports_image_input())
+                .await?;
         let tool_spec_index = Self::tool_spec_index(&provider_request.tools);
         let payload = ChatCompletionRequest {
             model: self.config.model.clone(),
@@ -410,6 +417,7 @@ mod tests {
     use super::*;
     use agent_core::ModelStreamObserver;
     use agent_core::ResponseItem;
+    use config::default_input_modalities;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -483,6 +491,7 @@ mod tests {
             base_url: format!("http://{addr}"),
             api_key: "test-key".to_string(),
             model: "test-model".to_string(),
+            input_modalities: default_input_modalities(),
             temperature: 0.0,
             request_max_retries: 0,
             stream_max_retries: 0,
@@ -492,7 +501,7 @@ mod tests {
 
         let request = ModelRequest {
             messages: vec![ResponseItem::User {
-                content: "hello".to_string(),
+                content: agent_core::text_input_items("hello"),
             }],
             tools: Vec::new(),
             temperature: 0.0,
@@ -571,6 +580,7 @@ mod tests {
             base_url: format!("http://{addr}"),
             api_key: "test-key".to_string(),
             model: "test-model".to_string(),
+            input_modalities: default_input_modalities(),
             temperature: 0.0,
             request_max_retries: 0,
             stream_max_retries: 0,
@@ -580,7 +590,7 @@ mod tests {
 
         let request = ModelRequest {
             messages: vec![ResponseItem::User {
-                content: "hello".to_string(),
+                content: agent_core::text_input_items("hello"),
             }],
             tools: Vec::new(),
             temperature: 0.0,

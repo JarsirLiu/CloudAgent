@@ -5,7 +5,10 @@ use crate::spec::{
     ToolCategory, ToolDefaultVisibility, ToolDescriptor, ToolLayer, ToolPermissionTier, ToolRisk,
     ToolUsageGuidance,
 };
-use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
+use agent_core::{
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
+    TurnItemDeltaKind, TurnItemKind,
+};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
@@ -57,8 +60,8 @@ impl WatchTool {
                 mutating: false,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
         )
@@ -104,8 +107,8 @@ impl UnwatchTool {
                 mutating: false,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
         )
@@ -386,7 +389,7 @@ impl LocalTool for WatchLocalTool {
                 args.watch_id,
                 if recursive { " recursively" } else { "" }
             ),
-            structured: Some(agent_protocol::StructuredToolResult::Watch {
+            structured: Some(StructuredToolResult::Watch {
                 watch_id: args.watch_id,
                 path: canonical_path.display().to_string(),
                 recursive,
@@ -424,7 +427,7 @@ impl LocalTool for UnwatchLocalTool {
         };
         Ok(ToolInvocationOutput {
             content,
-            structured: Some(agent_protocol::StructuredToolResult::Unwatch {
+            structured: Some(StructuredToolResult::Unwatch {
                 watch_id: result.watch_id,
                 removed: true,
                 changed_path_count: result.changed_paths.len(),

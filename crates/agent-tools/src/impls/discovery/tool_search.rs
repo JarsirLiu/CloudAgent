@@ -5,7 +5,7 @@ use crate::spec::{
 };
 use agent_core::{
     StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSearchHit,
-    ToolSpec,
+    ToolSpec, TurnItemDeltaKind, TurnItemKind,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -53,8 +53,8 @@ impl ToolSearchTool {
                 mutating: false,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
         )
@@ -214,8 +214,8 @@ mod tests {
                         mutating: false,
                         execution_policy: ToolExecutionPolicy::Sequential,
                         requires_approval: false,
-                        item_kind: agent_protocol::TurnItemKind::ToolCall,
-                        delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                        item_kind: TurnItemKind::ToolCall,
+                        delta_kind: TurnItemDeltaKind::ToolOutput,
                         approval_reason: None,
                     }],
                     output_tx: None,

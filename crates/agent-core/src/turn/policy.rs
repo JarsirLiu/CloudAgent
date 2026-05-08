@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::conversation::InputItem;
+
 #[derive(Clone, Debug)]
 pub struct ExecutionPolicy {
     pub max_tool_roundtrips: Option<usize>,
@@ -39,7 +41,7 @@ pub struct TurnPolicy {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserTurnInput {
     pub conversation_id: String,
-    pub content: String,
+    pub content: Vec<InputItem>,
     #[serde(default = "default_turn_policy")]
     pub turn_policy: TurnPolicy,
 }

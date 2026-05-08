@@ -1,5 +1,7 @@
 use crate::request::ProviderMessage;
-use agent_core::{ModelUsage, ToolCall, ToolSpec};
+use agent_core::conversation::{AttachmentRef, ImageDetail, InputItem};
+use agent_core::model::ModelUsage;
+use agent_core::tool::{ToolCall, ToolSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -26,7 +28,7 @@ pub(super) struct ChatCompletionStreamOptions {
 pub(super) struct ChatApiMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<ChatApiContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<ChatToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,14 +42,14 @@ impl ChatApiMessage {
         match message {
             ProviderMessage::System { content } => Self {
                 role: "system".to_string(),
-                content: Some(content.clone()),
+                content: Some(ChatApiContent::Text(content.clone())),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
             },
             ProviderMessage::User { content } => Self {
                 role: "user".to_string(),
-                content: Some(content.clone()),
+                content: Some(ChatApiContent::Parts(user_content_parts(content))),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
@@ -57,7 +59,7 @@ impl ChatApiMessage {
                 tool_calls,
             } => Self {
                 role: "assistant".to_string(),
-                content: content.clone(),
+                content: content.clone().map(ChatApiContent::Text),
                 tool_calls: if tool_calls.is_empty() {
                     None
                 } else {
@@ -77,7 +79,7 @@ impl ChatApiMessage {
                 content,
             } => Self {
                 role: "tool".to_string(),
-                content: Some(tool_message_content(name, content)),
+                content: Some(ChatApiContent::Text(tool_message_content(name, content))),
                 tool_calls: None,
                 tool_call_id: Some(tool_call_id.clone()),
                 name: Some(name.clone()),
@@ -88,6 +90,96 @@ impl ChatApiMessage {
 
 fn tool_message_content(_name: &str, content: &str) -> String {
     content.to_string()
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ChatApiContent {
+    Text(String),
+    Parts(Vec<ChatApiContentPart>),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ChatApiContentPart {
+    Text { text: String },
+    ImageUrl { image_url: ChatApiImageUrl },
+}
+
+#[derive(Serialize)]
+struct ChatApiImageUrl {
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<&'static str>,
+}
+
+fn user_content_parts(items: &[InputItem]) -> Vec<ChatApiContentPart> {
+    let mut parts = Vec::new();
+    for item in items {
+        match item {
+            InputItem::Text { text } => parts.push(ChatApiContentPart::Text { text: text.clone() }),
+            InputItem::Image {
+                source,
+                detail,
+                alt,
+            } => {
+                if let Some(url) = attachment_url(source) {
+                    parts.push(ChatApiContentPart::ImageUrl {
+                        image_url: ChatApiImageUrl {
+                            url,
+                            detail: detail.as_ref().map(image_detail_label),
+                        },
+                    });
+                } else if let Some(alt) = alt {
+                    parts.push(ChatApiContentPart::Text {
+                        text: format!("[image unavailable: {alt}]"),
+                    });
+                }
+            }
+            InputItem::File {
+                name, mime_type, ..
+            } => {
+                let label = name.clone().unwrap_or_else(|| "attachment".to_string());
+                let suffix = mime_type
+                    .as_ref()
+                    .map(|mime| format!(" ({mime})"))
+                    .unwrap_or_default();
+                parts.push(ChatApiContentPart::Text {
+                    text: format!("[file: {label}{suffix}]"),
+                });
+            }
+            InputItem::Mention { name, path } => parts.push(ChatApiContentPart::Text {
+                text: format!("@{name} ({path})"),
+            }),
+            InputItem::Skill { name, path } => parts.push(ChatApiContentPart::Text {
+                text: format!("#{name} ({path})"),
+            }),
+        }
+    }
+    if parts.is_empty() {
+        parts.push(ChatApiContentPart::Text {
+            text: String::new(),
+        });
+    }
+    parts
+}
+
+fn attachment_url(source: &AttachmentRef) -> Option<String> {
+    match source {
+        AttachmentRef::InlineDataUrl { data_url } => Some(data_url.clone()),
+        AttachmentRef::RemoteUrl { url } => Some(url.clone()),
+        AttachmentRef::HubAsset { download_url, .. } => download_url.clone(),
+        AttachmentRef::LocalPath { .. } => None,
+    }
+}
+
+fn image_detail_label(detail: &ImageDetail) -> &'static str {
+    match detail {
+        ImageDetail::Auto => "auto",
+        ImageDetail::Low => "low",
+        ImageDetail::High => "high",
+        ImageDetail::Original => "high",
+    }
 }
 
 #[derive(Serialize)]
@@ -242,7 +334,9 @@ impl From<ChatCompletionUsage> for ModelUsage {
 
 #[cfg(test)]
 mod tests {
-    use super::tool_message_content;
+    use super::{ChatApiMessage, ProviderMessage, tool_message_content};
+    use agent_core::{AttachmentRef, ImageDetail, InputItem};
+    use serde_json::json;
 
     #[test]
     fn tool_messages_forward_content_verbatim() {
@@ -250,5 +344,65 @@ mod tests {
         let rendered = tool_message_content("exec_command", filtered);
 
         assert_eq!(rendered, filtered);
+    }
+
+    #[test]
+    fn user_messages_encode_text_and_image_parts_for_openai_wire() {
+        let message = ChatApiMessage::from_message(&ProviderMessage::User {
+            content: vec![
+                InputItem::Text {
+                    text: "describe this".to_string(),
+                },
+                InputItem::Image {
+                    source: AttachmentRef::RemoteUrl {
+                        url: "https://example.com/diagram.png".to_string(),
+                    },
+                    detail: Some(ImageDetail::High),
+                    alt: Some("diagram".to_string()),
+                },
+            ],
+        });
+
+        let value = serde_json::to_value(message).expect("serialize user message");
+        assert_eq!(
+            value,
+            json!({
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe this" },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/diagram.png",
+                            "detail": "high"
+                        }
+                    }
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn local_path_images_fall_back_to_alt_text_until_materialized() {
+        let message = ChatApiMessage::from_message(&ProviderMessage::User {
+            content: vec![InputItem::Image {
+                source: AttachmentRef::LocalPath {
+                    path: "C:\\tmp\\plan.png".to_string(),
+                },
+                detail: Some(ImageDetail::Low),
+                alt: Some("plan".to_string()),
+            }],
+        });
+
+        let value = serde_json::to_value(message).expect("serialize user message");
+        assert_eq!(
+            value,
+            json!({
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "[image unavailable: plan]" }
+                ]
+            })
+        );
     }
 }

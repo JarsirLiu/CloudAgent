@@ -1,4 +1,6 @@
-use crate::conversation::ResponseItem;
+use crate::conversation::{
+    AttachmentRef, ImageDetail, InputItem, ResponseItem, input_items_are_blank, text_input_items,
+};
 use crate::model::ModelRequest;
 
 #[derive(Clone, Copy, Debug)]
@@ -238,7 +240,9 @@ pub fn build_compaction_summary_request(
                 content: "You create structured context-compaction summaries for agent handoff."
                     .to_string(),
             },
-            ResponseItem::User { content: prompt },
+            ResponseItem::User {
+                content: text_input_items(prompt),
+            },
         ],
         tools: Vec::new(),
         temperature,
@@ -325,7 +329,7 @@ fn choose_tail_start_from_token_budget_within_slice(
 impl CompactionSummary {
     pub fn fallback_from_plan(plan: &ContextCompactionPlan) -> Self {
         let current_task = latest_user_message(&plan.prefix)
-            .map(|text| vec![single_line(text)])
+            .map(|text| vec![single_line(&text)])
             .unwrap_or_else(|| vec!["Continue the active coding task.".to_string()]);
         let progress = collect_prefix_lines(&plan.prefix, "Progress", 4);
         let key_decisions = collect_decision_lines(&plan.prefix);
@@ -463,7 +467,10 @@ fn render_compaction_source(prefix: &[ResponseItem]) -> String {
             ResponseItem::System { content } => {
                 lines.push(format!("SYSTEM: {}", single_line(content)))
             }
-            ResponseItem::User { content } => lines.push(format!("USER: {}", single_line(content))),
+            ResponseItem::User { content } => lines.push(format!(
+                "USER: {}",
+                single_line(&render_input_items_for_compaction(content))
+            )),
             ResponseItem::Assistant {
                 content,
                 tool_calls,
@@ -548,7 +555,8 @@ fn estimate_message_tokens(messages: &[ResponseItem]) -> usize {
     let chars = messages
         .iter()
         .map(|item| match item {
-            ResponseItem::System { content } | ResponseItem::User { content } => content.len(),
+            ResponseItem::System { content } => content.len(),
+            ResponseItem::User { content } => render_input_items_for_compaction(content).len(),
             ResponseItem::Assistant {
                 content,
                 tool_calls,
@@ -567,9 +575,11 @@ fn estimate_message_tokens(messages: &[ResponseItem]) -> usize {
     chars.saturating_div(3).max(1)
 }
 
-fn latest_user_message(prefix: &[ResponseItem]) -> Option<&str> {
+fn latest_user_message(prefix: &[ResponseItem]) -> Option<String> {
     prefix.iter().rev().find_map(|item| match item {
-        ResponseItem::User { content } if !content.trim().is_empty() => Some(content.as_str()),
+        ResponseItem::User { content } if !input_items_are_blank(content) => {
+            Some(render_input_items_for_compaction(content))
+        }
         _ => None,
     })
 }
@@ -579,7 +589,10 @@ fn collect_prefix_lines(prefix: &[ResponseItem], label: &str, limit: usize) -> V
     for item in prefix {
         match item {
             ResponseItem::User { content } => {
-                lines.push(format!("{label}: {}", single_line(content)));
+                lines.push(format!(
+                    "{label}: {}",
+                    single_line(&render_input_items_for_compaction(content))
+                ));
             }
             ResponseItem::Assistant {
                 content: Some(content),
@@ -596,12 +609,12 @@ fn collect_prefix_lines(prefix: &[ResponseItem], label: &str, limit: usize) -> V
 fn collect_decision_lines(prefix: &[ResponseItem]) -> Vec<String> {
     let mut lines = Vec::new();
     for text in prefix.iter().filter_map(|item| match item {
-        ResponseItem::System { content }
-        | ResponseItem::User { content }
-        | ResponseItem::Assistant {
+        ResponseItem::System { content } => Some(content.clone()),
+        ResponseItem::User { content } => Some(render_input_items_for_compaction(content)),
+        ResponseItem::Assistant {
             content: Some(content),
             ..
-        } => Some(content.as_str()),
+        } => Some(content.clone()),
         _ => None,
     }) {
         let lower = text.to_ascii_lowercase();
@@ -612,7 +625,7 @@ fn collect_decision_lines(prefix: &[ResponseItem]) -> Vec<String> {
             || lower.contains("use")
             || lower.contains("belongs")
         {
-            lines.push(single_line(text));
+            lines.push(single_line(&text));
         }
     }
     dedupe_limit(lines, 4)
@@ -621,12 +634,12 @@ fn collect_decision_lines(prefix: &[ResponseItem]) -> Vec<String> {
 fn collect_context_lines(prefix: &[ResponseItem]) -> Vec<String> {
     let mut lines = Vec::new();
     for text in prefix.iter().filter_map(|item| match item {
-        ResponseItem::System { content }
-        | ResponseItem::User { content }
-        | ResponseItem::Assistant {
+        ResponseItem::System { content } => Some(content.clone()),
+        ResponseItem::User { content } => Some(render_input_items_for_compaction(content)),
+        ResponseItem::Assistant {
             content: Some(content),
             ..
-        } => Some(content.as_str()),
+        } => Some(content.clone()),
         _ => None,
     }) {
         if text.contains("crates/")
@@ -636,7 +649,7 @@ fn collect_context_lines(prefix: &[ResponseItem]) -> Vec<String> {
             || text.contains("history")
             || text.contains("turn")
         {
-            lines.push(single_line(text));
+            lines.push(single_line(&text));
         }
     }
     dedupe_limit(lines, 5)
@@ -673,10 +686,91 @@ fn dedupe_limit(lines: Vec<String>, limit: usize) -> Vec<String> {
     deduped
 }
 
+fn render_input_items_for_compaction(items: &[InputItem]) -> String {
+    items
+        .iter()
+        .map(render_input_item_for_compaction)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_input_item_for_compaction(item: &InputItem) -> String {
+    match item {
+        InputItem::Text { text } => text.clone(),
+        InputItem::Image {
+            source,
+            detail,
+            alt,
+        } => {
+            let mut parts = vec!["[image".to_string()];
+            if let Some(alt) = alt.as_ref().filter(|alt| !alt.trim().is_empty()) {
+                parts.push(format!("alt={}", single_line(alt)));
+            }
+            if let Some(detail) = detail {
+                parts.push(format!("detail={}", render_image_detail(detail)));
+            }
+            parts.push(format!("source={}", render_attachment_ref(source)));
+            format!("{}]", parts.join(" "))
+        }
+        InputItem::File {
+            source,
+            mime_type,
+            name,
+        } => {
+            let mut parts = vec!["[file".to_string()];
+            if let Some(name) = name.as_ref().filter(|name| !name.trim().is_empty()) {
+                parts.push(format!("name={}", single_line(name)));
+            }
+            if let Some(mime_type) = mime_type
+                .as_ref()
+                .filter(|mime_type| !mime_type.trim().is_empty())
+            {
+                parts.push(format!("mime={mime_type}"));
+            }
+            parts.push(format!("source={}", render_attachment_ref(source)));
+            format!("{}]", parts.join(" "))
+        }
+        InputItem::Mention { name, path } => {
+            format!("[mention @{name} path={}]", single_line(path))
+        }
+        InputItem::Skill { name, path } => format!("[skill #{name} path={}]", single_line(path)),
+    }
+}
+
+fn render_attachment_ref(source: &AttachmentRef) -> String {
+    match source {
+        AttachmentRef::InlineDataUrl { data_url } => {
+            let prefix = data_url.split(',').next().unwrap_or("data:unknown");
+            format!("{prefix},...")
+        }
+        AttachmentRef::RemoteUrl { url } => single_line(url),
+        AttachmentRef::HubAsset {
+            asset_id,
+            download_url,
+        } => match download_url {
+            Some(download_url) => format!("hub:{asset_id} ({})", single_line(download_url)),
+            None => format!("hub:{asset_id}"),
+        },
+        AttachmentRef::LocalPath { path } => single_line(path),
+    }
+}
+
+fn render_image_detail(detail: &ImageDetail) -> &'static str {
+    match detail {
+        ImageDetail::Auto => "auto",
+        ImageDetail::Low => "low",
+        ImageDetail::High => "high",
+        ImageDetail::Original => "original",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tool::{CommandExecutionStatus, StructuredToolResult, ToolCall};
+    use crate::{
+        AttachmentRef, ImageDetail, InputItem, input_items_to_plain_text, text_input_items,
+    };
     use serde_json::json;
 
     #[test]
@@ -686,7 +780,7 @@ mod tests {
         }];
         for i in 0..40 {
             messages.push(ResponseItem::User {
-                content: format!("user line {i} {}", "x".repeat(50)),
+                content: text_input_items(format!("user line {i} {}", "x".repeat(50))),
             });
             messages.push(ResponseItem::Assistant {
                 content: Some(format!("assistant line {i} {}", "y".repeat(50))),
@@ -733,7 +827,7 @@ mod tests {
         }];
         for i in 0..20 {
             messages.push(ResponseItem::User {
-                content: format!("q{i} {}", "z".repeat(80)),
+                content: text_input_items(format!("q{i} {}", "z".repeat(80))),
             });
             messages.push(ResponseItem::Assistant {
                 content: Some(format!("a{i} {}", "w".repeat(80))),
@@ -797,13 +891,80 @@ mod tests {
     }
 
     #[test]
+    fn compaction_source_keeps_multimodal_user_item_details() {
+        let source = render_compaction_source(&[ResponseItem::User {
+            content: vec![
+                InputItem::Text {
+                    text: "please inspect".to_string(),
+                },
+                InputItem::Image {
+                    source: AttachmentRef::RemoteUrl {
+                        url: "https://example.com/diagram.png".to_string(),
+                    },
+                    detail: Some(ImageDetail::High),
+                    alt: Some("system diagram".to_string()),
+                },
+                InputItem::File {
+                    source: AttachmentRef::HubAsset {
+                        asset_id: "asset-1".to_string(),
+                        download_url: None,
+                    },
+                    mime_type: Some("application/pdf".to_string()),
+                    name: Some("spec.pdf".to_string()),
+                },
+                InputItem::Mention {
+                    name: "browser-use".to_string(),
+                    path: "plugin://browser-use".to_string(),
+                },
+            ],
+        }]);
+
+        assert!(source.contains("please inspect"));
+        assert!(source.contains(
+            "[image alt=system diagram detail=high source=https://example.com/diagram.png]"
+        ));
+        assert!(source.contains("[file name=spec.pdf mime=application/pdf source=hub:asset-1]"));
+        assert!(source.contains("[mention @browser-use path=plugin://browser-use]"));
+    }
+
+    #[test]
+    fn fallback_summary_uses_multimodal_user_rendering() {
+        let plan = ContextCompactionPlan {
+            prefix: vec![ResponseItem::User {
+                content: vec![
+                    InputItem::Text {
+                        text: "compare this".to_string(),
+                    },
+                    InputItem::Image {
+                        source: AttachmentRef::LocalPath {
+                            path: "D:\\images\\shot.png".to_string(),
+                        },
+                        detail: Some(ImageDetail::Low),
+                        alt: Some("ui screenshot".to_string()),
+                    },
+                ],
+            }],
+            preserved_tail: Vec::new(),
+            compacted_target_tokens: 128,
+        };
+
+        let summary = CompactionSummary::fallback_from_plan(&plan);
+
+        assert!(summary.current_task[0].contains("compare this"));
+        assert!(
+            summary.current_task[0]
+                .contains("[image alt=ui screenshot detail=low source=D:\\images\\shot.png]")
+        );
+    }
+
+    #[test]
     fn adjust_tail_start_includes_tool_call_for_preserved_tool_result() {
         let messages = vec![
             ResponseItem::System {
                 content: "system".repeat(20),
             },
             ResponseItem::User {
-                content: format!("first {}", "x".repeat(80)),
+                content: text_input_items(format!("first {}", "x".repeat(80))),
             },
             ResponseItem::Assistant {
                 content: Some(format!("calling tool {}", "y".repeat(80))),
@@ -832,14 +993,14 @@ mod tests {
                 }),
             },
             ResponseItem::User {
-                content: format!("continue {}", "q".repeat(80)),
+                content: text_input_items(format!("continue {}", "q".repeat(80))),
             },
             ResponseItem::Assistant {
                 content: Some(format!("done {}", "w".repeat(80))),
                 tool_calls: Vec::new(),
             },
             ResponseItem::User {
-                content: format!("follow up {}", "n".repeat(80)),
+                content: text_input_items(format!("follow up {}", "n".repeat(80))),
             },
         ];
 
@@ -854,7 +1015,7 @@ mod tests {
         }];
         for i in 0..6 {
             messages.push(ResponseItem::User {
-                content: format!("user-{i} {}", "x".repeat(40)),
+                content: text_input_items(format!("user-{i} {}", "x".repeat(40))),
             });
             messages.push(ResponseItem::Assistant {
                 content: Some(format!("assistant-{i} {}", "y".repeat(20))),
@@ -865,7 +1026,7 @@ mod tests {
         let keep_start = choose_tail_start(&messages, 3, 200);
         assert!(matches!(
             &messages[keep_start],
-            ResponseItem::User { content } if content.starts_with("user-3")
+            ResponseItem::User { content } if input_items_to_plain_text(content).starts_with("user-3")
         ));
     }
 
@@ -876,7 +1037,7 @@ mod tests {
         }];
         for i in 0..4 {
             messages.push(ResponseItem::User {
-                content: format!("user-{i} {}", "x".repeat(160)),
+                content: text_input_items(format!("user-{i} {}", "x".repeat(160))),
             });
             messages.push(ResponseItem::Assistant {
                 content: Some(format!("assistant-{i} {}", "y".repeat(160))),

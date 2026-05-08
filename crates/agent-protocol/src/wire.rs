@@ -1,4 +1,5 @@
 use crate::*;
+use agent_core::ServerRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -526,6 +527,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_core::{
+        ApprovalPolicy, CommandApprovalRequest, InputItem, ModelUsage, PermissionProfile,
+        ServerRequestDecision, TranscriptItem, TurnItemKind,
+    };
 
     #[test]
     fn classify_core_transcript_notifications_matches_codex_core_set() {
@@ -902,7 +907,9 @@ mod tests {
             request_id: RequestId::Integer(1),
             command: AppClientCommand::SubmitTurn(UserTurnInput {
                 conversation_id: "default".to_string(),
-                content: "hello".to_string(),
+                content: vec![InputItem::Text {
+                    text: "hello".to_string(),
+                }],
                 turn_policy: TurnPolicy {
                     permission_profile: PermissionProfile::ReadOnly,
                     approval_policy: ApprovalPolicy::OnRequest,
@@ -917,7 +924,12 @@ mod tests {
         match parsed.command {
             AppClientCommand::SubmitTurn(input) => {
                 assert_eq!(input.conversation_id, "default");
-                assert_eq!(input.content, "hello");
+                assert_eq!(
+                    input.content,
+                    vec![InputItem::Text {
+                        text: "hello".to_string()
+                    }]
+                );
                 assert!(matches!(
                     input.turn_policy.permission_profile,
                     PermissionProfile::ReadOnly

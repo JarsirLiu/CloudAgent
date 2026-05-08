@@ -1,4 +1,5 @@
-use agent_core::{PermissionProfile, ToolSpec};
+use agent_core::tool::ToolSpec;
+use agent_core::turn::PermissionProfile;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolLayer {

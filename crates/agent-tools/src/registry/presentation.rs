@@ -1,6 +1,6 @@
-use agent_core::{ToolCall, ToolResult};
-use agent_protocol::{
-    CommandExecutionStatus, StructuredToolResult, TranscriptItem, WriteFileStatus,
+use agent_core::{
+    CommandExecutionStatus, StructuredToolResult, ToolCall, ToolResult, TranscriptItem,
+    WriteFileStatus,
 };
 
 pub(crate) fn transcript_item_from_tool_result(

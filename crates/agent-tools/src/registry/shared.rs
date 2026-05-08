@@ -1,5 +1,7 @@
-use agent_core::{PermissionProfile, ToolExecutionContext, ToolIdentity, ToolSpec};
-use agent_protocol::{StructuredToolResult, WriteFileStatus};
+use agent_core::{
+    PermissionProfile, StructuredToolResult, ToolExecutionContext, ToolIdentity, ToolSpec,
+    WriteFileStatus,
+};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;

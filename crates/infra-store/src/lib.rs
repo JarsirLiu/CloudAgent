@@ -1,8 +1,10 @@
-use agent_core::{
-    ApprovalGrantKey, ApprovalGrantStoreBackend, ConversationStoreBackend, ConversationSummary,
-};
-use agent_core::{ResponseItem, RolloutItem, conversation_history_from_rollout_items};
-use agent_protocol::EventMsg;
+use agent_core::EventMsg;
+use agent_core::approval::ApprovalGrantStoreBackend;
+use agent_core::conversation::{ConversationSummary, ResponseItem, input_items_are_blank};
+use agent_core::host::ConversationStoreBackend;
+use agent_core::projection::conversation_history_from_rollout_items;
+use agent_core::rollout::RolloutItem;
+use agent_core::tool::ApprovalGrantKey;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -470,7 +472,7 @@ impl JsonConversationStore {
             .messages
             .iter()
             .filter(|message| match message {
-                ResponseItem::User { content } => !content.trim().is_empty(),
+                ResponseItem::User { content } => !input_items_are_blank(content),
                 ResponseItem::Assistant { content, .. } => content
                     .as_deref()
                     .is_some_and(|content| !content.trim().is_empty()),
@@ -548,7 +550,9 @@ mod tests {
                             &EventMsg::TurnStarted {
                                 turn_id: format!("turn-{index}-{item}"),
                                 conversation_id: conversation_id.to_string(),
-                                user_input: format!("message-{index}-{item}"),
+                                user_input: agent_core::text_input_items(format!(
+                                    "message-{index}-{item}"
+                                )),
                             },
                         )
                         .await

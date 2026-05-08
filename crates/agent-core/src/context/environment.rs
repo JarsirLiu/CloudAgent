@@ -1,5 +1,5 @@
 use super::fragments::ContextFragment;
-use crate::conversation::ResponseItem;
+use crate::conversation::{ResponseItem, text_input_items};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -48,7 +48,7 @@ impl EnvironmentContext {
 impl ContextFragment for EnvironmentContext {
     fn render(&self) -> ResponseItem {
         ResponseItem::User {
-            content: self.render_text(),
+            content: text_input_items(self.render_text()),
         }
     }
 }

@@ -1,9 +1,9 @@
+use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
+use agent_core::projection::{CoreTranscriptEvent, core_transcript_event_from_event_msg};
 use agent_core::{
-    ConversationTurn, CoreTranscriptEvent, TranscriptItem, core_transcript_event_from_event_msg,
+    CommandExecutionStatus, EventMsg, TurnItemDeltaKind, TurnItemKind, TurnState, WriteFileStatus,
 };
-use agent_protocol::{
-    AppServerNotification, EventMsg, FrontendMode, TurnItemDeltaKind, TurnItemKind, TurnState,
-};
+use agent_protocol::{AppServerNotification, FrontendMode};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -29,6 +29,7 @@ struct ProjectedItemState {
     title: Option<String>,
     status: ProjectedItemStatus,
     last_delta_kind: Option<TurnItemDeltaKind>,
+    user_content: Vec<InputItem>,
     text_buffer: String,
     reasoning_buffer: String,
     tool_output_buffer: String,
@@ -52,6 +53,7 @@ impl ProjectedItemState {
             title,
             status: ProjectedItemStatus::Started,
             last_delta_kind: None,
+            user_content: Vec::new(),
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: String::new(),
@@ -669,7 +671,12 @@ impl ConversationNotificationProjector {
         current
     }
 
-    fn observe_turn_started(&mut self, turn_id: String, user_input: String, rollout_index: usize) {
+    fn observe_turn_started(
+        &mut self,
+        turn_id: String,
+        user_input: Vec<InputItem>,
+        rollout_index: usize,
+    ) {
         self.active_turn_id = Some(turn_id.clone());
         self.turns_by_turn_id
             .insert(turn_id.clone(), TurnProjectionState::new(rollout_index));
@@ -689,7 +696,8 @@ impl ConversationNotificationProjector {
                 title: None,
                 status: ProjectedItemStatus::Completed,
                 last_delta_kind: None,
-                text_buffer: user_input,
+                user_content: user_input.clone(),
+                text_buffer: String::new(),
                 reasoning_buffer: String::new(),
                 tool_output_buffer: String::new(),
                 order_hint,
@@ -805,26 +813,40 @@ fn projected_item_from_transcript_item(
             title: None,
             status: ProjectedItemStatus::Completed,
             last_delta_kind: None,
+            user_content: Vec::new(),
             text_buffer: text,
             reasoning_buffer: String::new(),
             tool_output_buffer: String::new(),
             order_hint: order_hint as u64,
         },
-        TranscriptItem::UserMessage { id, text } | TranscriptItem::AgentMessage { id, text } => {
-            ProjectedItemState {
-                turn_id,
-                item_id: id,
-                call_id: None,
-                kind,
-                title: None,
-                status: ProjectedItemStatus::Completed,
-                last_delta_kind: None,
-                text_buffer: text,
-                reasoning_buffer: String::new(),
-                tool_output_buffer: String::new(),
-                order_hint: order_hint as u64,
-            }
-        }
+        TranscriptItem::UserMessage { id, content } => ProjectedItemState {
+            turn_id,
+            item_id: id,
+            call_id: None,
+            kind,
+            title: None,
+            status: ProjectedItemStatus::Completed,
+            last_delta_kind: None,
+            user_content: content.clone(),
+            text_buffer: String::new(),
+            reasoning_buffer: String::new(),
+            tool_output_buffer: String::new(),
+            order_hint: order_hint as u64,
+        },
+        TranscriptItem::AgentMessage { id, text } => ProjectedItemState {
+            turn_id,
+            item_id: id,
+            call_id: None,
+            kind,
+            title: None,
+            status: ProjectedItemStatus::Completed,
+            last_delta_kind: None,
+            user_content: Vec::new(),
+            text_buffer: text,
+            reasoning_buffer: String::new(),
+            tool_output_buffer: String::new(),
+            order_hint: order_hint as u64,
+        },
         TranscriptItem::Reasoning { id, title, text } => ProjectedItemState {
             turn_id,
             item_id: id,
@@ -833,6 +855,7 @@ fn projected_item_from_transcript_item(
             title: Some(title),
             status: ProjectedItemStatus::Completed,
             last_delta_kind: None,
+            user_content: Vec::new(),
             text_buffer: String::new(),
             reasoning_buffer: text,
             tool_output_buffer: String::new(),
@@ -858,6 +881,7 @@ fn projected_item_from_transcript_item(
             title: Some(command),
             status: ProjectedItemStatus::Completed,
             last_delta_kind: None,
+            user_content: Vec::new(),
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: summary,
@@ -878,6 +902,7 @@ fn projected_item_from_transcript_item(
             title: Some(path),
             status: ProjectedItemStatus::Completed,
             last_delta_kind: None,
+            user_content: Vec::new(),
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: summary,
@@ -897,6 +922,7 @@ fn projected_item_from_transcript_item(
             title: Some(tool_name),
             status: ProjectedItemStatus::Completed,
             last_delta_kind: None,
+            user_content: Vec::new(),
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: if summary.trim().is_empty() {
@@ -913,7 +939,7 @@ fn projected_item_to_transcript_item(item: &ProjectedItemState) -> Option<Transc
     match item.kind {
         TurnItemKind::UserMessage => Some(TranscriptItem::UserMessage {
             id: item.item_id.clone(),
-            text: item.text_buffer.clone(),
+            content: item.user_content.clone(),
         }),
         TurnItemKind::AssistantMessage => Some(TranscriptItem::AgentMessage {
             id: item.item_id.clone(),
@@ -932,7 +958,7 @@ fn projected_item_to_transcript_item(item: &ProjectedItemState) -> Option<Transc
             tool_name: "exec_command".to_string(),
             command: item.title.clone().unwrap_or_default(),
             current_directory: String::new(),
-            status: agent_protocol::CommandExecutionStatus::InProgress,
+            status: CommandExecutionStatus::InProgress,
             exit_code: None,
             stdout: Some(item.tool_output_buffer.clone()),
             stderr: None,
@@ -945,7 +971,7 @@ fn projected_item_to_transcript_item(item: &ProjectedItemState) -> Option<Transc
             id: item.item_id.clone(),
             tool_name: "edit_file".to_string(),
             path: item.title.clone().unwrap_or_default(),
-            status: agent_protocol::WriteFileStatus::InProgress,
+            status: WriteFileStatus::InProgress,
             files_changed: 0,
             summary: item.tool_output_buffer.clone(),
         }),
@@ -978,9 +1004,13 @@ fn turn_item_kind_for_transcript_item(item: &TranscriptItem) -> TurnItemKind {
 fn projected_transcript_item_is_empty(item: &TranscriptItem) -> bool {
     match item {
         TranscriptItem::SystemMessage { text, .. }
-        | TranscriptItem::UserMessage { text, .. }
         | TranscriptItem::AgentMessage { text, .. }
         | TranscriptItem::Reasoning { text, .. } => text.trim().is_empty(),
+        TranscriptItem::UserMessage { content, .. } => {
+            agent_core::input_items_to_plain_text(content)
+                .trim()
+                .is_empty()
+        }
         TranscriptItem::CommandExecution { summary, .. }
         | TranscriptItem::FileChange { summary, .. }
         | TranscriptItem::ToolResult { summary, .. } => summary.trim().is_empty(),
@@ -990,10 +1020,11 @@ fn projected_transcript_item_is_empty(item: &TranscriptItem) -> bool {
 #[cfg(test)]
 mod tests {
     use super::ConversationNotificationProjector;
-    use agent_protocol::{
-        AppServerNotification, EventMsg, FrontendMode, TranscriptItem, TurnItemDeltaKind,
-        TurnItemKind, TurnState,
+    use agent_core::{
+        CommandExecutionStatus, CompactionContinuation, EventMsg, ModelRetryStage, ModelUsage,
+        TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState,
     };
+    use agent_protocol::{AppServerNotification, FrontendMode};
 
     #[test]
     fn terminal_notifications_are_deferred_until_finish() {
@@ -1124,7 +1155,7 @@ mod tests {
     #[test]
     fn token_usage_projects_to_conversation_notification() {
         let mut projector = ConversationNotificationProjector::new("default");
-        let usage = agent_protocol::ModelUsage {
+        let usage = ModelUsage {
             input_tokens: 100,
             cached_input_tokens: 25,
             output_tokens: 40,
@@ -1163,7 +1194,7 @@ mod tests {
 
         let notifications = projector.project_turn_event(&EventMsg::ModelRetrying {
             turn_id: "turn-1".to_string(),
-            stage: agent_protocol::ModelRetryStage::Streaming,
+            stage: ModelRetryStage::Streaming,
             attempt: 2,
             next_delay_ms: 500,
         });
@@ -1179,7 +1210,7 @@ mod tests {
                 next_delay_ms,
             } if conversation_id == "default"
                 && turn_id == "turn-1"
-                && *stage == agent_protocol::ModelRetryStage::Streaming
+                && *stage == ModelRetryStage::Streaming
                 && *attempt == 2
                 && *next_delay_ms == 500
         ));
@@ -1191,12 +1222,12 @@ mod tests {
 
         let started = projector.project_turn_event(&EventMsg::ContextCompactionStarted {
             turn_id: "turn-1".to_string(),
-            continuation: agent_protocol::CompactionContinuation::MidTurn,
+            continuation: CompactionContinuation::MidTurn,
             estimated_tokens: 12_345,
         });
         let compacted = projector.project_turn_event(&EventMsg::ContextCompacted {
             turn_id: "turn-1".to_string(),
-            continuation: agent_protocol::CompactionContinuation::MidTurn,
+            continuation: CompactionContinuation::MidTurn,
             pre_context_tokens_estimate: 12_345,
             post_context_tokens_estimate: 4_321,
             pre_message_count: 20,
@@ -1210,7 +1241,7 @@ mod tests {
                 continuation,
                 estimated_tokens,
                 ..
-            } if *continuation == agent_protocol::CompactionContinuation::MidTurn
+            } if *continuation == CompactionContinuation::MidTurn
                 && *estimated_tokens == 12_345
         ));
         assert!(matches!(
@@ -1220,7 +1251,7 @@ mod tests {
                 pre_context_tokens_estimate,
                 post_context_tokens_estimate,
                 ..
-            } if *continuation == agent_protocol::CompactionContinuation::MidTurn
+            } if *continuation == CompactionContinuation::MidTurn
                 && *pre_context_tokens_estimate == 12_345
                 && *post_context_tokens_estimate == 4_321
         ));
@@ -1458,7 +1489,7 @@ mod tests {
                 tool_name: "exec_command".to_string(),
                 command: "pwd".to_string(),
                 current_directory: "D:\\work".to_string(),
-                status: agent_protocol::CommandExecutionStatus::Completed,
+                status: CommandExecutionStatus::Completed,
                 exit_code: Some(0),
                 stdout: Some("D:\\work".to_string()),
                 stderr: None,
@@ -1592,7 +1623,7 @@ mod tests {
         projector.project_turn_event(&EventMsg::TurnStarted {
             turn_id: "turn-1".to_string(),
             conversation_id: "default".to_string(),
-            user_input: "hi".to_string(),
+            user_input: agent_core::text_input_items("hi"),
         });
         projector.project_turn_event(&EventMsg::ItemStarted {
             turn_id: "turn-1".to_string(),

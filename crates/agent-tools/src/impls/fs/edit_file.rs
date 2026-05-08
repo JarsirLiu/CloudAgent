@@ -6,7 +6,10 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_workspace_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
-use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
+use agent_core::{
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
+    TurnItemDeltaKind, TurnItemKind, WriteFileStatus,
+};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -96,8 +99,8 @@ impl EditFileTool {
                 mutating: true,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: true,
-                item_kind: agent_protocol::TurnItemKind::FileChange,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::FileChange,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: Some("Editing files can modify workspace contents.".to_string()),
             },
         )
@@ -316,10 +319,10 @@ fn completed_edit_output(changed_path: String, version_token: String) -> ToolInv
             lines,
             Some("inspect the diff and run the narrowest relevant verification"),
         ),
-        structured: Some(agent_protocol::StructuredToolResult::EditFile {
+        structured: Some(StructuredToolResult::EditFile {
             changed_paths: vec![changed_path],
             files_changed: 1,
-            status: agent_protocol::WriteFileStatus::Completed,
+            status: WriteFileStatus::Completed,
             version_token: Some(version_token),
         }),
     }

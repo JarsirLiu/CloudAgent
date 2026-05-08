@@ -1,6 +1,8 @@
 use crate::tool::{StructuredToolResult, ToolCall, ToolResult};
 use serde::{Deserialize, Serialize};
 
+use super::InputItem;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationHistory {
     pub id: String,
@@ -19,11 +21,9 @@ impl ConversationHistory {
         }
     }
 
-    pub fn push_user_message(&mut self, content: impl Into<String>) -> ResponseItem {
+    pub fn push_user_message(&mut self, content: Vec<InputItem>) -> ResponseItem {
         self.turn_count += 1;
-        let item = ResponseItem::User {
-            content: content.into(),
-        };
+        let item = ResponseItem::User { content };
         self.messages.push(item.clone());
         item
     }
@@ -79,7 +79,7 @@ pub enum ResponseItem {
         content: String,
     },
     User {
-        content: String,
+        content: Vec<InputItem>,
     },
     Assistant {
         content: Option<String>,
@@ -93,6 +93,12 @@ pub enum ResponseItem {
         #[serde(default)]
         structured: Option<StructuredToolResult>,
     },
+}
+
+impl ResponseItem {
+    pub fn user_plain_text(content: &[InputItem]) -> String {
+        super::input_items_to_plain_text(content)
+    }
 }
 
 pub fn ensure_tool_outputs_present(items: &mut Vec<ResponseItem>) {

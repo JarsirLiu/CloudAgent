@@ -1,4 +1,6 @@
-use crate::conversation::{ConversationTurn, ResponseItem, TranscriptItem};
+use crate::conversation::{
+    ConversationTurn, ResponseItem, TranscriptItem, input_items_to_plain_text,
+};
 use crate::rollout::RolloutItem;
 use crate::tool::StructuredToolResult;
 use crate::turn::{EventMsg, TurnItemDeltaKind, TurnItemKind, TurnState};
@@ -113,10 +115,10 @@ impl ConversationHistoryBuilder {
                     self.current_turn = None;
                 }
                 self.current_turn = Some(self.new_turn(turn_id.clone(), true));
-                self.upsert_item_in_current_turn(TranscriptItem::UserMessage {
-                    id: format!("user:{turn_id}"),
-                    text: user_input.clone(),
-                });
+                self.upsert_item_in_current_turn(TranscriptItem::user_message(
+                    format!("user:{turn_id}"),
+                    user_input.clone(),
+                ));
             }
             EventMsg::ItemStarted {
                 turn_id,
@@ -607,10 +609,9 @@ pub fn transcript_item_from_response_item(message: &ResponseItem) -> Option<Tran
             id: "system".to_string(),
             text: content.clone(),
         }),
-        ResponseItem::User { content } => Some(TranscriptItem::UserMessage {
-            id: String::new(),
-            text: content.clone(),
-        }),
+        ResponseItem::User { content } => {
+            Some(TranscriptItem::user_message(String::new(), content.clone()))
+        }
         ResponseItem::Assistant { content, .. } => Some(TranscriptItem::AgentMessage {
             id: String::new(),
             text: content.clone().unwrap_or_default(),
@@ -700,9 +701,11 @@ fn assign_response_item_id(item: &mut TranscriptItem, rollout_index: usize) {
 fn transcript_item_is_empty(item: &TranscriptItem) -> bool {
     match item {
         TranscriptItem::SystemMessage { text, .. }
-        | TranscriptItem::UserMessage { text, .. }
         | TranscriptItem::AgentMessage { text, .. }
         | TranscriptItem::Reasoning { text, .. } => text.trim().is_empty(),
+        TranscriptItem::UserMessage { content, .. } => {
+            input_items_to_plain_text(content).trim().is_empty()
+        }
         TranscriptItem::CommandExecution { summary, .. }
         | TranscriptItem::FileChange { summary, .. }
         | TranscriptItem::ToolResult { summary, .. } => summary.trim().is_empty(),
@@ -714,6 +717,8 @@ mod tests {
     use super::*;
     use crate::tool::{CommandExecutionStatus, StructuredToolResult};
     use crate::turn::TurnItemKind;
+    use crate::{AttachmentRef, ImageDetail, InputItem};
+    use crate::{input_items_to_plain_text, text_input_items};
 
     #[test]
     fn transcript_builder_projects_rollout_facts_without_duplicate_messages() {
@@ -723,12 +728,12 @@ mod tests {
         };
         let items = vec![
             RolloutItem::from(ResponseItem::User {
-                content: "hi".to_string(),
+                content: crate::text_input_items("hi"),
             }),
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "hi".to_string(),
+                user_input: crate::text_input_items("hi"),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
@@ -763,7 +768,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "hi".to_string(),
+                user_input: crate::text_input_items("hi"),
             }),
             RolloutItem::from(EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
@@ -788,9 +793,9 @@ mod tests {
         assert!(matches!(
             &snapshot.items[..],
             [
-                TranscriptItem::UserMessage { text: user, .. },
+                TranscriptItem::UserMessage { content: user, .. },
                 TranscriptItem::AgentMessage { text: assistant, .. },
-            ] if user == "hi" && assistant == "partial"
+            ] if input_items_to_plain_text(user) == "hi" && assistant == "partial"
         ));
     }
 
@@ -800,7 +805,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "hi".to_string(),
+                user_input: crate::text_input_items("hi"),
             }),
             RolloutItem::from(EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
@@ -846,7 +851,7 @@ mod tests {
             "system prompt",
             &[
                 RolloutItem::from(ResponseItem::User {
-                    content: "hi".to_string(),
+                    content: text_input_items("hi"),
                 }),
                 RolloutItem::from(ResponseItem::Assistant {
                     content: Some("hello".to_string()),
@@ -866,7 +871,41 @@ mod tests {
                     content: Some(assistant),
                     ..
                 },
-            ] if system == "system prompt" && user == "hi" && assistant == "hello"
+            ] if system == "system prompt"
+                && input_items_to_plain_text(user) == "hi"
+                && assistant == "hello"
+        ));
+    }
+
+    #[test]
+    fn conversation_history_preserves_local_image_paths_from_rollout() {
+        let history = conversation_history_from_rollout_items(
+            "default",
+            "system prompt",
+            &[RolloutItem::from(ResponseItem::User {
+                content: vec![InputItem::Image {
+                    source: AttachmentRef::LocalPath {
+                        path: "D:\\images\\diagram.png".to_string(),
+                    },
+                    detail: Some(ImageDetail::High),
+                    alt: Some("diagram".to_string()),
+                }],
+            })],
+        );
+
+        assert!(matches!(
+            &history.messages[..],
+            [
+                ResponseItem::System { .. },
+                ResponseItem::User { content },
+            ] if matches!(
+                &content[..],
+                [InputItem::Image {
+                    source: AttachmentRef::LocalPath { path },
+                    detail: Some(ImageDetail::High),
+                    alt: Some(alt),
+                }] if path == "D:\\images\\diagram.png" && alt == "diagram"
+            )
         ));
     }
 
@@ -877,7 +916,7 @@ mod tests {
             "system prompt",
             &[
                 RolloutItem::from(ResponseItem::User {
-                    content: "old".to_string(),
+                    content: text_input_items("old"),
                 }),
                 RolloutItem::Compacted {
                     summary: crate::context::CompactionSummary::from_model_output(
@@ -894,7 +933,7 @@ mod tests {
                             content: "[Context Summary]\nold".to_string(),
                         },
                         ResponseItem::User {
-                            content: "latest".to_string(),
+                            content: text_input_items("latest"),
                         },
                         ResponseItem::Assistant {
                             content: Some("current".to_string()),
@@ -918,7 +957,7 @@ mod tests {
                 },
             ] if system == "system prompt"
                 && summary == "[Context Summary]\nold"
-                && user == "latest"
+                && input_items_to_plain_text(user) == "latest"
                 && assistant == "current"
         ));
     }
@@ -930,7 +969,7 @@ mod tests {
             "system prompt",
             &[
                 RolloutItem::from(ResponseItem::User {
-                    content: "old".to_string(),
+                    content: text_input_items("old"),
                 }),
                 RolloutItem::Compacted {
                     summary: crate::context::CompactionSummary::from_model_output(
@@ -947,7 +986,7 @@ mod tests {
                             content: "[Context Summary]\nold".to_string(),
                         },
                         ResponseItem::User {
-                            content: "latest".to_string(),
+                            content: text_input_items("latest"),
                         },
                     ],
                 },
@@ -982,7 +1021,7 @@ mod tests {
                 ResponseItem::Tool { tool_call_id, content, .. },
             ] if system == "system prompt"
                 && summary == "[Context Summary]\nold"
-                && latest_user == "latest"
+                && input_items_to_plain_text(latest_user) == "latest"
                 && assistant == "after compact assistant"
                 && tool_calls.len() == 1
                 && tool_calls[0].id == "call-1"
@@ -998,11 +1037,11 @@ mod tests {
                 event: EventMsg::TurnStarted {
                     turn_id: "turn-1".to_string(),
                     conversation_id: "default".to_string(),
-                    user_input: "hi".to_string(),
+                    user_input: crate::text_input_items("hi"),
                 },
             },
             RolloutItem::from(ResponseItem::User {
-                content: "hi".to_string(),
+                content: text_input_items("hi"),
             }),
             RolloutItem::Compacted {
                 summary: crate::context::CompactionSummary::from_model_output(
@@ -1025,7 +1064,7 @@ mod tests {
         assert_eq!(transcript.len(), 1);
         assert!(matches!(
             &transcript[0],
-            TranscriptItem::UserMessage { text, .. } if text == "hi"
+            TranscriptItem::UserMessage { content, .. } if input_items_to_plain_text(content) == "hi"
         ));
     }
 
@@ -1086,12 +1125,12 @@ mod tests {
     fn conversation_history_builder_preserves_turn_boundaries() {
         let items = vec![
             RolloutItem::from(ResponseItem::User {
-                content: "first".to_string(),
+                content: text_input_items("first"),
             }),
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "first".to_string(),
+                user_input: crate::text_input_items("first"),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
@@ -1106,12 +1145,12 @@ mod tests {
                 turn_id: "turn-1".to_string(),
             }),
             RolloutItem::from(ResponseItem::User {
-                content: "second".to_string(),
+                content: text_input_items("second"),
             }),
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-2".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "second".to_string(),
+                user_input: crate::text_input_items("second"),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-2".to_string(),
@@ -1137,16 +1176,16 @@ mod tests {
         assert!(matches!(
             &turns[0].items[..],
             [
-                TranscriptItem::UserMessage { text: first, .. },
+                TranscriptItem::UserMessage { content: first, .. },
                 TranscriptItem::AgentMessage { text: one, .. }
-            ] if first == "first" && one == "one"
+            ] if input_items_to_plain_text(first) == "first" && one == "one"
         ));
         assert!(matches!(
             &turns[1].items[..],
             [
-                TranscriptItem::UserMessage { text: second, .. },
+                TranscriptItem::UserMessage { content: second, .. },
                 TranscriptItem::AgentMessage { text: two, .. }
-            ] if second == "second" && two == "two"
+            ] if input_items_to_plain_text(second) == "second" && two == "two"
         ));
     }
 
@@ -1199,7 +1238,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "repeat".to_string(),
+                user_input: crate::text_input_items("repeat"),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
@@ -1243,7 +1282,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "first".to_string(),
+                user_input: crate::text_input_items("first"),
             }),
             RolloutItem::from(EventMsg::TurnCompleted {
                 turn_id: "turn-1".to_string(),
@@ -1251,7 +1290,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-2".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "second".to_string(),
+                user_input: crate::text_input_items("second"),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
@@ -1273,13 +1312,13 @@ mod tests {
         assert!(matches!(
             &turns[0].items[..],
             [
-                TranscriptItem::UserMessage { text: first, .. },
+                TranscriptItem::UserMessage { content: first, .. },
                 TranscriptItem::AgentMessage { text: answer, .. }
-            ] if first == "first" && answer == "late answer"
+            ] if input_items_to_plain_text(first) == "first" && answer == "late answer"
         ));
         assert!(matches!(
             &turns[1].items[..],
-            [TranscriptItem::UserMessage { text, .. }] if text == "second"
+            [TranscriptItem::UserMessage { content, .. }] if input_items_to_plain_text(content) == "second"
         ));
     }
 
@@ -1302,7 +1341,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "twice".to_string(),
+                user_input: crate::text_input_items("twice"),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
                 turn_id: "turn-1".to_string(),
@@ -1340,7 +1379,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "hi".to_string(),
+                user_input: crate::text_input_items("hi"),
             }),
             RolloutItem::from(EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
@@ -1391,7 +1430,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "hi".to_string(),
+                user_input: crate::text_input_items("hi"),
             }),
             RolloutItem::from(EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),
@@ -1450,7 +1489,7 @@ mod tests {
             RolloutItem::from(EventMsg::TurnStarted {
                 turn_id: "turn-1".to_string(),
                 conversation_id: "default".to_string(),
-                user_input: "hi".to_string(),
+                user_input: crate::text_input_items("hi"),
             }),
             RolloutItem::from(EventMsg::ItemStarted {
                 turn_id: "turn-1".to_string(),

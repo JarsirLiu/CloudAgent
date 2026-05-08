@@ -69,6 +69,7 @@ fn insert_context_fragments_for_mid_turn_compaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{input_items_to_plain_text, text_input_items};
 
     #[test]
     fn mid_turn_compaction_inserts_before_summary_when_tail_has_no_real_user() {
@@ -85,7 +86,7 @@ mod tests {
             },
         ];
         let fragments = vec![ResponseItem::User {
-            content: "<environment_context>\nctx".to_string(),
+            content: text_input_items("<environment_context>\nctx"),
         }];
 
         let injected = insert_context_fragments(
@@ -102,7 +103,7 @@ mod tests {
                 ResponseItem::System { content: summary },
                 ResponseItem::Assistant { content: Some(assistant_tail), .. },
             ] if system == "system"
-                && env.starts_with("<environment_context>")
+                && input_items_to_plain_text(env).starts_with("<environment_context>")
                 && summary == "[Context Summary]\nsummary"
                 && assistant_tail == "assistant tail"
         ));

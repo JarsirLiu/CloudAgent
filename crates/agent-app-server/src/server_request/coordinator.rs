@@ -1,4 +1,5 @@
-use agent_protocol::{RequestId, ServerRequest, ServerRequestDecision, TurnId};
+use agent_core::{ServerRequest, ServerRequestDecision, TurnId};
+use agent_protocol::RequestId;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -164,7 +165,8 @@ fn request_id_order(left: &RequestId, right: &RequestId) -> CmpOrdering {
 #[cfg(test)]
 mod tests {
     use super::ServerRequestCoordinator;
-    use agent_protocol::{CommandApprovalRequest, RequestId, ServerRequest, ServerRequestDecision};
+    use agent_core::{CommandApprovalRequest, ServerRequest, ServerRequestDecision};
+    use agent_protocol::RequestId;
     use tokio::sync::oneshot;
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::InputItem;
 use crate::turn::{
     AgentTurnOutput, EventMsg, ManualCompactionOutcome, ServerRequest, ServerRequestDecision,
     TurnHost, run_manual_compaction, run_turn_with_approval,
@@ -19,7 +20,7 @@ where
 pub async fn chat<H>(
     host: &H,
     conversation_id: &str,
-    user_input: &str,
+    user_input: &[InputItem],
     permission_profile: &H::PermissionProfile,
     approval_policy: &H::ApprovalPolicy,
 ) -> Result<AgentTurnOutput>
@@ -46,7 +47,7 @@ where
 pub async fn chat_with_approval<H, F, Fut>(
     host: &H,
     conversation_id: &str,
-    user_input: &str,
+    user_input: &[InputItem],
     permission_profile: &H::PermissionProfile,
     approval_policy: &H::ApprovalPolicy,
     approval: F,
@@ -71,7 +72,7 @@ where
 pub async fn chat_with_approval_and_events<H, E, F, Fut>(
     host: &H,
     conversation_id: &str,
-    user_input: &str,
+    user_input: &[InputItem],
     permission_profile: &H::PermissionProfile,
     approval_policy: &H::ApprovalPolicy,
     mut on_event: E,

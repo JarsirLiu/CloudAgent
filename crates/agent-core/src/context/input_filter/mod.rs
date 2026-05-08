@@ -275,18 +275,19 @@ fn run_filter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text_input_items;
     use crate::tool::StructuredToolResult;
 
     #[test]
     fn filter_disabled_keeps_original_message() {
         let svc = ContextInputFilterService::new();
         let input = vec![ResponseItem::User {
-            content: "hello".to_string(),
+            content: text_input_items("hello"),
         }];
         let out = svc.filter_for_model(input.clone(), FilterPolicy { enabled: false });
         assert_eq!(out.len(), 1);
         match &out[0] {
-            ResponseItem::User { content } => assert_eq!(content, "hello"),
+            ResponseItem::User { content } => assert_eq!(content, &text_input_items("hello")),
             _ => panic!("expected user message"),
         }
     }

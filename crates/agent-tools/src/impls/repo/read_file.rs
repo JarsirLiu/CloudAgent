@@ -8,8 +8,10 @@ use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_read_path,
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
-use agent_core::{ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec};
-use agent_protocol::{ReadFileEntry, ReadFileStatus};
+use agent_core::{
+    ReadFileEntry, ReadFileStatus, StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy,
+    ToolIdentity, ToolSpec, TurnItemDeltaKind, TurnItemKind,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -69,8 +71,8 @@ impl ReadFileTool {
                 mutating: false,
                 execution_policy: ToolExecutionPolicy::ParallelSafe,
                 requires_approval: false,
-                item_kind: agent_protocol::TurnItemKind::ToolCall,
-                delta_kind: agent_protocol::TurnItemDeltaKind::ToolOutput,
+                item_kind: TurnItemKind::ToolCall,
+                delta_kind: TurnItemDeltaKind::ToolOutput,
                 approval_reason: None,
             },
         )
@@ -197,7 +199,7 @@ impl LocalTool for ReadFileLocalTool {
 
         Ok(ToolInvocationOutput {
             content: finalize(summary, rendered, next_step.as_deref()),
-            structured: Some(agent_protocol::StructuredToolResult::ReadFile {
+            structured: Some(StructuredToolResult::ReadFile {
                 path: normalized_path,
                 start_line: args.start_line,
                 max_lines: args.max_lines,

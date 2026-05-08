@@ -5,9 +5,9 @@ use crate::registry::shared::{
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{
-    ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolOutputStream, ToolSpec,
+    CommandExecutionStatus, StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy,
+    ToolIdentity, ToolOutputStream, ToolSpec, TurnItemDeltaKind, TurnItemKind,
 };
-use agent_protocol::{CommandExecutionStatus, StructuredToolResult};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -66,8 +66,8 @@ impl ExecCommandTool {
                 mutating: true,
                 execution_policy: ToolExecutionPolicy::Sequential,
                 requires_approval: true,
-                item_kind: agent_protocol::TurnItemKind::CommandExecution,
-                delta_kind: agent_protocol::TurnItemDeltaKind::CommandExecutionOutput,
+                item_kind: TurnItemKind::CommandExecution,
+                delta_kind: TurnItemDeltaKind::CommandExecutionOutput,
                 approval_reason: Some("Local command execution can inspect or modify the workspace.".to_string()),
             },
         )

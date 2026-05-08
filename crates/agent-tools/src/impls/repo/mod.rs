@@ -15,6 +15,7 @@ mod tests {
     use crate::registry::shared::{
         LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource,
     };
+    use agent_core::{SearchWorkspaceMode, StructuredToolResult};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::fs;
@@ -68,9 +69,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(matches!(
             output.structured.as_ref(),
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace {
+            Some(StructuredToolResult::SearchWorkspace {
                 session_id,
-                mode: agent_protocol::SearchWorkspaceMode::Files,
+                mode: SearchWorkspaceMode::Files,
                 query,
                 ..
             }) if session_id == "search:test:1" && query == "service.rs"
@@ -93,7 +94,7 @@ mod tests {
         );
         assert!(matches!(
             output.structured.as_ref(),
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. })
+            Some(StructuredToolResult::SearchWorkspace { hits, .. })
                 if hits.first().and_then(|hit| hit.score).is_some()
                     && hits.first().and_then(|hit| hit.file_score).is_some()
                     && hits.first().and_then(|hit| hit.file_match_count) == Some(1)

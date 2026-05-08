@@ -1,14 +1,14 @@
 use super::{
     ServerRequestHandler, TurnHost, TurnOutcome, conversation_busy_error, execute_regular_turn,
 };
-use crate::{EventMsg, TurnState};
+use crate::{EventMsg, InputItem, TurnState};
 use crate::{RolloutItem, ToolCall, emit_event, next_turn_id};
 use anyhow::{Result, bail};
 
 pub async fn run_turn_with_approval<H: TurnHost>(
     host: &H,
     conversation_id: &str,
-    user_input: &str,
+    user_input: &[InputItem],
     permission_profile: &H::PermissionProfile,
     approval_policy: &H::ApprovalPolicy,
     on_event: &mut (dyn for<'a> FnMut(&'a EventMsg) + Send + '_),
@@ -33,7 +33,7 @@ pub async fn run_turn_with_approval<H: TurnHost>(
     };
 
     let mut history = host.load_history(conversation_id).await?;
-    let user_item = history.push_user_message(user_input);
+    let user_item = history.push_user_message(user_input.to_vec());
     host.save_history(history.clone()).await?;
     host.persist_rollout_items(conversation_id, &[RolloutItem::from(user_item)])
         .await?;
@@ -45,7 +45,7 @@ pub async fn run_turn_with_approval<H: TurnHost>(
         EventMsg::TurnStarted {
             turn_id: turn_id.clone(),
             conversation_id: conversation_id.to_string(),
-            user_input: user_input.to_string(),
+            user_input: user_input.to_vec(),
         },
     );
     let result = if active_turn.is_cancelled() {
