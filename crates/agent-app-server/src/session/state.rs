@@ -60,7 +60,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[tokio::test]
-    async fn archive_active_conversation_switches_to_default() {
+    async fn archive_active_conversation_switches_to_fallback_draft() {
         let state = Arc::new(Mutex::new(ServerState::new("default".to_string())));
         {
             let mut guard = state.lock().await;
@@ -68,9 +68,12 @@ mod tests {
             guard.subscribe("session-a".to_string());
         }
 
-        let transition = apply_archive_transition(&state, "session-a", "default").await;
+        let transition = apply_archive_transition(&state, "session-a", "draft-session").await;
         assert!(transition.switched_active);
-        assert_eq!(transition.active_session_id, "default");
+        assert_eq!(transition.active_session_id, "draft-session");
+
+        let guard = state.lock().await;
+        assert!(guard.is_subscribed("draft-session"));
     }
 
     #[tokio::test]
