@@ -37,7 +37,6 @@ pub(crate) struct InputPaneRenderResult {
 
 #[derive(Clone, Copy)]
 struct InputPaneLayout {
-    banner_area: Option<Rect>,
     input_area: Rect,
     composer_area: Rect,
     completion_area: Option<Rect>,
@@ -45,18 +44,10 @@ struct InputPaneLayout {
 
 struct InputPaneSnapshot {
     layout: InputPaneLayout,
-    banner_line: Option<Line<'static>>,
     input_lines: Vec<Line<'static>>,
     completion_lines: Vec<Line<'static>>,
     cursor_position: Option<(u16, u16)>,
     height: u16,
-}
-
-struct InputPaneStatusPresentation {
-    banner_line: Option<Line<'static>>,
-    inline_status_text: String,
-    inline_runtime_hint: Option<String>,
-    top_spacer_height: u16,
 }
 
 const STATUS_ROW_HEIGHT: u16 = 1;
@@ -189,9 +180,6 @@ impl InputPane {
             hint_meta,
             inner_width,
         );
-        if let (Some(banner_area), Some(banner_line)) = (snapshot.layout.banner_area, snapshot.banner_line.clone()) {
-            frame.render_widget(Paragraph::new(Text::from(vec![banner_line])), banner_area);
-        }
         frame.render_widget(
             input_block(snapshot.input_lines, border_style(mode)),
             snapshot.layout.input_area,
@@ -448,31 +436,21 @@ impl InputPane {
         inner_width: usize,
     ) -> InputPaneSnapshot {
         let composer = self.composer.render(mode, inner_width);
-        let status_presentation = status_presentation(mode, status_text, runtime_hint);
         let completion_lines = if let Some(view) = self.view_stack.last() {
             view.render_lines(area.width.saturating_sub(2))
         } else {
             composer.completion_lines.clone()
         };
-        let layout = compute_input_layout(
-            area,
-            composer.height,
-            completion_lines.len(),
-            status_presentation.top_spacer_height,
-        );
+        let layout = compute_input_layout(area, composer.height, completion_lines.len());
         let mut input_lines = vec![status_line(
             mode,
-            if status_presentation.banner_line.is_some() {
-                None
-            } else {
-                status_indicator
-            },
-            &status_presentation.inline_status_text,
-            status_presentation.inline_runtime_hint.as_deref(),
+            status_indicator,
+            status_text,
+            runtime_hint,
             status_meta,
             inner_width,
         )];
-        if status_presentation.top_spacer_height > 0 {
+        if COMPOSER_TOP_SPACER_HEIGHT > 0 {
             input_lines.push(Line::raw(""));
         }
         input_lines.extend(composer.lines);
@@ -491,7 +469,6 @@ impl InputPane {
 
         InputPaneSnapshot {
             layout,
-            banner_line: status_presentation.banner_line,
             input_lines,
             completion_lines,
             cursor_position,
@@ -504,10 +481,9 @@ fn compute_input_layout(
     area: Rect,
     composer_height: u16,
     completion_line_count: usize,
-    top_spacer_height: u16,
 ) -> InputPaneLayout {
     let input_content_height = STATUS_ROW_HEIGHT
-        .saturating_add(top_spacer_height)
+        .saturating_add(COMPOSER_TOP_SPACER_HEIGHT)
         .saturating_add(composer_height)
         .saturating_add(if completion_line_count == 0 {
             COMPOSER_BOTTOM_SPACER_HEIGHT.saturating_add(HINT_ROW_HEIGHT)
@@ -515,84 +491,38 @@ fn compute_input_layout(
             0
         });
     let input_height = input_content_height.saturating_add(INPUT_BLOCK_CHROME_HEIGHT);
-    let [banner_area, content_area] = if top_spacer_height == 0 {
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area)
-    } else {
-        [Rect::default(), area]
-    };
-
     let [input_area, completion_area] = if completion_line_count == 0 {
-        [content_area, Rect::default()]
+        [area, Rect::default()]
     } else {
         Layout::vertical([
-            Constraint::Length(input_height.min(content_area.height)),
+            Constraint::Length(input_height.min(area.height)),
             Constraint::Min((completion_line_count as u16).saturating_add(1)),
         ])
-        .areas(content_area)
+        .areas(area)
     };
 
     let composer_area = Rect {
         x: input_area.x.saturating_add(1),
         y: input_area
             .y
-            .saturating_add(1 + STATUS_ROW_HEIGHT + top_spacer_height),
+            .saturating_add(1 + STATUS_ROW_HEIGHT + COMPOSER_TOP_SPACER_HEIGHT),
         width: input_area.width.saturating_sub(2),
         height: composer_height.min(
             input_area
                 .height
-                .saturating_sub(INPUT_BLOCK_CHROME_HEIGHT + STATUS_ROW_HEIGHT + top_spacer_height),
+                .saturating_sub(
+                    INPUT_BLOCK_CHROME_HEIGHT
+                        + STATUS_ROW_HEIGHT
+                        + COMPOSER_TOP_SPACER_HEIGHT,
+                ),
         ),
     };
 
     InputPaneLayout {
-        banner_area: (top_spacer_height == 0).then_some(banner_area),
         input_area,
         composer_area,
         completion_area: (completion_line_count > 0).then_some(completion_area),
     }
-}
-
-fn status_presentation(
-    mode: FrontendMode,
-    status_text: &str,
-    runtime_hint: Option<&str>,
-) -> InputPaneStatusPresentation {
-    if should_render_banner(mode, status_text) {
-        return InputPaneStatusPresentation {
-            banner_line: Some(status_banner_line(status_text, runtime_hint)),
-            inline_status_text: String::new(),
-            inline_runtime_hint: None,
-            top_spacer_height: 0,
-        };
-    }
-
-    InputPaneStatusPresentation {
-        banner_line: None,
-        inline_status_text: status_text.to_string(),
-        inline_runtime_hint: runtime_hint.map(str::to_string),
-        top_spacer_height: COMPOSER_TOP_SPACER_HEIGHT,
-    }
-}
-
-fn should_render_banner(mode: FrontendMode, status_text: &str) -> bool {
-    mode != FrontendMode::Idle && !status_text.trim().is_empty()
-}
-
-fn status_banner_line(status_text: &str, runtime_hint: Option<&str>) -> Line<'static> {
-    let mut spans = vec![ratatui::text::Span::styled(
-        status_text.to_string(),
-        Style::default()
-            .fg(Color::Rgb(210, 215, 225))
-            .add_modifier(Modifier::BOLD),
-    )];
-    if let Some(runtime) = runtime_hint.filter(|hint| !hint.trim().is_empty()) {
-        spans.push(ratatui::text::Span::raw(" "));
-        spans.push(ratatui::text::Span::styled(
-            format!("({runtime})"),
-            Style::default().fg(Color::Rgb(132, 138, 150)),
-        ));
-    }
-    Line::from(spans)
 }
 
 fn compute_desired_height(composer_height: u16, completion_line_count: usize) -> u16 {

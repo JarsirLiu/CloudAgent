@@ -208,32 +208,18 @@ impl BottomPaneController {
     pub(crate) fn build_status_view_model(&self, app: &TuiApp) -> StatusViewModel {
         let mode = app.current_mode();
         let fallback = status_text_from_mode(mode);
-        let (text, live_banner) =
-            if let Some(tool_title) = self.runtime.active_tool_title.as_deref() {
-                (tool_title.to_string(), None)
-            } else if let Some(live_label) = self.runtime.live_label.as_deref() {
-                (live_label.to_string(), None)
-            } else {
-                (fallback.to_string(), None)
-            };
+        let live_banner = self.runtime_banner_text();
+        let text = fallback.to_string();
         let indicator = match mode {
             FrontendMode::Running | FrontendMode::WaitingForServerRequest => {
                 Some(animated_indicator(app.run_state.live_animation_frame).to_string())
             }
             FrontendMode::Idle => None,
         };
-        let runtime_hint = match mode {
-            FrontendMode::Running | FrontendMode::WaitingForServerRequest => Some(format!(
-                "{} • esc to interrupt",
-                fmt_elapsed_compact(
-                    self.runtime
-                        .turn_started_at
-                        .map(|started| started.elapsed().as_secs())
-                        .unwrap_or(0),
-                )
-            )),
-            FrontendMode::Idle => None,
-        };
+        let runtime_hint = self
+            .runtime
+            .turn_started_at
+            .map(|started| format!("{} • esc to interrupt", fmt_elapsed_compact(started.elapsed().as_secs())));
 
         let mut parts = Vec::new();
         let hint_meta = format!(
@@ -270,6 +256,17 @@ impl BottomPaneController {
             hint_meta,
             live_banner,
         }
+    }
+
+    fn runtime_banner_text(&self) -> Option<String> {
+        if let Some(tool_title) = self.runtime.active_tool_title.as_deref() {
+            return Some(tool_title.to_string());
+        }
+        let live_label = self.runtime.live_label.as_deref()?.trim();
+        if live_label.is_empty() || live_label.eq_ignore_ascii_case("working") {
+            return None;
+        }
+        Some(live_label.to_string())
     }
 
     #[cfg(test)]
@@ -337,6 +334,7 @@ mod tests {
     fn active_tool_status_overrides_live_label() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 1;
+        app.bottom_pane.on_turn_started();
         app.bottom_pane
             .live_label_override_for_test(Some("Working".to_string()));
         app.bottom_pane
@@ -344,9 +342,9 @@ mod tests {
 
         let status = app.bottom_pane.build_status_view_model(&app);
 
-        assert_eq!(status.text, "running command: rg cli");
+        assert_eq!(status.text, "Working");
         assert_eq!(status.indicator.as_deref(), Some("⠙"));
-        assert_eq!(status.live_banner, None);
+        assert_eq!(status.live_banner.as_deref(), Some("running command: rg cli"));
         assert_eq!(
             status.runtime_hint.as_deref(),
             Some("0s • esc to interrupt")
@@ -357,15 +355,19 @@ mod tests {
     fn reconnect_live_label_animates_when_no_active_tool_or_notice() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 2;
+        app.bottom_pane.on_turn_started();
         app.bottom_pane.live_label_override_for_test(Some(
             "reconnecting (stream retry 2, next in 1.0s)".to_string(),
         ));
 
         let status = app.bottom_pane.build_status_view_model(&app);
 
-        assert_eq!(status.text, "reconnecting (stream retry 2, next in 1.0s)");
+        assert_eq!(status.text, "Working");
         assert_eq!(status.indicator.as_deref(), Some("⠹"));
-        assert_eq!(status.live_banner, None);
+        assert_eq!(
+            status.live_banner.as_deref(),
+            Some("reconnecting (stream retry 2, next in 1.0s)")
+        );
         assert_eq!(
             status.runtime_hint.as_deref(),
             Some("0s • esc to interrupt")
@@ -376,6 +378,7 @@ mod tests {
     fn generic_live_label_hides_when_active_cell_is_visible() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 0;
+        app.bottom_pane.on_turn_started();
         app.bottom_pane
             .live_label_override_for_test(Some("Thinking".to_string()));
         app.transcript_owner.push_live_cell(
@@ -384,8 +387,8 @@ mod tests {
 
         let status = app.bottom_pane.build_status_view_model(&app);
 
-        assert_eq!(status.text, "Thinking");
-        assert_eq!(status.live_banner, None);
+        assert_eq!(status.text, "Working");
+        assert_eq!(status.live_banner.as_deref(), Some("Thinking"));
         assert_eq!(
             status.runtime_hint.as_deref(),
             Some("0s • esc to interrupt")
@@ -396,16 +399,30 @@ mod tests {
     fn generic_live_label_does_not_render_external_banner_without_active_cell() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 0;
+        app.bottom_pane.on_turn_started();
         app.bottom_pane
             .live_label_override_for_test(Some("Thinking".to_string()));
 
         let status = app.bottom_pane.build_status_view_model(&app);
 
-        assert_eq!(status.text, "Thinking");
-        assert_eq!(status.live_banner, None);
+        assert_eq!(status.text, "Working");
+        assert_eq!(status.live_banner.as_deref(), Some("Thinking"));
         assert_eq!(
             status.runtime_hint.as_deref(),
             Some("0s • esc to interrupt")
         );
+    }
+
+    #[test]
+    fn working_without_runtime_does_not_show_elapsed_hint() {
+        let mut app = test_app();
+        app.bottom_pane
+            .live_label_override_for_test(Some("Working".to_string()));
+
+        let status = app.bottom_pane.build_status_view_model(&app);
+
+        assert_eq!(status.text, "Working");
+        assert_eq!(status.runtime_hint, None);
+        assert_eq!(status.live_banner, None);
     }
 }
