@@ -1,0 +1,26 @@
+name: cloudagent
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${NFPM_VERSION}
+version_schema: semver
+release: 1
+section: utils
+priority: optional
+maintainer: Liu Felix
+description: CloudAgent terminal CLI
+vendor: Liu Felix
+homepage: ${NFPM_HOMEPAGE}
+license: MIT
+contents:
+  - src: ${NFPM_SOURCE_DIR}/cloudagent
+    dst: /usr/local/bin/cloudagent
+    file_info:
+      mode: 0755
+  - src: ${NFPM_SOURCE_DIR}/agentd
+    dst: /usr/local/bin/agentd
+    file_info:
+      mode: 0755
+  - src: ${NFPM_SOURCE_DIR}/README.md
+    dst: /usr/share/doc/cloudagent/README.md
+    file_info:
+      mode: 0644

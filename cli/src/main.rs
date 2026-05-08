@@ -13,7 +13,8 @@ use std::process::Command;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     cli::terminal::install_panic_hook();
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let args = normalize_cli_args(raw_args);
     if wants_help(&args) {
         print_help();
         return Ok(());
@@ -145,6 +146,13 @@ fn arg_value(args: &[OsString], name: &str) -> Option<OsString> {
         .map(|pair| pair[1].clone())
 }
 
+fn normalize_cli_args(args: Vec<OsString>) -> Vec<OsString> {
+    match args.first().and_then(|arg| arg.to_str()) {
+        Some("start") => args.into_iter().skip(1).collect(),
+        _ => args,
+    }
+}
+
 fn wants_help(args: &[OsString]) -> bool {
     args.iter().any(|arg| arg == "--help" || arg == "-h")
 }
@@ -159,6 +167,7 @@ fn print_help() {
 cloudagent cli
 
 Usage:
+  cloudagent start [--transport stdio] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent [--transport stdio] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent --help
   cloudagent --version
@@ -177,4 +186,31 @@ Options:
 
 fn print_version() {
     println!("{}", env!("CARGO_PKG_VERSION"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_cli_args;
+    use std::ffi::OsString;
+
+    #[test]
+    fn start_subcommand_is_treated_as_default_launch() {
+        let args = vec![
+            OsString::from("start"),
+            OsString::from("--color"),
+            OsString::from("always"),
+        ];
+        let normalized = normalize_cli_args(args);
+        assert_eq!(
+            normalized,
+            vec![OsString::from("--color"), OsString::from("always")]
+        );
+    }
+
+    #[test]
+    fn non_start_args_are_left_unchanged() {
+        let args = vec![OsString::from("--version")];
+        let normalized = normalize_cli_args(args.clone());
+        assert_eq!(normalized, args);
+    }
 }

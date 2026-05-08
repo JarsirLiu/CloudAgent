@@ -3,6 +3,12 @@ name = "cli"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+authors.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "cloudagent"
+path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
