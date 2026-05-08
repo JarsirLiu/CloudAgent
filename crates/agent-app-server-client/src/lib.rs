@@ -1,4 +1,5 @@
 mod in_process;
+mod local_node;
 mod stdio;
 
 use agent_protocol::{
@@ -8,6 +9,7 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 
 pub use in_process::InProcessClientConfig;
+pub use local_node::LocalNodeClientConfig;
 pub use stdio::StdioClientConfig;
 
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 128;
@@ -22,6 +24,7 @@ pub enum AppServerEvent {
 
 pub enum AppServerClient {
     InProcess(in_process::InProcessAppServerClient),
+    LocalNode(local_node::LocalNodeAppServerClient),
     Stdio(stdio::StdioAppServerClient),
 }
 
@@ -36,9 +39,16 @@ impl AppServerClient {
         ))
     }
 
+    pub async fn local_node(config: LocalNodeClientConfig) -> Result<Self> {
+        Ok(Self::LocalNode(
+            local_node::LocalNodeAppServerClient::spawn(config).await?,
+        ))
+    }
+
     pub fn send_command(&self, command: agent_protocol::AppClientCommand) -> Result<()> {
         match self {
             Self::InProcess(client) => client.send_command(command),
+            Self::LocalNode(client) => client.send_command(command),
             Self::Stdio(client) => client.send_command(command),
         }
     }
@@ -69,6 +79,7 @@ impl AppServerClient {
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         match self {
             Self::InProcess(client) => client.next_event().await,
+            Self::LocalNode(client) => client.next_event().await,
             Self::Stdio(client) => client.next_event().await,
         }
     }
@@ -76,6 +87,7 @@ impl AppServerClient {
     pub fn try_next_event(&mut self) -> Option<AppServerEvent> {
         match self {
             Self::InProcess(client) => client.try_next_event(),
+            Self::LocalNode(client) => client.try_next_event(),
             Self::Stdio(client) => client.try_next_event(),
         }
     }
@@ -83,6 +95,7 @@ impl AppServerClient {
     pub async fn shutdown(self) -> Result<()> {
         match self {
             Self::InProcess(client) => client.shutdown().await,
+            Self::LocalNode(client) => client.shutdown().await,
             Self::Stdio(client) => client.shutdown().await,
         }
     }
