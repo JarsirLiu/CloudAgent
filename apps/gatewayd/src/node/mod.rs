@@ -1,4 +1,6 @@
+mod command_router;
 mod conversation_registry;
+mod message_sync;
 mod server;
 mod worker_manager;
 
