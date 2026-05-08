@@ -81,16 +81,25 @@ where
                 }
                 maybe_event = subscription.recv() => {
                     match maybe_event {
-                        Ok(event) => write_node_event(&mut writer, event).await?,
+                        Ok(event) => {
+                            write_node_event(&mut writer, event, &conversations).await?
+                        }
                         Err(broadcast::error::RecvError::Closed) => {
                             active_subscription = None;
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            write_node_event(&mut writer, NodeEvent::Diagnostic {
-                                conversation_id: active_conversation_id.clone(),
-                                message: format!("local node subscriber lagged; skipped {skipped} events"),
-                                is_error: false,
-                            }).await?;
+                            write_node_event(
+                                &mut writer,
+                                NodeEvent::Diagnostic {
+                                    conversation_id: active_conversation_id.clone(),
+                                    message: format!(
+                                        "local node subscriber lagged; skipped {skipped} events"
+                                    ),
+                                    is_error: false,
+                                },
+                                &conversations,
+                            )
+                            .await?;
                         }
                     }
                 }
@@ -174,7 +183,11 @@ async fn conversation_list_response(
     ))
 }
 
-async fn write_node_event<W>(writer: &mut W, event: NodeEvent) -> Result<()>
+async fn write_node_event<W>(
+    writer: &mut W,
+    event: NodeEvent,
+    conversations: &Arc<Mutex<ConversationRegistry>>,
+) -> Result<()>
 where
     W: AsyncWrite + Unpin,
 {
@@ -196,7 +209,34 @@ where
             }
         }),
     };
+    sync_registry_from_message(conversations, &message).await;
     write_app_server_message(writer, message).await
+}
+
+async fn sync_registry_from_message(
+    conversations: &Arc<Mutex<ConversationRegistry>>,
+    message: &AppServerMessage,
+) {
+    let AppServerMessage::Notification(notification) = message else {
+        return;
+    };
+
+    let mut registry = conversations.lock().await;
+    match notification {
+        AppServerNotification::ConversationList { conversations, .. } => {
+            registry.replace_from_summaries(conversations);
+        }
+        AppServerNotification::ConversationHistory {
+            conversation_id,
+            turns,
+        } => {
+            registry.update_from_history(conversation_id, turns);
+        }
+        AppServerNotification::ConversationSwitched { conversation_id } => {
+            registry.touch(conversation_id);
+        }
+        _ => {}
+    }
 }
 
 async fn write_app_server_message<W>(writer: &mut W, message: AppServerMessage) -> Result<()>
@@ -285,8 +325,11 @@ fn arg_value(args: &[OsString], name: &str) -> Option<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::{arg_value, conversation_list_response, target_conversation_id};
+    use super::{
+        arg_value, conversation_list_response, sync_registry_from_message, target_conversation_id,
+    };
     use crate::node::conversation_registry::ConversationRegistry;
+    use agent_core::conversation::ConversationSummary;
     use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
     use std::ffi::OsString;
     use std::sync::Arc;
@@ -377,6 +420,35 @@ mod tests {
                 }
                 other => panic!("unexpected message: {other:?}"),
             }
+        });
+    }
+
+    #[test]
+    fn worker_conversation_list_replaces_shared_registry_state() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
+            conversations.lock().await.touch("stale");
+
+            sync_registry_from_message(
+                &conversations,
+                &AppServerMessage::Notification(AppServerNotification::ConversationList {
+                    conversation_id: "conversation-1".to_string(),
+                    conversations: vec![ConversationSummary {
+                        conversation_id: "conversation-1".to_string(),
+                        title: Some("Alpha".to_string()),
+                        message_count: 4,
+                        updated_at_ms: 12,
+                    }],
+                }),
+            )
+            .await;
+
+            let summaries = conversations.lock().await.summaries();
+            assert_eq!(summaries.len(), 1);
+            assert_eq!(summaries[0].conversation_id, "conversation-1");
+            assert_eq!(summaries[0].title.as_deref(), Some("Alpha"));
+            assert_eq!(summaries[0].message_count, 4);
         });
     }
 }

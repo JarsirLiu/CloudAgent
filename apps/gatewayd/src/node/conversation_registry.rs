@@ -1,4 +1,6 @@
-use agent_core::conversation::ConversationSummary;
+use agent_core::conversation::{
+    ConversationSummary, ConversationTurn, TranscriptItem, input_items_are_blank,
+};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -26,6 +28,49 @@ impl ConversationRegistry {
         if let Some(meta) = self.known_conversations.get_mut(conversation_id) {
             meta.title = Some(title);
         }
+    }
+
+    pub(crate) fn replace_from_summaries(&mut self, summaries: &[ConversationSummary]) {
+        self.known_conversations = summaries
+            .iter()
+            .map(|summary| {
+                (
+                    summary.conversation_id.clone(),
+                    ConversationMeta {
+                        conversation_id: summary.conversation_id.clone(),
+                        title: summary.title.clone(),
+                        message_count: summary.message_count,
+                        updated_at_ms: summary.updated_at_ms,
+                    },
+                )
+            })
+            .collect();
+    }
+
+    pub(crate) fn update_from_history(
+        &mut self,
+        conversation_id: &str,
+        turns: &[ConversationTurn],
+    ) {
+        let message_count = turns
+            .iter()
+            .flat_map(|turn| turn.items.iter())
+            .filter(|item| is_visible_message(item))
+            .count();
+
+        let now = now_ms();
+        self.known_conversations
+            .entry(conversation_id.to_string())
+            .and_modify(|meta| {
+                meta.message_count = message_count;
+                meta.updated_at_ms = now;
+            })
+            .or_insert_with(|| ConversationMeta {
+                conversation_id: conversation_id.to_string(),
+                title: None,
+                message_count,
+                updated_at_ms: now,
+            });
     }
 
     pub(crate) fn summaries(&self) -> Vec<ConversationSummary> {
@@ -56,6 +101,18 @@ struct ConversationMeta {
     updated_at_ms: u64,
 }
 
+fn is_visible_message(item: &TranscriptItem) -> bool {
+    match item {
+        TranscriptItem::UserMessage { content, .. } => !input_items_are_blank(content),
+        TranscriptItem::AgentMessage { text, .. } => !text.trim().is_empty(),
+        TranscriptItem::SystemMessage { .. }
+        | TranscriptItem::CommandExecution { .. }
+        | TranscriptItem::FileChange { .. }
+        | TranscriptItem::ToolResult { .. }
+        | TranscriptItem::Reasoning { .. } => false,
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -66,6 +123,9 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::ConversationRegistry;
+    use agent_core::conversation::{
+        ConversationSummary, ConversationTurn, InputItem, TranscriptItem,
+    };
 
     #[test]
     fn summaries_include_touched_conversations_in_recent_order() {
@@ -79,5 +139,59 @@ mod tests {
         assert_eq!(summaries[0].conversation_id, "conversation-a");
         assert_eq!(summaries[0].title.as_deref(), Some("Alpha"));
         assert_eq!(summaries[1].conversation_id, "conversation-b");
+    }
+
+    #[test]
+    fn replace_from_summaries_overwrites_stale_registry_entries() {
+        let mut registry = ConversationRegistry::default();
+        registry.touch("stale");
+        registry.replace_from_summaries(&[ConversationSummary {
+            conversation_id: "fresh".to_string(),
+            title: Some("Fresh".to_string()),
+            message_count: 3,
+            updated_at_ms: 42,
+        }]);
+
+        let summaries = registry.summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].conversation_id, "fresh");
+        assert_eq!(summaries[0].title.as_deref(), Some("Fresh"));
+        assert_eq!(summaries[0].message_count, 3);
+        assert_eq!(summaries[0].updated_at_ms, 42);
+    }
+
+    #[test]
+    fn update_from_history_tracks_visible_message_count() {
+        let mut registry = ConversationRegistry::default();
+        registry.update_from_history(
+            "conversation-a",
+            &[ConversationTurn {
+                id: "turn-1".to_string(),
+                state: agent_core::TurnState::Completed,
+                items: vec![
+                    TranscriptItem::UserMessage {
+                        id: "user-1".to_string(),
+                        content: vec![InputItem::Text {
+                            text: "hello".to_string(),
+                        }],
+                    },
+                    TranscriptItem::Reasoning {
+                        id: "reasoning-1".to_string(),
+                        title: "Reasoning".to_string(),
+                        text: "thinking".to_string(),
+                    },
+                    TranscriptItem::AgentMessage {
+                        id: "assistant-1".to_string(),
+                        text: "world".to_string(),
+                    },
+                ],
+                rollout_start_index: 0,
+                rollout_end_index: 0,
+            }],
+        );
+
+        let summaries = registry.summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].message_count, 2);
     }
 }
