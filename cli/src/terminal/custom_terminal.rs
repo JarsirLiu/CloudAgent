@@ -15,31 +15,9 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::{Color, Modifier};
 use ratatui::widgets::Widget;
-use unicode_width::UnicodeWidthStr;
 
-use crate::terminal::color_compat::{ColorDepth, adapt_bg, adapt_color};
-
-fn display_width(value: &str) -> usize {
-    if !value.contains('\x1B') {
-        return value.width();
-    }
-
-    let mut visible = String::with_capacity(value.len());
-    let mut chars = value.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1B' && chars.clone().next() == Some(']') {
-            chars.next();
-            for c in chars.by_ref() {
-                if c == '\x07' {
-                    break;
-                }
-            }
-            continue;
-        }
-        visible.push(ch);
-    }
-    visible.width()
-}
+use crate::terminal::color_compat::{TerminalCapabilities, adapt_bg, adapt_color};
+use crate::text_width::display_width;
 
 pub(crate) struct Frame<'a> {
     cursor_position: Option<Position>,
@@ -73,14 +51,14 @@ where
     last_known_screen_size: Size,
     pub(crate) last_known_cursor_pos: Position,
     visible_history_rows: u16,
-    color_depth: ColorDepth,
+    capabilities: TerminalCapabilities,
 }
 
 impl<B> Terminal<B>
 where
     B: Backend + Write,
 {
-    pub(crate) fn new(mut backend: B, color_depth: ColorDepth) -> io::Result<Self> {
+    pub(crate) fn new(mut backend: B, capabilities: TerminalCapabilities) -> io::Result<Self> {
         let screen_size = backend.size()?;
         let cursor_pos = backend.get_cursor_position().unwrap_or(Position {
             x: 0,
@@ -95,7 +73,7 @@ where
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,
-            color_depth,
+            capabilities,
         })
     }
 
@@ -178,7 +156,7 @@ where
         if let Some(DrawCommand::Put { x, y, .. }) = last_put {
             self.last_known_cursor_pos = Position { x: *x, y: *y };
         }
-        draw_updates(&mut self.backend, updates.into_iter(), self.color_depth)
+        draw_updates(&mut self.backend, updates.into_iter(), self.capabilities)
     }
 
     pub(crate) fn clear_rows(&mut self, start_y: u16, end_y_exclusive: u16) -> io::Result<()> {
@@ -228,8 +206,8 @@ where
         self.visible_history_rows
     }
 
-    pub(crate) fn color_depth(&self) -> ColorDepth {
-        self.color_depth
+    pub(crate) fn capabilities(&self) -> TerminalCapabilities {
+        self.capabilities
     }
 
     fn swap_buffers(&mut self) {
@@ -433,7 +411,7 @@ fn diff_buffers(previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
 fn draw_updates(
     writer: &mut impl Write,
     commands: impl Iterator<Item = DrawCommand>,
-    color_depth: ColorDepth,
+    capabilities: TerminalCapabilities,
 ) -> io::Result<()> {
     let mut fg = Color::Reset;
     let mut bg = Color::Reset;
@@ -451,8 +429,8 @@ fn draw_updates(
 
         match command {
             DrawCommand::Put { cell, .. } => {
-                let next_fg = adapt_color(cell.fg, color_depth);
-                let next_bg = adapt_bg(cell.bg, color_depth);
+                let next_fg = adapt_color(cell.fg, capabilities);
+                let next_bg = adapt_bg(cell.bg, capabilities);
                 if cell.modifier != modifier {
                     queue_modifier_diff(writer, modifier, cell.modifier)?;
                     modifier = cell.modifier;
@@ -468,7 +446,7 @@ fn draw_updates(
                 queue!(writer, Print(cell.symbol()))?;
             }
             DrawCommand::ClearToEnd { bg: clear_bg, .. } => {
-                let clear_bg = adapt_bg(clear_bg, color_depth);
+                let clear_bg = adapt_bg(clear_bg, capabilities);
                 queue!(writer, SetAttribute(Attribute::Reset))?;
                 modifier = Modifier::empty();
                 queue!(writer, SetBackgroundColor(clear_bg.into()))?;
@@ -535,7 +513,7 @@ fn queue_modifier_diff<W: Write>(writer: &mut W, from: Modifier, to: Modifier) -
 #[cfg(test)]
 mod tests {
     use super::{DrawCommand, diff_buffers, draw_updates};
-    use crate::terminal::color_compat::ColorDepth;
+    use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::Color;
@@ -567,7 +545,16 @@ mod tests {
         cell.set_fg(Color::Rgb(120, 170, 255));
 
         let command = DrawCommand::Put { x: 0, y: 0, cell };
-        draw_updates(&mut bytes, [command].into_iter(), ColorDepth::Ansi256).unwrap();
+        draw_updates(
+            &mut bytes,
+            [command].into_iter(),
+            TerminalCapabilities {
+                color_depth: ColorDepth::Ansi256,
+                supports_synchronized_update: true,
+                background_tone: BackgroundTone::Dark,
+            },
+        )
+        .unwrap();
 
         let output = str::from_utf8(&bytes).unwrap();
         assert!(!output.contains("38;2;"));

@@ -1,6 +1,7 @@
 use crate::input::completion::CompletionState;
 use crate::input::intent::ComposerIntent;
 use crate::input::slash_command::{SlashCommand, find_slash_command};
+use crate::text_width::display_width;
 use crate::ui::widgets::completion_popup::completion_popup_lines;
 use crate::ui::widgets::paste_burst::{CharDecision, FlushResult, PasteBurst};
 use agent_protocol::FrontendMode;
@@ -11,7 +12,7 @@ use ratatui::text::{Line, Span};
 use std::cell::RefCell;
 use std::time::Instant;
 
-use crate::ui::widgets::textarea::{TextArea, TextAreaState, display_width, is_altgr};
+use crate::ui::widgets::textarea::{TextArea, TextAreaState, is_altgr};
 
 pub struct ComposerRender {
     pub lines: Vec<Line<'static>>,

@@ -18,6 +18,8 @@ use std::sync::Once;
 use crate::ui::widgets::history_cell::HistoryCell;
 
 pub(crate) use custom_terminal::Frame;
+pub use color_compat::apply_color_cli_preference;
+use color_compat::TerminalCapabilities;
 use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
 pub(crate) use insert_history::{insert_history_lines_raw, prepare_history_lines};
@@ -26,6 +28,7 @@ static INSTALL_PANIC_HOOK: Once = Once::new();
 
 pub(crate) struct TerminalGuard {
     pub(crate) terminal: custom_terminal::Terminal<CrosstermBackend<io::Stdout>>,
+    capabilities: TerminalCapabilities,
 }
 
 pub(crate) struct HistoryProjection {
@@ -55,8 +58,12 @@ pub(crate) fn init() -> Result<TerminalGuard> {
     let init_result = (|| -> Result<TerminalGuard> {
         execute!(stdout, EnableBracketedPaste)?;
         let backend = CrosstermBackend::new(io::stdout());
-        let terminal = custom_terminal::Terminal::new(backend, color_compat::ColorDepth::detect())?;
-        Ok(TerminalGuard { terminal })
+        let capabilities = TerminalCapabilities::detect();
+        let terminal = custom_terminal::Terminal::new(backend, capabilities)?;
+        Ok(TerminalGuard {
+            terminal,
+            capabilities,
+        })
     })();
     if init_result.is_err() {
         let _ = restore();
@@ -90,11 +97,16 @@ impl TerminalGuard {
         projection: PreparedHistoryProjection,
         render: impl FnOnce(&mut Frame),
     ) -> Result<()> {
-        stdout().sync_update(|_| {
+        if self.capabilities.supports_synchronized_update {
+            stdout().sync_update(|_| {
+                let mut coordinator = DrawCoordinator::new(&mut self.terminal);
+                coordinator.draw_frame(projection, render)?;
+                Ok::<(), anyhow::Error>(())
+            })??;
+        } else {
             let mut coordinator = DrawCoordinator::new(&mut self.terminal);
             coordinator.draw_frame(projection, render)?;
-            Ok::<(), anyhow::Error>(())
-        })??;
+        }
         Ok(())
     }
 }

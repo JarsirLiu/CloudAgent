@@ -2,8 +2,8 @@ use crate::app::commands::permission_profile::{
     DEFAULT_PERMISSION_MODE, PERMISSION_MODE_SPECS, PermissionModeSpec, canonical_permission_mode,
 };
 use crate::input::intent::ComposerIntent;
+use crate::text_width::display_width;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
-use crate::ui::widgets::textarea::display_width;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};

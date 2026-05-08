@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use cli::agent_host::build_agent_host;
 use cli::app::cli_settings::load_cli_settings;
+use cli::terminal::apply_color_cli_preference;
 use cli::{ConsoleConfig, ConsoleConnection, run_console};
 use config::AgentConfig;
 use std::ffi::OsString;
@@ -21,6 +22,7 @@ async fn main() -> Result<()> {
         print_version();
         return Ok(());
     }
+    apply_color_cli_preference(&args);
 
     ensure_user_config_exists()?;
     let workspace_root = std::env::current_dir()?;
@@ -157,7 +159,7 @@ fn print_help() {
 cloudagent cli
 
 Usage:
-  cloudagent [--transport stdio] [--app-server-bin PATH] [--conversation ID]
+  cloudagent [--transport stdio] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent --help
   cloudagent --version
 
@@ -167,6 +169,8 @@ Options:
       --transport MODE       Client transport: in-process (default) or stdio
       --app-server-bin PATH  app-server binary path when using stdio transport
       --conversation ID      Conversation id for stdio transport
+      --color WHEN           Color output: auto, always, or never
+      --no-color             Disable color output
 "
     );
 }

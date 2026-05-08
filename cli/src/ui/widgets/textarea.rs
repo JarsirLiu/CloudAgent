@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::cell::Cell;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+
+use crate::text_width::display_width;
 
 #[derive(Debug, Clone)]
 struct UndoState {
@@ -807,10 +808,6 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     }
 
     lines
-}
-
-pub fn display_width(s: &str) -> usize {
-    UnicodeWidthStr::width(s)
 }
 
 fn wrap_paragraph_preserving_spaces(paragraph: &str, width: usize, out: &mut Vec<String>) {

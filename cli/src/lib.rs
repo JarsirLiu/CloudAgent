@@ -3,6 +3,7 @@ pub mod app;
 pub mod input;
 pub mod state;
 pub mod terminal;
+mod text_width;
 pub mod transport;
 pub mod ui;
 

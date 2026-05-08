@@ -3,7 +3,8 @@ use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+
+use crate::text_width::display_width;
 
 pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let input = normalize_markdown_indentation(input);
@@ -465,10 +466,6 @@ fn highlight_code_line(line: &str, _lang: &str) -> Vec<Span<'static>> {
         line.to_string(),
         Style::default().fg(Color::Rgb(210, 210, 220)),
     )]
-}
-
-fn display_width(value: &str) -> usize {
-    UnicodeWidthStr::width(value)
 }
 
 #[allow(dead_code)]

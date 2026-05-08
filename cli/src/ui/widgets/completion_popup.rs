@@ -1,5 +1,5 @@
 use crate::input::completion::CompletionState;
-use crate::ui::widgets::textarea::display_width;
+use crate::text_width::display_width;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
