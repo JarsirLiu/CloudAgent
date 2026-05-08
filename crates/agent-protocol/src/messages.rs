@@ -1,7 +1,8 @@
 use crate::types::{ConversationSnapshot, FrontendMode, NotificationDelivery, NotificationStream};
 use crate::{
-    ConversationSummary, ConversationTurn, ModelRetryStage, ModelUsage, RequestId, ServerRequest,
-    ServerRequestDecision, TranscriptItem, TurnId, TurnItemKind, UserTurnInput,
+    CompactionContinuation, ConversationSummary, ConversationTurn, ModelRetryStage, ModelUsage,
+    RequestId, ServerRequest, ServerRequestDecision, TranscriptItem, TurnId, TurnItemKind,
+    UserTurnInput,
 };
 use serde::{Deserialize, Serialize};
 
@@ -170,6 +171,7 @@ pub enum AppServerNotification {
     ContextCompacted {
         conversation_id: String,
         turn_id: TurnId,
+        continuation: CompactionContinuation,
         pre_context_tokens_estimate: u64,
         post_context_tokens_estimate: u64,
         pre_message_count: usize,
@@ -179,6 +181,7 @@ pub enum AppServerNotification {
     ContextCompactionStarted {
         conversation_id: String,
         turn_id: TurnId,
+        continuation: CompactionContinuation,
         estimated_tokens: u64,
     },
     ItemCompleted {

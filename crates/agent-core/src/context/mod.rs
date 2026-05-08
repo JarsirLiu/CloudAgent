@@ -17,7 +17,7 @@ pub use compaction::{
 };
 pub use environment::EnvironmentContext;
 pub use facade::ContextFacade;
-pub use fragments::ContextFragment;
+pub use fragments::{ContextFragment, ContextInjectionStrategy};
 pub use input_filter::{ContextInputFilterService, FilterPolicy};
 pub use manager::{ContextManager, ModelContext};
 pub use tool_context::{AgentContext, ToolExecutionContext};

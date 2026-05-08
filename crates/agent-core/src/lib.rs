@@ -57,7 +57,7 @@ pub use tool::{
 };
 pub use turn::{
     AgentTurnOutput, ApprovalPolicy, CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE,
-    CommandApprovalRequest, EventMsg, ExecutionPolicy, FileChangeApprovalRequest,
+    CommandApprovalRequest, CompactionContinuation, EventMsg, ExecutionPolicy, FileChangeApprovalRequest,
     ManualCompactionOutcome, ModelRetryStage, PermissionProfile, RegularTurnSettings, RequestId,
     RestoredBudgetBaseline, ServerRequest, ServerRequestDecision, ServerRequestDecisionKind,
     ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnId, TurnItemDeltaKind, TurnItemKind,

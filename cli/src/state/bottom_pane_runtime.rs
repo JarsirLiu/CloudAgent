@@ -32,6 +32,23 @@ impl BottomPaneRuntimeState {
         }
     }
 
+    pub(crate) fn on_context_compaction_started(&mut self, estimated_tokens: u64) {
+        self.active_tool_title = None;
+        self.live_label = Some(format!(
+            "Compacting context (~{} tokens)",
+            compact_number(estimated_tokens)
+        ));
+    }
+
+    pub(crate) fn on_context_compaction_finished(&mut self) {
+        self.active_tool_title = None;
+        if self.turn_active {
+            self.live_label = Some("Working".to_string());
+        } else {
+            self.live_label = None;
+        }
+    }
+
     pub(crate) fn on_turn_finished(&mut self) {
         self.reset();
     }
@@ -117,4 +134,14 @@ fn humanize_runtime_title(title: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn compact_number(value: u64) -> String {
+    if value >= 1_000_000 {
+        format!("{:.1}m", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.1}k", value as f64 / 1_000.0)
+    } else {
+        value.to_string()
+    }
 }

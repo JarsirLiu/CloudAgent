@@ -1,6 +1,6 @@
 use crate::context::CompactionSummary;
 use crate::conversation::ResponseItem;
-use crate::turn::EventMsg;
+use crate::turn::{CompactionContinuation, EventMsg};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -15,6 +15,7 @@ pub enum RolloutItem {
     Compacted {
         summary: CompactionSummary,
         rendered_summary: String,
+        continuation: CompactionContinuation,
         #[serde(default)]
         replacement_history: Vec<ResponseItem>,
     },

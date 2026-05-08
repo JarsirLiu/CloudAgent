@@ -5,8 +5,8 @@ use crate::session::listener::start_conversation_listener;
 use crate::session::service as session_service;
 use agent_core::AgentHost;
 use agent_protocol::{
-    AppServerMessage, AppServerNotification, AppServerRequest, ApprovalPolicy, PermissionProfile,
-    ServerRequest, ServerRequestDecision,
+    AppServerMessage, AppServerNotification, AppServerRequest, ApprovalPolicy,
+    CompactionContinuation, PermissionProfile, ServerRequest, ServerRequestDecision,
 };
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
@@ -116,6 +116,7 @@ pub(crate) async fn compact_conversation(
         AppServerNotification::ContextCompactionStarted {
             conversation_id: conversation_id.clone(),
             turn_id: "manual_compaction".to_string(),
+            continuation: CompactionContinuation::PreTurn,
             estimated_tokens,
         },
     )

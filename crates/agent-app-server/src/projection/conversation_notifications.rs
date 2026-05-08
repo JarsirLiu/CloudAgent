@@ -274,6 +274,7 @@ impl ConversationNotificationProjector {
             }],
             EventMsg::ContextCompacted {
                 turn_id,
+                continuation,
                 pre_context_tokens_estimate,
                 post_context_tokens_estimate,
                 pre_message_count,
@@ -282,6 +283,7 @@ impl ConversationNotificationProjector {
             } => vec![AppServerNotification::ContextCompacted {
                 conversation_id: self.conversation_id.clone(),
                 turn_id: turn_id.clone(),
+                continuation: *continuation,
                 pre_context_tokens_estimate: *pre_context_tokens_estimate,
                 post_context_tokens_estimate: *post_context_tokens_estimate,
                 pre_message_count: *pre_message_count,
@@ -290,10 +292,12 @@ impl ConversationNotificationProjector {
             }],
             EventMsg::ContextCompactionStarted {
                 turn_id,
+                continuation,
                 estimated_tokens,
             } => vec![AppServerNotification::ContextCompactionStarted {
                 conversation_id: self.conversation_id.clone(),
                 turn_id: turn_id.clone(),
+                continuation: *continuation,
                 estimated_tokens: *estimated_tokens,
             }],
             EventMsg::ServerRequestRequested { turn_id, request } => {
@@ -1178,6 +1182,47 @@ mod tests {
                 && *stage == agent_protocol::ModelRetryStage::Streaming
                 && *attempt == 2
                 && *next_delay_ms == 500
+        ));
+    }
+
+    #[test]
+    fn context_compaction_notifications_preserve_continuation() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        let started = projector.project_turn_event(&EventMsg::ContextCompactionStarted {
+            turn_id: "turn-1".to_string(),
+            continuation: agent_protocol::CompactionContinuation::MidTurn,
+            estimated_tokens: 12_345,
+        });
+        let compacted = projector.project_turn_event(&EventMsg::ContextCompacted {
+            turn_id: "turn-1".to_string(),
+            continuation: agent_protocol::CompactionContinuation::MidTurn,
+            pre_context_tokens_estimate: 12_345,
+            post_context_tokens_estimate: 4_321,
+            pre_message_count: 20,
+            post_message_count: 6,
+            preserved_tail_count: 4,
+        });
+
+        assert!(matches!(
+            &started[0],
+            AppServerNotification::ContextCompactionStarted {
+                continuation,
+                estimated_tokens,
+                ..
+            } if *continuation == agent_protocol::CompactionContinuation::MidTurn
+                && *estimated_tokens == 12_345
+        ));
+        assert!(matches!(
+            &compacted[0],
+            AppServerNotification::ContextCompacted {
+                continuation,
+                pre_context_tokens_estimate,
+                post_context_tokens_estimate,
+                ..
+            } if *continuation == agent_protocol::CompactionContinuation::MidTurn
+                && *pre_context_tokens_estimate == 12_345
+                && *post_context_tokens_estimate == 4_321
         ));
     }
 

@@ -14,7 +14,7 @@ mod request_id;
 mod utils;
 
 pub use api::{chat, chat_with_approval, chat_with_approval_and_events, compact_conversation};
-pub use compaction::{ManualCompactionOutcome, run_manual_compaction};
+pub use compaction::{CompactionContinuation, ManualCompactionOutcome, run_manual_compaction};
 pub use concurrency::{
     CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE, conversation_busy_error,
 };

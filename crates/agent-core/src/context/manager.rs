@@ -1,4 +1,6 @@
-use super::fragments::{ContextFragment, insert_context_fragments_before_latest_user};
+use super::fragments::{
+    ContextFragment, ContextInjectionStrategy, insert_context_fragments,
+};
 use crate::conversation::{ConversationHistory, ResponseItem};
 use crate::model::ModelRequest;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
@@ -19,12 +21,10 @@ impl ModelContext {
     pub fn from_history_with_fragments(
         history: &ConversationHistory,
         fragments: &[ResponseItem],
+        strategy: ContextInjectionStrategy,
     ) -> Self {
         Self {
-            messages: insert_context_fragments_before_latest_user(
-                history.messages.clone(),
-                fragments,
-            ),
+            messages: insert_context_fragments(history.messages.clone(), fragments, strategy),
         }
     }
 
@@ -93,9 +93,10 @@ impl ContextManager {
         &self,
         history: &ConversationHistory,
         fragments: &[impl ContextFragment],
+        strategy: ContextInjectionStrategy,
     ) -> ModelContext {
         let rendered = render_context_fragments(fragments);
-        ModelContext::from_history_with_fragments(history, &rendered)
+        ModelContext::from_history_with_fragments(history, &rendered, strategy)
     }
 
     pub fn build_current_model_context(&self) -> ModelContext {
@@ -105,8 +106,9 @@ impl ContextManager {
     pub fn build_current_model_context_with_fragments(
         &self,
         fragments: &[impl ContextFragment],
+        strategy: ContextInjectionStrategy,
     ) -> ModelContext {
-        self.build_model_context_with_fragments(&self.history, fragments)
+        self.build_model_context_with_fragments(&self.history, fragments, strategy)
     }
 
     pub fn build_model_request(
@@ -127,10 +129,11 @@ impl ContextManager {
         &self,
         history: &ConversationHistory,
         fragments: &[impl ContextFragment],
+        strategy: ContextInjectionStrategy,
         tools: Vec<ToolSpec>,
         temperature: f32,
     ) -> ModelRequest {
-        let context = self.build_model_context_with_fragments(history, fragments);
+        let context = self.build_model_context_with_fragments(history, fragments, strategy);
         ModelRequest {
             messages: context.into_messages(),
             tools,
@@ -154,20 +157,27 @@ impl ContextManager {
     pub fn build_current_model_request_with_fragments(
         &self,
         fragments: &[impl ContextFragment],
+        strategy: ContextInjectionStrategy,
         tools: Vec<ToolSpec>,
         temperature: f32,
     ) -> ModelRequest {
-        self.build_model_request_with_fragments(&self.history, fragments, tools, temperature)
+        self.build_model_request_with_fragments(
+            &self.history,
+            fragments,
+            strategy,
+            tools,
+            temperature,
+        )
     }
 
     pub fn build_current_model_request_with_rendered_fragments(
         &self,
         fragments: &[ResponseItem],
+        strategy: ContextInjectionStrategy,
         tools: Vec<ToolSpec>,
         temperature: f32,
     ) -> ModelRequest {
-        let messages =
-            insert_context_fragments_before_latest_user(self.history.messages.clone(), fragments);
+        let messages = insert_context_fragments(self.history.messages.clone(), fragments, strategy);
         ModelRequest {
             messages,
             tools,
@@ -202,7 +212,12 @@ mod tests {
             "+08:00",
         );
         let request =
-            manager.build_current_model_request_with_fragments(&[environment], Vec::new(), 0.0);
+            manager.build_current_model_request_with_fragments(
+                &[environment],
+                ContextInjectionStrategy::Standard,
+                Vec::new(),
+                0.0,
+            );
 
         assert_eq!(manager.history().messages.len(), 2);
         assert_eq!(request.messages.len(), 3);
@@ -213,5 +228,60 @@ mod tests {
         assert!(
             matches!(request.messages[2], ResponseItem::User { ref content } if content == "hello")
         );
+    }
+
+    #[test]
+    fn contextual_fragments_insert_before_latest_real_user_after_compaction_summary() {
+        let history = ConversationHistory {
+            id: "default".to_string(),
+            turn_count: 1,
+            messages: vec![
+                ResponseItem::System {
+                    content: "system".to_string(),
+                },
+                ResponseItem::System {
+                    content: "[Context Summary]\nprevious work".to_string(),
+                },
+                ResponseItem::User {
+                    content: "latest user".to_string(),
+                },
+                ResponseItem::Assistant {
+                    content: Some("latest assistant".to_string()),
+                    tool_calls: Vec::new(),
+                },
+            ],
+        };
+        let manager = ContextManager::from_history(history);
+        let environment = EnvironmentContext::new(
+            r"D:\learn\gifti\cloudagent",
+            "powershell",
+            "2026-04-30",
+            "19:16:01",
+            "2026-04-30T19:16:01+08:00",
+            "+08:00",
+        );
+
+        let request =
+            manager.build_current_model_request_with_fragments(
+                &[environment],
+                ContextInjectionStrategy::MidTurnCompactionContinuation,
+                Vec::new(),
+                0.0,
+            );
+
+        assert!(matches!(
+            &request.messages[..],
+            [
+                ResponseItem::System { content: system },
+                ResponseItem::System { content: summary },
+                ResponseItem::User { content: env },
+                ResponseItem::User { content: latest_user },
+                ResponseItem::Assistant { content: Some(latest_assistant), .. },
+            ] if system == "system"
+                && summary == "[Context Summary]\nprevious work"
+                && env.starts_with("<environment_context>")
+                && latest_user == "latest user"
+                && latest_assistant == "latest assistant"
+        ));
     }
 }

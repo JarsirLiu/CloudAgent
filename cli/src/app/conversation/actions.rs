@@ -315,6 +315,13 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         } => {
             app.on_server_retrying(stage, attempt, next_delay_ms);
         }
+        ServerAction::SetContextCompactionStatus { estimated_tokens } => {
+            app.bottom_pane
+                .on_context_compaction_started(estimated_tokens);
+        }
+        ServerAction::ClearContextCompactionStatus => {
+            app.bottom_pane.on_context_compaction_finished();
+        }
         ServerAction::ClearServerRequestView => {
             app.clear_server_request_view();
         }

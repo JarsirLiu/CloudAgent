@@ -885,6 +885,7 @@ mod tests {
                     )
                     .ensure_defaults(),
                     rendered_summary: "[Context Summary]\nold".to_string(),
+                    continuation: crate::turn::CompactionContinuation::PreTurn,
                     replacement_history: vec![
                         ResponseItem::System {
                             content: "system prompt".to_string(),
@@ -923,6 +924,74 @@ mod tests {
     }
 
     #[test]
+    fn conversation_history_keeps_post_compaction_items_in_same_turn_tail() {
+        let history = conversation_history_from_rollout_items(
+            "default",
+            "system prompt",
+            &[
+                RolloutItem::from(ResponseItem::User {
+                    content: "old".to_string(),
+                }),
+                RolloutItem::Compacted {
+                    summary: crate::context::CompactionSummary::from_model_output(
+                        "Current Task:\n- old",
+                    )
+                    .ensure_defaults(),
+                    rendered_summary: "[Context Summary]\nold".to_string(),
+                    continuation: crate::turn::CompactionContinuation::MidTurn,
+                    replacement_history: vec![
+                        ResponseItem::System {
+                            content: "system prompt".to_string(),
+                        },
+                        ResponseItem::System {
+                            content: "[Context Summary]\nold".to_string(),
+                        },
+                        ResponseItem::User {
+                            content: "latest".to_string(),
+                        },
+                    ],
+                },
+                RolloutItem::from(ResponseItem::Assistant {
+                    content: Some("after compact assistant".to_string()),
+                    tool_calls: vec![crate::tool::ToolCall {
+                        id: "call-1".to_string(),
+                        name: "read_file".to_string(),
+                        identity: crate::tool::ToolIdentity::built_in("read_file"),
+                        arguments: serde_json::json!({"path": "README.md"}),
+                    }],
+                }),
+                RolloutItem::from(ResponseItem::Tool {
+                    tool_call_id: "call-1".to_string(),
+                    name: "read_file".to_string(),
+                    content: "file body".to_string(),
+                    structured: None,
+                }),
+            ],
+        );
+
+        assert!(matches!(
+            &history.messages[..],
+            [
+                ResponseItem::System { content: system },
+                ResponseItem::System { content: summary },
+                ResponseItem::User { content: latest_user },
+                ResponseItem::Assistant {
+                    content: Some(assistant),
+                    tool_calls,
+                },
+                ResponseItem::Tool { tool_call_id, content, .. },
+            ] if system == "system prompt"
+                && summary == "[Context Summary]\nold"
+                && latest_user == "latest"
+                && assistant == "after compact assistant"
+                && tool_calls.len() == 1
+                && tool_calls[0].id == "call-1"
+                && tool_call_id == "call-1"
+                && content == "file body"
+        ));
+    }
+
+    #[test]
     fn transcript_items_ignore_compaction_rollout_items() {
         let items = vec![
             RolloutItem::EventMsg {
@@ -941,6 +1010,7 @@ mod tests {
                 )
                 .ensure_defaults(),
                 rendered_summary: "[Context Summary]\nhidden".to_string(),
+                continuation: crate::turn::CompactionContinuation::PreTurn,
                 replacement_history: vec![],
             },
             RolloutItem::EventMsg {

@@ -59,6 +59,10 @@ pub(crate) enum ServerAction {
         attempt: u64,
         next_delay_ms: u64,
     },
+    SetContextCompactionStatus {
+        estimated_tokens: u64,
+    },
+    ClearContextCompactionStatus,
     ClearServerRequestView,
     DismissServerRequestView(RequestId),
     ClearServerRequestStatus,
@@ -249,16 +253,14 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     message: summary.clone(),
                     level: NoticeLevel::Warn,
                 });
+                actions.push(ServerAction::ClearContextCompactionStatus);
                 actions.push(ServerAction::ClearLastToolName);
             }
             AppServerNotification::ContextCompactionStarted {
                 estimated_tokens, ..
             } => {
-                let summary = format!("Compacting context... (~{} tokens)", estimated_tokens);
-                actions.push(ServerAction::PushNoticeCell {
-                    label: "context".to_string(),
-                    message: summary.clone(),
-                    level: NoticeLevel::Warn,
+                actions.push(ServerAction::SetContextCompactionStatus {
+                    estimated_tokens: *estimated_tokens,
                 });
             }
             AppServerNotification::Error { message, .. } => {
@@ -288,12 +290,14 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 });
             }
             AppServerNotification::TurnCompleted { .. } => {
+                actions.push(ServerAction::ClearContextCompactionStatus);
                 actions.push(ServerAction::ClearServerRequestStatus);
                 actions.push(ServerAction::ClearServerRequestView);
                 actions.push(ServerAction::ClearLastToolName);
                 actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
             }
             AppServerNotification::TurnFailed { error, .. } => {
+                actions.push(ServerAction::ClearContextCompactionStatus);
                 actions.push(ServerAction::ClearServerRequestStatus);
                 actions.push(ServerAction::ClearServerRequestView);
                 actions.push(ServerAction::ClearLastToolName);
@@ -302,6 +306,7 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 }));
             }
             AppServerNotification::TurnCancelled { reason, .. } => {
+                actions.push(ServerAction::ClearContextCompactionStatus);
                 actions.push(ServerAction::ClearServerRequestStatus);
                 actions.push(ServerAction::ClearServerRequestView);
                 actions.push(ServerAction::ClearLastToolName);
@@ -476,6 +481,30 @@ mod tests {
                     && *next_delay_ms == 500
             )
         }));
+    }
+
+    #[test]
+    fn context_compaction_started_sets_runtime_status_without_notice_cell() {
+        let message =
+            AppServerMessage::Notification(AppServerNotification::ContextCompactionStarted {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                continuation: agent_protocol::CompactionContinuation::MidTurn,
+                estimated_tokens: 12_345,
+            });
+
+        let reduced = apply_server_message(&message);
+
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(
+                action,
+                ServerAction::SetContextCompactionStatus { estimated_tokens }
+                    if *estimated_tokens == 12_345
+            )
+        }));
+        assert!(!reduced.actions.iter().any(
+            |action| matches!(action, ServerAction::PushNoticeCell { .. })
+        ));
     }
 
     #[test]

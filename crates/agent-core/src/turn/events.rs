@@ -1,3 +1,4 @@
+use super::compaction::CompactionContinuation;
 use crate::conversation::TranscriptItem;
 use crate::model::ModelUsage;
 use crate::turn::RequestId;
@@ -161,6 +162,7 @@ pub enum EventMsg {
     },
     ContextCompacted {
         turn_id: TurnId,
+        continuation: CompactionContinuation,
         pre_context_tokens_estimate: u64,
         post_context_tokens_estimate: u64,
         pre_message_count: usize,
@@ -169,6 +171,7 @@ pub enum EventMsg {
     },
     ContextCompactionStarted {
         turn_id: TurnId,
+        continuation: CompactionContinuation,
         estimated_tokens: u64,
     },
     ItemStarted {

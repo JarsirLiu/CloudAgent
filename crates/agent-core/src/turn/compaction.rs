@@ -6,6 +6,7 @@ use crate::conversation::ConversationHistory;
 use crate::rollout::RolloutItem;
 use crate::turn::TurnHost;
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
@@ -27,11 +28,20 @@ pub struct AppliedCompaction {
     pub summary: CompactionSummary,
     pub rendered_summary: String,
     pub replacement_history: Vec<crate::ResponseItem>,
+    #[allow(dead_code)]
+    pub continuation: CompactionContinuation,
     pub pre_context_tokens_estimate: u64,
     pub post_context_tokens_estimate: u64,
     pub pre_message_count: usize,
     pub post_message_count: usize,
     pub preserved_tail_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionContinuation {
+    PreTurn,
+    MidTurn,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -43,12 +53,14 @@ pub enum CompactionMode {
         estimated_total_tokens: usize,
         memory_floor_tokens: usize,
         safety_buffer_tokens: usize,
+        continuation: CompactionContinuation,
     },
 }
 
 pub async fn maybe_compact_history<H>(
     host: &H,
     history: &mut ConversationHistory,
+    cancellation_token: &CancellationToken,
     mode: CompactionMode,
 ) -> Result<Option<AppliedCompaction>>
 where
@@ -90,6 +102,7 @@ where
             estimated_total_tokens,
             memory_floor_tokens,
             safety_buffer_tokens,
+            ..
         } => {
             let trigger_tokens = ((settings.model_context_window as f32)
                 * settings.context_compaction_trigger_ratio)
@@ -129,7 +142,7 @@ where
         settings.llm_temperature,
     );
     let summary_response = host
-        .complete_model_request(&CancellationToken::new(), summary_request)
+        .complete_model_request(cancellation_token, summary_request)
         .await?;
     let summary = summary_response
         .content
@@ -140,6 +153,10 @@ where
     let pre_message_count = history.messages.len();
     let pre_context_tokens_estimate =
         context_facade.estimate_history_tokens(&history.messages) as u64;
+    let continuation = match mode {
+        CompactionMode::Manual { .. } => CompactionContinuation::PreTurn,
+        CompactionMode::Automatic { continuation, .. } => continuation,
+    };
     let compacted = context_facade.apply_compaction(&mut history.messages, &raw_plan, summary);
     let post_message_count = compacted.replacement_history.len();
     let post_context_tokens_estimate =
@@ -151,6 +168,7 @@ where
         summary: compacted.summary,
         rendered_summary,
         replacement_history: compacted.replacement_history,
+        continuation,
         pre_context_tokens_estimate,
         post_context_tokens_estimate,
         pre_message_count,
@@ -171,6 +189,7 @@ where
     let Some(compacted) = maybe_compact_history(
         host,
         &mut history,
+        &CancellationToken::new(),
         CompactionMode::Manual {
             minimum_history_tokens,
         },
@@ -193,6 +212,7 @@ where
         &[RolloutItem::Compacted {
             summary: compacted.summary,
             rendered_summary: compacted.rendered_summary,
+            continuation: compacted.continuation,
             replacement_history: compacted.replacement_history,
         }],
     )

@@ -43,6 +43,14 @@ impl BottomPaneController {
         self.runtime.on_tool_finished();
     }
 
+    pub(crate) fn on_context_compaction_started(&mut self, estimated_tokens: u64) {
+        self.runtime.on_context_compaction_started(estimated_tokens);
+    }
+
+    pub(crate) fn on_context_compaction_finished(&mut self) {
+        self.runtime.on_context_compaction_finished();
+    }
+
     pub(crate) fn on_turn_finished(&mut self) {
         self.runtime.on_turn_finished();
     }
@@ -424,5 +432,26 @@ mod tests {
         assert_eq!(status.text, "Working");
         assert_eq!(status.runtime_hint, None);
         assert_eq!(status.live_banner, None);
+    }
+
+    #[test]
+    fn compaction_runtime_status_renders_as_live_banner_and_clears_cleanly() {
+        let mut app = test_app();
+        app.run_state.live_animation_frame = 3;
+        app.bottom_pane.on_turn_started();
+        app.bottom_pane.on_context_compaction_started(12_345);
+
+        let during = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(during.text, "Working");
+        assert_eq!(during.indicator.as_deref(), Some("⠸"));
+        assert_eq!(
+            during.live_banner.as_deref(),
+            Some("Compacting context (~12.3k tokens)")
+        );
+
+        app.bottom_pane.on_context_compaction_finished();
+        let after = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(after.text, "Working");
+        assert_eq!(after.live_banner, None);
     }
 }
