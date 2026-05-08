@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 pub(crate) struct WorkerManager {
     worker_program: OsString,
@@ -24,7 +25,33 @@ impl WorkerManager {
         command: AppClientCommand,
         event_tx: mpsc::Sender<NodeEvent>,
     ) -> Result<()> {
+        self.prune_finished_workers().await?;
+        match self
+            .send_command_inner(conversation_id, command.clone(), event_tx.clone())
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("worker command channel closed for") =>
+            {
+                self.workers.remove(conversation_id);
+                self.send_command_inner(conversation_id, command, event_tx)
+                    .await
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn send_command_inner(
+        &mut self,
+        conversation_id: &str,
+        command: AppClientCommand,
+        event_tx: mpsc::Sender<NodeEvent>,
+    ) -> Result<()> {
         let handle = self.ensure_worker(conversation_id, event_tx).await?;
+        handle.last_active_at = Instant::now();
         handle
             .command_tx
             .send(command)
@@ -106,12 +133,36 @@ impl WorkerManager {
             });
             self.workers.insert(
                 conversation_id.to_string(),
-                WorkerHandle { command_tx, worker },
+                WorkerHandle {
+                    command_tx,
+                    worker,
+                    last_active_at: Instant::now(),
+                },
             );
         }
         self.workers
             .get_mut(conversation_id)
             .ok_or_else(|| anyhow!("worker handle missing for {conversation_id}"))
+    }
+
+    async fn prune_finished_workers(&mut self) -> Result<()> {
+        let finished: Vec<String> = self
+            .workers
+            .iter()
+            .filter_map(|(conversation_id, handle)| {
+                handle
+                    .worker
+                    .is_finished()
+                    .then(|| conversation_id.to_string())
+            })
+            .collect();
+
+        for conversation_id in finished {
+            if let Some(handle) = self.workers.remove(&conversation_id) {
+                handle.worker.await??;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn shutdown(self) -> Result<()> {
@@ -137,6 +188,7 @@ pub(crate) enum NodeEvent {
 struct WorkerHandle {
     command_tx: mpsc::UnboundedSender<AppClientCommand>,
     worker: tokio::task::JoinHandle<Result<()>>,
+    last_active_at: Instant,
 }
 
 fn worker_stdio_args(conversation_id: &str) -> Vec<OsString> {
@@ -149,8 +201,11 @@ fn worker_stdio_args(conversation_id: &str) -> Vec<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::worker_stdio_args;
+    use super::{WorkerHandle, WorkerManager, worker_stdio_args};
+    use anyhow::Result;
     use std::ffi::OsString;
+    use tokio::sync::mpsc;
+    use tokio::time::Instant;
 
     #[test]
     fn builds_worker_stdio_arguments() {
@@ -162,5 +217,26 @@ mod tests {
                 OsString::from("conversation-42"),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn prune_finished_workers_removes_completed_handles() -> Result<()> {
+        let mut manager = WorkerManager::new(OsString::from("agentd.exe"));
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let worker = tokio::spawn(async { Result::<()>::Ok(()) });
+        manager.workers.insert(
+            "conversation-1".to_string(),
+            WorkerHandle {
+                command_tx: tx,
+                worker,
+                last_active_at: Instant::now(),
+            },
+        );
+
+        tokio::task::yield_now().await;
+        manager.prune_finished_workers().await?;
+        assert!(manager.workers.is_empty());
+        Ok(())
     }
 }
