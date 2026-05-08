@@ -42,6 +42,10 @@ impl AppServerTarget {
 
 #[derive(Clone)]
 pub enum ConsoleBootstrap {
+    LocalNode {
+        program: OsString,
+        args: Vec<OsString>,
+    },
     Embedded {
         runtime: Arc<AgentHost>,
     },

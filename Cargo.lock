@@ -780,6 +780,7 @@ version = "0.1.31"
 dependencies = [
  "agent-gateway",
  "anyhow",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

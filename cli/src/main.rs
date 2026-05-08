@@ -133,9 +133,28 @@ fn resolve_console_target(
     let target = arg_value(args, "--target")
         .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_TARGET"))
         .and_then(|value| value.into_string().ok())
-        .unwrap_or_else(|| "embedded".to_string());
+        .unwrap_or_else(|| "local-node".to_string());
 
     match target.as_str() {
+        "local-node" => {
+            let program = arg_value(args, "--node-bin")
+                .or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
+                .unwrap_or_else(default_node_bin);
+            let remote_conversation = arg_value(args, "--conversation")
+                .and_then(|value| value.into_string().ok())
+                .unwrap_or_else(|| conversation_id.to_string());
+            Ok((
+                AppServerTarget::LocalNode,
+                ConsoleBootstrap::LocalNode {
+                    program,
+                    args: vec![
+                        OsString::from("local-app-server"),
+                        OsString::from("--conversation"),
+                        OsString::from(remote_conversation),
+                    ],
+                },
+            ))
+        }
         "embedded" => Ok((
             AppServerTarget::Embedded,
             ConsoleBootstrap::Embedded {
@@ -171,13 +190,21 @@ fn resolve_console_target(
                 },
             ))
         }
-        "local-node" => bail!(
-            "target 'local-node' is reserved for the direct-mode migration and is not implemented yet"
-        ),
         other => bail!(
             "unknown target '{other}'. supported targets in this migration stage: embedded, worker-stdio, local-node"
         ),
     }
+}
+
+fn default_node_bin() -> OsString {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.parent()
+                .map(|parent| parent.join(exe_name("gatewayd")))
+        })
+        .map(|path| path.into_os_string())
+        .unwrap_or_else(|| OsString::from(exe_name("gatewayd")))
 }
 
 fn wants_help(args: &[OsString]) -> bool {
@@ -194,17 +221,18 @@ fn print_help() {
 cloudagent cli
 
 Usage:
-  cloudagent start [--target TARGET] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
-  cloudagent [--target TARGET] [--app-server-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
+  cloudagent start [--target TARGET] [--node-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
+  cloudagent [--target TARGET] [--node-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent --help
   cloudagent --version
 
 Options:
   -h, --help                 Show this help text
   -V, --version              Show the CLI version
-      --target TARGET        Target selection: embedded (temporary), worker-stdio (temporary), or local-node (reserved)
+      --target TARGET        Target selection: local-node (default), embedded (internal), or worker-stdio (internal)
+      --node-bin PATH        node binary path when using local-node
       --app-server-bin PATH  worker binary path when using worker-stdio
-      --conversation ID      Conversation id for worker-stdio
+      --conversation ID      Conversation id passed to the selected target
       --color WHEN           Color output: auto, always, or never
       --no-color             Disable color output
 "
@@ -276,14 +304,27 @@ mod tests {
     }
 
     #[test]
-    fn local_node_target_is_reserved_until_node_exists() {
+    fn local_node_target_maps_to_node_bootstrap() {
         let args = vec![OsString::from("--target"), OsString::from("local-node")];
-        match resolve_console_target(&args, "local-conversation", None) {
-            Ok(_) => panic!("local-node should not resolve before node exists"),
-            Err(error) => assert!(
-                error
-                    .to_string()
-                    .contains("target 'local-node' is reserved")
+        let (target, bootstrap) = resolve_console_target(&args, "local-conversation", None)
+            .expect("local-node target should resolve");
+
+        assert!(matches!(target, AppServerTarget::LocalNode));
+        match bootstrap {
+            ConsoleBootstrap::LocalNode { program, args } => {
+                assert!(program.to_string_lossy().contains("gatewayd"));
+                assert_eq!(
+                    args,
+                    vec![
+                        OsString::from("local-app-server"),
+                        OsString::from("--conversation"),
+                        OsString::from("local-conversation"),
+                    ]
+                );
+            }
+            other => panic!(
+                "unexpected bootstrap: {}",
+                std::any::type_name_of_val(&other)
             ),
         }
     }

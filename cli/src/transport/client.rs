@@ -1,5 +1,7 @@
 use crate::app::{ConsoleBootstrap, ConsoleConfig};
-use agent_app_server_client::{AppServerClient, InProcessClientConfig, StdioClientConfig};
+use agent_app_server_client::{
+    AppServerClient, InProcessClientConfig, LocalNodeClientConfig, StdioClientConfig,
+};
 use anyhow::Result;
 
 pub(crate) async fn create_client(
@@ -7,6 +9,13 @@ pub(crate) async fn create_client(
     conversation_id: String,
 ) -> Result<AppServerClient> {
     match &config.bootstrap {
+        ConsoleBootstrap::LocalNode { program, args } => {
+            AppServerClient::local_node(LocalNodeClientConfig {
+                program: program.clone(),
+                args: args.clone(),
+            })
+            .await
+        }
         ConsoleBootstrap::Embedded { runtime } => {
             Ok(AppServerClient::in_process(InProcessClientConfig {
                 runtime: runtime.clone(),
