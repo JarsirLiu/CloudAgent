@@ -17,6 +17,8 @@ use ratatui::style::{Color, Modifier};
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
 
+use crate::terminal::color_compat::{ColorDepth, adapt_bg, adapt_color};
+
 fn display_width(value: &str) -> usize {
     if !value.contains('\x1B') {
         return value.width();
@@ -71,13 +73,14 @@ where
     last_known_screen_size: Size,
     pub(crate) last_known_cursor_pos: Position,
     visible_history_rows: u16,
+    color_depth: ColorDepth,
 }
 
 impl<B> Terminal<B>
 where
     B: Backend + Write,
 {
-    pub(crate) fn new(mut backend: B) -> io::Result<Self> {
+    pub(crate) fn new(mut backend: B, color_depth: ColorDepth) -> io::Result<Self> {
         let screen_size = backend.size()?;
         let cursor_pos = backend.get_cursor_position().unwrap_or(Position {
             x: 0,
@@ -92,6 +95,7 @@ where
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,
+            color_depth,
         })
     }
 
@@ -174,7 +178,7 @@ where
         if let Some(DrawCommand::Put { x, y, .. }) = last_put {
             self.last_known_cursor_pos = Position { x: *x, y: *y };
         }
-        draw_updates(&mut self.backend, updates.into_iter())
+        draw_updates(&mut self.backend, updates.into_iter(), self.color_depth)
     }
 
     pub(crate) fn clear_rows(&mut self, start_y: u16, end_y_exclusive: u16) -> io::Result<()> {
@@ -222,6 +226,10 @@ where
 
     pub(crate) fn visible_history_rows(&self) -> u16 {
         self.visible_history_rows
+    }
+
+    pub(crate) fn color_depth(&self) -> ColorDepth {
+        self.color_depth
     }
 
     fn swap_buffers(&mut self) {
@@ -425,6 +433,7 @@ fn diff_buffers(previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
 fn draw_updates(
     writer: &mut impl Write,
     commands: impl Iterator<Item = DrawCommand>,
+    color_depth: ColorDepth,
 ) -> io::Result<()> {
     let mut fg = Color::Reset;
     let mut bg = Color::Reset;
@@ -442,21 +451,24 @@ fn draw_updates(
 
         match command {
             DrawCommand::Put { cell, .. } => {
+                let next_fg = adapt_color(cell.fg, color_depth);
+                let next_bg = adapt_bg(cell.bg, color_depth);
                 if cell.modifier != modifier {
                     queue_modifier_diff(writer, modifier, cell.modifier)?;
                     modifier = cell.modifier;
                 }
-                if cell.fg != fg || cell.bg != bg {
+                if next_fg != fg || next_bg != bg {
                     queue!(
                         writer,
-                        SetColors(Colors::new(cell.fg.into(), cell.bg.into()))
+                        SetColors(Colors::new(next_fg.into(), next_bg.into()))
                     )?;
-                    fg = cell.fg;
-                    bg = cell.bg;
+                    fg = next_fg;
+                    bg = next_bg;
                 }
                 queue!(writer, Print(cell.symbol()))?;
             }
             DrawCommand::ClearToEnd { bg: clear_bg, .. } => {
+                let clear_bg = adapt_bg(clear_bg, color_depth);
                 queue!(writer, SetAttribute(Attribute::Reset))?;
                 modifier = Modifier::empty();
                 queue!(writer, SetBackgroundColor(clear_bg.into()))?;
@@ -522,9 +534,12 @@ fn queue_modifier_diff<W: Write>(writer: &mut W, from: Modifier, to: Modifier) -
 
 #[cfg(test)]
 mod tests {
-    use super::{DrawCommand, diff_buffers};
+    use super::{DrawCommand, diff_buffers, draw_updates};
+    use crate::terminal::color_compat::ColorDepth;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::style::Color;
+    use std::str;
 
     #[test]
     fn diff_buffers_clears_fully_blank_row_from_first_column() {
@@ -542,5 +557,19 @@ mod tests {
             updates.first(),
             Some(DrawCommand::ClearToEnd { x: 0, y: 0, .. })
         ));
+    }
+
+    #[test]
+    fn draw_updates_downgrades_truecolor_output_for_ansi256() {
+        let mut bytes = Vec::new();
+        let mut cell = ratatui::buffer::Cell::default();
+        cell.set_symbol("x");
+        cell.set_fg(Color::Rgb(120, 170, 255));
+
+        let command = DrawCommand::Put { x: 0, y: 0, cell };
+        draw_updates(&mut bytes, [command].into_iter(), ColorDepth::Ansi256).unwrap();
+
+        let output = str::from_utf8(&bytes).unwrap();
+        assert!(!output.contains("38;2;"));
     }
 }

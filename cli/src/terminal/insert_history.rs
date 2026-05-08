@@ -15,6 +15,7 @@ use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
+use crate::terminal::color_compat::{ColorDepth, adapt_bg, adapt_color};
 use crate::terminal::custom_terminal::Terminal;
 use crate::ui::widgets::history_cell::HistoryCell;
 
@@ -57,6 +58,7 @@ where
     let mut should_update_area = false;
     let mut history_region_was_empty = area.top() == 0;
     let last_cursor_pos = terminal.last_known_cursor_pos;
+    let color_depth = terminal.color_depth();
     let wrap_width = area.width.max(1) as usize;
     let lines = wrap_history_lines(lines, wrap_width);
     let wrapped_rows = lines.len() as u16;
@@ -106,7 +108,7 @@ where
         if index > 0 || !history_region_was_empty {
             queue!(writer, Print("\r\n"))?;
         }
-        write_history_line(writer, line, wrap_width)?;
+        write_history_line(writer, line, wrap_width, color_depth)?;
         history_region_was_empty = false;
     }
     if has_history_region {
@@ -174,7 +176,12 @@ fn line_from_spans(spans: Vec<Span<'static>>, style: ratatui::style::Style) -> L
     line
 }
 
-fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) -> io::Result<()> {
+fn write_history_line<W: Write>(
+    writer: &mut W,
+    line: &Line,
+    wrap_width: usize,
+    color_depth: ColorDepth,
+) -> io::Result<()> {
     let physical_rows = line.width().max(1).div_ceil(wrap_width) as u16;
     if physical_rows > 1 {
         queue!(writer, SavePosition)?;
@@ -189,10 +196,12 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) 
         SetColors(Colors::new(
             line.style
                 .fg
+                .map(|color| adapt_color(color, color_depth))
                 .map(Into::into)
                 .unwrap_or(CrosstermColor::Reset),
             line.style
                 .bg
+                .map(|color| adapt_bg(color, color_depth))
                 .map(Into::into)
                 .unwrap_or(CrosstermColor::Reset)
         )),
@@ -204,10 +213,11 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) 
             style: span.style.patch(line.style),
             content: span.content.clone(),
         }),
+        color_depth,
     )
 }
 
-fn write_spans<'a, W, I>(writer: &mut W, spans: I) -> io::Result<()>
+fn write_spans<'a, W, I>(writer: &mut W, spans: I, color_depth: ColorDepth) -> io::Result<()>
 where
     W: Write,
     I: IntoIterator<Item = Span<'a>>,
@@ -223,8 +233,8 @@ where
             queue_modifier_diff(writer, modifier, next_modifier)?;
             modifier = next_modifier;
         }
-        let next_fg = span.style.fg.unwrap_or(Color::Reset);
-        let next_bg = span.style.bg.unwrap_or(Color::Reset);
+        let next_fg = adapt_color(span.style.fg.unwrap_or(Color::Reset), color_depth);
+        let next_bg = adapt_bg(span.style.bg.unwrap_or(Color::Reset), color_depth);
         if next_fg != fg || next_bg != bg {
             queue!(
                 writer,
@@ -331,10 +341,12 @@ impl crossterm::Command for ResetScrollRegion {
 
 #[cfg(test)]
 mod tests {
-    use super::{prepare_history_lines, wrap_history_line};
+    use super::{prepare_history_lines, wrap_history_line, write_history_line};
+    use crate::terminal::color_compat::ColorDepth;
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
+    use std::str;
 
     #[test]
     fn wraps_long_history_line_before_terminal_insert() {
@@ -404,5 +416,19 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(rendered.iter().any(|line| line.is_empty()));
+    }
+
+    #[test]
+    fn write_history_line_downgrades_truecolor_output_for_ansi256() {
+        let line = Line::from(vec![Span::styled(
+            "hello",
+            Style::default().fg(Color::Rgb(120, 170, 255)),
+        )]);
+        let mut bytes = Vec::new();
+
+        write_history_line(&mut bytes, &line, 80, ColorDepth::Ansi256).unwrap();
+
+        let output = str::from_utf8(&bytes).unwrap();
+        assert!(!output.contains("38;2;"));
     }
 }

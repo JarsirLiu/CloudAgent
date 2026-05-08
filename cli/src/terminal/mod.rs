@@ -1,4 +1,5 @@
 pub mod custom_terminal;
+mod color_compat;
 mod draw_coordinator;
 pub mod events;
 mod insert_history;
@@ -54,7 +55,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
     let init_result = (|| -> Result<TerminalGuard> {
         execute!(stdout, EnableBracketedPaste)?;
         let backend = CrosstermBackend::new(io::stdout());
-        let terminal = custom_terminal::Terminal::new(backend)?;
+        let terminal = custom_terminal::Terminal::new(backend, color_compat::ColorDepth::detect())?;
         Ok(TerminalGuard { terminal })
     })();
     if init_result.is_err() {
