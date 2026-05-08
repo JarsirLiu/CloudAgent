@@ -525,7 +525,7 @@ mod tests {
 
         assert!(matches!(
             output.structured,
-            Some(agent_protocol::StructuredToolResult::Unwatch {
+            Some(StructuredToolResult::Unwatch {
                 changed_path_count: 1,
                 ..
             })

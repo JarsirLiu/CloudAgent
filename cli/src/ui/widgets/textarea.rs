@@ -20,11 +20,18 @@ pub struct TextArea {
     undo_stack: Vec<UndoState>,
     kill_buffer: String,
     last_wrap_width: Cell<Option<usize>>,
+    elements: Vec<TextElement>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TextAreaState {
     pub scroll: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TextElement {
+    payload: String,
+    range: std::ops::Range<usize>,
 }
 
 impl TextArea {
@@ -68,6 +75,7 @@ impl TextArea {
         self.preferred_column = None;
         self.undo_stack.clear();
         self.last_wrap_width.set(None);
+        self.elements.clear();
     }
 
     pub fn set_text(&mut self, value: impl Into<String>) {
@@ -77,6 +85,11 @@ impl TextArea {
         self.preferred_column = None;
         self.undo_stack.clear();
         self.last_wrap_width.set(None);
+        self.elements.clear();
+    }
+
+    pub fn set_text_clearing_elements(&mut self, value: impl Into<String>) {
+        self.set_text(value);
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -233,6 +246,69 @@ impl TextArea {
         Some(selected)
     }
 
+    pub fn insert_element(&mut self, payload: &str) {
+        let cursor = self.normalize_insertion_cursor(self.cursor);
+        self.cursor = cursor;
+        self.push_undo_state();
+        self.replace_selection_if_needed();
+        let start = self.cursor;
+        let at = byte_index_from_char_index(&self.text, start);
+        self.text.insert_str(at, payload);
+        let len = char_len(payload);
+        self.shift_elements_after(start, len as isize);
+        self.elements.push(TextElement {
+            payload: payload.to_string(),
+            range: start..start + len,
+        });
+        self.elements.sort_by_key(|element| element.range.start);
+        self.cursor = start + len;
+        self.selection_anchor = None;
+        self.preferred_column = None;
+        self.last_wrap_width.set(None);
+    }
+
+    pub fn element_payloads(&self) -> Vec<String> {
+        self.elements
+            .iter()
+            .map(|element| element.payload.clone())
+            .collect()
+    }
+
+    pub fn replace_element_payload(&mut self, current: &str, expected: &str) -> bool {
+        let Some(index) = self
+            .elements
+            .iter()
+            .position(|element| element.payload == current)
+        else {
+            return false;
+        };
+        let range = self.elements[index].range.clone();
+        let start_byte = byte_index_from_char_index(&self.text, range.start);
+        let end_byte = byte_index_from_char_index(&self.text, range.end);
+        self.text.replace_range(start_byte..end_byte, expected);
+        let old_len = range.end.saturating_sub(range.start);
+        let new_len = char_len(expected);
+        let delta = new_len as isize - old_len as isize;
+        self.elements[index].payload = expected.to_string();
+        self.elements[index].range = range.start..(range.start + new_len);
+        for element in self.elements.iter_mut().skip(index + 1) {
+            element.range.start = element.range.start.saturating_add_signed(delta);
+            element.range.end = element.range.end.saturating_add_signed(delta);
+        }
+        if self.cursor > range.end {
+            self.cursor = self.cursor.saturating_add_signed(delta);
+        } else if self.cursor > range.start {
+            self.cursor = range.start + new_len;
+        }
+        if let Some(anchor) = self.selection_anchor
+            && anchor > range.end
+        {
+            self.selection_anchor = Some(anchor.saturating_add_signed(delta));
+        }
+        self.last_wrap_width.set(None);
+        true
+    }
+
     fn undo(&mut self) {
         let Some(state) = self.undo_stack.pop() else {
             return;
@@ -266,10 +342,12 @@ impl TextArea {
     }
 
     fn insert_char(&mut self, ch: char) {
+        self.cursor = self.normalize_insertion_cursor(self.cursor);
         self.push_undo_state();
         self.replace_selection_if_needed();
         let at = byte_index_from_char_index(&self.text, self.cursor);
         self.text.insert(at, ch);
+        self.shift_elements_after(self.cursor, 1);
         self.cursor += 1;
         self.selection_anchor = None;
         self.preferred_column = None;
@@ -277,11 +355,14 @@ impl TextArea {
     }
 
     pub fn insert_str(&mut self, value: &str) {
+        self.cursor = self.normalize_insertion_cursor(self.cursor);
         self.push_undo_state();
         self.replace_selection_if_needed();
         let at = byte_index_from_char_index(&self.text, self.cursor);
         self.text.insert_str(at, value);
-        self.cursor += value.graphemes(true).count();
+        let len = value.graphemes(true).count();
+        self.shift_elements_after(self.cursor, len as isize);
+        self.cursor += len;
         self.selection_anchor = None;
         self.preferred_column = None;
         self.last_wrap_width.set(None);
@@ -289,10 +370,13 @@ impl TextArea {
 
     pub fn replace_char_range(&mut self, range: std::ops::Range<usize>, value: &str) {
         self.push_undo_state();
-        let start = byte_index_from_char_index(&self.text, range.start);
-        let end = byte_index_from_char_index(&self.text, range.end);
+        let (edit_start, edit_end) =
+            self.expand_range_to_element_boundaries(range.start, range.end);
+        let start = byte_index_from_char_index(&self.text, edit_start);
+        let end = byte_index_from_char_index(&self.text, edit_end);
         self.text.replace_range(start..end, value);
-        self.cursor = range.start + value.chars().count();
+        self.update_elements_for_edit(edit_start, edit_end, value.graphemes(true).count());
+        self.cursor = edit_start + value.chars().count();
         self.selection_anchor = None;
         self.preferred_column = None;
         self.last_wrap_width.set(None);
@@ -305,10 +389,23 @@ impl TextArea {
         if self.cursor == 0 {
             return;
         }
+        if let Some((range, start_cursor)) = self
+            .element_for_backspace(self.cursor)
+            .map(|element| (element.range.clone(), element.range.start))
+        {
+            self.push_undo_state();
+            self.delete_char_range_internal(range);
+            self.cursor = start_cursor;
+            self.selection_anchor = None;
+            self.preferred_column = None;
+            self.last_wrap_width.set(None);
+            return;
+        }
         self.push_undo_state();
         let start = byte_index_from_char_index(&self.text, self.cursor - 1);
         let end = byte_index_from_char_index(&self.text, self.cursor);
         self.text.replace_range(start..end, "");
+        self.update_elements_for_edit(self.cursor - 1, self.cursor, 0);
         self.cursor -= 1;
         self.selection_anchor = None;
         self.preferred_column = None;
@@ -323,10 +420,23 @@ impl TextArea {
         if self.cursor >= len {
             return;
         }
+        if let Some((range, start_cursor)) = self
+            .element_for_delete(self.cursor)
+            .map(|element| (element.range.clone(), element.range.start))
+        {
+            self.push_undo_state();
+            self.delete_char_range_internal(range);
+            self.cursor = start_cursor;
+            self.selection_anchor = None;
+            self.preferred_column = None;
+            self.last_wrap_width.set(None);
+            return;
+        }
         self.push_undo_state();
         let start = byte_index_from_char_index(&self.text, self.cursor);
         let end = byte_index_from_char_index(&self.text, self.cursor + 1);
         self.text.replace_range(start..end, "");
+        self.update_elements_for_edit(self.cursor, self.cursor + 1, 0);
         self.selection_anchor = None;
         self.preferred_column = None;
         self.last_wrap_width.set(None);
@@ -352,6 +462,7 @@ impl TextArea {
         let end = byte_index_from_char_index(&self.text, self.cursor);
         self.kill_buffer = self.text[start..end].to_string();
         self.text.replace_range(start..end, "");
+        self.update_elements_for_edit(i, self.cursor, 0);
         self.cursor = i;
         self.selection_anchor = None;
         self.preferred_column = None;
@@ -374,6 +485,7 @@ impl TextArea {
         let start_byte = byte_index_from_char_index(&self.text, start);
         let end_byte = byte_index_from_char_index(&self.text, end);
         self.text.replace_range(start_byte..end_byte, "");
+        self.update_elements_for_edit(start, end, 0);
         self.cursor = start;
         self.selection_anchor = None;
         self.preferred_column = None;
@@ -524,6 +636,7 @@ impl TextArea {
         let end_byte = byte_index_from_char_index(&self.text, self.cursor);
         self.kill_buffer = self.text[start_byte..end_byte].to_string();
         self.text.replace_range(start_byte..end_byte, "");
+        self.update_elements_for_edit(start, self.cursor, 0);
         self.cursor = start;
         self.selection_anchor = None;
         self.preferred_column = None;
@@ -543,6 +656,7 @@ impl TextArea {
         let end_byte = byte_index_from_char_index(&self.text, end);
         self.kill_buffer = self.text[start_byte..end_byte].to_string();
         self.text.replace_range(start_byte..end_byte, "");
+        self.update_elements_for_edit(self.cursor, end, 0);
         self.selection_anchor = None;
         self.preferred_column = None;
         self.last_wrap_width.set(None);
@@ -617,6 +731,7 @@ impl TextArea {
         let start_byte = byte_index_from_char_index(&self.text, self.cursor);
         let end_byte = byte_index_from_char_index(&self.text, end);
         self.text.replace_range(start_byte..end_byte, "");
+        self.update_elements_for_edit(self.cursor, end, 0);
         self.selection_anchor = None;
         self.preferred_column = None;
         self.last_wrap_width.set(None);
@@ -639,7 +754,7 @@ impl TextArea {
 
     fn apply_cursor_move(&mut self, new_cursor: usize, selecting: bool) {
         let len = char_len(&self.text);
-        let new_cursor = new_cursor.min(len);
+        let new_cursor = self.normalize_cursor_for_move(self.cursor, new_cursor.min(len));
         if selecting {
             if self.selection_anchor.is_none() {
                 self.selection_anchor = Some(self.cursor);
@@ -651,6 +766,89 @@ impl TextArea {
         if !selecting {
             self.preferred_column = None;
         }
+    }
+
+    fn element_for_backspace(&self, cursor: usize) -> Option<&TextElement> {
+        self.elements.iter().find(|element| {
+            (element.range.start < cursor && cursor < element.range.end)
+                || element.range.end == cursor
+        })
+    }
+
+    fn element_for_delete(&self, cursor: usize) -> Option<&TextElement> {
+        self.elements.iter().find(|element| {
+            (element.range.start < cursor && cursor < element.range.end)
+                || element.range.start == cursor
+        })
+    }
+
+    fn normalize_insertion_cursor(&self, cursor: usize) -> usize {
+        self.elements
+            .iter()
+            .find(|element| element.range.start < cursor && cursor < element.range.end)
+            .map(|element| element.range.end)
+            .unwrap_or(cursor)
+    }
+
+    fn normalize_cursor_for_move(&self, previous_cursor: usize, new_cursor: usize) -> usize {
+        self.elements
+            .iter()
+            .find(|element| element.range.start < new_cursor && new_cursor < element.range.end)
+            .map(|element| {
+                if new_cursor > previous_cursor {
+                    element.range.end
+                } else {
+                    element.range.start
+                }
+            })
+            .unwrap_or(new_cursor)
+    }
+
+    fn shift_elements_after(&mut self, index: usize, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+        for element in &mut self.elements {
+            if element.range.start >= index {
+                element.range.start = element.range.start.saturating_add_signed(delta);
+                element.range.end = element.range.end.saturating_add_signed(delta);
+            }
+        }
+    }
+
+    fn expand_range_to_element_boundaries(&self, start: usize, end: usize) -> (usize, usize) {
+        let mut expanded_start = start;
+        let mut expanded_end = end;
+        for element in &self.elements {
+            let overlaps = element.range.start < expanded_end && expanded_start < element.range.end;
+            if overlaps {
+                expanded_start = expanded_start.min(element.range.start);
+                expanded_end = expanded_end.max(element.range.end);
+            }
+        }
+        (expanded_start, expanded_end)
+    }
+
+    fn update_elements_for_edit(&mut self, start: usize, end: usize, inserted_len: usize) {
+        let delta = inserted_len as isize - (end.saturating_sub(start)) as isize;
+        self.elements.retain_mut(|element| {
+            if element.range.end <= start {
+                true
+            } else if element.range.start >= end {
+                element.range.start = element.range.start.saturating_add_signed(delta);
+                element.range.end = element.range.end.saturating_add_signed(delta);
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    fn delete_char_range_internal(&mut self, range: std::ops::Range<usize>) {
+        let start_byte = byte_index_from_char_index(&self.text, range.start);
+        let end_byte = byte_index_from_char_index(&self.text, range.end);
+        self.text.replace_range(start_byte..end_byte, "");
+        self.update_elements_for_edit(range.start, range.end, 0);
     }
 
     fn current_line_start_and_column(&self) -> (usize, usize) {

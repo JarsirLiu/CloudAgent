@@ -6,8 +6,8 @@ use crate::ui::widgets::input_pane::{
     InputPane, InputPaneAction, InputPaneRenderResult, ServerRequestInlineState,
 };
 use crate::ui::widgets::session_picker::SessionPickerMode;
-use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
 use agent_core::InputItem;
+use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
 use agent_protocol::FrontendMode;
 use agent_protocol::RequestId;
 use crossterm::event::KeyEvent;

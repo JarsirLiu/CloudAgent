@@ -1,7 +1,8 @@
-use agent_core::{
-    AgentContext, AgentHost, AgentHostParts, AgentMetadata, AgentState, ApprovalGrantStoreBackend,
-    ExecutionPolicy, RegularTurnSettings,
-};
+use agent_core::approval::ApprovalGrantStoreBackend;
+use agent_core::context::AgentContext;
+use agent_core::host::{AgentHost, AgentHostParts, AgentMetadata};
+use agent_core::state::AgentState;
+use agent_core::turn::{ExecutionPolicy, RegularTurnSettings};
 use agent_memory::LongTermMemoryFacade;
 use agent_model_provider::OpenAiCompatibleModel;
 use agent_tools::ToolRegistry;

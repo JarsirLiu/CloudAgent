@@ -1,6 +1,8 @@
+use agent_core::conversation::InputItem;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ComposerIntent {
-    Submit(String),
+    Submit(Vec<InputItem>),
     Interrupt,
     Compact,
     Session,

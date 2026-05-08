@@ -29,10 +29,16 @@ impl ConversationHistory {
     }
 
     pub fn rollback_last_user_message(&mut self, expected: &ResponseItem) -> bool {
-        let Some(ResponseItem::User { content: expected_content }) = Some(expected) else {
+        let Some(ResponseItem::User {
+            content: expected_content,
+        }) = Some(expected)
+        else {
             return false;
         };
-        let Some(ResponseItem::User { content: last_content }) = self.messages.last() else {
+        let Some(ResponseItem::User {
+            content: last_content,
+        }) = self.messages.last()
+        else {
             return false;
         };
         if last_content != expected_content {

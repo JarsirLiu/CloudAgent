@@ -1,5 +1,5 @@
 use crate::app::TuiApp;
-use agent_protocol::ConversationTurn;
+use agent_core::ConversationTurn;
 
 pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
     app.bottom_pane.clear_views();

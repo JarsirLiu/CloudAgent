@@ -186,9 +186,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_core::{ApprovalPolicy, CommandApprovalRequest, PermissionProfile};
     use agent_protocol::{
-        AppClientCommand, AppServerMessage, AppServerNotification, ApprovalPolicy,
-        CommandApprovalRequest, JsonRpcMessage, PermissionProfile, ServerRequest, TurnPolicy,
+        AppClientCommand, AppServerMessage, AppServerNotification, JsonRpcMessage, TurnPolicy,
         UserTurnInput,
     };
     use tokio::io::duplex;
@@ -202,7 +202,9 @@ mod tests {
         command_tx
             .send(AppClientCommand::SubmitTurn(UserTurnInput {
                 conversation_id: "default".to_string(),
-                content: "hello".to_string(),
+                content: vec![agent_core::InputItem::Text {
+                    text: "hello".to_string(),
+                }],
                 turn_policy: TurnPolicy {
                     permission_profile: PermissionProfile::ReadOnly,
                     approval_policy: ApprovalPolicy::OnRequest,
@@ -226,7 +228,12 @@ mod tests {
         match envelope.command {
             AppClientCommand::SubmitTurn(input) => {
                 assert_eq!(input.conversation_id, "default");
-                assert_eq!(input.content, "hello");
+                assert_eq!(
+                    input.content,
+                    vec![agent_core::InputItem::Text {
+                        text: "hello".to_string(),
+                    }]
+                );
             }
             other => panic!("unexpected command: {other:?}"),
         }
@@ -245,7 +252,7 @@ mod tests {
             message: AppServerMessage::Request(agent_protocol::AppServerRequest::ServerRequest {
                 request_id: RequestId::Integer(11),
                 conversation_id: "default".to_string(),
-                request: ServerRequest::CommandApproval {
+                request: agent_core::ServerRequest::CommandApproval {
                     request: CommandApprovalRequest {
                         turn_id: "turn-1".to_string(),
                         tool_call_id: "call-1".to_string(),
@@ -287,7 +294,7 @@ mod tests {
             AppServerEvent::Message(AppServerMessage::Request(
                 agent_protocol::AppServerRequest::ServerRequest {
                     request_id,
-                    request: ServerRequest::CommandApproval { request },
+                    request: agent_core::ServerRequest::CommandApproval { request },
                     ..
                 },
             )) => {

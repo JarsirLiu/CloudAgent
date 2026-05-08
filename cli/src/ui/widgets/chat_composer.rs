@@ -463,7 +463,10 @@ impl ChatComposer {
                     _ => self.append_display_text(&item.display_text()),
                 },
                 InputItem::File {
-                    source, name, mime_type, ..
+                    source,
+                    name,
+                    mime_type,
+                    ..
                 } => self.append_display_text(&format_file_restore_text(source, name, mime_type)),
                 InputItem::Mention { name, path } => {
                     self.append_display_text(&format!("@{name} ({path})"))
@@ -590,7 +593,8 @@ impl ChatComposer {
             if !text.is_empty() {
                 self.record_history_entry(text.clone());
             }
-            if local_images.is_empty() && remote_images.is_empty()
+            if local_images.is_empty()
+                && remote_images.is_empty()
                 && !leading_space_escape
                 && let Some(command_text) = text.strip_prefix('/')
             {
@@ -689,11 +693,11 @@ impl ChatComposer {
             return;
         };
         if idx + 1 >= self.history.len() {
-        self.history_cursor = None;
-        self.last_history_text = None;
-        self.textarea.clear();
-        *self.textarea_state.borrow_mut() = TextAreaState::default();
-        return;
+            self.history_cursor = None;
+            self.last_history_text = None;
+            self.textarea.clear();
+            *self.textarea_state.borrow_mut() = TextAreaState::default();
+            return;
         }
         let next = idx + 1;
         self.history_cursor = Some(next);
@@ -892,7 +896,7 @@ impl PendingImage<'_> {
         }
     }
 
-    fn into_input_item(&self) -> InputItem {
+    fn to_input_item(&self) -> InputItem {
         match self {
             Self::Local(image) => InputItem::Image {
                 source: AttachmentRef::LocalPath {
@@ -943,7 +947,7 @@ fn build_submission_content(
         let image = images.remove(image_idx);
         let (before, rest) = remaining.split_at(offset);
         push_text_item(&mut content, before);
-        content.push(image.into_input_item());
+        content.push(image.to_input_item());
         remaining = &rest[image.placeholder().len()..];
     }
 
@@ -1336,7 +1340,10 @@ mod tests {
         composer.attach_image(local_path.clone());
         type_text(&mut composer, "describe both");
 
-        assert_eq!(composer.textarea.text(), "[Image #1][Image #2]describe both");
+        assert_eq!(
+            composer.textarea.text(),
+            "[Image #1][Image #2]describe both"
+        );
 
         let action = composer.handle_key(key(KeyCode::Enter));
 

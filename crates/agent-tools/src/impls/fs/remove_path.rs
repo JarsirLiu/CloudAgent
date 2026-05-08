@@ -170,7 +170,7 @@ mod tests {
         assert!(!base.join("out/file.txt").exists());
         assert!(matches!(
             output.structured,
-            Some(agent_protocol::StructuredToolResult::RemovePath { removed, .. }) if removed
+            Some(StructuredToolResult::RemovePath { removed, .. }) if removed
         ));
     }
 
@@ -197,7 +197,7 @@ mod tests {
 
         assert!(matches!(
             output.structured,
-            Some(agent_protocol::StructuredToolResult::RemovePath { removed, .. }) if !removed
+            Some(StructuredToolResult::RemovePath { removed, .. }) if !removed
         ));
     }
 

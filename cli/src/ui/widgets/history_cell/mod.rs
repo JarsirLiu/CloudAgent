@@ -3,7 +3,7 @@ mod render;
 pub(crate) mod tool_aggregation;
 mod wrapping;
 
-use agent_protocol::{ConversationTurn, TranscriptItem};
+use agent_core::{ConversationTurn, TranscriptItem};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use wrapping::{WrapOptions, word_wrap_text};

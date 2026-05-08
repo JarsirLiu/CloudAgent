@@ -1,7 +1,7 @@
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
+use agent_core::ServerRequestDecisionKind;
 use agent_protocol::RequestId;
-use agent_protocol::ServerRequestDecisionKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 use ratatui::text::Line;

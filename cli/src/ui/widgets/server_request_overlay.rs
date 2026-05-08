@@ -8,7 +8,8 @@ use crate::input::intent::ComposerIntent;
 use crate::input::slash_command::{SlashCommand, find_slash_command};
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::textarea::TextArea;
-use agent_protocol::{RequestId, ServerRequestDecisionKind};
+use agent_core::ServerRequestDecisionKind;
+use agent_protocol::RequestId;
 use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use agent_protocol::{ModelRetryStage, TurnItemKind};
+use agent_core::{ModelRetryStage, TurnItemKind};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BottomPaneRuntimeState {

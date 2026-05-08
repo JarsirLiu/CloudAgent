@@ -1,4 +1,5 @@
-use agent_protocol::{ApprovalPolicy, PermissionProfile, TurnPolicy};
+use agent_core::{ApprovalPolicy, PermissionProfile};
+use agent_protocol::TurnPolicy;
 
 pub(crate) struct PermissionModeSpec {
     pub(crate) mode: &'static str,

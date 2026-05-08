@@ -140,7 +140,7 @@ mod tests {
         assert!(base.join("out/artifacts").is_dir());
         assert!(matches!(
             output.structured,
-            Some(agent_protocol::StructuredToolResult::CreateDirectory { created, .. }) if created
+            Some(StructuredToolResult::CreateDirectory { created, .. }) if created
         ));
     }
 

@@ -2,8 +2,9 @@ use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone};
 use crate::app::conversation::exploration::{
     is_exploration_command, summarize_exploration_command,
 };
-use agent_protocol::{
-    CommandExecutionStatus, StructuredToolResult, TranscriptItem, TurnItemKind, WriteFileStatus,
+use agent_core::{
+    CommandExecutionStatus, InputItem, SearchWorkspaceMode, SearchWorkspaceStatus,
+    StructuredToolResult, TranscriptItem, TurnItemKind, WriteFileStatus,
 };
 
 #[derive(Default)]
@@ -12,7 +13,9 @@ pub struct RenderContext;
 pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContext) -> HistoryCell {
     match message {
         TranscriptItem::SystemMessage { .. } => HistoryCell::info("", "", HistoryTone::Meta),
-        TranscriptItem::UserMessage { text, .. } => HistoryCell::user(text.clone()),
+        TranscriptItem::UserMessage { content, .. } => {
+            HistoryCell::user(render_user_content(content))
+        }
         TranscriptItem::AgentMessage { text, .. } => {
             let _ = context;
             HistoryCell::agent("", text.clone(), HistoryFormat::Markdown)
@@ -49,6 +52,73 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
             HistoryTone::Control,
         ),
         TranscriptItem::Reasoning { text, .. } => HistoryCell::reasoning("Reasoning", text.clone()),
+    }
+}
+
+fn render_user_content(content: &[InputItem]) -> String {
+    let mut media_lines = Vec::new();
+    let mut text_lines = Vec::new();
+    let mut image_index = 0usize;
+    for item in content {
+        match item {
+            InputItem::Text { text } => {
+                if !text.trim().is_empty() {
+                    text_lines.push(text.trim().to_string());
+                }
+            }
+            InputItem::Image { .. } => {
+                image_index += 1;
+                media_lines.push(format!("[Image #{image_index}]"));
+            }
+            InputItem::File { .. } => media_lines.push("[Attachment]".to_string()),
+            InputItem::Mention { name, path } => text_lines.push(format!("@{name} ({path})")),
+            InputItem::Skill { name, path } => text_lines.push(format!("#{name} ({path})")),
+        }
+    }
+
+    match (media_lines.is_empty(), text_lines.is_empty()) {
+        (false, false) => format!("{}\n\n{}", media_lines.join("\n"), text_lines.join("\n")),
+        (false, true) => media_lines.join("\n"),
+        (true, false) => text_lines.join("\n"),
+        (true, true) => String::new(),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+    use agent_core::conversation::{AttachmentRef, TranscriptItem};
+
+    #[test]
+    fn user_message_renders_image_placeholders_in_history() {
+        let message = TranscriptItem::user_message(
+            "user-1",
+            vec![
+                InputItem::Text {
+                    text: "please inspect".to_string(),
+                },
+                InputItem::Image {
+                    source: AttachmentRef::LocalPath {
+                        path: "D:\\images\\diagram.png".to_string(),
+                    },
+                    detail: None,
+                    alt: None,
+                },
+                InputItem::Image {
+                    source: AttachmentRef::LocalPath {
+                        path: "D:\\images\\diagram-2.png".to_string(),
+                    },
+                    detail: None,
+                    alt: None,
+                },
+            ],
+        );
+
+        let mut context = RenderContext;
+        let cell = render_history_entry(&message, &mut context);
+
+        assert_eq!(cell.body(), "[Image #1]\n[Image #2]\n\nplease inspect");
     }
 }
 
@@ -215,26 +285,26 @@ fn render_tool_result(
     }) = structured
     {
         let status_suffix = match status {
-            agent_protocol::SearchWorkspaceStatus::Active => "",
-            agent_protocol::SearchWorkspaceStatus::Closed => " closed",
-            agent_protocol::SearchWorkspaceStatus::NotFound => " missing",
+            SearchWorkspaceStatus::Active => "",
+            SearchWorkspaceStatus::Closed => " closed",
+            SearchWorkspaceStatus::NotFound => " missing",
         };
         let truncation = if *truncated { " truncated" } else { "" };
         let summary = match mode {
-            agent_protocol::SearchWorkspaceMode::Files => {
+            SearchWorkspaceMode::Files => {
                 format!("found {file_count} files{truncation}{status_suffix}")
             }
-            agent_protocol::SearchWorkspaceMode::Text => {
+            SearchWorkspaceMode::Text => {
                 format!(
                     "matched {match_count} hits in {file_count} files{truncation}{status_suffix}"
                 )
             }
         };
         let detail = match mode {
-            agent_protocol::SearchWorkspaceMode::Files => {
+            SearchWorkspaceMode::Files => {
                 format!("file search `{}`", compact_inline(query, 48))
             }
-            agent_protocol::SearchWorkspaceMode::Text => {
+            SearchWorkspaceMode::Text => {
                 format!("text search `{}`", compact_inline(query, 48))
             }
         };

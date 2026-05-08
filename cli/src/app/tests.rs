@@ -927,9 +927,9 @@ fn failed_turn_restores_submitted_text_to_composer() {
         error: "network error".to_string(),
     });
 
-    let lines = app
-        .bottom_pane
-        .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
+    let lines =
+        app.bottom_pane
+            .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
     let rendered = lines
         .0
         .iter()
@@ -962,23 +962,26 @@ fn failed_turn_restores_submitted_images_to_composer() {
         .save(&image_path)
         .expect("save temp image");
 
-    let submitted = vec![InputItem::Text {
-        text: "check this".to_string(),
-    }, InputItem::Image {
-        source: agent_core::AttachmentRef::LocalPath {
-            path: image_path.display().to_string(),
+    let submitted = vec![
+        InputItem::Text {
+            text: "check this".to_string(),
         },
-        detail: None,
-        alt: None,
-    }];
+        InputItem::Image {
+            source: agent_core::AttachmentRef::LocalPath {
+                path: image_path.display().to_string(),
+            },
+            detail: None,
+            alt: None,
+        },
+    ];
     app.prepare_submitted_turn(&submitted);
     app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Failed {
         error: "provider rejected message".to_string(),
     });
 
-    let lines = app
-        .bottom_pane
-        .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
+    let lines =
+        app.bottom_pane
+            .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
     let rendered = lines
         .0
         .iter()
@@ -1028,9 +1031,9 @@ fn failed_turn_restores_non_image_input_semantics_as_editable_text() {
         error: "temporary upstream failure".to_string(),
     });
 
-    let lines = app
-        .bottom_pane
-        .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 100);
+    let lines =
+        app.bottom_pane
+            .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 100);
     let rendered = lines
         .0
         .iter()

@@ -3,6 +3,7 @@ pub mod custom_terminal;
 mod draw_coordinator;
 pub mod events;
 mod insert_history;
+mod keyboard_modes;
 
 use anyhow::Result;
 use crossterm::SynchronizedUpdate;
@@ -57,6 +58,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
     let mut stdout = io::stdout();
     let init_result = (|| -> Result<TerminalGuard> {
         execute!(stdout, EnableBracketedPaste)?;
+        keyboard_modes::enable_keyboard_enhancement();
         let backend = CrosstermBackend::new(io::stdout());
         let capabilities = TerminalCapabilities::detect();
         let terminal = custom_terminal::Terminal::new(backend, capabilities)?;
@@ -73,6 +75,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
 
 pub(crate) fn restore() -> Result<()> {
     let _ = execute!(io::stdout(), DisableBracketedPaste);
+    keyboard_modes::restore_keyboard_enhancement_stack();
     disable_raw_mode()?;
     Ok(())
 }
@@ -81,6 +84,7 @@ pub fn install_panic_hook() {
     INSTALL_PANIC_HOOK.call_once(|| {
         let previous = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
+            keyboard_modes::reset_keyboard_reporting_after_exit();
             let _ = restore();
             previous(info);
         }));
@@ -114,6 +118,7 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = self.terminal.show_cursor();
+        keyboard_modes::reset_keyboard_reporting_after_exit();
         let _ = restore();
     }
 }

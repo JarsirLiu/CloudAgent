@@ -1,5 +1,6 @@
 use crate::ui::widgets::history_cell::{HistoryCell, RenderContext, render_history_entry};
-use agent_protocol::{ConversationTurn, TranscriptItem, TurnState};
+use agent_core::conversation::{ConversationTurn, TranscriptItem};
+use agent_core::turn::TurnState;
 
 pub(crate) struct ConversationProjection {
     pub(crate) completed_cells: Vec<HistoryTurnCells>,

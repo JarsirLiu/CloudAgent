@@ -531,7 +531,7 @@ mod tests {
         async fn call_tool(&self, invocation: McpToolInvocation) -> Result<McpToolResponse> {
             Ok(McpToolResponse {
                 content: format!("mcp:{}:{}", invocation.server, invocation.tool),
-                structured: Some(agent_protocol::StructuredToolResult::ToolError {
+                structured: Some(StructuredToolResult::ToolError {
                     tool_name: invocation.wire_name,
                     message: "stub".to_string(),
                 }),
@@ -594,7 +594,7 @@ mod tests {
         assert_eq!(result.content, "mcp:demo:lookup");
         assert!(matches!(
             result.structured,
-            Some(agent_protocol::StructuredToolResult::ToolError { tool_name, .. })
+            Some(StructuredToolResult::ToolError { tool_name, .. })
                 if tool_name == "mcp__demo__lookup"
         ));
     }

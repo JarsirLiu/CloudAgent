@@ -193,7 +193,7 @@ mod tests {
         assert_eq!(copied, "demo\n");
         assert!(matches!(
             output.structured,
-            Some(agent_protocol::StructuredToolResult::CopyPath {
+            Some(StructuredToolResult::CopyPath {
                 status: WriteFileStatus::Completed,
                 ..
             })

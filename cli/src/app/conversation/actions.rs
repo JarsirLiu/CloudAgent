@@ -10,9 +10,8 @@ use crate::state::NoticeLevel;
 use crate::state::reducer::ServerAction;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
 use agent_app_server_client::AppServerClient;
-use agent_protocol::{
-    AppClientCommand, ServerRequestDecision, ServerRequestDecisionKind, UserTurnInput,
-};
+use agent_core::{ServerRequestDecision, ServerRequestDecisionKind};
+use agent_protocol::{AppClientCommand, UserTurnInput};
 use anyhow::Result;
 use config::AgentConfig;
 use std::fs;

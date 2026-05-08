@@ -50,7 +50,7 @@ impl RuntimeController {
             }
             UiEvent::Paste(text) => {
                 pause_welcome_animation_for_input(app);
-                handle_paste_event(app, &text, || paste_image_to_temp_png());
+                handle_paste_event(app, &text, paste_image_to_temp_png);
                 frame_requester.schedule_frame();
                 RuntimeControl::Continue
             }
@@ -321,9 +321,9 @@ mod tests {
             ))
         });
 
-        let lines = app
-            .bottom_pane
-            .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
+        let lines =
+            app.bottom_pane
+                .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
         let rendered = lines
             .0
             .iter()
@@ -348,9 +348,9 @@ mod tests {
 
         handle_paste_event(&mut app, "ignored text representation", || Ok(image_path));
 
-        let lines = app
-            .bottom_pane
-            .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
+        let lines =
+            app.bottom_pane
+                .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
         let rendered = lines
             .0
             .iter()
@@ -376,9 +376,9 @@ mod tests {
 
         handle_paste_event(&mut app, "", || Ok(image_path.clone()));
 
-        let lines = app
-            .bottom_pane
-            .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
+        let lines =
+            app.bottom_pane
+                .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
         let rendered = lines
             .0
             .iter()

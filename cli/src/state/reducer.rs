@@ -1,8 +1,9 @@
 use crate::state::NoticeLevel;
+use agent_core::conversation::{ConversationSummary, ConversationTurn, TranscriptItem};
+use agent_core::turn::{TurnId, TurnItemKind};
+use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
 use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, ConversationTurn,
-    ModelRetryStage, ModelUsage, RequestId, ServerRequest, ServerRequestDecisionKind,
-    TranscriptItem, TurnId, TurnItemKind,
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, RequestId,
 };
 
 #[derive(Debug, Clone)]
@@ -46,7 +47,7 @@ pub(crate) struct ServerMessageReduce {
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ServerAction {
-    SetConversationList(Vec<agent_protocol::ConversationSummary>),
+    SetConversationList(Vec<ConversationSummary>),
     SwitchConversation(String),
     ClearCurrentTurnUsage,
     SetTokenUsage {
@@ -371,7 +372,9 @@ fn summarize_args_preview(arguments_preview: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_protocol::{TranscriptItem, TurnState};
+    use agent_core::{
+        CommandExecutionStatus, CompactionContinuation, InputItem, TranscriptItem, TurnState,
+    };
 
     #[test]
     fn conversation_history_action_preserves_turns() {
@@ -383,14 +386,16 @@ mod tests {
                 items: vec![
                     TranscriptItem::UserMessage {
                         id: "user:1".to_string(),
-                        text: "hi".to_string(),
+                        content: vec![InputItem::Text {
+                            text: "hi".to_string(),
+                        }],
                     },
                     TranscriptItem::CommandExecution {
                         id: "cmd:1".to_string(),
                         tool_name: "exec_command".to_string(),
                         command: "pwd".to_string(),
                         current_directory: "D:\\work".to_string(),
-                        status: agent_protocol::CommandExecutionStatus::Completed,
+                        status: CommandExecutionStatus::Completed,
                         exit_code: Some(0),
                         stdout: Some("D:\\work".to_string()),
                         stderr: None,
@@ -424,14 +429,14 @@ mod tests {
         let message = AppServerMessage::Notification(AppServerNotification::TokenUsageUpdated {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
-            last_usage: agent_protocol::ModelUsage {
+            last_usage: ModelUsage {
                 input_tokens: 10,
                 cached_input_tokens: 2,
                 output_tokens: 3,
                 reasoning_output_tokens: 1,
                 total_tokens: 13,
             },
-            total_usage: agent_protocol::ModelUsage {
+            total_usage: ModelUsage {
                 input_tokens: 20,
                 cached_input_tokens: 4,
                 output_tokens: 6,
@@ -463,7 +468,7 @@ mod tests {
         let message = AppServerMessage::Notification(AppServerNotification::ModelRetrying {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
-            stage: agent_protocol::ModelRetryStage::Streaming,
+            stage: ModelRetryStage::Streaming,
             attempt: 2,
             next_delay_ms: 500,
         });
@@ -477,7 +482,7 @@ mod tests {
                     stage,
                     attempt,
                     next_delay_ms,
-                } if *stage == agent_protocol::ModelRetryStage::Streaming
+                } if *stage == ModelRetryStage::Streaming
                     && *attempt == 2
                     && *next_delay_ms == 500
             )
@@ -490,7 +495,7 @@ mod tests {
             AppServerMessage::Notification(AppServerNotification::ContextCompactionStarted {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
-                continuation: agent_protocol::CompactionContinuation::MidTurn,
+                continuation: CompactionContinuation::MidTurn,
                 estimated_tokens: 12_345,
             });
 

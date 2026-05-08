@@ -3,7 +3,7 @@ use std::cmp::Reverse;
 use crate::input::intent::ComposerIntent;
 use crate::text_width::display_width;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
-use agent_protocol::ConversationSummary;
+use agent_core::ConversationSummary;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};

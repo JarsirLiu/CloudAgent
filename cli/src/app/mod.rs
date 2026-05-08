@@ -1,4 +1,5 @@
 pub mod cli_settings;
+pub(crate) mod clipboard_paste;
 pub(crate) mod commands;
 pub(crate) mod conversation;
 mod core;

@@ -2,7 +2,8 @@ use crate::ui::widgets::history_cell::{
     HistoryCell, HistoryFormat, HistoryTone, humanize_tool_label, render_active_item_placeholder,
     render_history_entry,
 };
-use agent_protocol::{TranscriptItem, TurnId, TurnItemKind};
+use agent_core::conversation::{InputItem, TranscriptItem, input_items_to_plain_text};
+use agent_core::turn::{TurnId, TurnItemKind};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
@@ -10,7 +11,7 @@ use std::collections::HashSet;
 pub(crate) enum ActiveTurnAction {
     Clear,
     StartLocalUser {
-        user_input: String,
+        user_input: Vec<InputItem>,
     },
     BindTurnId {
         turn_id: TurnId,
@@ -61,7 +62,7 @@ pub(crate) struct ActiveTurnState {
     live_cell: Option<HistoryCell>,
     last_copyable_output: Option<String>,
     replayed_item_ids: HashSet<String>,
-    pending_local_user_input: Option<String>,
+    pending_local_user_input: Option<Vec<InputItem>>,
 }
 
 impl ActiveTurnState {
@@ -94,12 +95,9 @@ impl ActiveTurnState {
                 ActiveTurnEffects {
                     active_cell: None,
                     last_copyable_output: None,
-                    replay_cells: vec![HistoryCell::user(
-                        self.pending_local_user_input
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string(),
-                    )],
+                    replay_cells: vec![HistoryCell::user(input_items_to_plain_text(
+                        self.pending_local_user_input.as_deref().unwrap_or_default(),
+                    ))],
                 }
             }
             ActiveTurnAction::BindTurnId { turn_id } => {

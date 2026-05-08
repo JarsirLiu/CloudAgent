@@ -3,7 +3,7 @@ use crate::app::runtime::terminal_projection::TerminalProjectionController;
 use crate::state::RunState;
 use crate::state::bottom_pane_controller::BottomPaneController;
 use agent_core::AgentHost;
-use agent_protocol::ConversationSummary;
+use agent_core::ConversationSummary;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;

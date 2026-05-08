@@ -10,6 +10,7 @@ pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
 use agent_core::ConversationSummary;
+use agent_core::InputItem;
 use agent_core::ServerRequestDecisionKind;
 use agent_protocol::{FrontendMode, RequestId};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -18,7 +19,6 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use agent_core::InputItem;
 use std::path::PathBuf;
 
 pub struct InputPane {

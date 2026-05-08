@@ -177,7 +177,7 @@ mod tests {
         );
         assert!(matches!(
             output.structured.as_ref(),
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. })
+            Some(StructuredToolResult::SearchWorkspace { hits, .. })
                 if hits.first().and_then(|hit| hit.score).is_some()
                     && hits.first().and_then(|hit| hit.file_score).is_some()
                     && hits.first().and_then(|hit| hit.file_match_count) == Some(2)
@@ -211,7 +211,7 @@ mod tests {
             .expect("search_workspace works");
 
         let hits = match output.structured.as_ref() {
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
+            Some(StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
             other => panic!("expected structured hits, got {other:?}"),
         };
         assert_eq!(hits.first().and_then(|hit| hit.line), Some(2));
@@ -301,7 +301,7 @@ mod tests {
         assert!(output.content.contains("cli/src/input/completion.rs"));
         assert!(matches!(
             output.structured.as_ref(),
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. })
+            Some(StructuredToolResult::SearchWorkspace { hits, .. })
                 if hits.first().and_then(|hit| hit.match_kind.as_deref()) == Some("term_cover")
         ));
     }
@@ -338,7 +338,7 @@ mod tests {
             .expect("search_workspace works");
 
         let hits = match output.structured.as_ref() {
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
+            Some(StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
             other => panic!("expected structured hits, got {other:?}"),
         };
         assert_eq!(hits.len(), 2);
@@ -385,7 +385,7 @@ mod tests {
             .expect("search_workspace works");
 
         let hits = match output.structured.as_ref() {
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
+            Some(StructuredToolResult::SearchWorkspace { hits, .. }) => hits,
             other => panic!("expected structured hits, got {other:?}"),
         };
         assert_eq!(
@@ -426,9 +426,7 @@ mod tests {
             .await
             .expect("start search session");
         let session_id = match first.structured.as_ref() {
-            Some(agent_protocol::StructuredToolResult::SearchWorkspace { session_id, .. }) => {
-                session_id.clone()
-            }
+            Some(StructuredToolResult::SearchWorkspace { session_id, .. }) => session_id.clone(),
             other => panic!("expected search session id, got {other:?}"),
         };
 
@@ -448,7 +446,7 @@ mod tests {
             .invoke(
                 tool_invocation(serde_json::json!({
                     "session_id": match refined.structured.as_ref() {
-                        Some(agent_protocol::StructuredToolResult::SearchWorkspace {
+                        Some(StructuredToolResult::SearchWorkspace {
                             session_id,
                             ..
                         }) => session_id.clone(),
@@ -501,7 +499,7 @@ mod tests {
         );
         assert!(matches!(
             output.structured.as_ref(),
-            Some(agent_protocol::StructuredToolResult::ReadFile {
+            Some(StructuredToolResult::ReadFile {
                 read,
                 ..
             }) if read.truncated

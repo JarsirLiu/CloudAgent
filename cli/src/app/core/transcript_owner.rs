@@ -2,7 +2,8 @@ use crate::app::conversation::projection::{HistoryTurnCells, project_conversatio
 use crate::app::core::active_cell_controller::ActiveCellController;
 use crate::app::core::committed_transcript_store::CommittedTranscriptStore;
 use crate::ui::widgets::history_cell::HistoryCell;
-use agent_protocol::{ConversationTurn, TranscriptItem, TurnId, TurnItemKind, TurnState};
+use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
+use agent_core::turn::{TurnId, TurnItemKind, TurnState};
 use std::collections::HashSet;
 
 #[derive(Default)]
@@ -109,7 +110,7 @@ impl TranscriptOwner {
         self.queue_history_cells(replay_cells);
     }
 
-    pub(crate) fn start_local_user(&mut self, user_input: String, expand_details: bool) {
+    pub(crate) fn start_local_user(&mut self, user_input: Vec<InputItem>, expand_details: bool) {
         let replay_cells = self
             .active_cell_controller
             .start_local_user(user_input, expand_details);

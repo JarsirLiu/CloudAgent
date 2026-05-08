@@ -2,7 +2,8 @@ use crate::app::core::active_turn::{ActiveTurnAction, ActiveTurnEffects, ActiveT
 use crate::ui::widgets::history_cell::{
     HistoryCell, HistoryTone, RenderContext, Transcript, render_history_entry,
 };
-use agent_protocol::{ConversationTurn, TranscriptItem, TurnId, TurnItemKind};
+use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
+use agent_core::turn::{TurnId, TurnItemKind};
 
 #[derive(Default)]
 pub(crate) struct ActiveCellController {
@@ -75,7 +76,7 @@ impl ActiveCellController {
 
     pub(crate) fn start_local_user(
         &mut self,
-        user_input: String,
+        user_input: Vec<InputItem>,
         expand_details: bool,
     ) -> Vec<HistoryCell> {
         self.apply_active_turn(

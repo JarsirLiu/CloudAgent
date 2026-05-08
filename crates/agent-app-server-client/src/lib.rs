@@ -156,10 +156,10 @@ pub(crate) async fn forward_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_protocol::{
-        AppServerNotification, CommandApprovalRequest, CommandExecutionStatus, RequestId,
-        ServerRequest, TranscriptItem, TurnItemKind,
+    use agent_core::{
+        CommandApprovalRequest, CommandExecutionStatus, ServerRequest, TranscriptItem, TurnItemKind,
     };
+    use agent_protocol::{AppServerNotification, RequestId};
 
     fn info_event(message: &str) -> AppServerEvent {
         AppServerEvent::Message(AppServerMessage::Notification(
