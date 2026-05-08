@@ -43,6 +43,7 @@ impl AppServerTarget {
 #[derive(Clone)]
 pub enum ConsoleBootstrap {
     LocalNode {
+        address: String,
         program: OsString,
         args: Vec<OsString>,
     },

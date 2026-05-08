@@ -137,20 +137,22 @@ fn resolve_console_target(
 
     match target.as_str() {
         "local-node" => {
+            let address = arg_value(args, "--node-addr")
+                .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
+                .and_then(|value| value.into_string().ok())
+                .unwrap_or_else(|| default_node_addr().to_string());
             let program = arg_value(args, "--node-bin")
                 .or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
                 .unwrap_or_else(default_node_bin);
-            let remote_conversation = arg_value(args, "--conversation")
-                .and_then(|value| value.into_string().ok())
-                .unwrap_or_else(|| conversation_id.to_string());
             Ok((
                 AppServerTarget::LocalNode,
                 ConsoleBootstrap::LocalNode {
+                    address: address.clone(),
                     program,
                     args: vec![
-                        OsString::from("local-app-server"),
-                        OsString::from("--conversation"),
-                        OsString::from(remote_conversation),
+                        OsString::from("serve"),
+                        OsString::from("--listen"),
+                        OsString::from(address),
                     ],
                 },
             ))
@@ -207,6 +209,10 @@ fn default_node_bin() -> OsString {
         .unwrap_or_else(|| OsString::from(exe_name("gatewayd")))
 }
 
+fn default_node_addr() -> &'static str {
+    "127.0.0.1:47070"
+}
+
 fn wants_help(args: &[OsString]) -> bool {
     args.iter().any(|arg| arg == "--help" || arg == "-h")
 }
@@ -221,16 +227,17 @@ fn print_help() {
 cloudagent cli
 
 Usage:
-  cloudagent start [--target TARGET] [--node-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
-  cloudagent [--target TARGET] [--node-bin PATH] [--conversation ID] [--color WHEN] [--no-color]
+  cloudagent start [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--conversation ID] [--color WHEN] [--no-color]
+  cloudagent [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent --help
   cloudagent --version
 
 Options:
   -h, --help                 Show this help text
-  -V, --version              Show the CLI version
+      -V, --version              Show the CLI version
       --target TARGET        Target selection: local-node (default), embedded (internal), or worker-stdio (internal)
       --node-bin PATH        node binary path when using local-node
+      --node-addr ADDR       node listen address when using local-node
       --app-server-bin PATH  worker binary path when using worker-stdio
       --conversation ID      Conversation id passed to the selected target
       --color WHEN           Color output: auto, always, or never
@@ -311,14 +318,19 @@ mod tests {
 
         assert!(matches!(target, AppServerTarget::LocalNode));
         match bootstrap {
-            ConsoleBootstrap::LocalNode { program, args } => {
+            ConsoleBootstrap::LocalNode {
+                address,
+                program,
+                args,
+            } => {
+                assert_eq!(address, "127.0.0.1:47070");
                 assert!(program.to_string_lossy().contains("gatewayd"));
                 assert_eq!(
                     args,
                     vec![
-                        OsString::from("local-app-server"),
-                        OsString::from("--conversation"),
-                        OsString::from("local-conversation"),
+                        OsString::from("serve"),
+                        OsString::from("--listen"),
+                        OsString::from("127.0.0.1:47070"),
                     ]
                 );
             }

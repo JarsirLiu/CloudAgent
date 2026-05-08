@@ -4,25 +4,49 @@ use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerMessageEnvelope,
     AppServerNotification, JsonRpcMessage,
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use std::ffi::OsString;
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-pub(crate) async fn run_local_app_server(args: &[OsString]) -> Result<()> {
-    let active_conversation_id = arg_value(args, "--conversation")
+pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
+    let listen_address = arg_value(args, "--listen")
+        .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
         .and_then(|value| value.into_string().ok())
-        .ok_or_else(|| anyhow!("missing required --conversation for local-app-server"))?;
+        .unwrap_or_else(|| default_listen_address().to_string());
     let worker_program = arg_value(args, "--worker-bin")
         .or_else(|| std::env::var_os("CLOUDAGENT_WORKER_BIN"))
         .unwrap_or_else(default_worker_bin);
 
-    let stdin = BufReader::new(io::stdin());
-    let mut input_lines = stdin.lines();
-    let mut stdout = io::stdout();
+    let listener = TcpListener::bind(&listen_address)
+        .await
+        .with_context(|| format!("failed to bind local node listener on {listen_address}"))?;
+    tracing::info!("gatewayd local node listening on {listen_address}");
+
+    loop {
+        let (stream, peer_addr) = listener.accept().await?;
+        tracing::debug!("accepted local node client from {peer_addr}");
+        let worker_program = worker_program.clone();
+        tokio::spawn(async move {
+            let (reader, writer) = stream.into_split();
+            if let Err(error) = run_connection(BufReader::new(reader), writer, worker_program).await
+            {
+                tracing::warn!("local node connection failed: {error}");
+            }
+        });
+    }
+}
+
+async fn run_connection<R, W>(reader: R, mut writer: W, worker_program: OsString) -> Result<()>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut input_lines = reader.lines();
     let (event_tx, mut event_rx) = mpsc::channel(128);
 
-    let mut registry = ConversationRegistry::new(active_conversation_id);
+    let mut registry = ConversationRegistry::new("default".to_string());
     let mut workers = WorkerManager::new(worker_program);
 
     loop {
@@ -72,9 +96,9 @@ pub(crate) async fn run_local_app_server(args: &[OsString]) -> Result<()> {
                             },
                         };
                         let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
-                        stdout.write_all(payload.as_bytes()).await?;
-                        stdout.write_all(b"\n").await?;
-                        stdout.flush().await?;
+                        writer.write_all(payload.as_bytes()).await?;
+                        writer.write_all(b"\n").await?;
+                        writer.flush().await?;
                     }
                     None => break,
                 }
@@ -124,6 +148,10 @@ fn target_conversation_id(
     }
 }
 
+fn default_listen_address() -> &'static str {
+    "127.0.0.1:47070"
+}
+
 fn default_worker_bin() -> OsString {
     std::env::current_exe()
         .ok()
@@ -154,16 +182,16 @@ mod tests {
     use std::ffi::OsString;
 
     #[test]
-    fn parses_local_app_server_flag_values() {
+    fn parses_serve_flag_values() {
         let args = vec![
-            OsString::from("--conversation"),
-            OsString::from("conversation-1"),
+            OsString::from("--listen"),
+            OsString::from("127.0.0.1:47070"),
             OsString::from("--worker-bin"),
             OsString::from("agentd.exe"),
         ];
         assert_eq!(
-            arg_value(&args, "--conversation"),
-            Some(OsString::from("conversation-1"))
+            arg_value(&args, "--listen"),
+            Some(OsString::from("127.0.0.1:47070"))
         );
         assert_eq!(
             arg_value(&args, "--worker-bin"),

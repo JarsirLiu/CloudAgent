@@ -41,7 +41,7 @@ impl AppServerClient {
 
     pub async fn local_node(config: LocalNodeClientConfig) -> Result<Self> {
         Ok(Self::LocalNode(
-            local_node::LocalNodeAppServerClient::spawn(config).await?,
+            local_node::LocalNodeAppServerClient::connect(config).await?,
         ))
     }
 

@@ -109,7 +109,7 @@ async fn write_commands(
     write_commands_to(&mut stdin, &mut command_rx, request_counter).await
 }
 
-async fn write_commands_to<W>(
+pub(crate) async fn write_commands_to<W>(
     writer: &mut W,
     command_rx: &mut mpsc::UnboundedReceiver<AppClientCommand>,
     request_counter: Arc<AtomicI64>,
@@ -137,7 +137,10 @@ async fn read_events(
     read_events_from(BufReader::new(stdout), event_tx).await
 }
 
-async fn read_events_from<R>(reader: R, event_tx: mpsc::Sender<AppServerEvent>) -> Result<()>
+pub(crate) async fn read_events_from<R>(
+    reader: R,
+    event_tx: mpsc::Sender<AppServerEvent>,
+) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
 {
