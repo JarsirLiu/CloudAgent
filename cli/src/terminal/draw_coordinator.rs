@@ -40,10 +40,8 @@ impl<'a> DrawCoordinator<'a> {
                 // exists, append committed cells against the current stable boundary first,
                 // then adjust the active viewport.
                 if self.terminal.viewport_area.top() == 0
-                    || should_resize_before_append(
-                    self.terminal.viewport_area,
-                    viewport_height,
-                ) {
+                    || should_resize_before_append(self.terminal.viewport_area, viewport_height)
+                {
                     self.terminal.ensure_viewport_height(viewport_height)?;
                     insert_history_lines_raw(self.terminal, committed_tail)?;
                 } else {
@@ -68,21 +66,12 @@ mod tests {
 
     #[test]
     fn shrinking_viewport_resizes_before_appending_history() {
-        assert!(should_resize_before_append(
-            Rect::new(0, 10, 80, 12),
-            6
-        ));
+        assert!(should_resize_before_append(Rect::new(0, 10, 80, 12), 6));
     }
 
     #[test]
     fn growing_or_equal_viewport_keeps_append_then_resize_order() {
-        assert!(!should_resize_before_append(
-            Rect::new(0, 10, 80, 12),
-            12
-        ));
-        assert!(!should_resize_before_append(
-            Rect::new(0, 10, 80, 12),
-            16
-        ));
+        assert!(!should_resize_before_append(Rect::new(0, 10, 80, 12), 12));
+        assert!(!should_resize_before_append(Rect::new(0, 10, 80, 12), 16));
     }
 }
