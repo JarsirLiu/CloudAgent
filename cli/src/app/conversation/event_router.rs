@@ -1,25 +1,18 @@
 use crate::app::TuiApp;
 use crate::app::conversation::actions::execute_server_action;
 use crate::state::reducer::apply_server_message;
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_app_server_client::AppServerEvent;
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
 
 pub(crate) fn handle_client_event(app: &mut TuiApp, event: AppServerEvent) {
     match event {
         AppServerEvent::Message(message) => handle_server_message(app, &message),
-        AppServerEvent::Lagged { skipped } => {
-            app.push_live_cell(HistoryCell::info(
-                "conversation",
-                format!("UI skipped {skipped} non-critical events while catching up"),
-                HistoryTone::Warning,
-            ));
-        }
+        AppServerEvent::Lagged { .. } => {}
         AppServerEvent::Disconnected { message } => {
-            app.push_live_cell(HistoryCell::info(
+            app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
                 "conversation",
                 message,
-                HistoryTone::Error,
+                crate::ui::widgets::history_cell::HistoryTone::Error,
             ));
             app.run_state.should_exit = true;
         }
