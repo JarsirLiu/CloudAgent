@@ -317,11 +317,9 @@ mod tests {
     #[tokio::test]
     async fn prune_workers_evicts_idle_handles() -> Result<()> {
         let manager = WorkerManager::new(OsString::from("agentd.exe"));
-        let (tx, rx) = mpsc::unbounded_channel();
-        drop(rx);
-        let worker = tokio::spawn(async {
-            std::future::pending::<()>().await;
-            #[allow(unreachable_code)]
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let worker = tokio::spawn(async move {
+            while rx.recv().await.is_some() {}
             Result::<()>::Ok(())
         });
         {

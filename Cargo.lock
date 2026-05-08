@@ -779,6 +779,7 @@ name = "gatewayd"
 version = "0.1.31"
 dependencies = [
  "agent-app-server-client",
+ "agent-core",
  "agent-gateway",
  "agent-protocol",
  "anyhow",

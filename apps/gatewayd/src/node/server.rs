@@ -1,14 +1,16 @@
 use crate::node::conversation_registry::ConversationRegistry;
 use crate::node::worker_manager::{NodeEvent, WorkerManager};
+use agent_core::conversation::ConversationSummary;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerMessageEnvelope,
     AppServerNotification, JsonRpcMessage,
 };
 use anyhow::{Context, Result};
 use std::ffi::OsString;
+use std::sync::Arc;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
 
 pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     let listen_address = arg_value(args, "--listen")
@@ -24,27 +26,36 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
         .with_context(|| format!("failed to bind local node listener on {listen_address}"))?;
     tracing::info!("gatewayd local node listening on {listen_address}");
     let workers = WorkerManager::new(worker_program);
+    let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
         tracing::debug!("accepted local node client from {peer_addr}");
         let workers = workers.clone();
+        let conversations = conversations.clone();
         tokio::spawn(async move {
             let (reader, writer) = stream.into_split();
-            if let Err(error) = run_connection(BufReader::new(reader), writer, workers).await {
+            if let Err(error) =
+                run_connection(BufReader::new(reader), writer, workers, conversations).await
+            {
                 tracing::warn!("local node connection failed: {error}");
             }
         });
     }
 }
 
-async fn run_connection<R, W>(reader: R, mut writer: W, workers: WorkerManager) -> Result<()>
+async fn run_connection<R, W>(
+    reader: R,
+    mut writer: W,
+    workers: WorkerManager,
+    conversations: Arc<Mutex<ConversationRegistry>>,
+) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     let mut input_lines = reader.lines();
-    let mut registry = ConversationRegistry::new("default".to_string());
+    let mut active_conversation_id = "default".to_string();
     let mut active_subscription: Option<broadcast::Receiver<NodeEvent>> = None;
 
     loop {
@@ -55,8 +66,10 @@ where
                         Some(line) => {
                             if !handle_command_line(
                                 &line,
-                                &mut registry,
+                                &mut active_conversation_id,
                                 &workers,
+                                &conversations,
+                                &mut writer,
                                 &mut active_subscription,
                             )
                             .await? {
@@ -74,7 +87,7 @@ where
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             write_node_event(&mut writer, NodeEvent::Diagnostic {
-                                conversation_id: registry.active_conversation_id().to_string(),
+                                conversation_id: active_conversation_id.clone(),
                                 message: format!("local node subscriber lagged; skipped {skipped} events"),
                                 is_error: false,
                             }).await?;
@@ -91,8 +104,10 @@ where
                 Some(line) => {
                     if !handle_command_line(
                         &line,
-                        &mut registry,
+                        &mut active_conversation_id,
                         &workers,
+                        &conversations,
+                        &mut writer,
                         &mut active_subscription,
                     )
                     .await?
@@ -108,19 +123,33 @@ where
     Ok(())
 }
 
-async fn handle_command_line(
+async fn handle_command_line<W>(
     line: &str,
-    registry: &mut ConversationRegistry,
+    active_conversation_id: &mut String,
     workers: &WorkerManager,
+    conversations: &Arc<Mutex<ConversationRegistry>>,
+    writer: &mut W,
     active_subscription: &mut Option<broadcast::Receiver<NodeEvent>>,
-) -> Result<bool> {
+) -> Result<bool>
+where
+    W: AsyncWrite + Unpin,
+{
     let rpc: JsonRpcMessage =
         serde_json::from_str(line).context("failed to parse local node jsonrpc command")?;
     let envelope = AppClientCommandEnvelope::try_from(rpc)?;
     if matches!(envelope.command, AppClientCommand::Exit) {
         return Ok(false);
     }
-    let target_conversation = target_conversation_id(registry, &envelope.command);
+
+    if let Some(message) =
+        conversation_list_response(&envelope.command, active_conversation_id, conversations).await
+    {
+        write_app_server_message(writer, message).await?;
+        return Ok(true);
+    }
+
+    let target_conversation =
+        target_conversation_id(active_conversation_id, conversations, &envelope.command).await;
     *active_subscription = Some(workers.subscribe(&target_conversation).await?);
     workers
         .send_command(&target_conversation, envelope.command)
@@ -128,33 +157,55 @@ async fn handle_command_line(
     Ok(true)
 }
 
+async fn conversation_list_response(
+    command: &AppClientCommand,
+    active_conversation_id: &str,
+    conversations: &Arc<Mutex<ConversationRegistry>>,
+) -> Option<AppServerMessage> {
+    if !matches!(command, AppClientCommand::ListConversations) {
+        return None;
+    }
+    let summaries: Vec<ConversationSummary> = conversations.lock().await.summaries();
+    Some(AppServerMessage::Notification(
+        AppServerNotification::ConversationList {
+            conversation_id: active_conversation_id.to_string(),
+            conversations: summaries,
+        },
+    ))
+}
+
 async fn write_node_event<W>(writer: &mut W, event: NodeEvent) -> Result<()>
 where
     W: AsyncWrite + Unpin,
 {
-    let envelope = match event {
-        NodeEvent::Message { message } => AppServerMessageEnvelope {
-            message,
-            event_seq: None,
-        },
+    let message = match event {
+        NodeEvent::Message { message } => message,
         NodeEvent::Diagnostic {
             conversation_id,
             message,
             is_error,
-        } => AppServerMessageEnvelope {
-            message: AppServerMessage::Notification(if is_error {
-                AppServerNotification::Error {
-                    conversation_id,
-                    message,
-                }
-            } else {
-                AppServerNotification::Info {
-                    conversation_id,
-                    message,
-                }
-            }),
-            event_seq: None,
-        },
+        } => AppServerMessage::Notification(if is_error {
+            AppServerNotification::Error {
+                conversation_id,
+                message,
+            }
+        } else {
+            AppServerNotification::Info {
+                conversation_id,
+                message,
+            }
+        }),
+    };
+    write_app_server_message(writer, message).await
+}
+
+async fn write_app_server_message<W>(writer: &mut W, message: AppServerMessage) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let envelope = AppServerMessageEnvelope {
+        message,
+        event_seq: None,
     };
     let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
     writer.write_all(payload.as_bytes()).await?;
@@ -163,8 +214,9 @@ where
     Ok(())
 }
 
-fn target_conversation_id(
-    registry: &mut ConversationRegistry,
+async fn target_conversation_id(
+    active_conversation_id: &mut String,
+    conversations: &Arc<Mutex<ConversationRegistry>>,
     command: &AppClientCommand,
 ) -> String {
     match command {
@@ -191,11 +243,16 @@ fn target_conversation_id(
         | AppClientCommand::DeleteConversation { conversation_id }
         | AppClientCommand::SubscribeConversation { conversation_id }
         | AppClientCommand::UnsubscribeConversation { conversation_id } => {
-            registry.set_active_conversation(conversation_id.clone());
+            let mut registry = conversations.lock().await;
+            registry.touch(conversation_id);
+            if let AppClientCommand::SetConversationTitle { title, .. } = command {
+                registry.set_title(conversation_id, title.clone());
+            }
+            *active_conversation_id = conversation_id.clone();
             conversation_id.clone()
         }
         AppClientCommand::ListConversations | AppClientCommand::Exit => {
-            registry.active_conversation_id().to_string()
+            active_conversation_id.to_string()
         }
     }
 }
@@ -228,10 +285,12 @@ fn arg_value(args: &[OsString], name: &str) -> Option<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::{arg_value, target_conversation_id};
+    use super::{arg_value, conversation_list_response, target_conversation_id};
     use crate::node::conversation_registry::ConversationRegistry;
-    use agent_protocol::AppClientCommand;
+    use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
     use std::ffi::OsString;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     #[test]
     fn parses_serve_flag_values() {
@@ -253,24 +312,71 @@ mod tests {
 
     #[test]
     fn list_conversations_routes_to_active_conversation() {
-        let mut registry = ConversationRegistry::new("conversation-1".to_string());
-        assert_eq!(
-            target_conversation_id(&mut registry, &AppClientCommand::ListConversations),
-            "conversation-1"
-        );
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
+            let mut active = "conversation-1".to_string();
+            assert_eq!(
+                target_conversation_id(
+                    &mut active,
+                    &conversations,
+                    &AppClientCommand::ListConversations,
+                )
+                .await,
+                "conversation-1"
+            );
+        });
     }
 
     #[test]
     fn switch_conversation_updates_active_conversation() {
-        let mut registry = ConversationRegistry::new("conversation-1".to_string());
-        let command = AppClientCommand::SwitchConversation {
-            conversation_id: "conversation-2".to_string(),
-        };
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
+            let mut active = "conversation-1".to_string();
+            let command = AppClientCommand::SwitchConversation {
+                conversation_id: "conversation-2".to_string(),
+            };
 
-        assert_eq!(
-            target_conversation_id(&mut registry, &command),
-            "conversation-2"
-        );
-        assert_eq!(registry.active_conversation_id(), "conversation-2");
+            assert_eq!(
+                target_conversation_id(&mut active, &conversations, &command).await,
+                "conversation-2"
+            );
+            assert_eq!(active, "conversation-2");
+            assert_eq!(conversations.lock().await.summaries().len(), 1);
+        });
+    }
+
+    #[test]
+    fn list_conversations_uses_node_shared_registry() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
+            {
+                let mut registry = conversations.lock().await;
+                registry.touch("conversation-1");
+                registry.set_title("conversation-1", "Alpha".to_string());
+            }
+
+            let message = conversation_list_response(
+                &AppClientCommand::ListConversations,
+                "conversation-1",
+                &conversations,
+            )
+            .await
+            .expect("conversation list message");
+
+            match message {
+                AppServerMessage::Notification(AppServerNotification::ConversationList {
+                    conversation_id,
+                    conversations,
+                }) => {
+                    assert_eq!(conversation_id, "conversation-1");
+                    assert_eq!(conversations.len(), 1);
+                    assert_eq!(conversations[0].title.as_deref(), Some("Alpha"));
+                }
+                other => panic!("unexpected message: {other:?}"),
+            }
+        });
     }
 }
