@@ -4,14 +4,17 @@ use crate::input::slash_command::{SlashCommand, find_slash_command};
 use crate::text_width::display_width;
 use crate::ui::widgets::completion_popup::completion_popup_lines;
 use crate::ui::widgets::paste_burst::{CharDecision, FlushResult, PasteBurst};
+use agent_core::conversation::{AttachmentRef, InputItem};
 use agent_protocol::FrontendMode;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::time::Instant;
 
+use crate::app::clipboard_paste::{is_supported_image_path, normalize_pasted_image_path};
 use crate::ui::widgets::textarea::{TextArea, TextAreaState, is_altgr};
 
 pub struct ComposerRender {
@@ -37,6 +40,20 @@ pub struct ChatComposer {
     history: Vec<String>,
     history_cursor: Option<usize>,
     last_history_text: Option<String>,
+    local_images: Vec<LocalAttachedImage>,
+    remote_images: Vec<RemoteAttachedImage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LocalAttachedImage {
+    placeholder: String,
+    path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RemoteAttachedImage {
+    placeholder: String,
+    url: String,
 }
 
 impl ChatComposer {
@@ -49,6 +66,8 @@ impl ChatComposer {
             history: Vec::new(),
             history_cursor: None,
             last_history_text: None,
+            local_images: Vec::new(),
+            remote_images: Vec::new(),
         }
     }
 
@@ -73,7 +92,7 @@ impl ChatComposer {
             if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
                 let _ = self.handle_paste(&pasted);
             }
-            self.textarea.insert_str("\n");
+            self.apply_textarea_edit(|textarea| textarea.insert_str("\n"));
             self.sync_completion();
             return None;
         }
@@ -97,7 +116,7 @@ impl ChatComposer {
                     }
                 }
                 _ => {
-                    self.textarea.handle_key(key);
+                    self.apply_textarea_edit(|textarea| textarea.handle_key(key));
                     self.sync_completion();
                     ComposerIntent::None
                 }
@@ -108,7 +127,7 @@ impl ChatComposer {
             if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
                 let _ = self.handle_paste(&pasted);
             }
-            self.textarea.handle_key(key);
+            self.apply_textarea_edit(|textarea| textarea.handle_key(key));
             self.sync_completion();
             return None;
         }
@@ -176,7 +195,7 @@ impl ChatComposer {
                 .paste_burst
                 .newline_should_insert_instead_of_submit(now)
             {
-                self.textarea.insert_str("\n");
+                self.apply_textarea_edit(|textarea| textarea.insert_str("\n"));
                 self.paste_burst.extend_window(now);
                 self.sync_completion();
                 return Some(ComposerIntent::None);
@@ -220,7 +239,9 @@ impl ChatComposer {
                     ) {
                         if !grab.grabbed.is_empty() {
                             let end = self.textarea.cursor();
-                            self.textarea.replace_char_range(grab.start_char..end, "");
+                            self.apply_textarea_edit(|textarea| {
+                                textarea.replace_char_range(grab.start_char..end, "")
+                            });
                         }
                         self.paste_burst.append_char_to_buffer(ch, now);
                         return Some(ComposerIntent::None);
@@ -252,7 +273,7 @@ impl ChatComposer {
                 if key_mutates_text(key) {
                     self.reset_history_navigation_if_needed();
                 }
-                self.textarea.handle_key(key);
+                self.apply_textarea_edit(|textarea| textarea.handle_key(key));
                 self.sync_completion();
                 None
             }
@@ -262,7 +283,9 @@ impl ChatComposer {
     pub(crate) fn handle_paste(&mut self, text: &str) -> ComposerIntent {
         self.paste_burst.clear_after_explicit_paste();
         self.reset_history_navigation_if_needed();
-        self.textarea.insert_str(text);
+        if !self.handle_paste_image_path(text) {
+            self.textarea.insert_str(text);
+        }
         self.sync_completion();
         ComposerIntent::None
     }
@@ -412,6 +435,101 @@ impl ChatComposer {
         self.paste_burst.clear_after_explicit_paste();
         self.history_cursor = None;
         self.last_history_text = None;
+        self.local_images.clear();
+        self.remote_images.clear();
+    }
+
+    pub fn restore_submission(&mut self, content: &[InputItem]) {
+        self.clear();
+
+        for item in content {
+            match item {
+                InputItem::Text { text } => {
+                    if !self.textarea.is_empty()
+                        && self
+                            .textarea
+                            .text()
+                            .chars()
+                            .last()
+                            .is_some_and(|ch| !ch.is_whitespace() && ch != ']')
+                    {
+                        self.apply_textarea_edit(|textarea| textarea.insert_str("\n"));
+                    }
+                    self.apply_textarea_edit(|textarea| textarea.insert_str(text));
+                }
+                InputItem::Image { source, .. } => match source {
+                    AttachmentRef::LocalPath { path } => self.attach_image(PathBuf::from(path)),
+                    AttachmentRef::RemoteUrl { url } => self.attach_remote_image(url.clone()),
+                    _ => self.append_display_text(&item.display_text()),
+                },
+                InputItem::File {
+                    source, name, mime_type, ..
+                } => self.append_display_text(&format_file_restore_text(source, name, mime_type)),
+                InputItem::Mention { name, path } => {
+                    self.append_display_text(&format!("@{name} ({path})"))
+                }
+                InputItem::Skill { name, path } => {
+                    self.append_display_text(&format!("#{name} ({path})"))
+                }
+            }
+        }
+
+        self.sync_completion();
+    }
+
+    pub(crate) fn attach_image(&mut self, path: PathBuf) {
+        let placeholder = format!("[Image #{}]", self.total_image_count() + 1);
+        if !self.textarea.is_empty()
+            && self
+                .textarea
+                .text()
+                .chars()
+                .last()
+                .is_some_and(|ch| !ch.is_whitespace() && ch != ']')
+        {
+            self.apply_textarea_edit(|textarea| textarea.insert_str(" "));
+        }
+        self.apply_textarea_edit(|textarea| textarea.insert_element(&placeholder));
+        self.local_images
+            .push(LocalAttachedImage { placeholder, path });
+        self.sync_completion();
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn attach_remote_image(&mut self, url: impl Into<String>) {
+        let placeholder = format!("[Image #{}]", self.total_image_count() + 1);
+        if !self.textarea.is_empty()
+            && self
+                .textarea
+                .text()
+                .chars()
+                .last()
+                .is_some_and(|ch| !ch.is_whitespace() && ch != ']')
+        {
+            self.apply_textarea_edit(|textarea| textarea.insert_str(" "));
+        }
+        self.apply_textarea_edit(|textarea| textarea.insert_element(&placeholder));
+        self.remote_images.push(RemoteAttachedImage {
+            placeholder,
+            url: url.into(),
+        });
+        self.sync_completion();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn attached_image_paths(&self) -> Vec<PathBuf> {
+        self.local_images
+            .iter()
+            .map(|img| img.path.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn attached_remote_image_urls(&self) -> Vec<String> {
+        self.remote_images
+            .iter()
+            .map(|img| img.url.clone())
+            .collect()
     }
 
     pub fn has_selection(&self) -> bool {
@@ -460,14 +578,22 @@ impl ChatComposer {
         let raw = self.textarea.text().to_string();
         let leading_space_escape = raw.starts_with(' ');
         let text = self.textarea.take_trimmed();
+        let local_images = std::mem::take(&mut self.local_images);
+        let remote_images = std::mem::take(&mut self.remote_images);
         self.completion.clear();
         self.history_cursor = None;
         self.last_history_text = None;
-        if text.is_empty() {
+        let content = build_submission_content(&text, &local_images, &remote_images);
+        if content.is_empty() {
             ComposerIntent::None
         } else {
-            self.record_history_entry(text.clone());
-            if !leading_space_escape && let Some(command_text) = text.strip_prefix('/') {
+            if !text.is_empty() {
+                self.record_history_entry(text.clone());
+            }
+            if local_images.is_empty() && remote_images.is_empty()
+                && !leading_space_escape
+                && let Some(command_text) = text.strip_prefix('/')
+            {
                 let mut parts = command_text.splitn(2, char::is_whitespace);
                 let name = parts.next().unwrap_or_default();
                 let args = parts.next().unwrap_or_default().trim();
@@ -478,13 +604,44 @@ impl ChatComposer {
                 }
                 return ComposerIntent::UnknownCommand(name.to_string());
             }
-            ComposerIntent::Submit(text)
+            ComposerIntent::Submit(content)
         }
     }
 
     fn sync_completion(&mut self) {
+        self.prune_attached_images();
         self.completion
             .sync_from_input(self.textarea.text(), self.textarea.byte_cursor());
+    }
+
+    fn prune_attached_images(&mut self) {
+        let present_placeholders = self.textarea.element_payloads();
+        let mut retained = Vec::new();
+
+        for image in &self.local_images {
+            if !present_placeholders.contains(&image.placeholder) {
+                continue;
+            }
+            retained.push(LocalAttachedImage {
+                placeholder: image.placeholder.clone(),
+                path: image.path.clone(),
+            });
+        }
+        self.local_images = retained;
+        self.remote_images
+            .retain(|image| present_placeholders.contains(&image.placeholder));
+        self.relabel_images_and_update_placeholders();
+    }
+
+    fn handle_paste_image_path(&mut self, pasted: &str) -> bool {
+        let Some(path) = normalize_pasted_image_path(pasted) else {
+            return false;
+        };
+        if !is_supported_image_path(&path) {
+            return false;
+        }
+        self.attach_image(path);
+        true
     }
 
     fn should_handle_history_navigation(&self, key: KeyEvent) -> bool {
@@ -532,11 +689,11 @@ impl ChatComposer {
             return;
         };
         if idx + 1 >= self.history.len() {
-            self.history_cursor = None;
-            self.last_history_text = None;
-            self.textarea.clear();
-            *self.textarea_state.borrow_mut() = TextAreaState::default();
-            return;
+        self.history_cursor = None;
+        self.last_history_text = None;
+        self.textarea.clear();
+        *self.textarea_state.borrow_mut() = TextAreaState::default();
+        return;
         }
         let next = idx + 1;
         self.history_cursor = Some(next);
@@ -578,6 +735,98 @@ impl ChatComposer {
                 .set_text(format!("/filter {} ", selected.insertion));
         }
         self.completion.clear();
+    }
+
+    fn apply_textarea_edit(&mut self, edit: impl FnOnce(&mut TextArea)) {
+        let elements_before = if self.local_images.is_empty() && self.remote_images.is_empty() {
+            None
+        } else {
+            Some(self.textarea.element_payloads())
+        };
+        edit(&mut self.textarea);
+        if let Some(elements_before) = elements_before {
+            self.reconcile_deleted_elements(elements_before);
+        }
+    }
+
+    fn reconcile_deleted_elements(&mut self, elements_before: Vec<String>) {
+        let elements_after = self.textarea.element_payloads();
+        let mut removed_any_image = false;
+        for removed in elements_before
+            .into_iter()
+            .filter(|payload| !elements_after.contains(payload))
+        {
+            if let Some(index) = self
+                .local_images
+                .iter()
+                .position(|image| image.placeholder == removed)
+            {
+                self.local_images.remove(index);
+                removed_any_image = true;
+                continue;
+            }
+            if let Some(index) = self
+                .remote_images
+                .iter()
+                .position(|image| image.placeholder == removed)
+            {
+                self.remote_images.remove(index);
+                removed_any_image = true;
+            }
+        }
+
+        if removed_any_image {
+            self.relabel_images_and_update_placeholders();
+        }
+    }
+
+    fn relabel_images_and_update_placeholders(&mut self) {
+        let mut next_index = 1usize;
+
+        for image in &mut self.remote_images {
+            let expected = format!("[Image #{}]", next_index);
+            next_index += 1;
+            if image.placeholder == expected {
+                continue;
+            }
+
+            let current = image.placeholder.clone();
+            image.placeholder = expected.clone();
+            let _ = self.textarea.replace_element_payload(&current, &expected);
+        }
+
+        for image in &mut self.local_images {
+            let expected = format!("[Image #{}]", next_index);
+            next_index += 1;
+            if image.placeholder == expected {
+                continue;
+            }
+
+            let current = image.placeholder.clone();
+            image.placeholder = expected.clone();
+            let _ = self.textarea.replace_element_payload(&current, &expected);
+        }
+    }
+
+    fn total_image_count(&self) -> usize {
+        self.local_images.len() + self.remote_images.len()
+    }
+
+    fn append_display_text(&mut self, text: &str) {
+        if text.trim().is_empty() {
+            return;
+        }
+        if !self.textarea.is_empty()
+            && self
+                .textarea
+                .text()
+                .chars()
+                .last()
+                .is_some_and(|ch| !ch.is_whitespace() && ch != ']')
+        {
+            self.apply_textarea_edit(|textarea| textarea.insert_str("\n"));
+        }
+        self.apply_textarea_edit(|textarea| textarea.insert_str(text));
     }
 }
 
@@ -630,6 +879,105 @@ fn key_mutates_text(key: KeyEvent) -> bool {
     }
 }
 
+enum PendingImage<'a> {
+    Local(&'a LocalAttachedImage),
+    Remote(&'a RemoteAttachedImage),
+}
+
+impl PendingImage<'_> {
+    fn placeholder(&self) -> &str {
+        match self {
+            Self::Local(image) => &image.placeholder,
+            Self::Remote(image) => &image.placeholder,
+        }
+    }
+
+    fn into_input_item(&self) -> InputItem {
+        match self {
+            Self::Local(image) => InputItem::Image {
+                source: AttachmentRef::LocalPath {
+                    path: image.path.display().to_string(),
+                },
+                detail: None,
+                alt: None,
+            },
+            Self::Remote(image) => InputItem::Image {
+                source: AttachmentRef::RemoteUrl {
+                    url: image.url.clone(),
+                },
+                detail: None,
+                alt: None,
+            },
+        }
+    }
+}
+
+fn build_submission_content(
+    text: &str,
+    local_images: &[LocalAttachedImage],
+    remote_images: &[RemoteAttachedImage],
+) -> Vec<InputItem> {
+    let mut content = Vec::new();
+    let mut remaining = text;
+    let mut images = local_images
+        .iter()
+        .map(PendingImage::Local)
+        .chain(remote_images.iter().map(PendingImage::Remote))
+        .filter(|image| text.contains(image.placeholder()))
+        .collect::<Vec<_>>();
+
+    while !images.is_empty() {
+        let next = images
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, image)| {
+                remaining
+                    .find(image.placeholder())
+                    .map(|offset| (idx, offset))
+            })
+            .min_by_key(|(_, offset)| *offset);
+
+        let Some((image_idx, offset)) = next else {
+            break;
+        };
+        let image = images.remove(image_idx);
+        let (before, rest) = remaining.split_at(offset);
+        push_text_item(&mut content, before);
+        content.push(image.into_input_item());
+        remaining = &rest[image.placeholder().len()..];
+    }
+
+    push_text_item(&mut content, remaining);
+    content
+}
+
+fn push_text_item(content: &mut Vec<InputItem>, text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    content.push(InputItem::Text {
+        text: text.trim().to_string(),
+    });
+}
+
+fn format_file_restore_text(
+    source: &AttachmentRef,
+    name: &Option<String>,
+    mime_type: &Option<String>,
+) -> String {
+    let label = name.clone().unwrap_or_else(|| match source {
+        AttachmentRef::LocalPath { path } => path.clone(),
+        AttachmentRef::RemoteUrl { url } => url.clone(),
+        AttachmentRef::HubAsset { asset_id, .. } => format!("hub:{asset_id}"),
+        AttachmentRef::InlineDataUrl { .. } => "[inline file]".to_string(),
+    });
+
+    match mime_type {
+        Some(mime) if !mime.is_empty() => format!("[Attachment: {label} ({mime})]"),
+        _ => format!("[Attachment: {label}]"),
+    }
+}
+
 fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
     match command {
         SlashCommand::Clear => ComposerIntent::Reset,
@@ -663,6 +1011,30 @@ fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn text_items(text: &str) -> Vec<InputItem> {
+        vec![InputItem::Text {
+            text: text.to_string(),
+        }]
+    }
+
+    fn create_test_png() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cloudagent-test-{nonce}.png"));
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]))
+            .save(&path)
+            .expect("save temp image");
+        path
+    }
+
+    fn image_path_string(path: &Path) -> String {
+        path.display().to_string()
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -711,7 +1083,7 @@ mod tests {
         type_text(&mut composer, " /clear");
 
         let action = composer.handle_key(key(KeyCode::Enter));
-        assert_eq!(action, Some(ComposerIntent::Submit("/clear".to_string())));
+        assert_eq!(action, Some(ComposerIntent::Submit(text_items("/clear"))));
     }
 
     #[test]
@@ -767,9 +1139,9 @@ mod tests {
         assert_eq!(paste_action, ComposerIntent::None);
         assert_eq!(
             submit_action,
-            Some(ComposerIntent::Submit(
-                "first line\nsecond line".to_string()
-            ))
+            Some(ComposerIntent::Submit(text_items(
+                "first line\nsecond line"
+            )))
         );
         assert!(composer.textarea.is_empty());
     }
@@ -869,9 +1241,142 @@ mod tests {
         assert_eq!(newline_action, None);
         assert_eq!(
             submit_action,
-            Some(ComposerIntent::Submit("first\nsecond".to_string()))
+            Some(ComposerIntent::Submit(text_items("first\nsecond")))
         );
         assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn pasted_image_path_attaches_placeholder_without_inserting_raw_path() {
+        let mut composer = ChatComposer::new();
+        let image_path = create_test_png();
+
+        let action = composer.handle_paste(&image_path_string(&image_path));
+
+        assert_eq!(action, ComposerIntent::None);
+        assert_eq!(composer.textarea.text(), "[Image #1]");
+        assert_eq!(composer.attached_image_paths(), vec![image_path]);
+    }
+
+    #[test]
+    fn submit_preserves_text_and_image_order() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "look at this");
+        let image_path = create_test_png();
+        composer.attach_image(image_path.clone());
+        type_text(&mut composer, "please");
+
+        let action = composer.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(
+            action,
+            Some(ComposerIntent::Submit(vec![
+                InputItem::Text {
+                    text: "look at this".to_string(),
+                },
+                InputItem::Image {
+                    source: AttachmentRef::LocalPath {
+                        path: image_path_string(&image_path),
+                    },
+                    detail: None,
+                    alt: None,
+                },
+                InputItem::Text {
+                    text: "please".to_string(),
+                },
+            ]))
+        );
+    }
+
+    #[test]
+    fn deleting_first_placeholder_renumbers_remaining_images() {
+        let mut composer = ChatComposer::new();
+        let first = create_test_png();
+        let second = create_test_png();
+
+        composer.attach_image(first);
+        composer.attach_image(second.clone());
+        composer.textarea.handle_key(key(KeyCode::Home));
+        composer.handle_key(key(KeyCode::Delete));
+
+        assert_eq!(composer.textarea.text(), "[Image #1]");
+        assert_eq!(composer.attached_image_paths(), vec![second]);
+    }
+
+    #[test]
+    fn backspace_deletes_image_placeholder_atomically() {
+        let mut composer = ChatComposer::new();
+        let image_path = create_test_png();
+        composer.attach_image(image_path);
+
+        composer.handle_key(key(KeyCode::Backspace));
+
+        assert!(composer.textarea.is_empty());
+        assert!(composer.attached_image_paths().is_empty());
+    }
+
+    #[test]
+    fn delete_deletes_image_placeholder_atomically() {
+        let mut composer = ChatComposer::new();
+        let image_path = create_test_png();
+        composer.attach_image(image_path);
+        composer.textarea.handle_key(key(KeyCode::Home));
+
+        composer.handle_key(key(KeyCode::Delete));
+
+        assert!(composer.textarea.is_empty());
+        assert!(composer.attached_image_paths().is_empty());
+    }
+
+    #[test]
+    fn local_and_remote_images_share_numbering_and_submit_order() {
+        let mut composer = ChatComposer::new();
+        let local_path = create_test_png();
+        composer.attach_remote_image("https://example.com/a.png");
+        composer.attach_image(local_path.clone());
+        type_text(&mut composer, "describe both");
+
+        assert_eq!(composer.textarea.text(), "[Image #1][Image #2]describe both");
+
+        let action = composer.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(
+            action,
+            Some(ComposerIntent::Submit(vec![
+                InputItem::Image {
+                    source: AttachmentRef::RemoteUrl {
+                        url: "https://example.com/a.png".to_string(),
+                    },
+                    detail: None,
+                    alt: None,
+                },
+                InputItem::Image {
+                    source: AttachmentRef::LocalPath {
+                        path: image_path_string(&local_path),
+                    },
+                    detail: None,
+                    alt: None,
+                },
+                InputItem::Text {
+                    text: "describe both".to_string(),
+                },
+            ]))
+        );
+    }
+
+    #[test]
+    fn deleting_remote_image_relabels_local_images() {
+        let mut composer = ChatComposer::new();
+        let local_path = create_test_png();
+        composer.attach_remote_image("https://example.com/a.png");
+        composer.attach_image(local_path.clone());
+        composer.textarea.handle_key(key(KeyCode::Home));
+
+        composer.handle_key(key(KeyCode::Delete));
+
+        assert_eq!(composer.textarea.text(), "[Image #1]");
+        assert_eq!(composer.attached_remote_image_urls(), Vec::<String>::new());
+        assert_eq!(composer.attached_image_paths(), vec![local_path]);
     }
 
     #[test]

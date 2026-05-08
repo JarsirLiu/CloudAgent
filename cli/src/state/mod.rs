@@ -3,7 +3,9 @@ pub mod bottom_pane_runtime;
 pub mod reducer;
 pub mod selectors;
 
-use agent_protocol::{ConversationTurn, ModelUsage};
+use agent_core::ConversationTurn;
+use agent_core::InputItem;
+use agent_core::ModelUsage;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoticeLevel {
@@ -18,6 +20,7 @@ pub struct RunState {
     pub last_turn_usage: Option<ModelUsage>,
     pub total_turn_usage: Option<ModelUsage>,
     pub model_context_window: Option<u64>,
+    pub pending_submitted_input: Option<Vec<InputItem>>,
     pub should_exit: bool,
     pub live_animation_frame: u64,
     pub expand_tool_details: bool,
@@ -32,6 +35,7 @@ impl RunState {
             last_turn_usage: None,
             total_turn_usage: None,
             model_context_window: None,
+            pending_submitted_input: None,
             should_exit: false,
             live_animation_frame: 0,
             expand_tool_details: false,

@@ -6,10 +6,13 @@ use crate::ui::widgets::input_pane::{
     InputPane, InputPaneAction, InputPaneRenderResult, ServerRequestInlineState,
 };
 use crate::ui::widgets::session_picker::SessionPickerMode;
-use agent_protocol::{ConversationSummary, RequestId};
-use agent_protocol::{FrontendMode, ModelRetryStage, TurnItemKind};
+use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
+use agent_core::InputItem;
+use agent_protocol::FrontendMode;
+use agent_protocol::RequestId;
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
+use std::path::PathBuf;
 
 pub(crate) struct StatusViewModel {
     pub(crate) indicator: Option<String>,
@@ -117,6 +120,10 @@ impl BottomPaneController {
         self.input_pane.composer_is_empty()
     }
 
+    pub(crate) fn attach_image(&mut self, path: PathBuf) -> bool {
+        self.input_pane.attach_image(path)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render(
         &self,
@@ -152,6 +159,10 @@ impl BottomPaneController {
 
     pub(crate) fn clear_composer(&mut self) {
         self.input_pane.clear_composer();
+    }
+
+    pub(crate) fn restore_submission(&mut self, content: &[InputItem]) {
+        self.input_pane.restore_composer_submission(content);
     }
 
     pub(crate) fn set_server_request(&mut self, request: ServerRequestInlineState) {
@@ -287,6 +298,18 @@ impl BottomPaneController {
     #[cfg(test)]
     pub(crate) fn active_tool_title_override_for_test(&mut self, title: Option<String>) {
         self.runtime.set_active_tool_title_for_test(title);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn render_lines_for_test(
+        &self,
+        mode: FrontendMode,
+        status_text: &str,
+        status_meta: &str,
+        area_width: u16,
+    ) -> (Vec<ratatui::text::Line<'static>>, u16) {
+        self.input_pane
+            .render_lines_for_test(mode, status_text, status_meta, area_width)
     }
 }
 

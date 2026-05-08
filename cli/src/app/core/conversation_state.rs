@@ -5,7 +5,9 @@ use crate::state::RunState;
 use crate::state::bottom_pane_controller::BottomPaneController;
 use crate::state::reducer::TurnDispatch;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
-use agent_protocol::{ConversationSummary, FrontendMode};
+use agent_core::conversation::{ConversationSummary, InputItem};
+use agent_core::turn::{ModelRetryStage, TurnItemKind};
+use agent_protocol::{FrontendMode, RequestId};
 
 impl TuiApp {
     pub(crate) fn new(
@@ -93,7 +95,7 @@ impl TuiApp {
 
     pub(crate) fn on_server_retrying(
         &mut self,
-        stage: agent_protocol::ModelRetryStage,
+        stage: ModelRetryStage,
         attempt: u64,
         next_delay_ms: u64,
     ) {
@@ -103,7 +105,7 @@ impl TuiApp {
 
     pub(crate) fn on_server_active_item_started(
         &mut self,
-        kind: &agent_protocol::TurnItemKind,
+        kind: &TurnItemKind,
         title: Option<&str>,
     ) {
         self.bottom_pane.on_active_item_started(kind, title);
@@ -120,23 +122,25 @@ impl TuiApp {
         self.bottom_pane.clear_server_request();
     }
 
-    pub(crate) fn dismiss_server_request_view(&mut self, request_id: &agent_protocol::RequestId) {
+    pub(crate) fn dismiss_server_request_view(&mut self, request_id: &RequestId) {
         self.bottom_pane.dismiss_server_request(request_id);
     }
 
-    pub(crate) fn prepare_submitted_turn(&mut self, content: &str) {
+    pub(crate) fn prepare_submitted_turn(&mut self, content: &[InputItem]) {
         self.run_state.last_turn_usage = None;
         self.run_state.total_turn_usage = None;
         self.run_state.model_context_window = None;
+        self.run_state.pending_submitted_input = Some(content.to_vec());
         self.bottom_pane.prepare_for_submit();
         self.transcript_owner
-            .start_local_user(content.to_string(), self.run_state.expand_tool_details);
+            .start_local_user(content.to_vec(), self.run_state.expand_tool_details);
     }
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
         self.bottom_pane.on_turn_finished();
         match dispatch {
             TurnDispatch::Completed => {
+                self.run_state.pending_submitted_input = None;
                 if let Some(turn_id) = self.transcript_owner.active_turn_id().map(str::to_owned) {
                     self.transcript_owner
                         .complete_turn(turn_id, self.run_state.expand_tool_details);
@@ -146,15 +150,19 @@ impl TuiApp {
                 }
             }
             TurnDispatch::Failed { error } => {
+                if let Some(content) = self.run_state.pending_submitted_input.take() {
+                    self.bottom_pane.restore_submission(&content);
+                }
                 self.transcript_owner
                     .clear_active_turn(self.run_state.expand_tool_details);
                 self.push_live_cell(HistoryCell::info(
                     "turn",
-                    format!("failed: {error}"),
+                    format!("failed: {error}\ndraft restored for retry"),
                     HistoryTone::Error,
                 ));
             }
             TurnDispatch::Cancelled { reason } => {
+                self.run_state.pending_submitted_input = None;
                 self.transcript_owner
                     .clear_active_turn(self.run_state.expand_tool_details);
                 self.push_live_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));

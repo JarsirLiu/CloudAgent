@@ -5,18 +5,26 @@ use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::runtime::display::should_show_welcome;
 use crate::ui::chat_surface::ChatSurface;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
-use agent_protocol::CommandExecutionStatus;
-use agent_protocol::{
-    ConversationTurn, ReadFileEntry, ReadFileStatus, SearchWorkspaceMode, SearchWorkspaceOperation,
-    SearchWorkspaceStatus, StructuredToolResult, TranscriptItem, TurnState,
+use agent_core::{
+    CommandExecutionStatus, ConversationTurn, InputItem, ReadFileEntry, ReadFileStatus,
+    SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
+    TranscriptItem, TurnItemKind, TurnState,
 };
 use std::path::PathBuf;
 
 fn user(id: &str, text: &str) -> TranscriptItem {
     TranscriptItem::UserMessage {
         id: id.to_string(),
-        text: text.to_string(),
+        content: vec![InputItem::Text {
+            text: text.to_string(),
+        }],
     }
+}
+
+fn local_input(text: &str) -> Vec<InputItem> {
+    vec![InputItem::Text {
+        text: text.to_string(),
+    }]
 }
 
 fn reasoning(id: &str, text: &str) -> TranscriptItem {
@@ -117,7 +125,7 @@ fn turn(id: &str, state: TurnState, items: Vec<TranscriptItem>) -> ConversationT
 #[test]
 fn transcript_owner_shows_local_user_immediately() {
     let mut owner = TranscriptOwner::default();
-    owner.start_local_user("hello".to_string(), false);
+    owner.start_local_user(local_input("hello"), false);
 
     assert!(owner.live_cells().is_empty());
     let pending = owner
@@ -228,12 +236,12 @@ fn completed_turn_history_merges_only_adjacent_agent_message_runs() {
 #[test]
 fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
     let mut owner = TranscriptOwner::default();
-    owner.start_local_user("hello".to_string(), false);
+    owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
     owner.start_item(
         "turn-1".to_string(),
         "r1".to_string(),
-        agent_protocol::TurnItemKind::Reasoning,
+        TurnItemKind::Reasoning,
         Some("Reasoning".to_string()),
         false,
     );
@@ -252,7 +260,7 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
     owner.start_item(
         "turn-1".to_string(),
         "c1".to_string(),
-        agent_protocol::TurnItemKind::CommandExecution,
+        TurnItemKind::CommandExecution,
         Some("Run command".to_string()),
         false,
     );
@@ -284,7 +292,7 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
     owner.start_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent_protocol::TurnItemKind::AssistantMessage,
+        TurnItemKind::AssistantMessage,
         None,
         false,
     );
@@ -307,12 +315,12 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
 #[test]
 fn completing_older_item_does_not_flush_current_live_item() {
     let mut owner = TranscriptOwner::default();
-    owner.start_local_user("hello".to_string(), false);
+    owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
     owner.start_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent_protocol::TurnItemKind::AssistantMessage,
+        TurnItemKind::AssistantMessage,
         None,
         false,
     );
@@ -325,7 +333,7 @@ fn completing_older_item_does_not_flush_current_live_item() {
     owner.start_item(
         "turn-1".to_string(),
         "c1".to_string(),
-        agent_protocol::TurnItemKind::CommandExecution,
+        TurnItemKind::CommandExecution,
         Some("Run command".to_string()),
         false,
     );
@@ -358,12 +366,12 @@ fn completing_older_item_does_not_flush_current_live_item() {
 #[test]
 fn runtime_non_agent_cells_do_not_become_stream_continuations() {
     let mut owner = TranscriptOwner::default();
-    owner.start_local_user("hello".to_string(), false);
+    owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
     owner.start_item(
         "turn-1".to_string(),
         "r1".to_string(),
-        agent_protocol::TurnItemKind::Reasoning,
+        TurnItemKind::Reasoning,
         Some("Reasoning".to_string()),
         false,
     );
@@ -382,7 +390,7 @@ fn runtime_non_agent_cells_do_not_become_stream_continuations() {
     owner.start_item(
         "turn-1".to_string(),
         "c1".to_string(),
-        agent_protocol::TurnItemKind::CommandExecution,
+        TurnItemKind::CommandExecution,
         Some("Run command".to_string()),
         false,
     );
@@ -418,12 +426,12 @@ fn runtime_non_agent_cells_do_not_become_stream_continuations() {
 #[test]
 fn tool_result_completion_replaces_matching_toolcall_placeholder() {
     let mut owner = TranscriptOwner::default();
-    owner.start_local_user("hello".to_string(), false);
+    owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
     owner.start_item(
         "turn-1".to_string(),
         "toolcall-1".to_string(),
-        agent_protocol::TurnItemKind::ToolCall,
+        TurnItemKind::ToolCall,
         Some("read_file".to_string()),
         false,
     );
@@ -438,7 +446,7 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
     owner.start_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent_protocol::TurnItemKind::AssistantMessage,
+        TurnItemKind::AssistantMessage,
         None,
         false,
     );
@@ -467,34 +475,34 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
 #[test]
 fn parallel_toolcall_placeholders_do_not_commit_running_cards() {
     let mut owner = TranscriptOwner::default();
-    owner.start_local_user("hello".to_string(), false);
+    owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
 
     owner.start_item(
         "turn-1".to_string(),
         "toolcall-1".to_string(),
-        agent_protocol::TurnItemKind::ToolCall,
+        TurnItemKind::ToolCall,
         Some("read_file".to_string()),
         false,
     );
     owner.start_item(
         "turn-1".to_string(),
         "toolcall-2".to_string(),
-        agent_protocol::TurnItemKind::ToolCall,
+        TurnItemKind::ToolCall,
         Some("read_file".to_string()),
         false,
     );
     owner.start_item(
         "turn-1".to_string(),
         "toolcall-3".to_string(),
-        agent_protocol::TurnItemKind::ToolCall,
+        TurnItemKind::ToolCall,
         Some("read_file".to_string()),
         false,
     );
     owner.start_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent_protocol::TurnItemKind::AssistantMessage,
+        TurnItemKind::AssistantMessage,
         None,
         false,
     );
@@ -561,13 +569,13 @@ fn running_snapshot_updates_history_cache_without_touching_live_transcript() {
         "ReadOnly".to_string(),
     );
     app.transcript_owner
-        .start_local_user("hello".to_string(), false);
+        .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
         "turn-1".to_string(),
         "r1".to_string(),
-        agent_protocol::TurnItemKind::Reasoning,
+        TurnItemKind::Reasoning,
         Some("Reasoning".to_string()),
         false,
     );
@@ -620,13 +628,13 @@ fn chat_surface_model_renders_streaming_visible_tail() {
         "ReadOnly".to_string(),
     );
     app.transcript_owner
-        .start_local_user("hello".to_string(), false);
+        .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
         "turn-1".to_string(),
         "r1".to_string(),
-        agent_protocol::TurnItemKind::Reasoning,
+        TurnItemKind::Reasoning,
         Some("Reasoning".to_string()),
         false,
     );
@@ -665,13 +673,13 @@ fn streaming_reasoning_stays_fully_visible_until_completion() {
         "ReadOnly".to_string(),
     );
     app.transcript_owner
-        .start_local_user("hello".to_string(), false);
+        .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
         "turn-1".to_string(),
         "r1".to_string(),
-        agent_protocol::TurnItemKind::Reasoning,
+        TurnItemKind::Reasoning,
         Some("Reasoning".to_string()),
         false,
     );
@@ -710,13 +718,13 @@ fn chat_surface_model_renders_placeholder_before_first_delta() {
         "ReadOnly".to_string(),
     );
     app.transcript_owner
-        .start_local_user("hello".to_string(), false);
+        .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
         "turn-1".to_string(),
         "r1".to_string(),
-        agent_protocol::TurnItemKind::Reasoning,
+        TurnItemKind::Reasoning,
         Some("Reasoning".to_string()),
         false,
     );
@@ -749,7 +757,7 @@ fn committed_history_without_active_cell_does_not_allocate_active_body_lines() {
         "ReadOnly".to_string(),
     );
     app.transcript_owner
-        .start_local_user("hello".to_string(), false);
+        .start_local_user(local_input("hello"), false);
 
     let model = build_chat_surface_model(&mut app, 80, 20);
     let ChatSurfaceBody::ActiveCell(active) = model.body else {
@@ -771,7 +779,7 @@ fn committed_history_without_active_cell_keeps_viewport_compact() {
         "ReadOnly".to_string(),
     );
     app.transcript_owner
-        .start_local_user("hello".to_string(), false);
+        .start_local_user(local_input("hello"), false);
 
     let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
     let desired = ChatSurface::desired_viewport_height(&mut app, terminal_area);
@@ -811,7 +819,7 @@ fn reset_local_view_requests_history_replay() {
         "ReadOnly".to_string(),
     );
     app.transcript_owner
-        .start_local_user("hello".to_string(), false);
+        .start_local_user(local_input("hello"), false);
     app.reset_local_view();
 
     let plan = app
@@ -881,7 +889,9 @@ fn cancelled_turn_clears_running_state_and_reenables_submit() {
         "ReadOnly".to_string(),
     );
 
-    app.prepare_submitted_turn("hello");
+    app.prepare_submitted_turn(&[InputItem::Text {
+        text: "hello".to_string(),
+    }]);
     assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Running);
     assert!(!app.can_submit_turn());
 
@@ -896,6 +906,146 @@ fn cancelled_turn_clears_running_state_and_reenables_submit() {
         app.transcript_owner.active_cell().map(|cell| cell.body()),
         Some("interrupted")
     );
+}
+
+#[test]
+fn failed_turn_restores_submitted_text_to_composer() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let submitted = vec![InputItem::Text {
+        text: "continue from this draft".to_string(),
+    }];
+    app.prepare_submitted_turn(&submitted);
+    app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Failed {
+        error: "network error".to_string(),
+    });
+
+    let lines = app
+        .bottom_pane
+        .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
+    let rendered = lines
+        .0
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("continue from this draft"));
+    assert!(app.can_submit_turn());
+    assert!(app.run_state.pending_submitted_input.is_none());
+}
+
+#[test]
+fn failed_turn_restores_submitted_images_to_composer() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    let image_path = std::env::temp_dir().join("cloudagent-failed-turn-restore.png");
+    image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]))
+        .save(&image_path)
+        .expect("save temp image");
+
+    let submitted = vec![InputItem::Text {
+        text: "check this".to_string(),
+    }, InputItem::Image {
+        source: agent_core::AttachmentRef::LocalPath {
+            path: image_path.display().to_string(),
+        },
+        detail: None,
+        alt: None,
+    }];
+    app.prepare_submitted_turn(&submitted);
+    app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Failed {
+        error: "provider rejected message".to_string(),
+    });
+
+    let lines = app
+        .bottom_pane
+        .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
+    let rendered = lines
+        .0
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("check this"));
+    assert!(rendered.contains("[Image #1]"));
+}
+
+#[test]
+fn failed_turn_restores_non_image_input_semantics_as_editable_text() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    let submitted = vec![
+        InputItem::File {
+            source: agent_core::AttachmentRef::LocalPath {
+                path: "D:\\tmp\\spec.pdf".to_string(),
+            },
+            mime_type: Some("application/pdf".to_string()),
+            name: Some("spec.pdf".to_string()),
+        },
+        InputItem::Mention {
+            name: "workspace".to_string(),
+            path: "D:\\learn\\gifti\\cloudagent".to_string(),
+        },
+        InputItem::Skill {
+            name: "browser-use".to_string(),
+            path: "plugin://browser-use".to_string(),
+        },
+    ];
+    app.prepare_submitted_turn(&submitted);
+    app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Failed {
+        error: "temporary upstream failure".to_string(),
+    });
+
+    let lines = app
+        .bottom_pane
+        .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 100);
+    let rendered = lines
+        .0
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("[Attachment: spec.pdf (application/pdf)]"));
+    assert!(rendered.contains("@workspace (D:\\learn\\gifti\\cloudagent)"));
+    assert!(rendered.contains("#browser-use (plugin://browser-use)"));
 }
 
 #[test]
@@ -972,13 +1122,13 @@ fn finalized_reasoning_history_matches_live_reasoning_card_ui() {
         "ReadOnly".to_string(),
     );
     app.transcript_owner
-        .start_local_user("hello".to_string(), false);
+        .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
     app.transcript_owner.start_item(
         "turn-1".to_string(),
         "r1".to_string(),
-        agent_protocol::TurnItemKind::Reasoning,
+        TurnItemKind::Reasoning,
         Some("Reasoning".to_string()),
         false,
     );

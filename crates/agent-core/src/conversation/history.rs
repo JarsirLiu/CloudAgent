@@ -28,6 +28,21 @@ impl ConversationHistory {
         item
     }
 
+    pub fn rollback_last_user_message(&mut self, expected: &ResponseItem) -> bool {
+        let Some(ResponseItem::User { content: expected_content }) = Some(expected) else {
+            return false;
+        };
+        let Some(ResponseItem::User { content: last_content }) = self.messages.last() else {
+            return false;
+        };
+        if last_content != expected_content {
+            return false;
+        }
+        self.messages.pop();
+        self.turn_count = self.turn_count.saturating_sub(1);
+        true
+    }
+
     pub fn push_assistant_message(
         &mut self,
         content: Option<String>,
@@ -141,6 +156,33 @@ pub fn ensure_tool_outputs_present(items: &mut Vec<ResponseItem>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn rollback_last_user_message_removes_matching_user_and_decrements_turn_count() {
+        let mut history = ConversationHistory::new("conv".to_string(), "system".to_string());
+        let user = history.push_user_message(vec![InputItem::Text {
+            text: "hello".to_string(),
+        }]);
+
+        assert!(history.rollback_last_user_message(&user));
+        assert_eq!(history.turn_count, 0);
+        assert!(matches!(
+            history.messages.as_slice(),
+            [ResponseItem::System { .. }]
+        ));
+    }
+
+    #[test]
+    fn rollback_last_user_message_ignores_non_matching_tail() {
+        let mut history = ConversationHistory::new("conv".to_string(), "system".to_string());
+        let user = history.push_user_message(vec![InputItem::Text {
+            text: "hello".to_string(),
+        }]);
+        history.push_assistant_message(Some("ok".to_string()), Vec::new());
+
+        assert!(!history.rollback_last_user_message(&user));
+        assert_eq!(history.turn_count, 1);
+    }
 
     #[test]
     fn ensure_tool_outputs_present_inserts_aborted_output_for_missing_call() {

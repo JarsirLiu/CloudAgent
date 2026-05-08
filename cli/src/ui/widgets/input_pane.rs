@@ -9,13 +9,17 @@ use crate::ui::widgets::permissions_picker::PermissionsPicker;
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
-use agent_protocol::{ConversationSummary, FrontendMode, RequestId, ServerRequestDecisionKind};
+use agent_core::ConversationSummary;
+use agent_core::ServerRequestDecisionKind;
+use agent_protocol::{FrontendMode, RequestId};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use agent_core::InputItem;
+use std::path::PathBuf;
 
 pub struct InputPane {
     composer: ChatComposer,
@@ -134,6 +138,15 @@ impl InputPane {
         self.view_stack.is_empty() && self.composer.has_selection()
     }
 
+    pub(crate) fn attach_image(&mut self, path: PathBuf) -> bool {
+        if self.view_stack.is_empty() {
+            self.composer.attach_image(path);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn handle_tick(&mut self) -> bool {
         self.view_stack.is_empty() && self.composer.flush_paste_burst_if_due()
     }
@@ -249,7 +262,7 @@ impl InputPane {
     }
 
     #[cfg(test)]
-    fn render_lines_for_test(
+    pub(crate) fn render_lines_for_test(
         &self,
         mode: FrontendMode,
         status_text: &str,
@@ -333,6 +346,11 @@ impl InputPane {
 
     pub fn clear_composer(&mut self) {
         self.composer.clear();
+    }
+
+    pub fn restore_composer_submission(&mut self, content: &[InputItem]) {
+        self.view_stack.clear();
+        self.composer.restore_submission(content);
     }
 
     pub fn set_server_request(&mut self, request: ServerRequestInlineState) {

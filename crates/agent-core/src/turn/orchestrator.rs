@@ -2,7 +2,7 @@ use super::{
     ServerRequestHandler, TurnHost, TurnOutcome, conversation_busy_error, execute_regular_turn,
 };
 use crate::{EventMsg, InputItem, TurnState};
-use crate::{RolloutItem, ToolCall, emit_event, next_turn_id};
+use crate::{RolloutItem, emit_event, next_turn_id};
 use anyhow::{Result, bail};
 
 pub async fn run_turn_with_approval<H: TurnHost>(
@@ -35,7 +35,7 @@ pub async fn run_turn_with_approval<H: TurnHost>(
     let mut history = host.load_history(conversation_id).await?;
     let user_item = history.push_user_message(user_input.to_vec());
     host.save_history(history.clone()).await?;
-    host.persist_rollout_items(conversation_id, &[RolloutItem::from(user_item)])
+    host.persist_rollout_items(conversation_id, &[RolloutItem::from(user_item.clone())])
         .await?;
 
     let mut events = Vec::new();
@@ -118,12 +118,7 @@ pub async fn run_turn_with_approval<H: TurnHost>(
                 return Ok(outcome);
             }
             let mut history = host.load_history(conversation_id).await?;
-            let failed_item = history.push_assistant_message(
-                Some(format!("Turn failed: {err:#}")),
-                Vec::<ToolCall>::new(),
-            );
-            host.persist_rollout_items(conversation_id, &[RolloutItem::from(failed_item)])
-                .await?;
+            let rolled_back_user = history.rollback_last_user_message(&user_item);
             let error_text = format!("{err:#}");
             let mut events = Vec::new();
             emit_event(
@@ -143,6 +138,13 @@ pub async fn run_turn_with_approval<H: TurnHost>(
                 model_name: None,
                 state: TurnState::Failed,
             };
+            if !rolled_back_user {
+                tracing::warn!(
+                    conversation_id,
+                    turn_id,
+                    "failed turn could not roll back the last user message from history"
+                );
+            }
             host.audit_turn_failed(conversation_id, &turn_id, &error_text);
             Ok(outcome)
         }
