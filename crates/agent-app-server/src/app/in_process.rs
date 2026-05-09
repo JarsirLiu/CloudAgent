@@ -80,6 +80,9 @@ pub fn start_in_process(
                 ServerMessage::Command(command) => {
                     let command_conversation_id = command.conversation_id().map(str::to_string);
                     let should_mark_active = matches!(command, AppClientCommand::SubmitTurn(_));
+                    let error_conversation_id = command_conversation_id
+                        .clone()
+                        .unwrap_or_else(|| conversation_id.clone());
                     if handle_command(
                         runtime.clone(),
                         command,
@@ -89,14 +92,15 @@ pub fn start_in_process(
                         auto_approve_reason.clone(),
                     )
                     .await
-                    .is_err()
-                    {
+                    .is_err_and(|error| {
                         let _ = event_tx.send(AppServerMessage::Notification(
                             AppServerNotification::Error {
-                                conversation_id: conversation_id.clone(),
-                                message: "command handling failed".to_string(),
+                                conversation_id: error_conversation_id.clone(),
+                                message: format!("command handling failed: {error:#}"),
                             },
                         ));
+                        true
+                    }) {
                     } else if let (Some(id), true) = (command_conversation_id, should_mark_active) {
                         session_state::persist_active_conversation(&runtime, &id).await;
                     }

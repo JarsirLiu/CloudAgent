@@ -321,7 +321,11 @@ Options:
 }
 
 fn print_version() {
-    println!("{}", env!("CARGO_PKG_VERSION"));
+    println!("{}", display_version());
+}
+
+fn display_version() -> &'static str {
+    option_env!("CLOUDAGENT_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
 #[cfg(test)]
@@ -467,5 +471,11 @@ mod tests {
             Ok(_) => panic!("embedded should be internal-only"),
             Err(err) => assert!(err.to_string().contains("internal-only")),
         }
+    }
+
+    #[test]
+    fn display_version_prefers_build_metadata_when_available() {
+        let expected = option_env!("CLOUDAGENT_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+        assert_eq!(super::display_version(), expected);
     }
 }
