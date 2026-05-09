@@ -8,8 +8,14 @@ use async_trait::async_trait;
 #[derive(Clone, Debug)]
 pub enum DirectNodeEvent {
     Message(AppServerMessage),
-    Lagged { skipped: usize },
-    Disconnected { message: String },
+    Lagged {
+        conversation_id: Option<String>,
+        skipped: usize,
+    },
+    Disconnected {
+        conversation_id: Option<String>,
+        message: String,
+    },
 }
 
 #[async_trait]
@@ -30,6 +36,7 @@ pub struct DirectGatewaySession<A, C> {
     adapter: A,
     node_client: C,
     turn_policy: TurnPolicy,
+    active_conversation_id: Option<String>,
 }
 
 impl<A, C> DirectGatewaySession<A, C> {
@@ -38,6 +45,7 @@ impl<A, C> DirectGatewaySession<A, C> {
             adapter,
             node_client,
             turn_policy,
+            active_conversation_id: None,
         }
     }
 
@@ -68,6 +76,7 @@ where
             return Ok(PumpStatus::AdapterClosed);
         };
         let command = gateway_message_to_command(message, self.turn_policy.clone());
+        self.active_conversation_id = command.conversation_id().map(ToOwned::to_owned);
         self.node_client.send_command(command).await?;
         Ok(PumpStatus::Active)
     }
@@ -79,24 +88,37 @@ where
 
         match event {
             DirectNodeEvent::Message(message) => {
+                if let Some(conversation_id) = message.conversation_id() {
+                    self.active_conversation_id = Some(conversation_id.to_string());
+                }
                 if let Some(outbound) = app_server_message_to_outbound(&message) {
                     self.adapter.send_outbound(outbound).await?;
                 }
                 Ok(PumpStatus::Active)
             }
-            DirectNodeEvent::Lagged { skipped } => {
+            DirectNodeEvent::Lagged {
+                conversation_id,
+                skipped,
+            } => {
                 self.adapter
                     .send_outbound(GatewayOutbound::Info {
-                        conversation_id: String::new(),
+                        conversation_id: conversation_id
+                            .or_else(|| self.active_conversation_id.clone())
+                            .unwrap_or_default(),
                         message: format!("node event stream lagged by {skipped} events"),
                     })
                     .await?;
                 Ok(PumpStatus::Active)
             }
-            DirectNodeEvent::Disconnected { message } => {
+            DirectNodeEvent::Disconnected {
+                conversation_id,
+                message,
+            } => {
                 self.adapter
                     .send_outbound(GatewayOutbound::Error {
-                        conversation_id: String::new(),
+                        conversation_id: conversation_id
+                            .or_else(|| self.active_conversation_id.clone())
+                            .unwrap_or_default(),
                         message,
                     })
                     .await?;
@@ -244,6 +266,7 @@ mod tests {
         let node_client = FakeNodeClient {
             sent_commands: Vec::new(),
             events: VecDeque::from([DirectNodeEvent::Disconnected {
+                conversation_id: Some("conversation-1".to_string()),
                 message: "node closed".to_string(),
             }]),
         };
@@ -254,7 +277,11 @@ mod tests {
         assert_eq!(status, PumpStatus::NodeClosed);
         assert_eq!(session.adapter().outbound.len(), 1);
         match &session.adapter().outbound[0] {
-            GatewayOutbound::Error { message, .. } => {
+            GatewayOutbound::Error {
+                conversation_id,
+                message,
+            } => {
+                assert_eq!(conversation_id, "conversation-1");
                 assert_eq!(message, "node closed");
             }
             other => panic!("unexpected outbound: {other:?}"),
