@@ -52,6 +52,9 @@ async fn conversation_list_response(
         return None;
     }
     let summaries: Vec<ConversationSummary> = runtime.conversations().lock().await.summaries();
+    if summaries.is_empty() {
+        return None;
+    }
     Some(AppServerMessage::Notification(
         AppServerNotification::ConversationList {
             conversation_id: active_conversation_id.to_string(),
@@ -179,6 +182,23 @@ mod tests {
                 }
                 other => panic!("unexpected message: {other:?}"),
             }
+        });
+    }
+
+    #[test]
+    fn empty_registry_defers_conversation_list_to_worker() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+
+            let message = conversation_list_response(
+                &AppClientCommand::ListConversations,
+                "conversation-1",
+                &runtime,
+            )
+            .await;
+
+            assert!(message.is_none());
         });
     }
 }
