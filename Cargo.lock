@@ -55,6 +55,9 @@ name = "agent-gateway"
 version = "0.1.31"
 dependencies = [
  "agent-core",
+ "agent-protocol",
+ "anyhow",
+ "async-trait",
  "shared",
 ]
 

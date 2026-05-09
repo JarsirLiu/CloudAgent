@@ -5,5 +5,8 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
 agent-core = { path = "../agent-core" }
+agent-protocol = { path = "../agent-protocol" }
 shared = { path = "../shared" }
