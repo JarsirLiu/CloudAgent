@@ -255,6 +255,10 @@ pub(crate) async fn handle_command(
         AppClientCommand::ListConversations => {
             session_service::list_conversations(&runtime, event_tx, &state).await?;
         }
+        AppClientCommand::ListOnlineNodes => {
+            session_service::report_hub_mode_only_command(event_tx, &state, "ListOnlineNodes")
+                .await;
+        }
         AppClientCommand::CreateConversation { conversation_id } => {
             session_service::create_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
@@ -275,6 +279,10 @@ pub(crate) async fn handle_command(
         AppClientCommand::SwitchConversation { conversation_id } => {
             session_service::switch_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
+        }
+        AppClientCommand::SelectTargetNode { .. } => {
+            session_service::report_hub_mode_only_command(event_tx, &state, "SelectTargetNode")
+                .await;
         }
         AppClientCommand::ArchiveConversation { conversation_id } => {
             session_service::archive_conversation(&runtime, event_tx, &state, conversation_id)

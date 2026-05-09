@@ -167,6 +167,7 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
             limit: optional_value_field(params, "limit")?.unwrap_or(30),
         }),
         "conversation/list" => Ok(AppClientCommand::ListConversations),
+        "hub/node/list" => Ok(AppClientCommand::ListOnlineNodes),
         "conversation/create" => Ok(AppClientCommand::CreateConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
@@ -176,6 +177,9 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         }),
         "conversation/switch" => Ok(AppClientCommand::SwitchConversation {
             conversation_id: value_field(params, "conversation_id")?,
+        }),
+        "hub/node/select" => Ok(AppClientCommand::SelectTargetNode {
+            node_id: value_field(params, "node_id")?,
         }),
         "conversation/archive" => Ok(AppClientCommand::ArchiveConversation {
             conversation_id: value_field(params, "conversation_id")?,
@@ -242,6 +246,7 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             }),
         ),
         AppClientCommand::ListConversations => ("conversation/list", Value::Null),
+        AppClientCommand::ListOnlineNodes => ("hub/node/list", Value::Null),
         AppClientCommand::CreateConversation { conversation_id } => (
             "conversation/create",
             serde_json::json!({ "conversation_id": conversation_id }),
@@ -257,6 +262,9 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             "conversation/switch",
             serde_json::json!({ "conversation_id": conversation_id }),
         ),
+        AppClientCommand::SelectTargetNode { node_id } => {
+            ("hub/node/select", serde_json::json!({ "node_id": node_id }))
+        }
         AppClientCommand::ArchiveConversation { conversation_id } => (
             "conversation/archive",
             serde_json::json!({ "conversation_id": conversation_id }),
@@ -379,6 +387,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "conversation/list",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::OnlineNodeList { .. } => (
+            "hub/node/list",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ConversationSwitched { .. } => (
             "conversation/switched",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -457,6 +469,7 @@ fn parse_server_notification(
         | "conversation/turnSnapshot"
         | "conversation/historyPage"
         | "conversation/list"
+        | "hub/node/list"
         | "conversation/switched"
         | "conversation/subscriptionChanged"
         | "app/info"
@@ -992,6 +1005,74 @@ mod tests {
                 assert_eq!(limit, 25);
             }
             other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_online_nodes_roundtrips_from_jsonrpc_request() {
+        let envelope = AppClientCommandEnvelope {
+            request_id: RequestId::Integer(13),
+            command: AppClientCommand::ListOnlineNodes,
+        };
+        let rpc = JsonRpcMessage::from(envelope);
+        let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");
+        assert_eq!(parsed.request_id, RequestId::Integer(13));
+        assert!(matches!(parsed.command, AppClientCommand::ListOnlineNodes));
+    }
+
+    #[test]
+    fn select_target_node_roundtrips_from_jsonrpc_request() {
+        let envelope = AppClientCommandEnvelope {
+            request_id: RequestId::Integer(14),
+            command: AppClientCommand::SelectTargetNode {
+                node_id: "node-a".to_string(),
+            },
+        };
+        let rpc = JsonRpcMessage::from(envelope);
+        let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");
+        match parsed.command {
+            AppClientCommand::SelectTargetNode { node_id } => {
+                assert_eq!(node_id, "node-a");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn online_node_list_roundtrips_through_jsonrpc_notification() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::OnlineNodeList {
+                conversation_id: "default".to_string(),
+                nodes: vec![OnlineNodeSummary {
+                    node_id: "node-a".to_string(),
+                    display_name: "Node A".to_string(),
+                    labels: vec!["gpu".to_string()],
+                    version: "0.1.0".to_string(),
+                    online: true,
+                }],
+            }),
+            event_seq: None,
+        };
+
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+        assert_eq!(notification.method, "hub/node/list");
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::OnlineNodeList {
+                conversation_id,
+                nodes,
+            }) => {
+                assert_eq!(conversation_id, "default");
+                assert_eq!(nodes.len(), 1);
+                assert_eq!(nodes[0].node_id, "node-a");
+                assert!(nodes[0].online);
+            }
+            other => panic!("unexpected notification: {other:?}"),
         }
     }
 }

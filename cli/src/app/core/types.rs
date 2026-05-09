@@ -24,6 +24,9 @@ pub struct ConsoleConfig {
 #[derive(Clone)]
 pub enum AppServerTarget {
     LocalNode,
+    HubNode {
+        node_id: String,
+    },
     #[doc(hidden)]
     Embedded,
     #[doc(hidden)]
@@ -34,6 +37,7 @@ impl AppServerTarget {
     pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::LocalNode => "local-node",
+            Self::HubNode { .. } => "hub-node",
             Self::Embedded => "embedded",
             Self::WorkerStdio => "worker-stdio",
         }

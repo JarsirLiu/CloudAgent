@@ -26,6 +26,13 @@ where
     }
 
     if let Some(message) =
+        hub_mode_only_response(&envelope.command, session.active_conversation_id())
+    {
+        write_app_server_message(writer, message).await?;
+        return Ok(true);
+    }
+
+    if let Some(message) =
         conversation_list_response(&envelope.command, session.active_conversation_id(), runtime)
             .await
     {
@@ -41,6 +48,25 @@ where
         .send_command(&target_conversation, envelope.command)
         .await?;
     Ok(true)
+}
+
+fn hub_mode_only_response(
+    command: &AppClientCommand,
+    active_conversation_id: &str,
+) -> Option<AppServerMessage> {
+    let unsupported = match command {
+        AppClientCommand::ListOnlineNodes => "ListOnlineNodes",
+        AppClientCommand::SelectTargetNode { .. } => "SelectTargetNode",
+        _ => return None,
+    };
+    Some(AppServerMessage::Notification(
+        AppServerNotification::Error {
+            conversation_id: active_conversation_id.to_string(),
+            message: format!(
+                "hub mode only: `{unsupported}` is not available for the current direct target"
+            ),
+        },
+    ))
 }
 
 async fn conversation_list_response(
@@ -100,9 +126,10 @@ pub(crate) async fn target_conversation_id(
             session.set_active_conversation_id(conversation_id.clone());
             conversation_id.clone()
         }
-        AppClientCommand::ListConversations | AppClientCommand::Exit => {
-            session.active_conversation_id().to_string()
-        }
+        AppClientCommand::ListConversations
+        | AppClientCommand::ListOnlineNodes
+        | AppClientCommand::SelectTargetNode { .. }
+        | AppClientCommand::Exit => session.active_conversation_id().to_string(),
     }
 }
 
@@ -200,5 +227,23 @@ mod tests {
 
             assert!(message.is_none());
         });
+    }
+
+    #[test]
+    fn hub_mode_only_commands_fail_explicitly_in_direct_mode() {
+        let message =
+            super::hub_mode_only_response(&AppClientCommand::ListOnlineNodes, "conversation-1")
+                .expect("error response");
+        match message {
+            AppServerMessage::Notification(AppServerNotification::Error {
+                conversation_id,
+                message,
+            }) => {
+                assert_eq!(conversation_id, "conversation-1");
+                assert!(message.contains("hub mode only"));
+                assert!(message.contains("ListOnlineNodes"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
     }
 }

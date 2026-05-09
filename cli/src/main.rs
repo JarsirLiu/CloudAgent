@@ -157,6 +157,14 @@ fn resolve_console_target(
                 },
             ))
         }
+        "hub-node" => {
+            let node_id = arg_value(args, "--hub-node-id")
+                .or_else(|| std::env::var_os("CLOUDAGENT_HUB_NODE_ID"))
+                .and_then(|value| value.into_string().ok())
+                .ok_or_else(|| anyhow::anyhow!("hub-node target requires --hub-node-id"))?;
+            let _target = AppServerTarget::HubNode { node_id };
+            bail!("target 'hub-node' is reserved for hub mode and is not implemented yet");
+        }
         "embedded" => Ok((
             AppServerTarget::Embedded,
             ConsoleBootstrap::Embedded {
@@ -193,7 +201,7 @@ fn resolve_console_target(
             ))
         }
         other => bail!(
-            "unknown target '{other}'. supported targets in this migration stage: embedded, worker-stdio, local-node"
+            "unknown target '{other}'. supported targets in this migration stage: embedded, worker-stdio, local-node, hub-node"
         ),
     }
 }
@@ -235,9 +243,10 @@ Usage:
 Options:
   -h, --help                 Show this help text
       -V, --version              Show the CLI version
-      --target TARGET        Target selection: local-node (default), embedded (internal), or worker-stdio (internal)
+      --target TARGET        Target selection: local-node (default), hub-node (reserved), embedded (internal), or worker-stdio (internal)
       --node-bin PATH        node binary path when using local-node
       --node-addr ADDR       node listen address when using local-node
+      --hub-node-id ID       target node id when using the reserved hub-node target
       --app-server-bin PATH  worker binary path when using worker-stdio
       --conversation ID      Conversation id passed to the selected target
       --color WHEN           Color output: auto, always, or never
@@ -337,6 +346,23 @@ mod tests {
             other => panic!(
                 "unexpected bootstrap: {}",
                 std::any::type_name_of_val(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn hub_node_target_is_reserved() {
+        let args = vec![
+            OsString::from("--target"),
+            OsString::from("hub-node"),
+            OsString::from("--hub-node-id"),
+            OsString::from("node-a"),
+        ];
+        match resolve_console_target(&args, "local-conversation", None) {
+            Ok(_) => panic!("hub-node target should stay reserved"),
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("reserved for hub mode and is not implemented yet")
             ),
         }
     }

@@ -285,6 +285,28 @@ pub(crate) async fn delete_conversation(
     Ok(())
 }
 
+pub(crate) async fn report_hub_mode_only_command(
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    command_name: &str,
+) {
+    let conversation_id = {
+        let guard = state.lock().await;
+        guard.active_conversation_id().to_string()
+    };
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::Error {
+            conversation_id,
+            message: format!(
+                "hub mode only: `{command_name}` is not available for the current direct target"
+            ),
+        },
+    )
+    .await;
+}
+
 pub(crate) async fn maybe_spawn_auto_title_job(
     runtime: Arc<AgentHost>,
     event_tx: mpsc::UnboundedSender<AppServerMessage>,

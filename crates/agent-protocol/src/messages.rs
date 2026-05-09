@@ -7,6 +7,15 @@ use agent_core::{
 };
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OnlineNodeSummary {
+    pub node_id: String,
+    pub display_name: String,
+    pub labels: Vec<String>,
+    pub version: String,
+    pub online: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppClientCommand {
@@ -37,6 +46,7 @@ pub enum AppClientCommand {
         limit: usize,
     },
     ListConversations,
+    ListOnlineNodes,
     SetConversationTitle {
         conversation_id: String,
         title: String,
@@ -46,6 +56,9 @@ pub enum AppClientCommand {
     },
     SwitchConversation {
         conversation_id: String,
+    },
+    SelectTargetNode {
+        node_id: String,
     },
     ArchiveConversation {
         conversation_id: String,
@@ -86,7 +99,10 @@ impl AppClientCommand {
             | Self::DeleteConversation { conversation_id }
             | Self::SubscribeConversation { conversation_id }
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
-            Self::ListConversations | Self::Exit => None,
+            Self::ListConversations
+            | Self::ListOnlineNodes
+            | Self::SelectTargetNode { .. }
+            | Self::Exit => None,
         }
     }
 }
@@ -239,6 +255,10 @@ pub enum AppServerNotification {
         conversation_id: String,
         conversations: Vec<ConversationSummary>,
     },
+    OnlineNodeList {
+        conversation_id: String,
+        nodes: Vec<OnlineNodeSummary>,
+    },
     ConversationSwitched {
         conversation_id: String,
     },
@@ -337,6 +357,9 @@ impl AppServerNotification {
             | Self::ConversationList {
                 conversation_id, ..
             }
+            | Self::OnlineNodeList {
+                conversation_id, ..
+            }
             | Self::ConversationSwitched {
                 conversation_id, ..
             }
@@ -423,6 +446,7 @@ pub fn classify_notification(
         | AppServerNotification::ConversationHistory { .. }
         | AppServerNotification::ConversationHistoryPage { .. }
         | AppServerNotification::ConversationList { .. }
+        | AppServerNotification::OnlineNodeList { .. }
         | AppServerNotification::ConversationSwitched { .. }
         | AppServerNotification::ConversationSubscriptionChanged { .. }
         | AppServerNotification::FrontendStateChanged { .. } => {
