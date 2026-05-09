@@ -204,7 +204,13 @@ async fn write_commands(
         Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
     >,
 ) -> Result<()> {
-    write_commands_to(&mut stdin, &mut command_rx, request_counter, pending_requests).await
+    write_commands_to(
+        &mut stdin,
+        &mut command_rx,
+        request_counter,
+        pending_requests,
+    )
+    .await
 }
 
 async fn write_commands_to<W>(
@@ -372,16 +378,18 @@ mod tests {
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
 
         command_tx
-            .send(StdioOutbound::Command(AppClientCommand::SubmitTurn(UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: vec![agent_core::InputItem::Text {
-                    text: "hello".to_string(),
-                }],
-                turn_policy: TurnPolicy {
-                    permission_profile: PermissionProfile::ReadOnly,
-                    approval_policy: ApprovalPolicy::OnRequest,
+            .send(StdioOutbound::Command(AppClientCommand::SubmitTurn(
+                UserTurnInput {
+                    conversation_id: "default".to_string(),
+                    content: vec![agent_core::InputItem::Text {
+                        text: "hello".to_string(),
+                    }],
+                    turn_policy: TurnPolicy {
+                        permission_profile: PermissionProfile::ReadOnly,
+                        approval_policy: ApprovalPolicy::OnRequest,
+                    },
                 },
-            })))
+            )))
             .expect("queue command");
         drop(command_tx);
 
@@ -583,7 +591,10 @@ mod tests {
         )
         .await
         .expect("write request");
-        let response = request_rx.await.expect("response channel").expect("ok response");
+        let response = request_rx
+            .await
+            .expect("response channel")
+            .expect("ok response");
         match response {
             JsonRpcResponseEnvelope::Result(value) => {
                 assert_eq!(value["conversations"], serde_json::json!([]));

@@ -3,7 +3,10 @@ use crate::node::message_sync::write_node_event;
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
 use crate::node::worker_manager::NodeEvent;
-use agent_protocol::{JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse, TransportInitializeParams, TransportInitializeResult, TransportServerInfo};
+use agent_protocol::{
+    JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse,
+    TransportInitializeParams, TransportInitializeResult, TransportServerInfo,
+};
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -18,8 +21,8 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     let worker_program = arg_value(args, "--worker-bin")
         .or_else(|| std::env::var_os("CLOUDAGENT_WORKER_BIN"))
         .unwrap_or_else(default_worker_bin);
-    let data_root_dir = arg_value(args, "--data-dir")
-        .or_else(|| std::env::var_os("CLOUDAGENT_DATA_ROOT_DIR"));
+    let data_root_dir =
+        arg_value(args, "--data-dir").or_else(|| std::env::var_os("CLOUDAGENT_DATA_ROOT_DIR"));
 
     let listener = TcpListener::bind(&listen_address)
         .await
@@ -69,7 +72,9 @@ where
                 maybe_event = subscription.recv() => {
                     match maybe_event {
                         Ok(event) => {
-                            write_node_event(&mut writer, event, &runtime).await?
+                            if session.should_forward_event(&event) {
+                                write_node_event(&mut writer, event, &runtime).await?;
+                            }
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             *session.active_subscription_mut() = None;

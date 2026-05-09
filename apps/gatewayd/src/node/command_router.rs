@@ -1,5 +1,6 @@
 use crate::node::message_sync::{
-    sync_registry_from_message, write_app_server_message, write_jsonrpc_error, write_jsonrpc_response,
+    sync_registry_from_message, write_app_server_message, write_jsonrpc_error,
+    write_jsonrpc_response,
 };
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
@@ -71,8 +72,7 @@ where
     }
 
     let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
-    *session.active_subscription_mut() =
-        Some(runtime.workers().subscribe(&target_conversation).await?);
+    ensure_session_subscription(runtime, session, &target_conversation).await?;
     if let Some(request) = typed_request_from_command(&envelope.command, &envelope.request_id) {
         match envelope.command {
             AppClientCommand::RequestConversationStatus { .. } => {
@@ -158,18 +158,20 @@ where
             HubModeOnlyResponse::JsonRpc { request_id, error } => {
                 write_jsonrpc_error(writer, request_id, error).await?;
             }
-            HubModeOnlyResponse::Notification(_) => unreachable!("request path always returns jsonrpc"),
+            HubModeOnlyResponse::Notification(_) => {
+                unreachable!("request path always returns jsonrpc")
+            }
         }
         return Ok(Some(true));
     }
 
-    let Some(typed_request) = typed_request_from_command(&envelope.command, &envelope.request_id) else {
+    let Some(typed_request) = typed_request_from_command(&envelope.command, &envelope.request_id)
+    else {
         return Ok(None);
     };
 
     let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
-    *session.active_subscription_mut() =
-        Some(runtime.workers().subscribe(&target_conversation).await?);
+    ensure_session_subscription(runtime, session, &target_conversation).await?;
 
     let result = match &envelope.command {
         AppClientCommand::ListConversations => {
@@ -181,7 +183,8 @@ where
                 .request_json(&target_conversation, typed_request)
                 .await
                 .map_err(anyhow::Error::from)?;
-            sync_typed_read_registry(runtime, &envelope.command, &target_conversation, &value).await?;
+            sync_typed_read_registry(runtime, &envelope.command, &target_conversation, &value)
+                .await?;
             value
         }
     };
@@ -206,7 +209,7 @@ fn classify_command_error_for_request(message: String) -> JsonRpcErrorPayload {
 fn typed_request_from_command(
     command: &AppClientCommand,
     request_id: &RequestId,
- ) -> Option<JsonRpcRequest> {
+) -> Option<JsonRpcRequest> {
     let (method, params) = match command {
         AppClientCommand::ListConversations => ("conversation/list", serde_json::Value::Null),
         AppClientCommand::RequestConversationStatus { conversation_id } => (
@@ -283,7 +286,9 @@ async fn conversation_list_notification(
     active_conversation_id: &str,
     runtime: &NodeRuntime,
 ) -> Option<AppServerMessage> {
-    if !matches!(rpc, JsonRpcMessage::Notification(_)) || !matches!(command, AppClientCommand::ListConversations) {
+    if !matches!(rpc, JsonRpcMessage::Notification(_))
+        || !matches!(command, AppClientCommand::ListConversations)
+    {
         return None;
     }
     Some(AppServerMessage::Notification(
@@ -359,6 +364,16 @@ async fn sync_typed_read_registry(
     Ok(())
 }
 
+async fn ensure_session_subscription(
+    runtime: &NodeRuntime,
+    session: &mut NodeSessionState,
+    target_conversation: &str,
+) -> Result<()> {
+    *session.active_subscription_mut() =
+        Some(runtime.workers().subscribe(target_conversation).await?);
+    Ok(())
+}
+
 pub(crate) async fn target_conversation_id(
     session: &mut NodeSessionState,
     runtime: &NodeRuntime,
@@ -386,14 +401,18 @@ pub(crate) async fn target_conversation_id(
         }
         | AppClientCommand::ArchiveConversation { conversation_id }
         | AppClientCommand::DeleteConversation { conversation_id }
-        | AppClientCommand::SubscribeConversation { conversation_id }
-        | AppClientCommand::UnsubscribeConversation { conversation_id } => {
+        | AppClientCommand::SubscribeConversation { conversation_id } => {
             let mut registry = runtime.conversations().lock().await;
             registry.touch(conversation_id);
             if let AppClientCommand::SetConversationTitle { title, .. } = command {
                 registry.set_title(conversation_id, title.clone());
             }
             session.set_active_conversation_id(conversation_id.clone());
+            session.subscribe_conversation(conversation_id.clone());
+            conversation_id.clone()
+        }
+        AppClientCommand::UnsubscribeConversation { conversation_id } => {
+            session.unsubscribe_conversation(conversation_id);
             conversation_id.clone()
         }
         AppClientCommand::ListConversations
@@ -405,16 +424,20 @@ pub(crate) async fn target_conversation_id(
 
 #[cfg(test)]
 mod tests {
-    use super::{conversation_list_notification, read_conversation_list, target_conversation_id};
+    use super::{
+        conversation_list_notification, ensure_session_subscription, read_conversation_list,
+        target_conversation_id,
+    };
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
-    use crate::node::worker_manager::WorkerManager;
+    use crate::node::worker_manager::{NodeEvent, WorkerManager};
     use agent_protocol::JsonRpcNotification;
     use agent_protocol::{
         AppClientCommand, AppServerMessage, AppServerNotification, JsonRpcMessage, JsonRpcRequest,
         RequestId,
     };
     use std::ffi::OsString;
+    use tokio::sync::broadcast;
 
     #[test]
     fn list_conversations_routes_to_active_conversation() {
@@ -502,15 +525,14 @@ mod tests {
 
     #[test]
     fn hub_mode_only_commands_fail_explicitly_in_direct_mode() {
-        let message =
-            super::hub_mode_only_error_response(
-                &JsonRpcMessage::Notification(agent_protocol::JsonRpcNotification {
-                    method: "hub/node/list".to_string(),
-                    params: None,
-                }),
-                &AppClientCommand::ListOnlineNodes,
-            )
-            .expect("error response");
+        let message = super::hub_mode_only_error_response(
+            &JsonRpcMessage::Notification(agent_protocol::JsonRpcNotification {
+                method: "hub/node/list".to_string(),
+                params: None,
+            }),
+            &AppClientCommand::ListOnlineNodes,
+        )
+        .expect("error response");
         match message {
             super::HubModeOnlyResponse::Notification(AppServerMessage::Notification(
                 AppServerNotification::Error { message, .. },
@@ -553,5 +575,19 @@ mod tests {
         assert_eq!(request.id, RequestId::Integer(5));
         assert_eq!(request.method, "conversation/list");
         assert!(request.params.is_some());
+    }
+
+    #[tokio::test]
+    async fn ensure_session_subscription_replaces_stale_receiver() {
+        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+        let mut session = NodeSessionState::new("conversation-1");
+        let (_, stale_rx) = broadcast::channel::<NodeEvent>(1);
+        *session.active_subscription_mut() = Some(stale_rx);
+
+        ensure_session_subscription(&runtime, &mut session, "conversation-1")
+            .await
+            .expect("subscribe shared worker");
+
+        assert!(session.active_subscription_mut().is_some());
     }
 }

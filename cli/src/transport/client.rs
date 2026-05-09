@@ -131,14 +131,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::{connect_local_node_once, existing_node_looks_unhealthy, wait_for_service};
-    use agent_protocol::{ConversationHistoryResponse, ConversationStatusResponse, JsonRpcRequest, RequestId};
+    use agent_protocol::{
+        ConversationHistoryResponse, ConversationStatusResponse, JsonRpcRequest, RequestId,
+    };
     use anyhow::{Result, anyhow};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
-    use std::{ffi::OsString, path::PathBuf};
     use std::time::Duration;
+    use std::{ffi::OsString, path::PathBuf};
     use tokio::net::{TcpListener, TcpStream};
 
     #[tokio::test]
@@ -226,8 +228,16 @@ mod tests {
         let exe_dir = current_binary_dir();
         let gatewayd = exe_dir.join(exe_name("gatewayd"));
         let agentd = exe_dir.join(exe_name("agentd"));
-        assert!(gatewayd.exists(), "missing gatewayd binary at {}", gatewayd.display());
-        assert!(agentd.exists(), "missing agentd binary at {}", agentd.display());
+        assert!(
+            gatewayd.exists(),
+            "missing gatewayd binary at {}",
+            gatewayd.display()
+        );
+        assert!(
+            agentd.exists(),
+            "missing agentd binary at {}",
+            agentd.display()
+        );
 
         let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe listener");
         let addr = probe.local_addr().expect("probe local addr");
@@ -290,10 +300,7 @@ mod tests {
         let exe = std::env::current_exe().expect("current exe");
         let exe_dir = exe.parent().expect("exe parent");
         if exe_dir.file_name().is_some_and(|name| name == "deps") {
-            exe_dir
-                .parent()
-                .expect("debug dir parent")
-                .to_path_buf()
+            exe_dir.parent().expect("debug dir parent").to_path_buf()
         } else {
             exe_dir.to_path_buf()
         }

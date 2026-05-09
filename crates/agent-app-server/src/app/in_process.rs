@@ -60,13 +60,18 @@ pub struct InProcessServer;
 
 pub fn start_in_process(
     runtime: Arc<AgentHost>,
-    conversation_id: String,
+    conversation_id: Option<String>,
+    emit_all_conversations: bool,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) -> InProcessClientHandle {
     let (command_tx, mut command_rx) = mpsc::unbounded_channel::<ServerMessage>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<AppServerMessage>();
-    let state = Arc::new(Mutex::new(ServerState::new(conversation_id.clone())));
+    let initial_conversation_id = conversation_id.unwrap_or_else(|| "default".to_string());
+    let state = Arc::new(Mutex::new(ServerState::new(
+        initial_conversation_id.clone(),
+        emit_all_conversations,
+    )));
 
     let state_for_task = state.clone();
     tokio::spawn(async move {
@@ -88,7 +93,7 @@ pub fn start_in_process(
                     let should_mark_active = matches!(command, AppClientCommand::SubmitTurn(_));
                     let error_conversation_id = command_conversation_id
                         .clone()
-                        .unwrap_or_else(|| conversation_id.clone());
+                        .unwrap_or_else(|| initial_conversation_id.clone());
                     if handle_command(
                         runtime.clone(),
                         command,
@@ -108,7 +113,8 @@ pub fn start_in_process(
                         true
                     }) {
                     } else if let (Some(id), true) = (command_conversation_id, should_mark_active) {
-                        session_state::persist_active_conversation(&runtime, &id).await;
+                        session_state::persist_active_conversation(&runtime, &state_for_task, &id)
+                            .await;
                     }
                 }
                 ServerMessage::Shutdown { done } => {

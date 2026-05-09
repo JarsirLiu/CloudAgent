@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 
 pub(crate) struct ServerState {
     active_conversation_id: String,
+    emit_all_conversations: bool,
     subscriptions: ConversationSubscriptions,
     server_requests: ServerRequestCoordinator,
     turn_tasks_by_conversation: HashMap<String, Vec<JoinHandle<()>>>,
@@ -25,9 +26,10 @@ pub(crate) struct ServerState {
 }
 
 impl ServerState {
-    pub(crate) fn new(default_conversation_id: String) -> Self {
+    pub(crate) fn new(default_conversation_id: String, emit_all_conversations: bool) -> Self {
         Self {
             active_conversation_id: default_conversation_id.clone(),
+            emit_all_conversations,
             subscriptions: ConversationSubscriptions::new(default_conversation_id),
             server_requests: ServerRequestCoordinator::new(),
             turn_tasks_by_conversation: HashMap::new(),
@@ -84,12 +86,26 @@ impl ServerState {
         &self.active_conversation_id
     }
 
+    pub(crate) fn tracks_active_conversation(&self) -> bool {
+        !self.emit_all_conversations
+    }
+
     pub(crate) fn switch_active_conversation(&mut self, conversation_id: String) {
-        self.active_conversation_id = conversation_id;
+        if self.tracks_active_conversation() {
+            self.active_conversation_id = conversation_id;
+        }
+    }
+
+    pub(crate) fn notification_anchor_conversation_id<'a>(&'a self, fallback: &'a str) -> &'a str {
+        if self.tracks_active_conversation() {
+            self.active_conversation_id()
+        } else {
+            fallback
+        }
     }
 
     pub(crate) fn is_subscribed(&self, conversation_id: &str) -> bool {
-        self.subscriptions.is_subscribed(conversation_id)
+        self.emit_all_conversations || self.subscriptions.is_subscribed(conversation_id)
     }
 
     pub(crate) fn subscribe(&mut self, conversation_id: String) {
@@ -352,9 +368,12 @@ pub(crate) fn merge_active_turn(
             }
         }
         existing.items = merged_items;
-        existing.rollout_start_index =
-            existing.rollout_start_index.min(active_turn.rollout_start_index);
-        existing.rollout_end_index = existing.rollout_end_index.max(active_turn.rollout_end_index);
+        existing.rollout_start_index = existing
+            .rollout_start_index
+            .min(active_turn.rollout_start_index);
+        existing.rollout_end_index = existing
+            .rollout_end_index
+            .max(active_turn.rollout_end_index);
         if !matches!(
             existing.state,
             TurnState::Completed | TurnState::Failed | TurnState::Cancelled
@@ -369,6 +388,7 @@ pub(crate) fn merge_active_turn(
 #[cfg(test)]
 mod tests {
     use super::merge_active_turn;
+    use crate::routing::command_router::ServerState;
     use agent_core::{ConversationTurn, TranscriptItem, TurnState};
 
     #[test]
@@ -438,5 +458,18 @@ mod tests {
             rollout_start_index: 0,
             rollout_end_index: 0,
         }
+    }
+
+    #[test]
+    fn shared_worker_state_uses_fallback_notification_anchor() {
+        let mut state = ServerState::new("default".to_string(), true);
+        state.switch_active_conversation("conversation-1".to_string());
+
+        assert!(!state.tracks_active_conversation());
+        assert_eq!(state.active_conversation_id(), "default");
+        assert_eq!(
+            state.notification_anchor_conversation_id("conversation-1"),
+            "conversation-1"
+        );
     }
 }

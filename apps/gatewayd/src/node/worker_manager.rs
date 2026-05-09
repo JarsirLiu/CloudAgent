@@ -3,7 +3,6 @@ use agent_app_server_client::{
 };
 use agent_protocol::{AppClientCommand, JsonRpcRequest};
 use anyhow::{Context, Result, anyhow};
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
@@ -30,11 +29,11 @@ impl WorkerManager {
 
     pub(crate) async fn subscribe(
         &self,
-        conversation_id: &str,
+        _conversation_id: &str,
     ) -> Result<broadcast::Receiver<NodeEvent>> {
-        self.prune_workers().await?;
+        self.prune_worker().await?;
         let mut state = self.state.lock().await;
-        let handle = self.ensure_worker(&mut state, conversation_id).await?;
+        let handle = self.ensure_worker(&mut state).await?;
         Ok(handle.events_tx.subscribe())
     }
 
@@ -43,19 +42,15 @@ impl WorkerManager {
         conversation_id: &str,
         command: AppClientCommand,
     ) -> Result<()> {
-        self.prune_workers().await?;
+        self.prune_worker().await?;
         match self
             .send_command_inner(conversation_id, command.clone())
             .await
         {
             Ok(()) => Ok(()),
-            Err(error)
-                if error
-                    .to_string()
-                    .contains("worker command channel closed for") =>
-            {
+            Err(error) if error.to_string().contains("worker command channel closed") => {
                 let mut state = self.state.lock().await;
-                state.workers.remove(conversation_id);
+                state.worker = None;
                 drop(state);
                 self.send_command_inner(conversation_id, command).await
             }
@@ -68,15 +63,12 @@ impl WorkerManager {
         conversation_id: &str,
         request: JsonRpcRequest,
     ) -> Result<serde_json::Value, TypedRequestError> {
-        self.prune_workers()
+        self.prune_worker()
             .await
             .map_err(typed_request_transport_error(&request.method))?;
         let request_tx = {
-            let mut state = self
-                .state
-                .lock()
-                .await;
-            match self.ensure_worker(&mut state, conversation_id).await {
+            let mut state = self.state.lock().await;
+            match self.ensure_worker(&mut state).await {
                 Ok(handle) => {
                     handle.last_active_at = Instant::now();
                     handle.request_tx.clone()
@@ -99,13 +91,15 @@ impl WorkerManager {
                     format!("worker request channel closed for {conversation_id}"),
                 ),
             })?;
-        response_rx.await.map_err(|_| TypedRequestError::Transport {
-            method: "worker/request".to_string(),
-            source: std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                format!("worker response channel closed for {conversation_id}"),
-            ),
-        })?
+        response_rx
+            .await
+            .map_err(|_| TypedRequestError::Transport {
+                method: "worker/request".to_string(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    format!("worker response channel closed for {conversation_id}"),
+                ),
+            })?
     }
 
     async fn send_command_inner(
@@ -114,7 +108,7 @@ impl WorkerManager {
         command: AppClientCommand,
     ) -> Result<()> {
         let mut state = self.state.lock().await;
-        let handle = self.ensure_worker(&mut state, conversation_id).await?;
+        let handle = self.ensure_worker(&mut state).await?;
         handle.last_active_at = Instant::now();
         handle
             .command_tx
@@ -125,26 +119,24 @@ impl WorkerManager {
     async fn ensure_worker<'a>(
         &self,
         state: &'a mut WorkerManagerState,
-        conversation_id: &str,
     ) -> Result<&'a mut WorkerHandle> {
-        if !state.workers.contains_key(conversation_id) {
+        if state.worker.is_none() {
             let mut client = StdioAppServerClient::spawn(StdioClientConfig {
                 program: self.worker_program.clone(),
-                args: worker_stdio_args(conversation_id, self.data_root_dir.clone()),
+                args: worker_stdio_args(self.data_root_dir.clone()),
             })
             .await
-            .with_context(|| format!("failed to start worker for {conversation_id}"))?;
+            .context("failed to start shared worker")?;
             let (command_tx, mut command_rx) = mpsc::unbounded_channel();
             let (request_tx, mut request_rx) = mpsc::unbounded_channel::<WorkerTypedRequest>();
-            let (events_tx, _) = broadcast::channel(128);
-            let conversation_id_owned = conversation_id.to_string();
+            let (events_tx, _) = broadcast::channel(256);
             let events_tx_for_worker = events_tx.clone();
             let worker = tokio::spawn(async move {
                 loop {
                     tokio::select! {
                         maybe_request = request_rx.recv() => {
                             match maybe_request {
-                                Some(WorkerTypedRequest { request, response_tx }) => {
+                                Some(WorkerTypedRequest { request, response_tx, .. }) => {
                                     let response = client.request_typed::<serde_json::Value>(request).await;
                                     let _ = response_tx.send(response);
                                 }
@@ -169,14 +161,14 @@ impl WorkerManager {
                                 }
                                 Some(AppServerEvent::Lagged { skipped }) => {
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
-                                        conversation_id: conversation_id_owned.clone(),
-                                        message: format!("worker event channel lagged; skipped {skipped} events"),
+                                        conversation_id: "default".to_string(),
+                                        message: format!("shared worker event channel lagged; skipped {skipped} events"),
                                         is_error: false,
                                     });
                                 }
                                 Some(AppServerEvent::Disconnected { message }) => {
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
-                                        conversation_id: conversation_id_owned.clone(),
+                                        conversation_id: "default".to_string(),
                                         message: normalize_worker_disconnect_message(&message),
                                         is_error: true,
                                     });
@@ -184,9 +176,9 @@ impl WorkerManager {
                                 }
                                 None => {
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
-                                        conversation_id: conversation_id_owned.clone(),
+                                        conversation_id: "default".to_string(),
                                         message: format!(
-                                            "{ERR_TRANSPORT_CLOSED_PREFIX} worker event stream ended unexpectedly"
+                                            "{ERR_TRANSPORT_CLOSED_PREFIX} shared worker event stream ended unexpectedly"
                                         ),
                                         is_error: true,
                                     });
@@ -197,49 +189,39 @@ impl WorkerManager {
                     }
                 }
             });
-            state.workers.insert(
-                conversation_id.to_string(),
-                WorkerHandle {
-                    command_tx,
-                    request_tx,
-                    events_tx,
-                    worker,
-                    last_active_at: Instant::now(),
-                },
-            );
+            state.worker = Some(WorkerHandle {
+                command_tx,
+                request_tx,
+                events_tx,
+                worker,
+                last_active_at: Instant::now(),
+            });
         }
         state
-            .workers
-            .get_mut(conversation_id)
-            .ok_or_else(|| anyhow!("worker handle missing for {conversation_id}"))
+            .worker
+            .as_mut()
+            .ok_or_else(|| anyhow!("shared worker handle missing"))
     }
 
-    async fn prune_workers(&self) -> Result<()> {
-        self.prune_workers_at(Instant::now()).await
+    async fn prune_worker(&self) -> Result<()> {
+        self.prune_worker_at(Instant::now()).await
     }
 
-    async fn prune_workers_at(&self, now: Instant) -> Result<()> {
+    async fn prune_worker_at(&self, now: Instant) -> Result<()> {
         let evicted = {
             let mut state = self.state.lock().await;
-            let evicted: Vec<String> = state
-                .workers
-                .iter()
-                .filter(|(_, handle)| should_evict_worker(handle, now))
-                .map(|(conversation_id, _)| conversation_id.to_string())
-                .collect();
-
-            evicted
-                .into_iter()
-                .filter_map(|conversation_id| {
-                    state
-                        .workers
-                        .remove(&conversation_id)
-                        .map(|handle| (conversation_id, handle))
-                })
-                .collect::<Vec<_>>()
+            if state
+                .worker
+                .as_ref()
+                .is_some_and(|handle| should_evict_worker(handle, now))
+            {
+                state.worker.take()
+            } else {
+                None
+            }
         };
 
-        for (_, handle) in evicted {
+        if let Some(handle) = evicted {
             drop(handle.command_tx);
             handle.worker.await??;
         }
@@ -249,7 +231,7 @@ impl WorkerManager {
 
 #[derive(Default)]
 struct WorkerManagerState {
-    workers: HashMap<String, WorkerHandle>,
+    worker: Option<WorkerHandle>,
 }
 
 #[derive(Clone, Debug)]
@@ -293,18 +275,14 @@ fn should_evict_worker(handle: &WorkerHandle, now: Instant) -> bool {
 fn normalize_worker_disconnect_message(message: &str) -> String {
     match message.trim() {
         "stdio app server closed" => {
-            format!("{ERR_TRANSPORT_CLOSED_PREFIX} worker app server closed unexpectedly")
+            format!("{ERR_TRANSPORT_CLOSED_PREFIX} shared worker app server closed unexpectedly")
         }
         other => format!("{ERR_TRANSPORT_CLOSED_PREFIX} {other}"),
     }
 }
 
-fn worker_stdio_args(conversation_id: &str, data_root_dir: Option<OsString>) -> Vec<OsString> {
-    let mut args = vec![
-        OsString::from("app-server-stdio"),
-        OsString::from("--conversation"),
-        OsString::from(conversation_id),
-    ];
+fn worker_stdio_args(data_root_dir: Option<OsString>) -> Vec<OsString> {
+    let mut args = vec![OsString::from("app-server-stdio")];
     if let Some(data_root_dir) = data_root_dir {
         args.push(OsString::from("--data-dir"));
         args.push(data_root_dir);
@@ -324,25 +302,19 @@ mod tests {
     use tokio::time::Instant;
 
     #[test]
-    fn builds_worker_stdio_arguments() {
+    fn builds_shared_worker_stdio_arguments() {
         assert_eq!(
-            worker_stdio_args("conversation-42", None),
-            vec![
-                OsString::from("app-server-stdio"),
-                OsString::from("--conversation"),
-                OsString::from("conversation-42"),
-            ]
+            worker_stdio_args(None),
+            vec![OsString::from("app-server-stdio"),]
         );
     }
 
     #[test]
     fn worker_stdio_arguments_include_data_root_when_present() {
         assert_eq!(
-            worker_stdio_args("conversation-42", Some(OsString::from("D:\\cloudagent-data"))),
+            worker_stdio_args(Some(OsString::from("D:\\cloudagent-data"))),
             vec![
                 OsString::from("app-server-stdio"),
-                OsString::from("--conversation"),
-                OsString::from("conversation-42"),
                 OsString::from("--data-dir"),
                 OsString::from("D:\\cloudagent-data"),
             ]
@@ -353,7 +325,7 @@ mod tests {
     fn normalizes_worker_disconnect_messages() {
         assert_eq!(
             normalize_worker_disconnect_message("stdio app server closed"),
-            "ERR_TRANSPORT_CLOSED: worker app server closed unexpectedly"
+            "ERR_TRANSPORT_CLOSED: shared worker app server closed unexpectedly"
         );
         assert_eq!(
             normalize_worker_disconnect_message("local node closed"),
@@ -362,7 +334,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prune_finished_workers_removes_completed_handles() -> Result<()> {
+    async fn prune_finished_worker_removes_completed_handle() -> Result<()> {
         let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
@@ -370,26 +342,23 @@ mod tests {
         {
             let mut state = manager.state.lock().await;
             let (events_tx, _) = broadcast::channel(8);
-            state.workers.insert(
-                "conversation-1".to_string(),
-                WorkerHandle {
-                    command_tx: tx,
-                    request_tx: mpsc::unbounded_channel().0,
-                    events_tx,
-                    worker,
-                    last_active_at: Instant::now(),
-                },
-            );
+            state.worker = Some(WorkerHandle {
+                command_tx: tx,
+                request_tx: mpsc::unbounded_channel().0,
+                events_tx,
+                worker,
+                last_active_at: Instant::now(),
+            });
         }
 
         tokio::task::yield_now().await;
-        manager.prune_workers().await?;
-        assert!(manager.state.lock().await.workers.is_empty());
+        manager.prune_worker().await?;
+        assert!(manager.state.lock().await.worker.is_none());
         Ok(())
     }
 
     #[tokio::test]
-    async fn subscribe_receives_broadcast_events_from_existing_worker() -> Result<()> {
+    async fn subscribe_receives_broadcast_events_from_existing_shared_worker() -> Result<()> {
         let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
@@ -401,21 +370,18 @@ mod tests {
         let (events_tx, _) = broadcast::channel(8);
         {
             let mut state = manager.state.lock().await;
-            state.workers.insert(
-                "conversation-1".to_string(),
-                WorkerHandle {
-                    command_tx: tx,
-                    request_tx: mpsc::unbounded_channel().0,
-                    events_tx: events_tx.clone(),
-                    worker,
-                    last_active_at: Instant::now(),
-                },
-            );
+            state.worker = Some(WorkerHandle {
+                command_tx: tx,
+                request_tx: mpsc::unbounded_channel().0,
+                events_tx: events_tx.clone(),
+                worker,
+                last_active_at: Instant::now(),
+            });
         }
 
         let mut receiver = manager.subscribe("conversation-1").await?;
         let _ = events_tx.send(NodeEvent::Diagnostic {
-            conversation_id: "conversation-1".to_string(),
+            conversation_id: "default".to_string(),
             message: "hello".to_string(),
             is_error: false,
         });
@@ -426,7 +392,7 @@ mod tests {
                 message,
                 is_error,
             } => {
-                assert_eq!(conversation_id, "conversation-1");
+                assert_eq!(conversation_id, "default");
                 assert_eq!(message, "hello");
                 assert!(!is_error);
             }
@@ -436,7 +402,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prune_workers_evicts_idle_handles() -> Result<()> {
+    async fn prune_worker_evicts_idle_handle() -> Result<()> {
         let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let worker = tokio::spawn(async move {
@@ -446,25 +412,22 @@ mod tests {
         {
             let mut state = manager.state.lock().await;
             let (events_tx, _) = broadcast::channel(8);
-            state.workers.insert(
-                "conversation-1".to_string(),
-                WorkerHandle {
-                    command_tx: tx,
-                    request_tx: mpsc::unbounded_channel().0,
-                    events_tx,
-                    worker,
-                    last_active_at: Instant::now() - IDLE_WORKER_TTL,
-                },
-            );
+            state.worker = Some(WorkerHandle {
+                command_tx: tx,
+                request_tx: mpsc::unbounded_channel().0,
+                events_tx,
+                worker,
+                last_active_at: Instant::now() - IDLE_WORKER_TTL,
+            });
         }
 
-        manager.prune_workers_at(Instant::now()).await?;
-        assert!(manager.state.lock().await.workers.is_empty());
+        manager.prune_worker_at(Instant::now()).await?;
+        assert!(manager.state.lock().await.worker.is_none());
         Ok(())
     }
 
     #[tokio::test]
-    async fn prune_workers_keeps_recent_handles() -> Result<()> {
+    async fn prune_worker_keeps_recent_handle() -> Result<()> {
         let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
@@ -476,29 +439,19 @@ mod tests {
         {
             let mut state = manager.state.lock().await;
             let (events_tx, _) = broadcast::channel(8);
-            state.workers.insert(
-                "conversation-1".to_string(),
-                WorkerHandle {
-                    command_tx: tx,
-                    request_tx: mpsc::unbounded_channel().0,
-                    events_tx,
-                    worker,
-                    last_active_at: Instant::now(),
-                },
-            );
-            let handle = state.workers.get("conversation-1").expect("worker handle");
+            state.worker = Some(WorkerHandle {
+                command_tx: tx,
+                request_tx: mpsc::unbounded_channel().0,
+                events_tx,
+                worker,
+                last_active_at: Instant::now(),
+            });
+            let handle = state.worker.as_ref().expect("worker handle");
             assert!(!should_evict_worker(handle, Instant::now()));
         }
 
-        manager.prune_workers_at(Instant::now()).await?;
-        assert!(
-            manager
-                .state
-                .lock()
-                .await
-                .workers
-                .contains_key("conversation-1")
-        );
+        manager.prune_worker_at(Instant::now()).await?;
+        assert!(manager.state.lock().await.worker.is_some());
         Ok(())
     }
 }

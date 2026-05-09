@@ -33,7 +33,8 @@ impl InProcessAppServerClient {
     pub fn start(config: InProcessClientConfig) -> Self {
         let handle = start_in_process(
             config.runtime,
-            config.conversation_id,
+            Some(config.conversation_id),
+            false,
             config.auto_approve,
             config.auto_approve_reason,
         );

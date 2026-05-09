@@ -17,16 +17,18 @@ pub(crate) async fn list_conversations(
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
 ) -> Result<()> {
-    let active_session_id = {
+    let anchor_conversation_id = {
         let state = state.lock().await;
-        state.active_conversation_id().to_string()
+        state
+            .notification_anchor_conversation_id("default")
+            .to_string()
     };
     let conversations = runtime.list_conversations().await?;
     send_notification(
         event_tx,
         state,
         AppServerNotification::ConversationList {
-            conversation_id: active_session_id,
+            conversation_id: anchor_conversation_id,
             conversations,
         },
     )
@@ -79,7 +81,9 @@ pub(crate) async fn read_conversation_history(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<ConversationHistoryResponse> {
-    let _ = runtime.ensure_conversation_persisted(&conversation_id).await?;
+    let _ = runtime
+        .ensure_conversation_persisted(&conversation_id)
+        .await?;
     let active_listener = {
         let state = state.lock().await;
         state.active_listener(&conversation_id)
@@ -120,7 +124,9 @@ pub(crate) async fn read_conversation_status(
     _state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<ConversationStatusResponse> {
-    let _ = runtime.ensure_conversation_persisted(&conversation_id).await?;
+    let _ = runtime
+        .ensure_conversation_persisted(&conversation_id)
+        .await?;
     Ok(ConversationStatusResponse {
         snapshot: runtime.conversation_status(&conversation_id).await?,
     })
@@ -161,7 +167,9 @@ pub(crate) async fn read_conversation_history_page(
     before_turn_id: Option<String>,
     limit: usize,
 ) -> Result<ConversationHistoryPageResponse> {
-    let _ = runtime.ensure_conversation_persisted(&conversation_id).await?;
+    let _ = runtime
+        .ensure_conversation_persisted(&conversation_id)
+        .await?;
     let (turns, has_more, next_before_turn_id) = runtime
         .build_turns_page_from_rollout(&conversation_id, before_turn_id.as_deref(), limit)
         .await?;
@@ -212,7 +220,7 @@ pub(crate) async fn switch_conversation(
     conversation_id: String,
 ) -> Result<()> {
     session_state::apply_active_conversation(state, conversation_id.clone()).await;
-    session_state::persist_active_conversation(runtime, &conversation_id).await;
+    session_state::persist_active_conversation(runtime, state, &conversation_id).await;
     publish_switched_conversation_state(runtime, event_tx, state, &conversation_id).await?;
     let conversations = runtime.list_conversations().await?;
     send_notification(
@@ -241,7 +249,7 @@ pub(crate) async fn archive_conversation(
     let active_session_id = transition.active_session_id;
     let switched_active = transition.switched_active;
     if switched_active {
-        session_state::persist_active_conversation(runtime, &active_session_id).await;
+        session_state::persist_active_conversation(runtime, state, &active_session_id).await;
         publish_switched_conversation_state(runtime, event_tx, state, &active_session_id).await?;
     }
     let conversations = runtime.list_conversations().await?;
@@ -317,19 +325,21 @@ pub(crate) async fn delete_conversation(
 ) -> Result<()> {
     let was_active = {
         let guard = state.lock().await;
-        guard.active_conversation_id() == conversation_id
+        guard.tracks_active_conversation() && guard.active_conversation_id() == conversation_id
     };
     runtime.reset_conversation(&conversation_id).await?;
     if was_active {
         let next_conversation_id = runtime.create_draft_conversation().await?;
         session_state::apply_active_conversation(state, next_conversation_id.clone()).await;
-        session_state::persist_active_conversation(runtime, &next_conversation_id).await;
+        session_state::persist_active_conversation(runtime, state, &next_conversation_id).await;
         publish_switched_conversation_state(runtime, event_tx, state, &next_conversation_id)
             .await?;
     }
     let active_session_id = {
         let guard = state.lock().await;
-        guard.active_conversation_id().to_string()
+        guard
+            .notification_anchor_conversation_id(&conversation_id)
+            .to_string()
     };
     let conversations = runtime.list_conversations().await?;
     send_notification(
@@ -362,7 +372,9 @@ pub(crate) async fn report_hub_mode_only_command(
 ) {
     let conversation_id = {
         let guard = state.lock().await;
-        guard.active_conversation_id().to_string()
+        guard
+            .notification_anchor_conversation_id("default")
+            .to_string()
     };
     send_notification(
         event_tx,

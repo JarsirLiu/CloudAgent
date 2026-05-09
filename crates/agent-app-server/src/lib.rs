@@ -22,11 +22,16 @@ pub use app::in_process::{
 
 pub async fn run_stdio_server(
     runtime: Arc<AgentHost>,
-    conversation_id: String,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) -> Result<()> {
-    let mut client = start_in_process(runtime.clone(), conversation_id.clone(), auto_approve, auto_approve_reason);
+    let mut client = start_in_process(
+        runtime.clone(),
+        None,
+        true,
+        auto_approve,
+        auto_approve_reason,
+    );
     let sender = client.sender();
     let state = client.state();
     let (command_tx, mut command_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
@@ -46,7 +51,10 @@ pub async fn run_stdio_server(
                 *next
             });
             if event_tx_for_events
-                .send(JsonRpcMessage::from(AppServerMessageEnvelope { message, event_seq }))
+                .send(JsonRpcMessage::from(AppServerMessageEnvelope {
+                    message,
+                    event_seq,
+                }))
                 .is_err()
             {
                 break;
@@ -61,8 +69,9 @@ pub async fn run_stdio_server(
                     handle_stdio_request(&runtime, &sender, &event_tx, &state, request).await?;
                 }
                 JsonRpcMessage::Notification(notification) => {
-                    let envelope =
-                        AppClientCommandEnvelope::try_from(JsonRpcMessage::Notification(notification))?;
+                    let envelope = AppClientCommandEnvelope::try_from(
+                        JsonRpcMessage::Notification(notification),
+                    )?;
                     sender.send_command(envelope.command)?;
                 }
                 JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {}
@@ -106,7 +115,8 @@ async fn handle_stdio_request(
         "conversation/history" => {
             let conversation_id = required_string_param(&request, "conversation_id")?;
             let result =
-                session::service::read_conversation_history(runtime, state, conversation_id).await?;
+                session::service::read_conversation_history(runtime, state, conversation_id)
+                    .await?;
             JsonRpcMessage::Response(JsonRpcResponse {
                 id: request_id,
                 result: serde_json::to_value(result)?,

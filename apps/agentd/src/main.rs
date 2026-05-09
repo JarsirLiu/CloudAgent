@@ -24,9 +24,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some("app-server-stdio") => {
-            let conversation_id =
-                parse_conversation_id(&args).unwrap_or(runtime.ensure_active_conversation().await?);
-            run_stdio_server(runtime, conversation_id, false, None).await?;
+            run_stdio_server(runtime, false, None).await?;
             return Ok(());
         }
         _ => {}
@@ -54,12 +52,6 @@ async fn run_console_mode(runtime: Arc<AgentHost>) -> Result<()> {
         bootstrap: ConsoleBootstrap::Embedded { runtime },
     })
     .await
-}
-
-fn parse_conversation_id(args: &[String]) -> Option<String> {
-    args.windows(2)
-        .find(|pair| pair[0] == "--conversation")
-        .map(|pair| pair[1].clone())
 }
 
 fn apply_data_dir_override(config: &mut AgentConfig, args: &[String]) {

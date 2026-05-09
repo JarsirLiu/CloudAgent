@@ -6,8 +6,8 @@ use agent_core::ServerRequestDecision;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
     ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
-    JsonRpcErrorPayload, JsonRpcRequest, NotificationDelivery, OnlineNodeListResponse,
-    RequestId, SelectTargetNodeResponse, UserTurnInput, classify_notification,
+    JsonRpcErrorPayload, JsonRpcRequest, NotificationDelivery, OnlineNodeListResponse, RequestId,
+    SelectTargetNodeResponse, UserTurnInput, classify_notification,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;
@@ -130,7 +130,9 @@ impl AppServerClient {
     pub async fn request_conversation_list_typed(
         &self,
     ) -> Result<ConversationListResponse, TypedRequestError> {
-        self.request_handle().request_conversation_list_typed().await
+        self.request_handle()
+            .request_conversation_list_typed()
+            .await
     }
 
     pub async fn request_conversation_status_typed(
@@ -172,7 +174,9 @@ impl AppServerClient {
         &self,
         node_id: impl Into<String>,
     ) -> Result<SelectTargetNodeResponse, TypedRequestError> {
-        self.request_handle().select_target_node_typed(node_id).await
+        self.request_handle()
+            .select_target_node_typed(node_id)
+            .await
     }
 
     pub fn submit_turn(&self, input: UserTurnInput) -> Result<()> {

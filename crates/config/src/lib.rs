@@ -421,12 +421,10 @@ impl AgentConfig {
             }
         }
         if !conversation_store_overridden {
-            self.runtime.conversation_store_dir =
-                self.runtime.data_root_dir.join("conversations");
+            self.runtime.conversation_store_dir = self.runtime.data_root_dir.join("conversations");
         }
         if !memory_root_overridden {
-            self.runtime.memory.root_dir =
-                self.runtime.data_root_dir.join("state").join("memory");
+            self.runtime.memory.root_dir = self.runtime.data_root_dir.join("state").join("memory");
         }
 
         if let Some(tools) = partial.tools {
@@ -505,7 +503,8 @@ impl AgentConfig {
                 absolutize_path(&self.workspace_root, PathBuf::from(value));
         }
         if let Ok(value) = env::var("CLOUDAGENT_DATA_ROOT_DIR") {
-            self.runtime.data_root_dir = absolutize_path(&self.workspace_root, PathBuf::from(value));
+            self.runtime.data_root_dir =
+                absolutize_path(&self.workspace_root, PathBuf::from(value));
         }
         if let Ok(value) = env::var("CLOUDAGENT_MODEL_CONTEXT_WINDOW")
             && let Ok(parsed) = value.parse::<u64>()
@@ -639,12 +638,10 @@ impl AgentConfig {
             self.runtime.context_budget_safety_buffer_tokens = parsed.max(512);
         }
         if !conversation_store_overridden {
-            self.runtime.conversation_store_dir =
-                self.runtime.data_root_dir.join("conversations");
+            self.runtime.conversation_store_dir = self.runtime.data_root_dir.join("conversations");
         }
         if !memory_root_overridden {
-            self.runtime.memory.root_dir =
-                self.runtime.data_root_dir.join("state").join("memory");
+            self.runtime.memory.root_dir = self.runtime.data_root_dir.join("state").join("memory");
         }
     }
 

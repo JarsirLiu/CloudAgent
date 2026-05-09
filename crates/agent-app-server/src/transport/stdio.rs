@@ -37,14 +37,14 @@ where
             && let (Some(conversation_id), Some(event_seq)) =
                 (event.message.conversation_id(), event.event_seq)
         {
-                let last_seq = last_seq_by_conversation
-                    .entry(conversation_id.to_string())
-                    .or_insert(0);
-                if event_seq <= *last_seq {
-                    continue;
-                }
-                *last_seq = event_seq;
+            let last_seq = last_seq_by_conversation
+                .entry(conversation_id.to_string())
+                .or_insert(0);
+            if event_seq <= *last_seq {
+                continue;
             }
+            *last_seq = event_seq;
+        }
         let payload = serde_json::to_string(&message)?;
         writer.write_all(payload.as_bytes()).await?;
         writer.write_all(b"\n").await?;

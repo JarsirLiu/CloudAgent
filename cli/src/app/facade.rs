@@ -48,6 +48,9 @@ async fn load_initial_history(
         agent_core::ConversationStatus::Busy => agent_protocol::FrontendMode::Running,
         agent_core::ConversationStatus::Idle => agent_protocol::FrontendMode::Idle,
     };
-    crate::app::conversation::actions::execute_server_action(app, ServerAction::SetFrontendMode(mode));
+    crate::app::conversation::actions::execute_server_action(
+        app,
+        ServerAction::SetFrontendMode(mode),
+    );
     Ok(())
 }

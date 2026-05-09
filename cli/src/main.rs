@@ -336,8 +336,8 @@ fn display_version() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        RequestedConsoleTarget, apply_data_dir_cli_override, normalize_cli_args, requested_console_target,
-        resolve_console_target,
+        RequestedConsoleTarget, apply_data_dir_cli_override, normalize_cli_args,
+        requested_console_target, resolve_console_target,
     };
     use cli::{AppServerTarget, ConsoleBootstrap};
     use config::AgentConfig;
@@ -372,7 +372,10 @@ mod tests {
 
         apply_data_dir_cli_override(
             &mut config,
-            &[OsString::from("--data-dir"), OsString::from(".cloudagent-dev")],
+            &[
+                OsString::from("--data-dir"),
+                OsString::from(".cloudagent-dev"),
+            ],
         );
 
         assert_eq!(
@@ -385,7 +388,10 @@ mod tests {
         );
         assert_eq!(
             config.runtime.memory.root_dir,
-            workspace.join(".cloudagent-dev").join("state").join("memory")
+            workspace
+                .join(".cloudagent-dev")
+                .join("state")
+                .join("memory")
         );
     }
 
@@ -420,9 +426,14 @@ mod tests {
     fn local_node_target_maps_to_node_bootstrap() {
         let args = vec![OsString::from("--target"), OsString::from("local-node")];
         let requested = requested_console_target(&args, false).expect("requested target");
-        let (target_label, bootstrap) =
-            resolve_console_target(&args, "local-conversation", None, requested, PathBuf::from("D:\\learn\\gifti\\cloudagent\\data").as_path())
-                .expect("local-node target should resolve");
+        let (target_label, bootstrap) = resolve_console_target(
+            &args,
+            "local-conversation",
+            None,
+            requested,
+            PathBuf::from("D:\\learn\\gifti\\cloudagent\\data").as_path(),
+        )
+        .expect("local-node target should resolve");
 
         assert_eq!(target_label, "local-node");
         match bootstrap {
@@ -460,7 +471,13 @@ mod tests {
             OsString::from("node-a"),
         ];
         let requested = requested_console_target(&args, false).expect("requested target");
-        match resolve_console_target(&args, "local-conversation", None, requested, PathBuf::from("D:\\learn\\gifti\\cloudagent\\data").as_path()) {
+        match resolve_console_target(
+            &args,
+            "local-conversation",
+            None,
+            requested,
+            PathBuf::from("D:\\learn\\gifti\\cloudagent\\data").as_path(),
+        ) {
             Ok(_) => panic!("hub-node target should stay reserved"),
             Err(err) => assert!(
                 err.to_string()
