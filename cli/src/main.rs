@@ -11,6 +11,12 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+enum RequestedConsoleTarget {
+    Public(AppServerTarget),
+    Embedded,
+    WorkerStdio,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -39,12 +45,13 @@ async fn main() -> Result<()> {
         config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
         config.cli.permission_mode = settings.permission_mode;
     }
+    let allow_internal_targets = internal_targets_enabled();
+    let requested_target = requested_console_target(&args, allow_internal_targets)?;
     let conversation_store_dir = config.runtime.conversation_store_dir.clone();
     let initial_filter_enabled = config.cli.pre_llm_filter_enabled;
     let initial_permission_mode = config.cli.permission_mode.clone();
-    let requested_target = requested_target_name(&args);
     let conversation_id = resolve_initial_conversation_id(&args, &conversation_store_dir).await?;
-    let runtime = if requested_target == "embedded" {
+    let runtime = if matches!(requested_target, RequestedConsoleTarget::Embedded) {
         let runtime = build_runtime(config)?;
         runtime.run_startup_retention_cleanup().await;
         Some(runtime)
@@ -52,7 +59,7 @@ async fn main() -> Result<()> {
         None
     };
     let (target_label, bootstrap) =
-        resolve_console_target(&args, &conversation_id, runtime.as_ref())?;
+        resolve_console_target(&args, &conversation_id, runtime.as_ref(), requested_target)?;
 
     run_console(ConsoleConfig {
         conversation_id: conversation_id.clone(),
@@ -149,6 +156,35 @@ fn requested_target_name(args: &[OsString]) -> String {
         .unwrap_or_else(|| "local-node".to_string())
 }
 
+fn requested_console_target(
+    args: &[OsString],
+    allow_internal_targets: bool,
+) -> Result<RequestedConsoleTarget> {
+    let target = requested_target_name(args);
+
+    match target.as_str() {
+        "local-node" => Ok(RequestedConsoleTarget::Public(AppServerTarget::LocalNode)),
+        "hub-node" => {
+            let node_id = arg_value(args, "--hub-node-id")
+                .or_else(|| std::env::var_os("CLOUDAGENT_HUB_NODE_ID"))
+                .and_then(|value| value.into_string().ok())
+                .ok_or_else(|| anyhow::anyhow!("hub-node target requires --hub-node-id"))?;
+            Ok(RequestedConsoleTarget::Public(AppServerTarget::HubNode {
+                node_id,
+            }))
+        }
+        "embedded" if allow_internal_targets => Ok(RequestedConsoleTarget::Embedded),
+        "worker-stdio" if allow_internal_targets => Ok(RequestedConsoleTarget::WorkerStdio),
+        "embedded" => {
+            bail!("target 'embedded' is internal-only and not part of the supported user path")
+        }
+        "worker-stdio" => {
+            bail!("target 'worker-stdio' is internal-only and not part of the supported user path")
+        }
+        other => bail!("unknown target '{other}'. supported targets: local-node, hub-node"),
+    }
+}
+
 async fn resolve_initial_conversation_id(
     args: &[OsString],
     conversation_store_dir: &std::path::Path,
@@ -185,20 +221,10 @@ fn resolve_console_target(
     args: &[OsString],
     conversation_id: &str,
     runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
+    requested_target: RequestedConsoleTarget,
 ) -> Result<(String, ConsoleBootstrap)> {
-    resolve_console_target_with_mode(args, conversation_id, runtime, internal_targets_enabled())
-}
-
-fn resolve_console_target_with_mode(
-    args: &[OsString],
-    conversation_id: &str,
-    runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
-    allow_internal_targets: bool,
-) -> Result<(String, ConsoleBootstrap)> {
-    let target = requested_target_name(args);
-
-    match target.as_str() {
-        "local-node" => {
+    match requested_target {
+        RequestedConsoleTarget::Public(AppServerTarget::LocalNode) => {
             let address = arg_value(args, "--node-addr")
                 .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
                 .and_then(|value| value.into_string().ok())
@@ -219,21 +245,10 @@ fn resolve_console_target_with_mode(
                 },
             ))
         }
-        "embedded" if !allow_internal_targets => {
-            bail!("target 'embedded' is internal-only and not part of the supported user path")
-        }
-        "worker-stdio" if !allow_internal_targets => {
-            bail!("target 'worker-stdio' is internal-only and not part of the supported user path")
-        }
-        "hub-node" => {
-            let node_id = arg_value(args, "--hub-node-id")
-                .or_else(|| std::env::var_os("CLOUDAGENT_HUB_NODE_ID"))
-                .and_then(|value| value.into_string().ok())
-                .ok_or_else(|| anyhow::anyhow!("hub-node target requires --hub-node-id"))?;
-            let _target = AppServerTarget::HubNode { node_id };
+        RequestedConsoleTarget::Public(AppServerTarget::HubNode { node_id: _ }) => {
             bail!("target 'hub-node' is reserved for hub mode and is not implemented yet");
         }
-        "embedded" => Ok((
+        RequestedConsoleTarget::Embedded => Ok((
             "embedded".to_string(),
             ConsoleBootstrap::Embedded {
                 runtime: runtime
@@ -241,7 +256,7 @@ fn resolve_console_target_with_mode(
                     .ok_or_else(|| anyhow::anyhow!("embedded target requires a local runtime"))?,
             },
         )),
-        "worker-stdio" => {
+        RequestedConsoleTarget::WorkerStdio => {
             let program = arg_value(args, "--app-server-bin")
                 .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_BIN"))
                 .unwrap_or_else(|| {
@@ -268,7 +283,6 @@ fn resolve_console_target_with_mode(
                 },
             ))
         }
-        other => bail!("unknown target '{other}'. supported targets: local-node, hub-node"),
     }
 }
 
@@ -330,8 +344,11 @@ fn display_version() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_cli_args, resolve_console_target, resolve_console_target_with_mode};
-    use cli::ConsoleBootstrap;
+    use super::{
+        RequestedConsoleTarget, normalize_cli_args, requested_console_target,
+        resolve_console_target,
+    };
+    use cli::{AppServerTarget, ConsoleBootstrap};
     use std::ffi::OsString;
 
     #[test]
@@ -392,8 +409,9 @@ mod tests {
             OsString::from("--conversation"),
             OsString::from("remote-conversation"),
         ];
+        let requested = requested_console_target(&args, true).expect("requested target");
         let (target_label, bootstrap) =
-            resolve_console_target_with_mode(&args, "local-conversation", None, true)
+            resolve_console_target(&args, "local-conversation", None, requested)
                 .expect("worker-stdio target should resolve");
 
         assert_eq!(target_label, "worker-stdio");
@@ -419,8 +437,10 @@ mod tests {
     #[test]
     fn local_node_target_maps_to_node_bootstrap() {
         let args = vec![OsString::from("--target"), OsString::from("local-node")];
-        let (target_label, bootstrap) = resolve_console_target(&args, "local-conversation", None)
-            .expect("local-node target should resolve");
+        let requested = requested_console_target(&args, false).expect("requested target");
+        let (target_label, bootstrap) =
+            resolve_console_target(&args, "local-conversation", None, requested)
+                .expect("local-node target should resolve");
 
         assert_eq!(target_label, "local-node");
         match bootstrap {
@@ -455,7 +475,8 @@ mod tests {
             OsString::from("--hub-node-id"),
             OsString::from("node-a"),
         ];
-        match resolve_console_target(&args, "local-conversation", None) {
+        let requested = requested_console_target(&args, false).expect("requested target");
+        match resolve_console_target(&args, "local-conversation", None, requested) {
             Ok(_) => panic!("hub-node target should stay reserved"),
             Err(err) => assert!(
                 err.to_string()
@@ -467,10 +488,39 @@ mod tests {
     #[test]
     fn embedded_target_is_rejected_without_internal_flag() {
         let args = vec![OsString::from("--target"), OsString::from("embedded")];
-        match resolve_console_target(&args, "local-conversation", None) {
+        match requested_console_target(&args, false) {
             Ok(_) => panic!("embedded should be internal-only"),
             Err(err) => assert!(err.to_string().contains("internal-only")),
         }
+    }
+
+    #[test]
+    fn public_target_parser_only_exposes_local_and_hub() {
+        let local = requested_console_target(
+            &[OsString::from("--target"), OsString::from("local-node")],
+            false,
+        )
+        .expect("local-node target");
+        assert!(matches!(
+            local,
+            RequestedConsoleTarget::Public(AppServerTarget::LocalNode)
+        ));
+
+        let hub = requested_console_target(
+            &[
+                OsString::from("--target"),
+                OsString::from("hub-node"),
+                OsString::from("--hub-node-id"),
+                OsString::from("node-a"),
+            ],
+            false,
+        )
+        .expect("hub-node target");
+        assert!(matches!(
+            hub,
+            RequestedConsoleTarget::Public(AppServerTarget::HubNode { ref node_id })
+            if node_id == "node-a"
+        ));
     }
 
     #[test]
