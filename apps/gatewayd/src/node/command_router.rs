@@ -1,16 +1,18 @@
-use crate::node::message_sync::{write_app_server_message, write_jsonrpc_response};
+use crate::node::message_sync::{
+    write_app_server_message, write_jsonrpc_error, write_jsonrpc_response,
+};
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
 use agent_core::conversation::ConversationSummary;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
-    ConversationListResponse, JsonRpcMessage, RequestId,
+    ConversationListResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, RequestId,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
 
-pub(crate) async fn handle_command_line<W>(
-    line: &str,
+pub(crate) async fn handle_command_message<W>(
+    rpc: JsonRpcMessage,
     runtime: &NodeRuntime,
     session: &mut NodeSessionState,
     writer: &mut W,
@@ -18,9 +20,21 @@ pub(crate) async fn handle_command_line<W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let rpc: JsonRpcMessage =
-        serde_json::from_str(line).context("failed to parse local node jsonrpc command")?;
-    let envelope = AppClientCommandEnvelope::try_from(rpc)?;
+    let envelope = match AppClientCommandEnvelope::try_from(rpc.clone()) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            if let JsonRpcMessage::Request(JsonRpcRequest { id, .. }) = rpc {
+                write_jsonrpc_error(
+                    writer,
+                    id,
+                    classify_command_error_for_request(error.to_string()),
+                )
+                .await?;
+                return Ok(true);
+            }
+            return Err(error).context("failed to decode local node command");
+        }
+    };
     if matches!(envelope.command, AppClientCommand::Exit) {
         return Ok(false);
     }
@@ -55,6 +69,19 @@ where
         .send_command(&target_conversation, envelope.command)
         .await?;
     Ok(true)
+}
+
+fn classify_command_error_for_request(message: String) -> JsonRpcErrorPayload {
+    let code = if message.contains("unsupported request method") {
+        -32601
+    } else {
+        -32602
+    };
+    JsonRpcErrorPayload {
+        code,
+        message,
+        data: None,
+    }
 }
 
 async fn maybe_write_list_conversations_response<W>(

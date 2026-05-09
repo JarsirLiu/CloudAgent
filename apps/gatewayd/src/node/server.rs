@@ -1,4 +1,4 @@
-use crate::node::command_router::handle_command_line;
+use crate::node::command_router::handle_command_message;
 use crate::node::message_sync::write_node_event;
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
@@ -128,12 +128,16 @@ where
 
     match rpc {
         JsonRpcMessage::Request(request) => {
-            let line = serde_json::to_string(&JsonRpcMessage::Request(request))?;
-            handle_command_line(&line, runtime, session, writer).await
+            handle_command_message(JsonRpcMessage::Request(request), runtime, session, writer).await
         }
         JsonRpcMessage::Notification(notification) => {
-            let line = serde_json::to_string(&JsonRpcMessage::Notification(notification))?;
-            handle_command_line(&line, runtime, session, writer).await
+            handle_command_message(
+                JsonRpcMessage::Notification(notification),
+                runtime,
+                session,
+                writer,
+            )
+            .await
         }
         JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
             anyhow::bail!("unexpected local node transport response from client")
@@ -362,5 +366,73 @@ mod tests {
             .await
             .expect("initialized notification should succeed");
         assert!(session.is_ready());
+    }
+
+    #[tokio::test]
+    async fn unsupported_request_after_initialize_returns_jsonrpc_error() {
+        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+        let mut session = NodeSessionState::new("default");
+        let (mut writer, reader) = duplex(4096);
+
+        let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::String("initialize".to_string()),
+            method: "initialize".to_string(),
+            params: Some(
+                serde_json::to_value(TransportInitializeParams {
+                    client_info: agent_protocol::TransportClientInfo {
+                        name: "test-client".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    capabilities: None,
+                })
+                .expect("serialize initialize params"),
+            ),
+        }))
+        .expect("serialize initialize request");
+        handle_transport_line(&initialize, &runtime, &mut session, &mut writer)
+            .await
+            .expect("initialize should succeed");
+
+        let initialized = serde_json::to_string(&JsonRpcMessage::Notification(
+            agent_protocol::JsonRpcNotification {
+                method: "initialized".to_string(),
+                params: None,
+            },
+        ))
+        .expect("serialize initialized notification");
+        handle_transport_line(&initialized, &runtime, &mut session, &mut writer)
+            .await
+            .expect("initialized should succeed");
+
+        let unsupported = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::Integer(99),
+            method: "conversation/unknown".to_string(),
+            params: None,
+        }))
+        .expect("serialize unsupported request");
+        handle_transport_line(&unsupported, &runtime, &mut session, &mut writer)
+            .await
+            .expect("unsupported request should return a protocol error");
+
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .await
+            .expect("read initialize response");
+        line.clear();
+        reader
+            .read_line(&mut line)
+            .await
+            .expect("read unsupported error response");
+
+        let JsonRpcMessage::Error(JsonRpcError { id, error }) =
+            serde_json::from_str(line.trim_end()).expect("parse error response")
+        else {
+            panic!("expected jsonrpc error");
+        };
+        assert_eq!(id, RequestId::Integer(99));
+        assert_eq!(error.code, -32601);
+        assert!(error.message.contains("unsupported request method"));
     }
 }
