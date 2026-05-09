@@ -4,10 +4,12 @@ use cli::app::cli_settings::load_cli_settings;
 use cli::terminal::apply_color_cli_preference;
 use cli::{AppServerTarget, ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
+use infra_store::JsonConversationStore;
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,6 +39,35 @@ async fn main() -> Result<()> {
         config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
         config.cli.permission_mode = settings.permission_mode;
     }
+    let conversation_store_dir = config.runtime.conversation_store_dir.clone();
+    let initial_filter_enabled = config.cli.pre_llm_filter_enabled;
+    let initial_permission_mode = config.cli.permission_mode.clone();
+    let requested_target = requested_target_name(&args);
+    let conversation_id = resolve_initial_conversation_id(&args, &conversation_store_dir).await?;
+    let runtime = if requested_target == "embedded" {
+        let runtime = build_runtime(config)?;
+        runtime.run_startup_retention_cleanup().await;
+        Some(runtime)
+    } else {
+        None
+    };
+    let (target, bootstrap) = resolve_console_target(&args, &conversation_id, runtime.as_ref())?;
+
+    run_console(ConsoleConfig {
+        conversation_id: conversation_id.clone(),
+        workspace_root: std::env::current_dir()?,
+        conversation_store_dir,
+        initial_filter_enabled,
+        initial_permission_mode,
+        auto_approve: false,
+        auto_approve_reason: None,
+        target,
+        bootstrap,
+    })
+    .await
+}
+
+fn build_runtime(config: AgentConfig) -> Result<std::sync::Arc<agent_core::AgentHost>> {
     let runtime = match build_agent_host(config) {
         Ok(runtime) => runtime,
         Err(err) => {
@@ -51,22 +82,7 @@ async fn main() -> Result<()> {
             return Err(err);
         }
     };
-    runtime.run_startup_retention_cleanup().await;
-    let conversation_id = runtime.ensure_active_conversation().await?;
-    let (target, bootstrap) = resolve_console_target(&args, &conversation_id, Some(&runtime))?;
-
-    run_console(ConsoleConfig {
-        conversation_id: conversation_id.clone(),
-        workspace_root: std::env::current_dir()?,
-        conversation_store_dir: runtime.conversation_store_dir().to_path_buf(),
-        initial_filter_enabled: runtime.cli_pre_llm_filter_enabled(),
-        initial_permission_mode: runtime.cli_permission_mode().to_string(),
-        auto_approve: false,
-        auto_approve_reason: None,
-        target,
-        bootstrap,
-    })
-    .await
+    Ok(runtime)
 }
 
 fn ensure_user_config_exists() -> Result<()> {
@@ -125,15 +141,60 @@ fn normalize_cli_args(args: Vec<OsString>) -> Vec<OsString> {
     }
 }
 
+fn requested_target_name(args: &[OsString]) -> String {
+    arg_value(args, "--target")
+        .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_TARGET"))
+        .and_then(|value| value.into_string().ok())
+        .unwrap_or_else(|| "local-node".to_string())
+}
+
+async fn resolve_initial_conversation_id(
+    args: &[OsString],
+    conversation_store_dir: &std::path::Path,
+) -> Result<String> {
+    if let Some(conversation_id) =
+        arg_value(args, "--conversation").and_then(|v| v.into_string().ok())
+    {
+        return Ok(conversation_id);
+    }
+
+    let store = JsonConversationStore::new(conversation_store_dir.to_path_buf());
+    if let Some(conversation_id) = store.load_active_conversation().await?
+        && !conversation_id.trim().is_empty()
+    {
+        return Ok(conversation_id);
+    }
+
+    let generated = format!(
+        "draft-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| anyhow::anyhow!("system clock before unix epoch: {err}"))?
+            .as_millis()
+    );
+    store.mark_active_conversation(&generated).await?;
+    Ok(generated)
+}
+
+fn internal_targets_enabled() -> bool {
+    std::env::var("CLOUDAGENT_INTERNAL_TARGETS").ok().as_deref() == Some("1")
+}
+
 fn resolve_console_target(
     args: &[OsString],
     conversation_id: &str,
     runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
 ) -> Result<(AppServerTarget, ConsoleBootstrap)> {
-    let target = arg_value(args, "--target")
-        .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_TARGET"))
-        .and_then(|value| value.into_string().ok())
-        .unwrap_or_else(|| "local-node".to_string());
+    resolve_console_target_with_mode(args, conversation_id, runtime, internal_targets_enabled())
+}
+
+fn resolve_console_target_with_mode(
+    args: &[OsString],
+    conversation_id: &str,
+    runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
+    allow_internal_targets: bool,
+) -> Result<(AppServerTarget, ConsoleBootstrap)> {
+    let target = requested_target_name(args);
 
     match target.as_str() {
         "local-node" => {
@@ -156,6 +217,12 @@ fn resolve_console_target(
                     ],
                 },
             ))
+        }
+        "embedded" if !allow_internal_targets => {
+            bail!("target 'embedded' is internal-only and not part of the supported user path")
+        }
+        "worker-stdio" if !allow_internal_targets => {
+            bail!("target 'worker-stdio' is internal-only and not part of the supported user path")
         }
         "hub-node" => {
             let node_id = arg_value(args, "--hub-node-id")
@@ -200,9 +267,7 @@ fn resolve_console_target(
                 },
             ))
         }
-        other => bail!(
-            "unknown target '{other}'. supported targets in this migration stage: embedded, worker-stdio, local-node, hub-node"
-        ),
+        other => bail!("unknown target '{other}'. supported targets: local-node, hub-node"),
     }
 }
 
@@ -243,11 +308,10 @@ Usage:
 Options:
   -h, --help                 Show this help text
       -V, --version              Show the CLI version
-      --target TARGET        Target selection: local-node (default), hub-node (reserved), embedded (internal), or worker-stdio (internal)
+      --target TARGET        Target selection: local-node (default) or hub-node (reserved)
       --node-bin PATH        node binary path when using local-node
       --node-addr ADDR       node listen address when using local-node
       --hub-node-id ID       target node id when using the reserved hub-node target
-      --app-server-bin PATH  worker binary path when using worker-stdio
       --conversation ID      Conversation id passed to the selected target
       --color WHEN           Color output: auto, always, or never
       --no-color             Disable color output
@@ -261,7 +325,7 @@ fn print_version() {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_cli_args, resolve_console_target};
+    use super::{normalize_cli_args, resolve_console_target, resolve_console_target_with_mode};
     use cli::{AppServerTarget, ConsoleBootstrap};
     use std::ffi::OsString;
 
@@ -286,6 +350,33 @@ mod tests {
         assert_eq!(normalized, args);
     }
 
+    #[tokio::test]
+    async fn initial_conversation_id_uses_store_active_conversation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = infra_store::JsonConversationStore::new(temp.path().to_path_buf());
+        store
+            .mark_active_conversation("conversation-1")
+            .await
+            .expect("mark active");
+
+        let conversation_id = super::resolve_initial_conversation_id(&[], temp.path())
+            .await
+            .expect("resolve initial conversation");
+
+        assert_eq!(conversation_id, "conversation-1");
+    }
+
+    #[tokio::test]
+    async fn initial_conversation_id_creates_draft_when_store_is_empty() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let conversation_id = super::resolve_initial_conversation_id(&[], temp.path())
+            .await
+            .expect("resolve initial conversation");
+
+        assert!(conversation_id.starts_with("draft-"));
+    }
+
     #[test]
     fn worker_stdio_target_maps_to_worker_bootstrap() {
         let args = vec![
@@ -296,8 +387,9 @@ mod tests {
             OsString::from("--conversation"),
             OsString::from("remote-conversation"),
         ];
-        let (target, bootstrap) = resolve_console_target(&args, "local-conversation", None)
-            .expect("worker-stdio target should resolve");
+        let (target, bootstrap) =
+            resolve_console_target_with_mode(&args, "local-conversation", None, true)
+                .expect("worker-stdio target should resolve");
 
         assert!(matches!(target, AppServerTarget::WorkerStdio));
         match bootstrap {
@@ -364,6 +456,15 @@ mod tests {
                 err.to_string()
                     .contains("reserved for hub mode and is not implemented yet")
             ),
+        }
+    }
+
+    #[test]
+    fn embedded_target_is_rejected_without_internal_flag() {
+        let args = vec![OsString::from("--target"), OsString::from("embedded")];
+        match resolve_console_target(&args, "local-conversation", None) {
+            Ok(_) => panic!("embedded should be internal-only"),
+            Err(err) => assert!(err.to_string().contains("internal-only")),
         }
     }
 }

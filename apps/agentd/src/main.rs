@@ -31,11 +31,9 @@ async fn main() -> Result<()> {
     }
 
     tracing::info!(
-        "agentd ready; conversation store at {}",
-        runtime.ensure_active_conversation().await?
+        "agentd is a worker-oriented binary; use `app-server-stdio` for node-managed workers"
     );
-    tracing::info!("run `cargo run -p agentd -- console` to attach a local console");
-    tokio::signal::ctrl_c().await?;
+    tracing::info!("`console` remains available for development only");
     Ok(())
 }
 
