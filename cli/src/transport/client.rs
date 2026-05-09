@@ -1,6 +1,6 @@
 use crate::app::{ConsoleBootstrap, ConsoleConfig};
 use agent_app_server_client::{
-    AppServerClient, AppServerConnectInfo, InProcessClientConfig, LocalNodeClientConfig,
+    AppServerClient, AppServerConnectInfo, InProcessClientConfig, RemoteClientConfig,
     StdioClientConfig,
 };
 use anyhow::{Result, anyhow};
@@ -67,7 +67,7 @@ async fn create_local_node_client(
 }
 
 async fn connect_local_node_once(address: &str) -> Result<AppServerClient> {
-    AppServerClient::local_node(LocalNodeClientConfig {
+    AppServerClient::remote(RemoteClientConfig {
         address: address.to_string(),
         client: AppServerConnectInfo {
             client_name: env!("CARGO_PKG_NAME").to_string(),

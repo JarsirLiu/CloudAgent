@@ -18,6 +18,7 @@ use in_process::InProcessAppServerRequestHandle;
 pub use in_process::InProcessClientConfig;
 use local_node::LocalNodeAppServerRequestHandle;
 pub use local_node::LocalNodeClientConfig;
+pub type RemoteClientConfig = LocalNodeClientConfig;
 use stdio::StdioAppServerRequestHandle;
 pub use stdio::StdioClientConfig;
 
@@ -106,6 +107,10 @@ impl AppServerClient {
         Ok(Self::LocalNode(
             local_node::LocalNodeAppServerClient::connect(config).await?,
         ))
+    }
+
+    pub async fn remote(config: RemoteClientConfig) -> Result<Self> {
+        Self::local_node(config).await
     }
 
     pub fn send_command(&self, command: agent_protocol::AppClientCommand) -> Result<()> {
