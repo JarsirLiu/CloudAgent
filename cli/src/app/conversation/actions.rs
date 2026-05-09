@@ -252,7 +252,14 @@ pub(crate) fn handle_tui_input(
             if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
                 app.prepare_submitted_turn(content);
             }
-            client.send_command(command)?;
+            match command {
+                AppClientCommand::SubmitTurn(input) => client.submit_turn(input)?,
+                AppClientCommand::InterruptTurn { conversation_id } => {
+                    client.interrupt_turn(conversation_id)?
+                }
+                AppClientCommand::ListConversations => client.list_conversations()?,
+                other => client.send_command(other)?,
+            }
         }
         ParsedInput::ServerRequestAnswer {
             request_id,
@@ -264,14 +271,14 @@ pub(crate) fn handle_tui_input(
                 format!("Request {}", decision_label(&decision)),
                 HistoryTone::Control,
             ));
-            client.send_command(AppClientCommand::ResolveServerRequest {
-                conversation_id: app.conversation_id.clone(),
+            client.resolve_server_request(
+                app.conversation_id.clone(),
                 request_id,
-                decision: ServerRequestDecision {
+                ServerRequestDecision {
                     decision,
                     reason: Some(reason),
                 },
-            })?;
+            )?;
         }
     }
     Ok(false)

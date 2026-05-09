@@ -2,8 +2,10 @@ mod in_process;
 mod local_node;
 mod stdio;
 
+use agent_core::ServerRequestDecision;
 use agent_protocol::{
-    AppServerMessage, AppServerNotification, NotificationDelivery, classify_notification,
+    AppServerMessage, AppServerNotification, NotificationDelivery, UserTurnInput,
+    classify_notification,
 };
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -60,6 +62,33 @@ impl AppServerClient {
             Self::LocalNode(client) => client.send_command(command),
             Self::Stdio(client) => client.send_command(command),
         }
+    }
+
+    pub fn submit_turn(&self, input: UserTurnInput) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::SubmitTurn(input))
+    }
+
+    pub fn resolve_server_request(
+        &self,
+        conversation_id: impl Into<String>,
+        request_id: agent_protocol::RequestId,
+        decision: ServerRequestDecision,
+    ) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::ResolveServerRequest {
+            conversation_id: conversation_id.into(),
+            request_id,
+            decision,
+        })
+    }
+
+    pub fn interrupt_turn(&self, conversation_id: impl Into<String>) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::InterruptTurn {
+            conversation_id: conversation_id.into(),
+        })
+    }
+
+    pub fn list_conversations(&self) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::ListConversations)
     }
 
     pub fn request_conversation_history(&self, conversation_id: impl Into<String>) -> Result<()> {
