@@ -15,7 +15,7 @@ where
     W: AsyncWrite + Unpin,
 {
     let message = match event {
-        NodeEvent::Message { message } => message,
+        NodeEvent::Message { message } => *message,
         NodeEvent::Diagnostic {
             conversation_id,
             message,

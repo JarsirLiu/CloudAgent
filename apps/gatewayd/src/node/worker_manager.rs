@@ -103,7 +103,9 @@ impl WorkerManager {
                         maybe_event = client.next_event() => {
                             match maybe_event {
                                 Some(AppServerEvent::Message(message)) => {
-                                    let _ = events_tx_for_worker.send(NodeEvent::Message { message });
+                                    let _ = events_tx_for_worker.send(NodeEvent::Message {
+                                        message: Box::new(message),
+                                    });
                                 }
                                 Some(AppServerEvent::Lagged { skipped }) => {
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
@@ -159,9 +161,8 @@ impl WorkerManager {
             let evicted: Vec<String> = state
                 .workers
                 .iter()
-                .filter_map(|(conversation_id, handle)| {
-                    should_evict_worker(handle, now).then(|| conversation_id.to_string())
-                })
+                .filter(|(_, handle)| should_evict_worker(handle, now))
+                .map(|(conversation_id, _)| conversation_id.to_string())
                 .collect();
 
             evicted
@@ -191,7 +192,7 @@ struct WorkerManagerState {
 #[derive(Clone, Debug)]
 pub(crate) enum NodeEvent {
     Message {
-        message: agent_protocol::AppServerMessage,
+        message: Box<agent_protocol::AppServerMessage>,
     },
     Diagnostic {
         conversation_id: String,

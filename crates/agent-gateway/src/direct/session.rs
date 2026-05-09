@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 #[derive(Clone, Debug)]
 pub enum DirectNodeEvent {
-    Message(AppServerMessage),
+    Message(Box<AppServerMessage>),
     Lagged {
         conversation_id: Option<String>,
         skipped: usize,
@@ -230,13 +230,13 @@ mod tests {
         };
         let node_client = FakeNodeClient {
             sent_commands: Vec::new(),
-            events: VecDeque::from([DirectNodeEvent::Message(AppServerMessage::Notification(
-                AppServerNotification::AgentMessageDelta {
+            events: VecDeque::from([DirectNodeEvent::Message(Box::new(
+                AppServerMessage::Notification(AppServerNotification::AgentMessageDelta {
                     conversation_id: "conversation-1".to_string(),
                     turn_id: "turn-1".to_string(),
                     item_id: "assistant:1".to_string(),
                     delta: "hello".to_string(),
-                },
+                }),
             ))]),
         };
         let mut session = DirectGatewaySession::new(adapter, node_client, turn_policy());
