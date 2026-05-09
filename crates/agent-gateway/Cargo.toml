@@ -10,3 +10,4 @@ async-trait.workspace = true
 agent-core = { path = "../agent-core" }
 agent-protocol = { path = "../agent-protocol" }
 shared = { path = "../shared" }
+tokio.workspace = true

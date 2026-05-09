@@ -1,4 +1,4 @@
-mod direct;
+pub mod direct;
 mod message;
 mod outbound;
 

@@ -59,6 +59,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "shared",
+ "tokio",
 ]
 
 [[package]]
