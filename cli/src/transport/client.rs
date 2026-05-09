@@ -1,6 +1,7 @@
 use crate::app::{ConsoleBootstrap, ConsoleConfig};
 use agent_app_server_client::{
-    AppServerClient, InProcessClientConfig, LocalNodeClientConfig, StdioClientConfig,
+    AppServerClient, AppServerConnectInfo, InProcessClientConfig, LocalNodeClientConfig,
+    StdioClientConfig,
 };
 use anyhow::{Result, anyhow};
 use std::process::Stdio;
@@ -68,13 +69,15 @@ async fn create_local_node_client(
 async fn connect_local_node_once(address: &str) -> Result<AppServerClient> {
     AppServerClient::local_node(LocalNodeClientConfig {
         address: address.to_string(),
-        client_name: env!("CARGO_PKG_NAME").to_string(),
-        client_version: option_env!("CLOUDAGENT_BUILD_VERSION")
-            .unwrap_or(env!("CARGO_PKG_VERSION"))
-            .to_string(),
-        experimental_api: true,
-        opt_out_notification_methods: Vec::new(),
-        channel_capacity: agent_app_server_client::DEFAULT_EVENT_CHANNEL_CAPACITY,
+        client: AppServerConnectInfo {
+            client_name: env!("CARGO_PKG_NAME").to_string(),
+            client_version: option_env!("CLOUDAGENT_BUILD_VERSION")
+                .unwrap_or(env!("CARGO_PKG_VERSION"))
+                .to_string(),
+            experimental_api: true,
+            opt_out_notification_methods: Vec::new(),
+            channel_capacity: agent_app_server_client::DEFAULT_EVENT_CHANNEL_CAPACITY,
+        },
         connect_timeout: Duration::from_secs(1),
         initialize_timeout: Duration::from_secs(5),
     })

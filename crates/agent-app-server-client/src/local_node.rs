@@ -1,5 +1,5 @@
 use crate::{
-    AppServerEvent,
+    AppServerConnectInfo, AppServerEvent,
     stdio::{read_events_from_with_disconnect_message, write_commands_to},
 };
 use agent_protocol::{
@@ -20,11 +20,7 @@ use tokio::time::timeout;
 #[derive(Clone, Debug)]
 pub struct LocalNodeClientConfig {
     pub address: String,
-    pub client_name: String,
-    pub client_version: String,
-    pub experimental_api: bool,
-    pub opt_out_notification_methods: Vec<String>,
-    pub channel_capacity: usize,
+    pub client: AppServerConnectInfo,
     pub connect_timeout: Duration,
     pub initialize_timeout: Duration,
 }
@@ -33,12 +29,12 @@ impl LocalNodeClientConfig {
     fn initialize_params(&self) -> TransportInitializeParams {
         TransportInitializeParams {
             client_info: TransportClientInfo {
-                name: self.client_name.clone(),
-                version: self.client_version.clone(),
+                name: self.client.client_name.clone(),
+                version: self.client.client_version.clone(),
             },
             capabilities: Some(TransportInitializeCapabilities {
-                experimental_api: self.experimental_api,
-                opt_out_notification_methods: self.opt_out_notification_methods.clone(),
+                experimental_api: self.client.experimental_api,
+                opt_out_notification_methods: self.client.opt_out_notification_methods.clone(),
             }),
         }
     }
@@ -72,7 +68,7 @@ impl LocalNodeAppServerClient {
         .await
         .map_err(|_| anyhow!("timed out initializing local node at {}", config.address))??;
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
-        let event_capacity = config.channel_capacity.max(1);
+        let event_capacity = config.client.channel_capacity.max(1);
         let (event_tx, event_rx) = mpsc::channel(event_capacity);
         let request_counter = Arc::new(AtomicI64::new(1));
 
@@ -189,7 +185,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{LocalNodeAppServerClient, LocalNodeClientConfig};
-    use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY};
+    use crate::{AppServerConnectInfo, AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY};
     use agent_protocol::{
         AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerMessageEnvelope,
         AppServerNotification, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
@@ -204,11 +200,13 @@ mod tests {
     fn test_config(address: String) -> LocalNodeClientConfig {
         LocalNodeClientConfig {
             address,
-            client_name: "cloudagent-cli".to_string(),
-            client_version: "0.0.0-test".to_string(),
-            experimental_api: true,
-            opt_out_notification_methods: Vec::new(),
-            channel_capacity: DEFAULT_EVENT_CHANNEL_CAPACITY,
+            client: AppServerConnectInfo {
+                client_name: "cloudagent-cli".to_string(),
+                client_version: "0.0.0-test".to_string(),
+                experimental_api: true,
+                opt_out_notification_methods: Vec::new(),
+                channel_capacity: DEFAULT_EVENT_CHANNEL_CAPACITY,
+            },
             connect_timeout: Duration::from_secs(5),
             initialize_timeout: Duration::from_secs(5),
         }

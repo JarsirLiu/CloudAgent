@@ -14,6 +14,15 @@ pub use stdio::StdioClientConfig;
 
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 128;
 
+#[derive(Clone, Debug)]
+pub struct AppServerConnectInfo {
+    pub client_name: String,
+    pub client_version: String,
+    pub experimental_api: bool,
+    pub opt_out_notification_methods: Vec<String>,
+    pub channel_capacity: usize,
+}
+
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum AppServerEvent {
