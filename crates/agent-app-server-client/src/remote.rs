@@ -74,10 +74,15 @@ impl RemoteAppServerClient {
     pub async fn connect(config: RemoteClientConfig) -> Result<Self> {
         let stream = timeout(config.connect_timeout, TcpStream::connect(&config.address))
             .await
-            .map_err(|_| anyhow!("timed out connecting to local node at {}", config.address))?
+            .map_err(|_| {
+                anyhow!(
+                    "timed out connecting to remote app server at {}",
+                    config.address
+                )
+            })?
             .map_err(|err| {
                 anyhow!(
-                    "failed to connect to local node at {}: {err}",
+                    "failed to connect to remote app server at {}: {err}",
                     config.address
                 )
             })?;
@@ -89,7 +94,12 @@ impl RemoteAppServerClient {
             perform_initialize_handshake(&mut reader, &mut writer, &config),
         )
         .await
-        .map_err(|_| anyhow!("timed out initializing local node at {}", config.address))??;
+        .map_err(|_| {
+            anyhow!(
+                "timed out initializing remote app server at {}",
+                config.address
+            )
+        })??;
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
         let event_capacity = config.client.channel_capacity.max(1);
         let (event_tx, event_rx) = mpsc::channel(event_capacity);
@@ -115,7 +125,7 @@ impl RemoteAppServerClient {
             read_transport_messages_from(
                 reader,
                 event_tx,
-                "local node closed",
+                "remote app server closed",
                 pending_requests_for_reader,
             )
             .await
@@ -134,7 +144,7 @@ impl RemoteAppServerClient {
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
             .send(RemoteOutbound::Command(command))
-            .map_err(|_| anyhow!("local node command channel is closed"))
+            .map_err(|_| anyhow!("remote app server command channel is closed"))
     }
 
     pub fn request_handle(&self) -> RemoteAppServerRequestHandle {
@@ -187,7 +197,7 @@ impl RemoteAppServerRequestHandle {
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
             .send(RemoteOutbound::Command(command))
-            .map_err(|_| anyhow!("local node command channel is closed"))
+            .map_err(|_| anyhow!("remote app server command channel is closed"))
     }
 
     pub async fn request_conversation_list(&self) -> Result<ConversationListResponse> {
@@ -218,7 +228,7 @@ impl RemoteAppServerRequestHandle {
                 method: method.clone(),
                 source: io::Error::new(
                     ErrorKind::BrokenPipe,
-                    "local node command channel is closed",
+                    "remote app server command channel is closed",
                 ),
             })?;
 
@@ -228,7 +238,7 @@ impl RemoteAppServerRequestHandle {
                 method: method.clone(),
                 source: io::Error::new(
                     ErrorKind::BrokenPipe,
-                    "local node request channel is closed",
+                    "remote app server request channel is closed",
                 ),
             })?
             .map_err(|source| TypedRequestError::Transport {
@@ -308,8 +318,8 @@ where
     let mut last_seq_by_conversation: HashMap<String, u64> = HashMap::new();
 
     while let Some(line) = lines.next_line().await? {
-        let message: JsonRpcMessage =
-            serde_json::from_str(&line).context("failed to parse local node transport event")?;
+        let message: JsonRpcMessage = serde_json::from_str(&line)
+            .context("failed to parse remote app-server transport event")?;
         match message {
             JsonRpcMessage::Response(JsonRpcResponse { id, result }) => {
                 if let Some(response_tx) = pending_requests.lock().await.remove(&id) {
@@ -399,7 +409,7 @@ where
                 break;
             }
             JsonRpcMessage::Error(JsonRpcError { id, error }) if id == initialize_request_id => {
-                anyhow::bail!("local node initialize failed: {}", error.message)
+                anyhow::bail!("remote app server initialize failed: {}", error.message)
             }
             JsonRpcMessage::Notification(_) | JsonRpcMessage::Request(_) => {
                 if let Some(event) = app_server_event_from_jsonrpc_message(response)? {
@@ -438,7 +448,7 @@ where
     let mut line = String::new();
     let bytes = reader.read_line(&mut line).await?;
     if bytes == 0 {
-        anyhow::bail!("local node closed during initialize")
+        anyhow::bail!("remote app server closed during initialize")
     }
     Ok(serde_json::from_str(line.trim_end())?)
 }
@@ -518,7 +528,7 @@ mod tests {
                         version: "0.0.0-test".to_string(),
                     },
                     protocol_version: "1".to_string(),
-                    transport: "local-node".to_string(),
+                    transport: "remote".to_string(),
                 })
                 .expect("serialize initialize result"),
             }))
@@ -590,7 +600,7 @@ mod tests {
 
         match client.next_event().await.expect("disconnect event") {
             AppServerEvent::Disconnected { message } => {
-                assert_eq!(message, "local node closed");
+                assert_eq!(message, "remote app server closed");
             }
             other => panic!("unexpected disconnect event: {other:?}"),
         }
@@ -636,7 +646,7 @@ mod tests {
                         version: "0.0.0-test".to_string(),
                     },
                     protocol_version: "1".to_string(),
-                    transport: "local-node".to_string(),
+                    transport: "remote".to_string(),
                 })
                 .expect("serialize initialize result"),
             }))
@@ -734,7 +744,9 @@ mod tests {
             Err(error) => error,
         };
         assert!(
-            error.to_string().contains("local node initialize failed"),
+            error
+                .to_string()
+                .contains("remote app server initialize failed"),
             "unexpected error: {error:#}"
         );
 
@@ -762,7 +774,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("timed out initializing local node"),
+                .contains("timed out initializing remote app server"),
             "unexpected error: {error:#}"
         );
 
@@ -823,7 +835,7 @@ mod tests {
                             version: "0.0.0-test".to_string(),
                         },
                         protocol_version: "1".to_string(),
-                        transport: "local-node".to_string(),
+                        transport: "remote".to_string(),
                     })
                     .expect("serialize initialize result"),
                 }))
@@ -899,7 +911,7 @@ mod tests {
                             version: "0.0.0-test".to_string(),
                         },
                         protocol_version: "1".to_string(),
-                        transport: "local-node".to_string(),
+                        transport: "remote".to_string(),
                     })
                     .expect("serialize initialize result"),
                 }))

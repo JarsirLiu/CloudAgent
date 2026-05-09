@@ -24,20 +24,20 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
 
     let listener = TcpListener::bind(&listen_address)
         .await
-        .with_context(|| format!("failed to bind local node listener on {listen_address}"))?;
-    tracing::info!("gatewayd local node listening on {listen_address}");
+        .with_context(|| format!("failed to bind gatewayd remote host on {listen_address}"))?;
+    tracing::info!("gatewayd remote app-server host listening on {listen_address}");
     let runtime = NodeRuntime::new(crate::node::worker_manager::WorkerManager::new(
         worker_program,
     ));
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
-        tracing::debug!("accepted local node client from {peer_addr}");
+        tracing::debug!("accepted remote app-server client from {peer_addr}");
         let runtime = runtime.clone();
         tokio::spawn(async move {
             let (reader, writer) = stream.into_split();
             if let Err(error) = run_connection(BufReader::new(reader), writer, runtime).await {
-                tracing::warn!("local node connection failed: {error}");
+                tracing::warn!("gatewayd remote host connection failed: {error}");
             }
         });
     }
@@ -55,7 +55,7 @@ where
         if let Some(subscription) = session.active_subscription_mut().as_mut() {
             tokio::select! {
                 maybe_line = input_lines.next_line() => {
-                    match maybe_line.context("failed to read local node command line")? {
+                    match maybe_line.context("failed to read remote app-server command line")? {
                         Some(line) => {
                             if !handle_transport_line(&line, &runtime, &mut session, &mut writer)
                                 .await?
@@ -80,7 +80,7 @@ where
                                 NodeEvent::Diagnostic {
                                     conversation_id: session.active_conversation_id().to_string(),
                                     message: format!(
-                                        "local node subscriber lagged; skipped {skipped} events"
+                                        "remote app-server subscriber lagged; skipped {skipped} events"
                                     ),
                                     is_error: false,
                                 },
@@ -95,7 +95,7 @@ where
             match input_lines
                 .next_line()
                 .await
-                .context("failed to read local node command line")?
+                .context("failed to read remote app-server command line")?
             {
                 Some(line) => {
                     if !handle_transport_line(&line, &runtime, &mut session, &mut writer).await? {
@@ -119,8 +119,8 @@ async fn handle_transport_line<W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let rpc: JsonRpcMessage =
-        serde_json::from_str(line).context("failed to parse local node transport jsonrpc")?;
+    let rpc: JsonRpcMessage = serde_json::from_str(line)
+        .context("failed to parse remote app-server transport jsonrpc")?;
 
     if !session.is_ready() {
         return handle_handshake_message(rpc, session, writer).await;
@@ -140,7 +140,7 @@ where
             .await
         }
         JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
-            anyhow::bail!("unexpected local node transport response from client")
+            anyhow::bail!("unexpected remote app-server transport response from client")
         }
     }
 }
@@ -189,7 +189,7 @@ where
 
             let params = request.params.unwrap_or(serde_json::Value::Null);
             let _: TransportInitializeParams = serde_json::from_value(params)
-                .context("failed to decode local node initialize params")?;
+                .context("failed to decode remote app-server initialize params")?;
             session.mark_initialize_accepted();
             write_jsonrpc_message(
                 writer,
@@ -201,7 +201,7 @@ where
                             version: env!("CARGO_PKG_VERSION").to_string(),
                         },
                         protocol_version: "1".to_string(),
-                        transport: "local-node".to_string(),
+                        transport: "remote".to_string(),
                     })?,
                 }),
             )
@@ -213,10 +213,10 @@ where
                 session.mark_ready();
                 return Ok(true);
             }
-            anyhow::bail!("local node transport is not initialized")
+            anyhow::bail!("remote app-server transport is not initialized")
         }
         JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
-            anyhow::bail!("unexpected local node transport response from client")
+            anyhow::bail!("unexpected remote app-server transport response from client")
         }
     }
 }
@@ -353,7 +353,7 @@ mod tests {
         };
         let result: agent_protocol::TransportInitializeResult =
             serde_json::from_value(result).expect("decode initialize result");
-        assert_eq!(result.transport, "local-node");
+        assert_eq!(result.transport, "remote");
 
         let initialized = serde_json::to_string(&JsonRpcMessage::Notification(
             agent_protocol::JsonRpcNotification {
