@@ -8,6 +8,39 @@ use agent_core::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportClientInfo {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportInitializeCapabilities {
+    pub experimental_api: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opt_out_notification_methods: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportInitializeParams {
+    pub client_info: TransportClientInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<TransportInitializeCapabilities>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportServerInfo {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportInitializeResult {
+    pub server_info: TransportServerInfo,
+    pub protocol_version: String,
+    pub transport: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OnlineNodeSummary {
     pub node_id: String,
     pub display_name: String,

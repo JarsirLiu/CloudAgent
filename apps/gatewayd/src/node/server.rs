@@ -3,9 +3,13 @@ use crate::node::message_sync::write_node_event;
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
 use crate::node::worker_manager::NodeEvent;
+use agent_protocol::{
+    JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse,
+    TransportInitializeParams, TransportInitializeResult, TransportServerInfo,
+};
 use anyhow::{Context, Result};
 use std::ffi::OsString;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
@@ -53,13 +57,9 @@ where
                 maybe_line = input_lines.next_line() => {
                     match maybe_line.context("failed to read local node command line")? {
                         Some(line) => {
-                            if !handle_command_line(
-                                &line,
-                                &runtime,
-                                &mut session,
-                                &mut writer,
-                            )
-                            .await? {
+                            if !handle_transport_line(&line, &runtime, &mut session, &mut writer)
+                                .await?
+                            {
                                 break;
                             }
                         }
@@ -98,7 +98,7 @@ where
                 .context("failed to read local node command line")?
             {
                 Some(line) => {
-                    if !handle_command_line(&line, &runtime, &mut session, &mut writer).await? {
+                    if !handle_transport_line(&line, &runtime, &mut session, &mut writer).await? {
                         break;
                     }
                 }
@@ -107,6 +107,124 @@ where
         }
     }
 
+    Ok(())
+}
+
+async fn handle_transport_line<W>(
+    line: &str,
+    runtime: &NodeRuntime,
+    session: &mut NodeSessionState,
+    writer: &mut W,
+) -> Result<bool>
+where
+    W: AsyncWrite + Unpin,
+{
+    let rpc: JsonRpcMessage =
+        serde_json::from_str(line).context("failed to parse local node transport jsonrpc")?;
+
+    if !session.is_ready() {
+        return handle_handshake_message(rpc, session, writer).await;
+    }
+
+    match rpc {
+        JsonRpcMessage::Request(request) => {
+            let line = serde_json::to_string(&JsonRpcMessage::Request(request))?;
+            handle_command_line(&line, runtime, session, writer).await
+        }
+        JsonRpcMessage::Notification(notification) => {
+            let line = serde_json::to_string(&JsonRpcMessage::Notification(notification))?;
+            handle_command_line(&line, runtime, session, writer).await
+        }
+        JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
+            anyhow::bail!("unexpected local node transport response from client")
+        }
+    }
+}
+
+async fn handle_handshake_message<W>(
+    rpc: JsonRpcMessage,
+    session: &mut NodeSessionState,
+    writer: &mut W,
+) -> Result<bool>
+where
+    W: AsyncWrite + Unpin,
+{
+    match rpc {
+        JsonRpcMessage::Request(request) => {
+            if request.method != "initialize" {
+                write_jsonrpc_message(
+                    writer,
+                    JsonRpcMessage::Error(JsonRpcError {
+                        id: request.id,
+                        error: JsonRpcErrorPayload {
+                            code: -32002,
+                            message: "Not initialized".to_string(),
+                            data: None,
+                        },
+                    }),
+                )
+                .await?;
+                return Ok(true);
+            }
+
+            if !session.expects_initialize() {
+                write_jsonrpc_message(
+                    writer,
+                    JsonRpcMessage::Error(JsonRpcError {
+                        id: request.id,
+                        error: JsonRpcErrorPayload {
+                            code: -32001,
+                            message: "Already initialized".to_string(),
+                            data: None,
+                        },
+                    }),
+                )
+                .await?;
+                return Ok(true);
+            }
+
+            let params = request.params.unwrap_or(serde_json::Value::Null);
+            let _: TransportInitializeParams = serde_json::from_value(params)
+                .context("failed to decode local node initialize params")?;
+            session.mark_initialize_accepted();
+            write_jsonrpc_message(
+                writer,
+                JsonRpcMessage::Response(JsonRpcResponse {
+                    id: request.id,
+                    result: serde_json::to_value(TransportInitializeResult {
+                        server_info: TransportServerInfo {
+                            name: "gatewayd".to_string(),
+                            version: env!("CARGO_PKG_VERSION").to_string(),
+                        },
+                        protocol_version: "1".to_string(),
+                        transport: "local-node".to_string(),
+                    })?,
+                }),
+            )
+            .await?;
+            Ok(true)
+        }
+        JsonRpcMessage::Notification(JsonRpcNotification { method, .. }) => {
+            if method == "initialized" && session.expects_initialized_notification() {
+                session.mark_ready();
+                return Ok(true);
+            }
+            anyhow::bail!("local node transport is not initialized")
+        }
+        JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
+            anyhow::bail!("unexpected local node transport response from client")
+        }
+    }
+}
+
+async fn write_jsonrpc_message<W>(writer: &mut W, message: JsonRpcMessage) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let payload = serde_json::to_string(&message)?;
+    writer.write_all(payload.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
     Ok(())
 }
 
@@ -138,8 +256,16 @@ fn arg_value(args: &[OsString], name: &str) -> Option<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::arg_value;
+    use super::{arg_value, handle_transport_line};
+    use crate::node::runtime::NodeRuntime;
+    use crate::node::session_state::NodeSessionState;
+    use crate::node::worker_manager::WorkerManager;
+    use agent_protocol::{
+        JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId,
+        TransportInitializeParams,
+    };
     use std::ffi::OsString;
+    use tokio::io::{AsyncBufReadExt, BufReader, duplex};
 
     #[test]
     fn parses_serve_flag_values() {
@@ -157,5 +283,84 @@ mod tests {
             arg_value(&args, "--worker-bin"),
             Some(OsString::from("agentd.exe"))
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_business_requests_before_initialize() {
+        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+        let mut session = NodeSessionState::new("default");
+        let (mut writer, reader) = duplex(4096);
+        let request = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::Integer(1),
+            method: "conversation/list".to_string(),
+            params: None,
+        }))
+        .expect("serialize request");
+
+        handle_transport_line(&request, &runtime, &mut session, &mut writer)
+            .await
+            .expect("request should return a protocol error response");
+
+        let mut line = String::new();
+        let mut reader = BufReader::new(reader);
+        reader.read_line(&mut line).await.expect("read response");
+        let JsonRpcMessage::Error(JsonRpcError { error, .. }) =
+            serde_json::from_str(line.trim_end()).expect("parse response")
+        else {
+            panic!("expected jsonrpc error");
+        };
+        assert_eq!(error.message, "Not initialized");
+        assert!(!session.is_ready());
+    }
+
+    #[tokio::test]
+    async fn initialize_then_initialized_marks_session_ready() {
+        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+        let mut session = NodeSessionState::new("default");
+        let (mut writer, reader) = duplex(4096);
+        let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::String("initialize".to_string()),
+            method: "initialize".to_string(),
+            params: Some(
+                serde_json::to_value(TransportInitializeParams {
+                    client_info: agent_protocol::TransportClientInfo {
+                        name: "test-client".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    capabilities: None,
+                })
+                .expect("serialize initialize params"),
+            ),
+        }))
+        .expect("serialize initialize request");
+
+        handle_transport_line(&initialize, &runtime, &mut session, &mut writer)
+            .await
+            .expect("initialize should succeed");
+        assert!(!session.is_ready());
+
+        let mut line = String::new();
+        let mut reader = BufReader::new(reader);
+        reader.read_line(&mut line).await.expect("read response");
+        let JsonRpcMessage::Response(JsonRpcResponse { result, .. }) =
+            serde_json::from_str(line.trim_end()).expect("parse response")
+        else {
+            panic!("expected initialize response");
+        };
+        let result: agent_protocol::TransportInitializeResult =
+            serde_json::from_value(result).expect("decode initialize result");
+        assert_eq!(result.transport, "local-node");
+
+        let initialized = serde_json::to_string(&JsonRpcMessage::Notification(
+            agent_protocol::JsonRpcNotification {
+                method: "initialized".to_string(),
+                params: None,
+            },
+        ))
+        .expect("serialize initialized notification");
+        handle_transport_line(&initialized, &runtime, &mut session, &mut writer)
+            .await
+            .expect("initialized notification should succeed");
+        assert!(session.is_ready());
     }
 }
