@@ -44,6 +44,11 @@ async fn create_local_node_client(
     match connect_local_node_once(address).await {
         Ok(client) => Ok(client),
         Err(first_error) => {
+            if existing_node_looks_unhealthy(&first_error) {
+                return Err(anyhow!(
+                    "failed to connect to local node at {address}: {first_error}; an existing local node is already listening but did not complete the transport handshake. stop the stale `gatewayd` process and retry"
+                ));
+            }
             let mut child = std::process::Command::new(program)
                 .args(args)
                 .stdin(Stdio::null())
@@ -64,6 +69,13 @@ async fn create_local_node_client(
             })
         }
     }
+}
+
+fn existing_node_looks_unhealthy(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("local node closed during initialize")
+        || message.contains("local node initialize failed")
+        || message.contains("timed out initializing local node")
 }
 
 async fn connect_local_node_once(address: &str) -> Result<AppServerClient> {
@@ -126,7 +138,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::wait_for_service;
+    use super::{existing_node_looks_unhealthy, wait_for_service};
     use anyhow::{Result, anyhow};
     use std::sync::{
         Arc,
@@ -197,5 +209,21 @@ mod tests {
                 .contains("service did not become reachable within"),
             "unexpected timeout error: {error}"
         );
+    }
+
+    #[test]
+    fn detects_unhealthy_existing_node_errors() {
+        assert!(existing_node_looks_unhealthy(&anyhow!(
+            "local node closed during initialize"
+        )));
+        assert!(existing_node_looks_unhealthy(&anyhow!(
+            "local node initialize failed: initialize denied"
+        )));
+        assert!(existing_node_looks_unhealthy(&anyhow!(
+            "timed out initializing local node at 127.0.0.1:47070"
+        )));
+        assert!(!existing_node_looks_unhealthy(&anyhow!(
+            "failed to connect to local node at 127.0.0.1:47070: connection refused"
+        )));
     }
 }
