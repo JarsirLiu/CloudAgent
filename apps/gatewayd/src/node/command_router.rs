@@ -3,13 +3,19 @@ use crate::node::message_sync::{
 };
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
+use crate::node::worker_manager::NodeEvent;
 use agent_core::conversation::ConversationSummary;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
-    ConversationListResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, RequestId,
+    ConversationHistoryPageResponse, ConversationHistoryResponse, ConversationListResponse,
+    ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, RequestId,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
+use tokio::sync::broadcast;
+use tokio::time::{Duration, timeout};
+
+const WORKER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) async fn handle_command_message<W>(
     rpc: JsonRpcMessage,
@@ -62,12 +68,21 @@ where
     }
 
     let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
+    let response_subscription = runtime.workers().subscribe(&target_conversation).await?;
     *session.active_subscription_mut() =
         Some(runtime.workers().subscribe(&target_conversation).await?);
     runtime
         .workers()
-        .send_command(&target_conversation, envelope.command)
+        .send_command(&target_conversation, envelope.command.clone())
         .await?;
+    maybe_write_worker_backed_response(
+        writer,
+        &envelope.command,
+        &envelope.request_id,
+        &target_conversation,
+        response_subscription,
+    )
+    .await?;
     Ok(true)
 }
 
@@ -112,6 +127,146 @@ where
         })?,
     )
     .await
+}
+
+async fn maybe_write_worker_backed_response<W>(
+    writer: &mut W,
+    command: &AppClientCommand,
+    request_id: &RequestId,
+    conversation_id: &str,
+    mut events: broadcast::Receiver<NodeEvent>,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    if !matches!(
+        command,
+        AppClientCommand::RequestConversationStatus { .. }
+            | AppClientCommand::RequestConversationHistory { .. }
+            | AppClientCommand::RequestConversationHistoryPage { .. }
+    ) {
+        return Ok(());
+    }
+
+    let result = timeout(WORKER_RESPONSE_TIMEOUT, async {
+        loop {
+            match events.recv().await {
+                Ok(NodeEvent::Message { message }) => {
+                    if let Some(response) =
+                        worker_response_value(command, conversation_id, message.as_ref())?
+                    {
+                        return Ok(response);
+                    }
+                }
+                Ok(NodeEvent::Diagnostic { message, .. }) => {
+                    return Err(anyhow::anyhow!(message));
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(anyhow::anyhow!("worker response stream closed"));
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    return Err(anyhow::anyhow!(
+                        "worker response stream lagged; skipped {skipped} events"
+                    ));
+                }
+            }
+        }
+    })
+    .await;
+
+    match result {
+        Ok(Ok(value)) => write_jsonrpc_response(writer, request_id.clone(), value).await,
+        Ok(Err(error)) => {
+            write_jsonrpc_error(
+                writer,
+                request_id.clone(),
+                JsonRpcErrorPayload {
+                    code: -32000,
+                    message: error.to_string(),
+                    data: None,
+                },
+            )
+            .await
+        }
+        Err(_) => {
+            write_jsonrpc_error(
+                writer,
+                request_id.clone(),
+                JsonRpcErrorPayload {
+                    code: -32000,
+                    message: format!(
+                        "timed out waiting for worker response to `{}`",
+                        request_method_name(command)
+                    ),
+                    data: None,
+                },
+            )
+            .await
+        }
+    }
+}
+
+fn worker_response_value(
+    command: &AppClientCommand,
+    conversation_id: &str,
+    message: &AppServerMessage,
+) -> Result<Option<serde_json::Value>> {
+    let AppServerMessage::Notification(notification) = message else {
+        return Ok(None);
+    };
+
+    let value = match (command, notification) {
+        (
+            AppClientCommand::RequestConversationStatus { .. },
+            AppServerNotification::ConversationStatus {
+                conversation_id: response_conversation_id,
+                snapshot,
+            },
+        ) if response_conversation_id == conversation_id => {
+            serde_json::to_value(ConversationStatusResponse {
+                snapshot: snapshot.clone(),
+            })?
+        }
+        (
+            AppClientCommand::RequestConversationHistory { .. },
+            AppServerNotification::ConversationHistory {
+                conversation_id: response_conversation_id,
+                turns,
+            },
+        ) if response_conversation_id == conversation_id => {
+            serde_json::to_value(ConversationHistoryResponse {
+                turns: turns.clone(),
+            })?
+        }
+        (
+            AppClientCommand::RequestConversationHistoryPage { .. },
+            AppServerNotification::ConversationHistoryPage {
+                conversation_id: response_conversation_id,
+                turns,
+                has_more,
+                next_before_turn_id,
+            },
+        ) if response_conversation_id == conversation_id => {
+            serde_json::to_value(ConversationHistoryPageResponse {
+                turns: turns.clone(),
+                has_more: *has_more,
+                next_before_turn_id: next_before_turn_id.clone(),
+            })?
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(value))
+}
+
+fn request_method_name(command: &AppClientCommand) -> &'static str {
+    match command {
+        AppClientCommand::RequestConversationStatus { .. } => "conversation/status",
+        AppClientCommand::RequestConversationHistory { .. } => "conversation/history",
+        AppClientCommand::RequestConversationHistoryPage { .. } => "conversation/historyPage",
+        AppClientCommand::ListConversations => "conversation/list",
+        _ => "unknown",
+    }
 }
 
 fn hub_mode_only_response(
@@ -199,10 +354,11 @@ pub(crate) async fn target_conversation_id(
 
 #[cfg(test)]
 mod tests {
-    use super::{conversation_list_response, target_conversation_id};
+    use super::{conversation_list_response, target_conversation_id, worker_response_value};
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
     use crate::node::worker_manager::WorkerManager;
+    use agent_core::conversation::{ConversationSnapshot, ConversationStatus};
     use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
     use std::ffi::OsString;
 
@@ -309,5 +465,58 @@ mod tests {
             }
             other => panic!("unexpected message: {other:?}"),
         }
+    }
+
+    #[test]
+    fn history_request_maps_notification_to_typed_response_value() {
+        let turns = vec![];
+        let value = worker_response_value(
+            &AppClientCommand::RequestConversationHistory {
+                conversation_id: "conversation-1".to_string(),
+            },
+            "conversation-1",
+            &AppServerMessage::Notification(AppServerNotification::ConversationHistory {
+                conversation_id: "conversation-1".to_string(),
+                turns: turns.clone(),
+            }),
+        )
+        .expect("response mapping")
+        .expect("typed response value");
+
+        let response: agent_protocol::ConversationHistoryResponse =
+            serde_json::from_value(value).expect("decode history response");
+        assert_eq!(response.turns.len(), turns.len());
+    }
+
+    #[test]
+    fn status_request_maps_notification_to_typed_response_value() {
+        let snapshot = ConversationSnapshot {
+            conversation_id: "conversation-1".to_string(),
+            conversation_status: ConversationStatus::Idle,
+            active_turn: None,
+            turn_state: None,
+            message_count: 3,
+        };
+        let value = worker_response_value(
+            &AppClientCommand::RequestConversationStatus {
+                conversation_id: "conversation-1".to_string(),
+            },
+            "conversation-1",
+            &AppServerMessage::Notification(AppServerNotification::ConversationStatus {
+                conversation_id: "conversation-1".to_string(),
+                snapshot: snapshot.clone(),
+            }),
+        )
+        .expect("response mapping")
+        .expect("typed response value");
+
+        let response: agent_protocol::ConversationStatusResponse =
+            serde_json::from_value(value).expect("decode status response");
+        assert_eq!(response.snapshot.conversation_id, snapshot.conversation_id);
+        assert!(matches!(
+            response.snapshot.conversation_status,
+            ConversationStatus::Idle
+        ));
+        assert_eq!(response.snapshot.message_count, 3);
     }
 }

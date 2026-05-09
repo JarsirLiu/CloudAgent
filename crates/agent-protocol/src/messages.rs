@@ -55,6 +55,23 @@ pub struct ConversationListResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationStatusResponse {
+    pub snapshot: ConversationSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationHistoryResponse {
+    pub turns: Vec<ConversationTurn>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationHistoryPageResponse {
+    pub turns: Vec<ConversationTurn>,
+    pub has_more: bool,
+    pub next_before_turn_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppClientCommand {
     SubmitTurn(UserTurnInput),
