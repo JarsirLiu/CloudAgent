@@ -10,8 +10,11 @@ use agent_protocol::{
 use anyhow::Result;
 use tokio::sync::mpsc;
 
+use in_process::InProcessAppServerRequestHandle;
 pub use in_process::InProcessClientConfig;
+use local_node::LocalNodeAppServerRequestHandle;
 pub use local_node::LocalNodeClientConfig;
+use stdio::StdioAppServerRequestHandle;
 pub use stdio::StdioClientConfig;
 
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 128;
@@ -39,6 +42,13 @@ pub enum AppServerClient {
     Stdio(stdio::StdioAppServerClient),
 }
 
+#[derive(Clone)]
+pub enum AppServerRequestHandle {
+    InProcess(InProcessAppServerRequestHandle),
+    LocalNode(LocalNodeAppServerRequestHandle),
+    Stdio(StdioAppServerRequestHandle),
+}
+
 impl AppServerClient {
     pub fn in_process(config: InProcessClientConfig) -> Self {
         Self::InProcess(in_process::InProcessAppServerClient::start(config))
@@ -61,6 +71,14 @@ impl AppServerClient {
             Self::InProcess(client) => client.send_command(command),
             Self::LocalNode(client) => client.send_command(command),
             Self::Stdio(client) => client.send_command(command),
+        }
+    }
+
+    pub fn request_handle(&self) -> AppServerRequestHandle {
+        match self {
+            Self::InProcess(client) => AppServerRequestHandle::InProcess(client.request_handle()),
+            Self::LocalNode(client) => AppServerRequestHandle::LocalNode(client.request_handle()),
+            Self::Stdio(client) => AppServerRequestHandle::Stdio(client.request_handle()),
         }
     }
 
@@ -136,6 +154,51 @@ impl AppServerClient {
             Self::LocalNode(client) => client.shutdown().await,
             Self::Stdio(client) => client.shutdown().await,
         }
+    }
+}
+
+impl AppServerRequestHandle {
+    pub fn send_command(&self, command: agent_protocol::AppClientCommand) -> Result<()> {
+        match self {
+            Self::InProcess(handle) => handle.send_command(command),
+            Self::LocalNode(handle) => handle.send_command(command),
+            Self::Stdio(handle) => handle.send_command(command),
+        }
+    }
+
+    pub fn submit_turn(&self, input: UserTurnInput) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::SubmitTurn(input))
+    }
+
+    pub fn resolve_server_request(
+        &self,
+        conversation_id: impl Into<String>,
+        request_id: agent_protocol::RequestId,
+        decision: ServerRequestDecision,
+    ) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::ResolveServerRequest {
+            conversation_id: conversation_id.into(),
+            request_id,
+            decision,
+        })
+    }
+
+    pub fn interrupt_turn(&self, conversation_id: impl Into<String>) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::InterruptTurn {
+            conversation_id: conversation_id.into(),
+        })
+    }
+
+    pub fn list_conversations(&self) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::ListConversations)
+    }
+
+    pub fn request_conversation_history(&self, conversation_id: impl Into<String>) -> Result<()> {
+        self.send_command(
+            agent_protocol::AppClientCommand::RequestConversationHistory {
+                conversation_id: conversation_id.into(),
+            },
+        )
     }
 }
 

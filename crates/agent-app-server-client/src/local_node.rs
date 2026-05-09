@@ -49,6 +49,11 @@ pub struct LocalNodeAppServerClient {
     reader_task: JoinHandle<Result<()>>,
 }
 
+#[derive(Clone)]
+pub struct LocalNodeAppServerRequestHandle {
+    command_tx: mpsc::UnboundedSender<AppClientCommand>,
+}
+
 impl LocalNodeAppServerClient {
     pub async fn connect(config: LocalNodeClientConfig) -> Result<Self> {
         let stream = timeout(config.connect_timeout, TcpStream::connect(&config.address))
@@ -96,6 +101,12 @@ impl LocalNodeAppServerClient {
             .map_err(|_| anyhow!("local node command channel is closed"))
     }
 
+    pub fn request_handle(&self) -> LocalNodeAppServerRequestHandle {
+        LocalNodeAppServerRequestHandle {
+            command_tx: self.command_tx.clone(),
+        }
+    }
+
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         if let Some(event) = self.pending_events.pop_front() {
             return Some(event);
@@ -123,6 +134,14 @@ impl LocalNodeAppServerClient {
         writer_task.await??;
         reader_task.await??;
         Ok(())
+    }
+}
+
+impl LocalNodeAppServerRequestHandle {
+    pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
+        self.command_tx
+            .send(command)
+            .map_err(|_| anyhow!("local node command channel is closed"))
     }
 }
 

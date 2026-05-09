@@ -27,6 +27,11 @@ pub struct StdioAppServerClient {
     reader_task: JoinHandle<Result<()>>,
 }
 
+#[derive(Clone)]
+pub struct StdioAppServerRequestHandle {
+    command_tx: mpsc::UnboundedSender<AppClientCommand>,
+}
+
 impl StdioAppServerClient {
     pub async fn spawn(config: StdioClientConfig) -> Result<Self> {
         let mut command = Command::new(&config.program);
@@ -70,6 +75,12 @@ impl StdioAppServerClient {
             .map_err(|_| anyhow!("stdio app-server command channel is closed"))
     }
 
+    pub fn request_handle(&self) -> StdioAppServerRequestHandle {
+        StdioAppServerRequestHandle {
+            command_tx: self.command_tx.clone(),
+        }
+    }
+
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         self.event_rx.recv().await
     }
@@ -98,6 +109,14 @@ impl StdioAppServerClient {
         drop(child);
         reader_task.await??;
         Ok(())
+    }
+}
+
+impl StdioAppServerRequestHandle {
+    pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
+        self.command_tx
+            .send(command)
+            .map_err(|_| anyhow!("stdio app-server command channel is closed"))
     }
 }
 

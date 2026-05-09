@@ -22,6 +22,11 @@ pub struct InProcessAppServerClient {
     worker: JoinHandle<Result<()>>,
 }
 
+#[derive(Clone)]
+pub struct InProcessAppServerRequestHandle {
+    sender: InProcessClientSender,
+}
+
 impl InProcessAppServerClient {
     pub fn start(config: InProcessClientConfig) -> Self {
         let handle = start_in_process(
@@ -47,6 +52,12 @@ impl InProcessAppServerClient {
         self.sender.send_command(command)
     }
 
+    pub fn request_handle(&self) -> InProcessAppServerRequestHandle {
+        InProcessAppServerRequestHandle {
+            sender: self.sender.clone(),
+        }
+    }
+
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         self.event_rx.recv().await
     }
@@ -61,6 +72,12 @@ impl InProcessAppServerClient {
         }
         self.worker.await??;
         Ok(())
+    }
+}
+
+impl InProcessAppServerRequestHandle {
+    pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
+        self.sender.send_command(command)
     }
 }
 
