@@ -17,29 +17,21 @@ pub struct ConsoleConfig {
     pub initial_permission_mode: String,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
-    pub target: AppServerTarget,
+    pub target_label: String,
     pub bootstrap: ConsoleBootstrap,
 }
 
 #[derive(Clone)]
 pub enum AppServerTarget {
     LocalNode,
-    HubNode {
-        node_id: String,
-    },
-    #[doc(hidden)]
-    Embedded,
-    #[doc(hidden)]
-    WorkerStdio,
+    HubNode { node_id: String },
 }
 
 impl AppServerTarget {
-    pub(crate) fn label(&self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             Self::LocalNode => "local-node",
             Self::HubNode { .. } => "hub-node",
-            Self::Embedded => "embedded",
-            Self::WorkerStdio => "worker-stdio",
         }
     }
 }

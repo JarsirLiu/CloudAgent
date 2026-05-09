@@ -51,7 +51,8 @@ async fn main() -> Result<()> {
     } else {
         None
     };
-    let (target, bootstrap) = resolve_console_target(&args, &conversation_id, runtime.as_ref())?;
+    let (target_label, bootstrap) =
+        resolve_console_target(&args, &conversation_id, runtime.as_ref())?;
 
     run_console(ConsoleConfig {
         conversation_id: conversation_id.clone(),
@@ -61,7 +62,7 @@ async fn main() -> Result<()> {
         initial_permission_mode,
         auto_approve: false,
         auto_approve_reason: None,
-        target,
+        target_label,
         bootstrap,
     })
     .await
@@ -184,7 +185,7 @@ fn resolve_console_target(
     args: &[OsString],
     conversation_id: &str,
     runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
-) -> Result<(AppServerTarget, ConsoleBootstrap)> {
+) -> Result<(String, ConsoleBootstrap)> {
     resolve_console_target_with_mode(args, conversation_id, runtime, internal_targets_enabled())
 }
 
@@ -193,7 +194,7 @@ fn resolve_console_target_with_mode(
     conversation_id: &str,
     runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
     allow_internal_targets: bool,
-) -> Result<(AppServerTarget, ConsoleBootstrap)> {
+) -> Result<(String, ConsoleBootstrap)> {
     let target = requested_target_name(args);
 
     match target.as_str() {
@@ -206,7 +207,7 @@ fn resolve_console_target_with_mode(
                 .or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
                 .unwrap_or_else(default_node_bin);
             Ok((
-                AppServerTarget::LocalNode,
+                AppServerTarget::LocalNode.label().to_string(),
                 ConsoleBootstrap::LocalNode {
                     address: address.clone(),
                     program,
@@ -233,7 +234,7 @@ fn resolve_console_target_with_mode(
             bail!("target 'hub-node' is reserved for hub mode and is not implemented yet");
         }
         "embedded" => Ok((
-            AppServerTarget::Embedded,
+            "embedded".to_string(),
             ConsoleBootstrap::Embedded {
                 runtime: runtime
                     .cloned()
@@ -256,7 +257,7 @@ fn resolve_console_target_with_mode(
                 .and_then(|value| value.into_string().ok())
                 .unwrap_or_else(|| conversation_id.to_string());
             Ok((
-                AppServerTarget::WorkerStdio,
+                "worker-stdio".to_string(),
                 ConsoleBootstrap::WorkerStdio {
                     program,
                     args: vec![
@@ -326,7 +327,7 @@ fn print_version() {
 #[cfg(test)]
 mod tests {
     use super::{normalize_cli_args, resolve_console_target, resolve_console_target_with_mode};
-    use cli::{AppServerTarget, ConsoleBootstrap};
+    use cli::ConsoleBootstrap;
     use std::ffi::OsString;
 
     #[test]
@@ -387,11 +388,11 @@ mod tests {
             OsString::from("--conversation"),
             OsString::from("remote-conversation"),
         ];
-        let (target, bootstrap) =
+        let (target_label, bootstrap) =
             resolve_console_target_with_mode(&args, "local-conversation", None, true)
                 .expect("worker-stdio target should resolve");
 
-        assert!(matches!(target, AppServerTarget::WorkerStdio));
+        assert_eq!(target_label, "worker-stdio");
         match bootstrap {
             ConsoleBootstrap::WorkerStdio { program, args } => {
                 assert_eq!(program, OsString::from("custom-agentd.exe"));
@@ -414,10 +415,10 @@ mod tests {
     #[test]
     fn local_node_target_maps_to_node_bootstrap() {
         let args = vec![OsString::from("--target"), OsString::from("local-node")];
-        let (target, bootstrap) = resolve_console_target(&args, "local-conversation", None)
+        let (target_label, bootstrap) = resolve_console_target(&args, "local-conversation", None)
             .expect("local-node target should resolve");
 
-        assert!(matches!(target, AppServerTarget::LocalNode));
+        assert_eq!(target_label, "local-node");
         match bootstrap {
             ConsoleBootstrap::LocalNode {
                 address,
