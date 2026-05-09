@@ -2,7 +2,11 @@ use crate::app::notification::send_notification;
 use crate::routing::command_router::{ServerState, merge_active_turn};
 use crate::session::state as session_state;
 use agent_core::{AgentHost, ConversationStatus, InputItem, input_items_preview_text};
-use agent_protocol::{AppServerMessage, AppServerNotification, FrontendMode};
+use agent_protocol::{
+    AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
+    ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
+    FrontendMode,
+};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -28,6 +32,15 @@ pub(crate) async fn list_conversations(
     )
     .await;
     Ok(())
+}
+
+pub(crate) async fn read_conversation_list(
+    runtime: &Arc<AgentHost>,
+    _state: &Arc<Mutex<ServerState>>,
+) -> Result<ConversationListResponse> {
+    Ok(ConversationListResponse {
+        conversations: runtime.list_conversations().await?,
+    })
 }
 
 pub(crate) async fn request_conversation_history(
@@ -61,6 +74,25 @@ pub(crate) async fn request_conversation_history(
     Ok(())
 }
 
+pub(crate) async fn read_conversation_history(
+    runtime: &Arc<AgentHost>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: String,
+) -> Result<ConversationHistoryResponse> {
+    let _ = runtime.ensure_conversation_persisted(&conversation_id).await?;
+    let active_listener = {
+        let state = state.lock().await;
+        state.active_listener(&conversation_id)
+    };
+    let active_turn = match active_listener {
+        Some(listener) => listener.active_turn_snapshot().await,
+        None => None,
+    };
+    let mut turns = runtime.build_turns_from_rollout(&conversation_id).await?;
+    merge_active_turn(&mut turns, active_turn);
+    Ok(ConversationHistoryResponse { turns })
+}
+
 pub(crate) async fn request_conversation_status(
     runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
@@ -81,6 +113,17 @@ pub(crate) async fn request_conversation_status(
     )
     .await;
     Ok(())
+}
+
+pub(crate) async fn read_conversation_status(
+    runtime: &Arc<AgentHost>,
+    _state: &Arc<Mutex<ServerState>>,
+    conversation_id: String,
+) -> Result<ConversationStatusResponse> {
+    let _ = runtime.ensure_conversation_persisted(&conversation_id).await?;
+    Ok(ConversationStatusResponse {
+        snapshot: runtime.conversation_status(&conversation_id).await?,
+    })
 }
 
 pub(crate) async fn request_conversation_history_page(
@@ -109,6 +152,24 @@ pub(crate) async fn request_conversation_history_page(
     )
     .await;
     Ok(())
+}
+
+pub(crate) async fn read_conversation_history_page(
+    runtime: &Arc<AgentHost>,
+    _state: &Arc<Mutex<ServerState>>,
+    conversation_id: String,
+    before_turn_id: Option<String>,
+    limit: usize,
+) -> Result<ConversationHistoryPageResponse> {
+    let _ = runtime.ensure_conversation_persisted(&conversation_id).await?;
+    let (turns, has_more, next_before_turn_id) = runtime
+        .build_turns_page_from_rollout(&conversation_id, before_turn_id.as_deref(), limit)
+        .await?;
+    Ok(ConversationHistoryPageResponse {
+        turns,
+        has_more,
+        next_before_turn_id,
+    })
 }
 
 pub(crate) async fn replay_frontend_state(

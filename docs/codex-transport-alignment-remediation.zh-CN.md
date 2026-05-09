@@ -39,6 +39,29 @@ Codex 的关键原则是：
 2. transport 只是 `InProcess` / `Remote` 的底层实现
 3. remote transport 与 embedded transport 使用同一套上层事件面
 4. remote transport 必须完成明确握手，不能裸连后直接发业务命令
+5. workspace root 与 app data root 必须分离，不能让日志/会话数据隐式跟随当前启动目录漂移
+6. typed request/response 与同名 state notification 必须职责分离
+
+这里尤其要强调第 6 条：
+
+- `conversation/list`
+- `conversation/status`
+- `conversation/history`
+- `conversation/historyPage`
+
+这些能力的**初始化读取 / 显式读取**必须走 typed request/response。
+
+同名 notification 最多只能承担：
+
+- 增量同步
+- 重连后的状态投影刷新
+- node 内部 registry / UI projection 的更新来源
+
+不能再做的事情：
+
+- typed request 成功后，再顺手补发一份同名 notification 给同一个 client 当初始化面
+- CLI/UI 把同名 notification 当成首屏 bootstrap 的主来源
+- 让 history / status / list 同时充当“读取面”和“事件面”，形成双源语义
 
 ## 必须收敛到的目标形态
 
@@ -48,6 +71,13 @@ Codex 的关键原则是：
 - `Remote` 连接到 `gatewayd` 暴露的正式 app-server remote endpoint
 - `gatewayd` 内部再决定 `conversation -> worker`
 - `worker` 继续承载 `agent-app-server`
+
+补充的数据根目标：
+
+- `workspace_root` 只负责工作区与工具执行
+- `data_root_dir` 负责 conversations / logs / memory
+- dev / release 都必须有明确 `data_root_dir` 语义
+- `conversation_store_dir` 和 `memory.root_dir` 只是 `data_root_dir` 之下的高级覆盖项
 
 也就是说：
 
@@ -156,3 +186,4 @@ Codex 的关键原则是：
 3. `gatewayd` 对外具备明确握手和请求/响应语义
 4. `embedded` 与 `remote` 共享同一上层事件面
 5. 启动、切会话、请求历史、审批请求、断连语义都能在统一 client surface 下成立
+6. `conversation/list|status|history|historyPage` 的 typed read 不会再向同一 client 回放重复同名 notification

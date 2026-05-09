@@ -131,12 +131,14 @@ impl TuiApp {
         self.run_state.total_turn_usage = None;
         self.run_state.model_context_window = None;
         self.run_state.pending_submitted_input = Some(content.to_vec());
+        self.run_state.frontend_mode = FrontendMode::Running;
         self.bottom_pane.prepare_for_submit();
         self.transcript_owner
             .start_local_user(content.to_vec(), self.run_state.expand_tool_details);
     }
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
+        self.run_state.frontend_mode = FrontendMode::Idle;
         self.bottom_pane.on_turn_finished();
         match dispatch {
             TurnDispatch::Completed => {
@@ -180,10 +182,13 @@ impl TuiApp {
     }
 
     pub(crate) fn current_mode(&self) -> FrontendMode {
-        let has_active_turn = self.transcript_owner.active_turn_id().is_some();
-        let has_live_cell = !self.transcript_owner.live_is_empty();
         self.bottom_pane
-            .current_mode(has_active_turn, has_live_cell)
+            .current_mode(self.run_state.frontend_mode)
+    }
+
+    pub(crate) fn sync_frontend_mode(&mut self, mode: FrontendMode) {
+        self.run_state.frontend_mode = mode;
+        self.bottom_pane.sync_frontend_mode(mode);
     }
 
     pub(crate) fn can_submit_turn(&self) -> bool {

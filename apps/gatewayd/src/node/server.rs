@@ -3,10 +3,7 @@ use crate::node::message_sync::write_node_event;
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
 use crate::node::worker_manager::NodeEvent;
-use agent_protocol::{
-    JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse,
-    TransportInitializeParams, TransportInitializeResult, TransportServerInfo,
-};
+use agent_protocol::{JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse, TransportInitializeParams, TransportInitializeResult, TransportServerInfo};
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -21,6 +18,8 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     let worker_program = arg_value(args, "--worker-bin")
         .or_else(|| std::env::var_os("CLOUDAGENT_WORKER_BIN"))
         .unwrap_or_else(default_worker_bin);
+    let data_root_dir = arg_value(args, "--data-dir")
+        .or_else(|| std::env::var_os("CLOUDAGENT_DATA_ROOT_DIR"));
 
     let listener = TcpListener::bind(&listen_address)
         .await
@@ -28,6 +27,7 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     tracing::info!("gatewayd remote app-server host listening on {listen_address}");
     let runtime = NodeRuntime::new(crate::node::worker_manager::WorkerManager::new(
         worker_program,
+        data_root_dir,
     ));
 
     loop {
@@ -278,6 +278,8 @@ mod tests {
             OsString::from("127.0.0.1:47070"),
             OsString::from("--worker-bin"),
             OsString::from("agentd.exe"),
+            OsString::from("--data-dir"),
+            OsString::from("D:\\cloudagent-data"),
         ];
         assert_eq!(
             arg_value(&args, "--listen"),
@@ -287,11 +289,15 @@ mod tests {
             arg_value(&args, "--worker-bin"),
             Some(OsString::from("agentd.exe"))
         );
+        assert_eq!(
+            arg_value(&args, "--data-dir"),
+            Some(OsString::from("D:\\cloudagent-data"))
+        );
     }
 
     #[tokio::test]
     async fn rejects_business_requests_before_initialize() {
-        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
         let request = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
@@ -319,7 +325,7 @@ mod tests {
 
     #[tokio::test]
     async fn initialize_then_initialized_marks_session_ready() {
-        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
         let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
@@ -370,7 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn unsupported_request_after_initialize_returns_jsonrpc_error() {
-        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
 

@@ -78,26 +78,20 @@ impl BottomPaneController {
         self.on_turn_started();
     }
 
-    pub(crate) fn derive_mode(
-        &self,
-        requires_action: bool,
-        has_active_turn: bool,
-        _has_live_cell: bool,
-    ) -> FrontendMode {
-        let has_runtime_activity = self.runtime.turn_active
-            || self.runtime.live_label.is_some()
-            || self.runtime.active_tool_title.is_some();
+    pub(crate) fn sync_frontend_mode(&mut self, mode: FrontendMode) {
+        self.runtime.sync_frontend_mode(mode);
+    }
+
+    pub(crate) fn derive_mode(&self, frontend_mode: FrontendMode, requires_action: bool) -> FrontendMode {
         if requires_action {
             FrontendMode::WaitingForServerRequest
-        } else if has_runtime_activity || has_active_turn {
-            FrontendMode::Running
         } else {
-            FrontendMode::Idle
+            frontend_mode
         }
     }
 
-    pub(crate) fn current_mode(&self, has_active_turn: bool, has_live_cell: bool) -> FrontendMode {
-        self.derive_mode(self.requires_action(), has_active_turn, has_live_cell)
+    pub(crate) fn current_mode(&self, frontend_mode: FrontendMode) -> FrontendMode {
+        self.derive_mode(frontend_mode, self.requires_action())
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {

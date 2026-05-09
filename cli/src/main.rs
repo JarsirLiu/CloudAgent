@@ -31,7 +31,6 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     apply_color_cli_preference(&args);
-
     ensure_user_config_exists()?;
     let workspace_root = std::env::current_dir()?;
     let config = if std::env::var("CLOUDAGENT_RELEASE_MODE").ok().as_deref() == Some("1") {
@@ -40,6 +39,7 @@ async fn main() -> Result<()> {
         AgentConfig::load(workspace_root)?
     };
     let mut config = config;
+    apply_data_dir_cli_override(&mut config, &args);
     if let Ok(Some(settings)) = load_cli_settings(&config.runtime.conversation_store_dir) {
         config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
         config.cli.permission_mode = settings.permission_mode;
@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
     let allow_internal_targets = internal_targets_enabled();
     let requested_target = requested_console_target(&args, allow_internal_targets)?;
     let conversation_store_dir = config.runtime.conversation_store_dir.clone();
+    let data_root_dir = config.runtime.data_root_dir.clone();
     let initial_filter_enabled = config.cli.pre_llm_filter_enabled;
     let initial_permission_mode = config.cli.permission_mode.clone();
     let conversation_id = resolve_initial_conversation_id(&args, &conversation_store_dir).await?;
@@ -57,8 +58,13 @@ async fn main() -> Result<()> {
     } else {
         None
     };
-    let (target_label, bootstrap) =
-        resolve_console_target(&args, &conversation_id, runtime.as_ref(), requested_target)?;
+    let (target_label, bootstrap) = resolve_console_target(
+        &args,
+        &conversation_id,
+        runtime.as_ref(),
+        requested_target,
+        &data_root_dir,
+    )?;
 
     run_console(ConsoleConfig {
         conversation_id: conversation_id.clone(),
@@ -148,6 +154,19 @@ fn normalize_cli_args(args: Vec<OsString>) -> Vec<OsString> {
     }
 }
 
+fn apply_data_dir_cli_override(config: &mut AgentConfig, args: &[OsString]) {
+    if let Some(value) = arg_value(args, "--data-dir") {
+        let value = PathBuf::from(value);
+        config.runtime.data_root_dir = if value.is_absolute() {
+            value
+        } else {
+            config.workspace_root.join(value)
+        };
+        config.runtime.conversation_store_dir = config.runtime.data_root_dir.join("conversations");
+        config.runtime.memory.root_dir = config.runtime.data_root_dir.join("state").join("memory");
+    }
+}
+
 fn requested_target_name(args: &[OsString]) -> String {
     arg_value(args, "--target")
         .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_TARGET"))
@@ -217,6 +236,7 @@ fn resolve_console_target(
     _conversation_id: &str,
     runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
     requested_target: RequestedConsoleTarget,
+    data_root_dir: &std::path::Path,
 ) -> Result<(String, ConsoleBootstrap)> {
     match requested_target {
         RequestedConsoleTarget::Public(AppServerTarget::LocalNode) => {
@@ -236,6 +256,8 @@ fn resolve_console_target(
                         OsString::from("serve"),
                         OsString::from("--listen"),
                         OsString::from(address),
+                        OsString::from("--data-dir"),
+                        data_root_dir.as_os_str().to_os_string(),
                     ],
                 },
             ))
@@ -283,8 +305,8 @@ fn print_help() {
 cloudagent cli
 
 Usage:
-  cloudagent start [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--conversation ID] [--color WHEN] [--no-color]
-  cloudagent [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--conversation ID] [--color WHEN] [--no-color]
+  cloudagent start [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--data-dir PATH] [--conversation ID] [--color WHEN] [--no-color]
+  cloudagent [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--data-dir PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent --help
   cloudagent --version
 
@@ -294,6 +316,7 @@ Options:
       --target TARGET        Target selection: local-node (default) or hub-node (reserved)
       --node-bin PATH        node binary path when using local-node
       --node-addr ADDR       node listen address when using local-node
+      --data-dir PATH        app data root dir for conversations, logs, and memory
       --hub-node-id ID       target node id when using the reserved hub-node target
       --conversation ID      Conversation id passed to the selected target
       --color WHEN           Color output: auto, always, or never
@@ -313,11 +336,13 @@ fn display_version() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        RequestedConsoleTarget, normalize_cli_args, requested_console_target,
+        RequestedConsoleTarget, apply_data_dir_cli_override, normalize_cli_args, requested_console_target,
         resolve_console_target,
     };
     use cli::{AppServerTarget, ConsoleBootstrap};
+    use config::AgentConfig;
     use std::ffi::OsString;
+    use std::path::PathBuf;
 
     #[test]
     fn start_subcommand_is_treated_as_default_launch() {
@@ -338,6 +363,30 @@ mod tests {
         let args = vec![OsString::from("--version")];
         let normalized = normalize_cli_args(args.clone());
         assert_eq!(normalized, args);
+    }
+
+    #[test]
+    fn data_dir_cli_override_updates_data_bound_paths() {
+        let workspace = PathBuf::from("D:\\learn\\gifti\\cloudagent");
+        let mut config = AgentConfig::load(workspace.clone()).expect("load config");
+
+        apply_data_dir_cli_override(
+            &mut config,
+            &[OsString::from("--data-dir"), OsString::from(".cloudagent-dev")],
+        );
+
+        assert_eq!(
+            config.runtime.data_root_dir,
+            workspace.join(".cloudagent-dev")
+        );
+        assert_eq!(
+            config.runtime.conversation_store_dir,
+            workspace.join(".cloudagent-dev").join("conversations")
+        );
+        assert_eq!(
+            config.runtime.memory.root_dir,
+            workspace.join(".cloudagent-dev").join("state").join("memory")
+        );
     }
 
     #[tokio::test]
@@ -372,7 +421,7 @@ mod tests {
         let args = vec![OsString::from("--target"), OsString::from("local-node")];
         let requested = requested_console_target(&args, false).expect("requested target");
         let (target_label, bootstrap) =
-            resolve_console_target(&args, "local-conversation", None, requested)
+            resolve_console_target(&args, "local-conversation", None, requested, PathBuf::from("D:\\learn\\gifti\\cloudagent\\data").as_path())
                 .expect("local-node target should resolve");
 
         assert_eq!(target_label, "local-node");
@@ -390,6 +439,8 @@ mod tests {
                         OsString::from("serve"),
                         OsString::from("--listen"),
                         OsString::from("127.0.0.1:47070"),
+                        OsString::from("--data-dir"),
+                        OsString::from("D:\\learn\\gifti\\cloudagent\\data"),
                     ]
                 );
             }
@@ -409,7 +460,7 @@ mod tests {
             OsString::from("node-a"),
         ];
         let requested = requested_console_target(&args, false).expect("requested target");
-        match resolve_console_target(&args, "local-conversation", None, requested) {
+        match resolve_console_target(&args, "local-conversation", None, requested, PathBuf::from("D:\\learn\\gifti\\cloudagent\\data").as_path()) {
             Ok(_) => panic!("hub-node target should stay reserved"),
             Err(err) => assert!(
                 err.to_string()

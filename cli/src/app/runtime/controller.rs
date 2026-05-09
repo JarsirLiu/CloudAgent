@@ -30,7 +30,7 @@ impl RuntimeController {
         frame_requester.schedule_frame();
     }
 
-    pub(crate) fn handle_ui_event(
+    pub(crate) async fn handle_ui_event(
         &mut self,
         app: &mut TuiApp,
         client: &mut AppServerClient,
@@ -41,7 +41,7 @@ impl RuntimeController {
             UiEvent::Key(key) => {
                 pause_welcome_animation_for_input(app);
                 if let Some(input) = app.handle_key(key)
-                    && handle_tui_input(app, client, input)?
+                    && handle_tui_input(app, client, input).await?
                 {
                     return Ok(RuntimeControl::Break);
                 }

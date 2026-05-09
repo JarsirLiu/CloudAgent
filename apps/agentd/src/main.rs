@@ -4,18 +4,20 @@ use anyhow::Result;
 use cli::agent_host::build_agent_host;
 use cli::{ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
+    let args: Vec<String> = std::env::args().collect();
     let workspace_root = std::env::current_dir()?;
-    let config = AgentConfig::load(workspace_root)?;
+    let mut config = AgentConfig::load(workspace_root)?;
+    apply_data_dir_override(&mut config, &args);
     let runtime = build_agent_host(config)?;
     runtime.run_startup_retention_cleanup().await;
 
-    let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("console") => {
             run_console_mode(runtime).await?;
@@ -58,4 +60,21 @@ fn parse_conversation_id(args: &[String]) -> Option<String> {
     args.windows(2)
         .find(|pair| pair[0] == "--conversation")
         .map(|pair| pair[1].clone())
+}
+
+fn apply_data_dir_override(config: &mut AgentConfig, args: &[String]) {
+    let Some(value) = args
+        .windows(2)
+        .find(|pair| pair[0] == "--data-dir")
+        .map(|pair| PathBuf::from(&pair[1]))
+    else {
+        return;
+    };
+    config.runtime.data_root_dir = if value.is_absolute() {
+        value
+    } else {
+        config.workspace_root.join(value)
+    };
+    config.runtime.conversation_store_dir = config.runtime.data_root_dir.join("conversations");
+    config.runtime.memory.root_dir = config.runtime.data_root_dir.join("state").join("memory");
 }

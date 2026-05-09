@@ -16,7 +16,7 @@ use anyhow::Result;
 use config::AgentConfig;
 use std::fs;
 
-pub(crate) fn handle_tui_input(
+pub(crate) async fn handle_tui_input(
     app: &mut TuiApp,
     client: &AppServerClient,
     input: ParsedInput,
@@ -188,7 +188,10 @@ pub(crate) fn handle_tui_input(
                 app.bottom_pane.request_session_picker(
                     crate::ui::widgets::session_picker::SessionPickerMode::Delete,
                 );
-                client.send_command(AppClientCommand::ListConversations)?;
+                let response = client
+                    .request_conversation_list_typed()
+                    .await?;
+                execute_server_action(app, ServerAction::SetConversationList(response.conversations));
                 return Ok(false);
             }
             client.send_command(AppClientCommand::DeleteConversation {
@@ -257,7 +260,15 @@ pub(crate) fn handle_tui_input(
                 AppClientCommand::InterruptTurn { conversation_id } => {
                     client.interrupt_turn(conversation_id)?
                 }
-                AppClientCommand::ListConversations => client.list_conversations()?,
+                AppClientCommand::ListConversations => {
+                    let response = client
+                        .request_conversation_list_typed()
+                        .await?;
+                    execute_server_action(
+                        app,
+                        ServerAction::SetConversationList(response.conversations),
+                    );
+                }
                 other => client.send_command(other)?,
             }
         }
@@ -297,6 +308,9 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     match action {
         ServerAction::SetConversationList(conversations) => {
             app.handle_conversation_list(conversations);
+        }
+        ServerAction::SetFrontendMode(mode) => {
+            app.sync_frontend_mode(mode);
         }
         ServerAction::SwitchConversation(conversation_id) => {
             app.bottom_pane.clear_session_picker();

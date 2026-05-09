@@ -51,24 +51,38 @@ pub struct OnlineNodeSummary {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationListResponse {
+    // Typed read surface for conversation index bootstrap / explicit refresh.
     pub conversations: Vec<ConversationSummary>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationStatusResponse {
+    // Typed read surface for authoritative frontend mode bootstrap.
     pub snapshot: ConversationSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationHistoryResponse {
+    // Typed read surface for committed transcript bootstrap / explicit refresh.
     pub turns: Vec<ConversationTurn>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationHistoryPageResponse {
+    // Typed read surface for paged transcript bootstrap / explicit refresh.
     pub turns: Vec<ConversationTurn>,
     pub has_more: bool,
     pub next_before_turn_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OnlineNodeListResponse {
+    pub nodes: Vec<OnlineNodeSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SelectTargetNodeResponse {
+    pub node_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -165,6 +179,7 @@ impl AppClientCommand {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppServerNotification {
+    // Incremental frontend sync only. This is not a substitute for typed status bootstrap.
     FrontendStateChanged {
         conversation_id: String,
         mode: FrontendMode,
@@ -288,10 +303,14 @@ pub enum AppServerNotification {
         turn_id: TurnId,
         reason: String,
     },
+    // Incremental/state-sync notification only. Clients should not rely on this as the
+    // authoritative bootstrap path for explicit status reads.
     ConversationStatus {
         conversation_id: String,
         snapshot: ConversationSnapshot,
     },
+    // Incremental/state-sync notification only. Clients should bootstrap transcript state
+    // through typed conversation/history reads and treat this as a sync/update channel.
     ConversationHistory {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
@@ -300,12 +319,15 @@ pub enum AppServerNotification {
         conversation_id: String,
         turn: ConversationTurn,
     },
+    // Incremental/state-sync notification only. Typed historyPage remains the bootstrap/read path.
     ConversationHistoryPage {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
         has_more: bool,
         next_before_turn_id: Option<String>,
     },
+    // Incremental/state-sync notification only. Typed conversation/list remains the
+    // authoritative bootstrap/read path.
     ConversationList {
         conversation_id: String,
         conversations: Vec<ConversationSummary>,

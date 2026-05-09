@@ -17,12 +17,14 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     config.validate()?;
     let context = AgentContext {
         workspace_root: config.workspace_root.clone(),
+        data_root_dir: config.runtime.data_root_dir.clone(),
         conversation_store_dir: config.runtime.conversation_store_dir.clone(),
         default_shell_timeout_ms: config.tools.default_shell_timeout_ms,
     };
     let policy = ExecutionPolicy::new(config.runtime.max_tool_roundtrips);
     let regular_turn_settings = RegularTurnSettings {
         workspace_root: config.workspace_root.clone(),
+        data_root_dir: config.runtime.data_root_dir.clone(),
         llm_temperature: config.llm.temperature,
         pre_llm_filter_enabled: config.cli.pre_llm_filter_enabled,
         max_tool_roundtrips: policy.max_tool_roundtrips,

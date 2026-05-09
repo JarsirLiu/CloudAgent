@@ -53,6 +53,24 @@ impl BottomPaneRuntimeState {
         self.reset();
     }
 
+    pub(crate) fn sync_frontend_mode(&mut self, mode: agent_protocol::FrontendMode) {
+        match mode {
+            agent_protocol::FrontendMode::Idle => self.reset(),
+            agent_protocol::FrontendMode::Running => {
+                if !self.turn_active {
+                    self.turn_active = true;
+                    self.live_label.get_or_insert_with(|| "Working".to_string());
+                }
+            }
+            agent_protocol::FrontendMode::WaitingForServerRequest => {
+                if !self.turn_active {
+                    self.turn_active = true;
+                }
+                self.live_label.get_or_insert_with(|| "Working".to_string());
+            }
+        }
+    }
+
     pub(crate) fn on_model_retrying(
         &mut self,
         stage: ModelRetryStage,

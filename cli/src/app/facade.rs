@@ -1,7 +1,8 @@
 use crate::app::core::types::{ConsoleConfig, TuiApp};
 use crate::app::runtime::r#loop as runtime_loop;
+use crate::state::reducer::ServerAction;
 use crate::transport::client::create_client;
-use agent_protocol::AppClientCommand;
+use agent_app_server_client::AppServerClient;
 use anyhow::Result;
 use std::io::{self, IsTerminal as _};
 
@@ -23,9 +24,30 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         config.initial_filter_enabled,
         config.initial_permission_mode.clone(),
     );
-    client.send_command(AppClientCommand::RequestConversationHistory {
-        conversation_id: conversation_id.clone(),
-    })?;
+    load_initial_history(&client, &mut app, &conversation_id).await?;
     runtime_loop::run_tui_event_loop(&mut app, &mut client).await?;
     client.shutdown().await
+}
+
+async fn load_initial_history(
+    client: &AppServerClient,
+    app: &mut TuiApp,
+    conversation_id: &str,
+) -> Result<()> {
+    let response = client
+        .request_conversation_history_typed(conversation_id)
+        .await?;
+    crate::app::conversation::actions::execute_server_action(
+        app,
+        ServerAction::ReplaceHistory(response.turns),
+    );
+    let status = client
+        .request_conversation_status_typed(conversation_id)
+        .await?;
+    let mode = match status.snapshot.conversation_status {
+        agent_core::ConversationStatus::Busy => agent_protocol::FrontendMode::Running,
+        agent_core::ConversationStatus::Idle => agent_protocol::FrontendMode::Idle,
+    };
+    crate::app::conversation::actions::execute_server_action(app, ServerAction::SetFrontendMode(mode));
+    Ok(())
 }

@@ -22,6 +22,7 @@ pub struct RestoredBudgetBaseline {
 #[derive(Clone, Debug)]
 pub struct RegularTurnSettings {
     pub workspace_root: PathBuf,
+    pub data_root_dir: PathBuf,
     pub llm_temperature: f32,
     pub pre_llm_filter_enabled: bool,
     pub max_tool_roundtrips: Option<usize>,

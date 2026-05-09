@@ -6,6 +6,7 @@ pub mod selectors;
 use agent_core::ConversationTurn;
 use agent_core::InputItem;
 use agent_core::ModelUsage;
+use agent_protocol::FrontendMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoticeLevel {
@@ -21,6 +22,7 @@ pub struct RunState {
     pub total_turn_usage: Option<ModelUsage>,
     pub model_context_window: Option<u64>,
     pub pending_submitted_input: Option<Vec<InputItem>>,
+    pub frontend_mode: FrontendMode,
     pub should_exit: bool,
     pub live_animation_frame: u64,
     pub expand_tool_details: bool,
@@ -36,6 +38,7 @@ impl RunState {
             total_turn_usage: None,
             model_context_window: None,
             pending_submitted_input: None,
+            frontend_mode: FrontendMode::Idle,
             should_exit: false,
             live_animation_frame: 0,
             expand_tool_details: false,

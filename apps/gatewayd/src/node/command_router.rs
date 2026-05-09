@@ -1,9 +1,8 @@
 use crate::node::message_sync::{
-    write_app_server_message, write_jsonrpc_error, write_jsonrpc_response,
+    sync_registry_from_message, write_app_server_message, write_jsonrpc_error, write_jsonrpc_response,
 };
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
-use crate::node::worker_manager::NodeEvent;
 use agent_core::conversation::ConversationSummary;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
@@ -12,10 +11,6 @@ use agent_protocol::{
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
-use tokio::sync::broadcast;
-use tokio::time::{Duration, timeout};
-
-const WORKER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) async fn handle_command_message<W>(
     rpc: JsonRpcMessage,
@@ -26,6 +21,12 @@ pub(crate) async fn handle_command_message<W>(
 where
     W: AsyncWrite + Unpin,
 {
+    if let Some(should_continue) =
+        handle_typed_request_message(&rpc, runtime, session, writer).await?
+    {
+        return Ok(should_continue);
+    }
+
     let envelope = match AppClientCommandEnvelope::try_from(rpc.clone()) {
         Ok(envelope) => envelope,
         Err(error) => {
@@ -45,45 +46,148 @@ where
         return Ok(false);
     }
 
-    if let Some(message) =
-        hub_mode_only_response(&envelope.command, session.active_conversation_id())
-    {
-        write_app_server_message(writer, message).await?;
+    if let Some(error) = hub_mode_only_error_response(&rpc, &envelope.command) {
+        match error {
+            HubModeOnlyResponse::JsonRpc { request_id, error } => {
+                write_jsonrpc_error(writer, request_id, error).await?;
+            }
+            HubModeOnlyResponse::Notification(message) => {
+                write_app_server_message(writer, message).await?;
+            }
+        }
         return Ok(true);
     }
 
-    if let Some(message) =
-        conversation_list_response(&envelope.command, session.active_conversation_id(), runtime)
-            .await
+    if let Some(message) = conversation_list_notification(
+        &rpc,
+        &envelope.command,
+        session.active_conversation_id(),
+        runtime,
+    )
+    .await
     {
-        maybe_write_list_conversations_response(
-            writer,
-            &envelope.command,
-            &envelope.request_id,
-            &message,
-        )
-        .await?;
         write_app_server_message(writer, message).await?;
         return Ok(true);
     }
 
     let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
-    let response_subscription = runtime.workers().subscribe(&target_conversation).await?;
     *session.active_subscription_mut() =
         Some(runtime.workers().subscribe(&target_conversation).await?);
-    runtime
-        .workers()
-        .send_command(&target_conversation, envelope.command.clone())
-        .await?;
-    maybe_write_worker_backed_response(
-        writer,
-        &envelope.command,
-        &envelope.request_id,
-        &target_conversation,
-        response_subscription,
-    )
-    .await?;
+    if let Some(request) = typed_request_from_command(&envelope.command, &envelope.request_id) {
+        match envelope.command {
+            AppClientCommand::RequestConversationStatus { .. } => {
+                let value = runtime
+                    .workers()
+                    .request_json(&target_conversation, request)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                let response: ConversationStatusResponse = serde_json::from_value(value)?;
+                write_jsonrpc_response(
+                    writer,
+                    envelope.request_id,
+                    serde_json::to_value(response)?,
+                )
+                .await?;
+            }
+            AppClientCommand::RequestConversationHistory { .. } => {
+                let value = runtime
+                    .workers()
+                    .request_json(&target_conversation, request)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                let response: ConversationHistoryResponse = serde_json::from_value(value)?;
+                write_jsonrpc_response(
+                    writer,
+                    envelope.request_id,
+                    serde_json::to_value(response)?,
+                )
+                .await?;
+            }
+            AppClientCommand::RequestConversationHistoryPage { .. } => {
+                let value = runtime
+                    .workers()
+                    .request_json(&target_conversation, request)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                let response: ConversationHistoryPageResponse = serde_json::from_value(value)?;
+                write_jsonrpc_response(
+                    writer,
+                    envelope.request_id,
+                    serde_json::to_value(response)?,
+                )
+                .await?;
+            }
+            _ => unreachable!("typed_request_from_command only returns typed worker requests"),
+        }
+    } else {
+        runtime
+            .workers()
+            .send_command(&target_conversation, envelope.command.clone())
+            .await?;
+    }
     Ok(true)
+}
+
+async fn handle_typed_request_message<W>(
+    rpc: &JsonRpcMessage,
+    runtime: &NodeRuntime,
+    session: &mut NodeSessionState,
+    writer: &mut W,
+) -> Result<Option<bool>>
+where
+    W: AsyncWrite + Unpin,
+{
+    let JsonRpcMessage::Request(request) = rpc else {
+        return Ok(None);
+    };
+    let envelope = match AppClientCommandEnvelope::try_from(rpc.clone()) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            write_jsonrpc_error(
+                writer,
+                request.id.clone(),
+                classify_command_error_for_request(error.to_string()),
+            )
+            .await?;
+            return Ok(Some(true));
+        }
+    };
+
+    if let Some(error) = hub_mode_only_error_response(rpc, &envelope.command) {
+        match error {
+            HubModeOnlyResponse::JsonRpc { request_id, error } => {
+                write_jsonrpc_error(writer, request_id, error).await?;
+            }
+            HubModeOnlyResponse::Notification(_) => unreachable!("request path always returns jsonrpc"),
+        }
+        return Ok(Some(true));
+    }
+
+    let Some(typed_request) = typed_request_from_command(&envelope.command, &envelope.request_id) else {
+        return Ok(None);
+    };
+
+    let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
+    *session.active_subscription_mut() =
+        Some(runtime.workers().subscribe(&target_conversation).await?);
+
+    let result = match &envelope.command {
+        AppClientCommand::ListConversations => {
+            serde_json::to_value(read_conversation_list(runtime, &target_conversation).await?)?
+        }
+        _ => {
+            let value = runtime
+                .workers()
+                .request_json(&target_conversation, typed_request)
+                .await
+                .map_err(anyhow::Error::from)?;
+            sync_typed_read_registry(runtime, &envelope.command, &target_conversation, &value).await?;
+            value
+        }
+    };
+
+    write_jsonrpc_response(writer, envelope.request_id, result).await?;
+    Ok(Some(true))
 }
 
 fn classify_command_error_for_request(message: String) -> JsonRpcErrorPayload {
@@ -99,213 +203,160 @@ fn classify_command_error_for_request(message: String) -> JsonRpcErrorPayload {
     }
 }
 
-async fn maybe_write_list_conversations_response<W>(
-    writer: &mut W,
+fn typed_request_from_command(
     command: &AppClientCommand,
     request_id: &RequestId,
-    message: &AppServerMessage,
-) -> Result<()>
-where
-    W: AsyncWrite + Unpin,
-{
-    if !matches!(command, AppClientCommand::ListConversations) {
-        return Ok(());
-    }
-    let AppServerMessage::Notification(AppServerNotification::ConversationList {
-        conversations,
-        ..
-    }) = message
-    else {
-        return Ok(());
+ ) -> Option<JsonRpcRequest> {
+    let (method, params) = match command {
+        AppClientCommand::ListConversations => ("conversation/list", serde_json::Value::Null),
+        AppClientCommand::RequestConversationStatus { conversation_id } => (
+            "conversation/status",
+            serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::RequestConversationHistory { conversation_id } => (
+            "conversation/history",
+            serde_json::json!({ "conversation_id": conversation_id }),
+        ),
+        AppClientCommand::RequestConversationHistoryPage {
+            conversation_id,
+            before_turn_id,
+            limit,
+        } => (
+            "conversation/historyPage",
+            serde_json::json!({
+                "conversation_id": conversation_id,
+                "before_turn_id": before_turn_id,
+                "limit": limit,
+            }),
+        ),
+        _ => return None,
     };
-
-    write_jsonrpc_response(
-        writer,
-        request_id.clone(),
-        serde_json::to_value(ConversationListResponse {
-            conversations: conversations.clone(),
-        })?,
-    )
-    .await
-}
-
-async fn maybe_write_worker_backed_response<W>(
-    writer: &mut W,
-    command: &AppClientCommand,
-    request_id: &RequestId,
-    conversation_id: &str,
-    mut events: broadcast::Receiver<NodeEvent>,
-) -> Result<()>
-where
-    W: AsyncWrite + Unpin,
-{
-    if !matches!(
-        command,
-        AppClientCommand::RequestConversationStatus { .. }
-            | AppClientCommand::RequestConversationHistory { .. }
-            | AppClientCommand::RequestConversationHistoryPage { .. }
-    ) {
-        return Ok(());
-    }
-
-    let result = timeout(WORKER_RESPONSE_TIMEOUT, async {
-        loop {
-            match events.recv().await {
-                Ok(NodeEvent::Message { message }) => {
-                    if let Some(response) =
-                        worker_response_value(command, conversation_id, message.as_ref())?
-                    {
-                        return Ok(response);
-                    }
-                }
-                Ok(NodeEvent::Diagnostic { message, .. }) => {
-                    return Err(anyhow::anyhow!(message));
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    return Err(anyhow::anyhow!("worker response stream closed"));
-                }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    return Err(anyhow::anyhow!(
-                        "worker response stream lagged; skipped {skipped} events"
-                    ));
-                }
-            }
-        }
+    Some(JsonRpcRequest {
+        id: request_id.clone(),
+        method: method.to_string(),
+        params: Some(params),
     })
-    .await;
-
-    match result {
-        Ok(Ok(value)) => write_jsonrpc_response(writer, request_id.clone(), value).await,
-        Ok(Err(error)) => {
-            write_jsonrpc_error(
-                writer,
-                request_id.clone(),
-                JsonRpcErrorPayload {
-                    code: -32000,
-                    message: error.to_string(),
-                    data: None,
-                },
-            )
-            .await
-        }
-        Err(_) => {
-            write_jsonrpc_error(
-                writer,
-                request_id.clone(),
-                JsonRpcErrorPayload {
-                    code: -32000,
-                    message: format!(
-                        "timed out waiting for worker response to `{}`",
-                        request_method_name(command)
-                    ),
-                    data: None,
-                },
-            )
-            .await
-        }
-    }
 }
 
-fn worker_response_value(
+#[derive(Debug)]
+enum HubModeOnlyResponse {
+    JsonRpc {
+        request_id: RequestId,
+        error: JsonRpcErrorPayload,
+    },
+    Notification(AppServerMessage),
+}
+
+fn hub_mode_only_error_response(
+    rpc: &JsonRpcMessage,
     command: &AppClientCommand,
-    conversation_id: &str,
-    message: &AppServerMessage,
-) -> Result<Option<serde_json::Value>> {
-    let AppServerMessage::Notification(notification) = message else {
-        return Ok(None);
-    };
-
-    let value = match (command, notification) {
-        (
-            AppClientCommand::RequestConversationStatus { .. },
-            AppServerNotification::ConversationStatus {
-                conversation_id: response_conversation_id,
-                snapshot,
-            },
-        ) if response_conversation_id == conversation_id => {
-            serde_json::to_value(ConversationStatusResponse {
-                snapshot: snapshot.clone(),
-            })?
-        }
-        (
-            AppClientCommand::RequestConversationHistory { .. },
-            AppServerNotification::ConversationHistory {
-                conversation_id: response_conversation_id,
-                turns,
-            },
-        ) if response_conversation_id == conversation_id => {
-            serde_json::to_value(ConversationHistoryResponse {
-                turns: turns.clone(),
-            })?
-        }
-        (
-            AppClientCommand::RequestConversationHistoryPage { .. },
-            AppServerNotification::ConversationHistoryPage {
-                conversation_id: response_conversation_id,
-                turns,
-                has_more,
-                next_before_turn_id,
-            },
-        ) if response_conversation_id == conversation_id => {
-            serde_json::to_value(ConversationHistoryPageResponse {
-                turns: turns.clone(),
-                has_more: *has_more,
-                next_before_turn_id: next_before_turn_id.clone(),
-            })?
-        }
-        _ => return Ok(None),
-    };
-
-    Ok(Some(value))
-}
-
-fn request_method_name(command: &AppClientCommand) -> &'static str {
-    match command {
-        AppClientCommand::RequestConversationStatus { .. } => "conversation/status",
-        AppClientCommand::RequestConversationHistory { .. } => "conversation/history",
-        AppClientCommand::RequestConversationHistoryPage { .. } => "conversation/historyPage",
-        AppClientCommand::ListConversations => "conversation/list",
-        _ => "unknown",
-    }
-}
-
-fn hub_mode_only_response(
-    command: &AppClientCommand,
-    active_conversation_id: &str,
-) -> Option<AppServerMessage> {
+) -> Option<HubModeOnlyResponse> {
     let unsupported = match command {
         AppClientCommand::ListOnlineNodes => "ListOnlineNodes",
         AppClientCommand::SelectTargetNode { .. } => "SelectTargetNode",
         _ => return None,
     };
-    Some(AppServerMessage::Notification(
-        AppServerNotification::Error {
-            conversation_id: active_conversation_id.to_string(),
-            message: format!(
-                "hub mode only: `{unsupported}` is not available for the current direct target"
-            ),
-        },
-    ))
+    let message =
+        format!("hub mode only: `{unsupported}` is not available for the current direct target");
+    match rpc {
+        JsonRpcMessage::Request(JsonRpcRequest { id, .. }) => Some(HubModeOnlyResponse::JsonRpc {
+            request_id: id.clone(),
+            error: JsonRpcErrorPayload {
+                code: -32000,
+                message,
+                data: None,
+            },
+        }),
+        JsonRpcMessage::Notification(_) => Some(HubModeOnlyResponse::Notification(
+            AppServerMessage::Notification(AppServerNotification::Error {
+                conversation_id: "default".to_string(),
+                message,
+            }),
+        )),
+        JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => None,
+    }
 }
 
-async fn conversation_list_response(
+async fn conversation_list_notification(
+    rpc: &JsonRpcMessage,
     command: &AppClientCommand,
     active_conversation_id: &str,
     runtime: &NodeRuntime,
 ) -> Option<AppServerMessage> {
-    if !matches!(command, AppClientCommand::ListConversations) {
-        return None;
-    }
-    let summaries: Vec<ConversationSummary> = runtime.conversations().lock().await.summaries();
-    if summaries.is_empty() {
+    if !matches!(rpc, JsonRpcMessage::Notification(_)) || !matches!(command, AppClientCommand::ListConversations) {
         return None;
     }
     Some(AppServerMessage::Notification(
         AppServerNotification::ConversationList {
             conversation_id: active_conversation_id.to_string(),
-            conversations: summaries,
+            conversations: read_conversation_list(runtime, active_conversation_id)
+                .await
+                .ok()?
+                .conversations,
         },
     ))
+}
+
+async fn read_conversation_list(
+    runtime: &NodeRuntime,
+    active_conversation_id: &str,
+) -> Result<ConversationListResponse> {
+    let summaries: Vec<ConversationSummary> = runtime.conversations().lock().await.summaries();
+    if !summaries.is_empty() {
+        return Ok(ConversationListResponse {
+            conversations: summaries,
+        });
+    }
+
+    let value = runtime
+        .workers()
+        .request_json(
+            active_conversation_id,
+            JsonRpcRequest {
+                id: RequestId::String("conversation-list".to_string()),
+                method: "conversation/list".to_string(),
+                params: None,
+            },
+        )
+        .await
+        .map_err(anyhow::Error::from)?;
+    let response: ConversationListResponse = serde_json::from_value(value)?;
+    Ok(response)
+}
+
+async fn sync_typed_read_registry(
+    runtime: &NodeRuntime,
+    command: &AppClientCommand,
+    conversation_id: &str,
+    value: &serde_json::Value,
+) -> Result<()> {
+    let message = match command {
+        AppClientCommand::RequestConversationHistory { .. } => {
+            let response: ConversationHistoryResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::ConversationHistory {
+                conversation_id: conversation_id.to_string(),
+                turns: response.turns,
+            })
+        }
+        AppClientCommand::RequestConversationStatus { .. } => {
+            let response: ConversationStatusResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::ConversationStatus {
+                conversation_id: conversation_id.to_string(),
+                snapshot: response.snapshot,
+            })
+        }
+        AppClientCommand::ListConversations => {
+            let response: ConversationListResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::ConversationList {
+                conversation_id: conversation_id.to_string(),
+                conversations: response.conversations,
+            })
+        }
+        AppClientCommand::RequestConversationHistoryPage { .. } => return Ok(()),
+        _ => return Ok(()),
+    };
+    sync_registry_from_message(runtime, &message).await;
+    Ok(())
 }
 
 pub(crate) async fn target_conversation_id(
@@ -354,19 +405,22 @@ pub(crate) async fn target_conversation_id(
 
 #[cfg(test)]
 mod tests {
-    use super::{conversation_list_response, target_conversation_id, worker_response_value};
+    use super::{conversation_list_notification, read_conversation_list, target_conversation_id};
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
     use crate::node::worker_manager::WorkerManager;
-    use agent_core::conversation::{ConversationSnapshot, ConversationStatus};
-    use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
+    use agent_protocol::JsonRpcNotification;
+    use agent_protocol::{
+        AppClientCommand, AppServerMessage, AppServerNotification, JsonRpcMessage, JsonRpcRequest,
+        RequestId,
+    };
     use std::ffi::OsString;
 
     #[test]
     fn list_conversations_routes_to_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
             let mut session = NodeSessionState::new("conversation-1");
             assert_eq!(
                 target_conversation_id(
@@ -384,7 +438,7 @@ mod tests {
     fn switch_conversation_updates_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
             let mut session = NodeSessionState::new("conversation-1");
             let command = AppClientCommand::SwitchConversation {
                 conversation_id: "conversation-2".to_string(),
@@ -403,14 +457,18 @@ mod tests {
     fn list_conversations_uses_node_shared_registry() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
             {
                 let mut registry = runtime.conversations().lock().await;
                 registry.touch("conversation-1");
                 registry.set_title("conversation-1", "Alpha".to_string());
             }
 
-            let message = conversation_list_response(
+            let message = conversation_list_notification(
+                &JsonRpcMessage::Notification(JsonRpcNotification {
+                    method: "conversation/list".to_string(),
+                    params: None,
+                }),
                 &AppClientCommand::ListConversations,
                 "conversation-1",
                 &runtime,
@@ -433,33 +491,30 @@ mod tests {
     }
 
     #[test]
-    fn empty_registry_defers_conversation_list_to_worker() {
+    fn empty_registry_still_returns_a_typed_conversation_list_result() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
-
-            let message = conversation_list_response(
-                &AppClientCommand::ListConversations,
-                "conversation-1",
-                &runtime,
-            )
-            .await;
-
-            assert!(message.is_none());
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+            let response = read_conversation_list(&runtime, "conversation-1").await;
+            assert!(response.is_ok());
         });
     }
 
     #[test]
     fn hub_mode_only_commands_fail_explicitly_in_direct_mode() {
         let message =
-            super::hub_mode_only_response(&AppClientCommand::ListOnlineNodes, "conversation-1")
-                .expect("error response");
+            super::hub_mode_only_error_response(
+                &JsonRpcMessage::Notification(agent_protocol::JsonRpcNotification {
+                    method: "hub/node/list".to_string(),
+                    params: None,
+                }),
+                &AppClientCommand::ListOnlineNodes,
+            )
+            .expect("error response");
         match message {
-            AppServerMessage::Notification(AppServerNotification::Error {
-                conversation_id,
-                message,
-            }) => {
-                assert_eq!(conversation_id, "conversation-1");
+            super::HubModeOnlyResponse::Notification(AppServerMessage::Notification(
+                AppServerNotification::Error { message, .. },
+            )) => {
                 assert!(message.contains("hub mode only"));
                 assert!(message.contains("ListOnlineNodes"));
             }
@@ -468,55 +523,35 @@ mod tests {
     }
 
     #[test]
-    fn history_request_maps_notification_to_typed_response_value() {
-        let turns = vec![];
-        let value = worker_response_value(
-            &AppClientCommand::RequestConversationHistory {
-                conversation_id: "conversation-1".to_string(),
-            },
-            "conversation-1",
-            &AppServerMessage::Notification(AppServerNotification::ConversationHistory {
-                conversation_id: "conversation-1".to_string(),
-                turns: turns.clone(),
+    fn hub_mode_only_requests_return_jsonrpc_error() {
+        let response = super::hub_mode_only_error_response(
+            &JsonRpcMessage::Request(JsonRpcRequest {
+                id: RequestId::Integer(9),
+                method: "hub/node/list".to_string(),
+                params: None,
             }),
+            &AppClientCommand::ListOnlineNodes,
         )
-        .expect("response mapping")
-        .expect("typed response value");
-
-        let response: agent_protocol::ConversationHistoryResponse =
-            serde_json::from_value(value).expect("decode history response");
-        assert_eq!(response.turns.len(), turns.len());
+        .expect("error response");
+        match response {
+            super::HubModeOnlyResponse::JsonRpc { request_id, error } => {
+                assert_eq!(request_id, RequestId::Integer(9));
+                assert_eq!(error.code, -32000);
+                assert!(error.message.contains("hub mode only"));
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
     }
 
     #[test]
-    fn status_request_maps_notification_to_typed_response_value() {
-        let snapshot = ConversationSnapshot {
-            conversation_id: "conversation-1".to_string(),
-            conversation_status: ConversationStatus::Idle,
-            active_turn: None,
-            turn_state: None,
-            message_count: 3,
-        };
-        let value = worker_response_value(
-            &AppClientCommand::RequestConversationStatus {
-                conversation_id: "conversation-1".to_string(),
-            },
-            "conversation-1",
-            &AppServerMessage::Notification(AppServerNotification::ConversationStatus {
-                conversation_id: "conversation-1".to_string(),
-                snapshot: snapshot.clone(),
-            }),
+    fn typed_request_from_list_conversations_uses_jsonrpc_list_method() {
+        let request = super::typed_request_from_command(
+            &AppClientCommand::ListConversations,
+            &RequestId::Integer(5),
         )
-        .expect("response mapping")
-        .expect("typed response value");
-
-        let response: agent_protocol::ConversationStatusResponse =
-            serde_json::from_value(value).expect("decode status response");
-        assert_eq!(response.snapshot.conversation_id, snapshot.conversation_id);
-        assert!(matches!(
-            response.snapshot.conversation_status,
-            ConversationStatus::Idle
-        ));
-        assert_eq!(response.snapshot.message_count, 3);
+        .expect("typed request");
+        assert_eq!(request.id, RequestId::Integer(5));
+        assert_eq!(request.method, "conversation/list");
+        assert!(request.params.is_some());
     }
 }

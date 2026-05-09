@@ -127,7 +127,7 @@ mod tests {
     fn worker_conversation_list_replaces_shared_registry_state() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
             runtime.conversations().lock().await.touch("stale");
 
             sync_registry_from_message(

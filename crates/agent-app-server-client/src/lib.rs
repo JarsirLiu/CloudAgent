@@ -4,14 +4,17 @@ mod stdio;
 
 use agent_core::ServerRequestDecision;
 use agent_protocol::{
-    AppServerMessage, AppServerNotification, JsonRpcErrorPayload, JsonRpcRequest,
-    NotificationDelivery, UserTurnInput, classify_notification,
+    AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
+    ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
+    JsonRpcErrorPayload, JsonRpcRequest, NotificationDelivery, OnlineNodeListResponse,
+    RequestId, SelectTargetNodeResponse, UserTurnInput, classify_notification,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;
 use std::error::Error;
 use std::fmt;
 use std::io::Error as IoError;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::mpsc;
 
 use in_process::InProcessAppServerRequestHandle;
@@ -21,6 +24,7 @@ pub use remote::{RemoteAppServerClient, RemoteClientConfig};
 pub use stdio::{StdioAppServerClient, StdioClientConfig};
 
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 128;
+static REQUEST_ID_COUNTER: AtomicI64 = AtomicI64::new(1);
 
 #[derive(Clone, Debug)]
 pub struct AppServerConnectInfo {
@@ -121,6 +125,54 @@ impl AppServerClient {
             Self::InProcess(client) => client.request_typed(request).await,
             Self::Remote(client) => client.request_typed(request).await,
         }
+    }
+
+    pub async fn request_conversation_list_typed(
+        &self,
+    ) -> Result<ConversationListResponse, TypedRequestError> {
+        self.request_handle().request_conversation_list_typed().await
+    }
+
+    pub async fn request_conversation_status_typed(
+        &self,
+        conversation_id: impl Into<String>,
+    ) -> Result<ConversationStatusResponse, TypedRequestError> {
+        self.request_handle()
+            .request_conversation_status_typed(conversation_id)
+            .await
+    }
+
+    pub async fn request_conversation_history_typed(
+        &self,
+        conversation_id: impl Into<String>,
+    ) -> Result<ConversationHistoryResponse, TypedRequestError> {
+        self.request_handle()
+            .request_conversation_history_typed(conversation_id)
+            .await
+    }
+
+    pub async fn request_conversation_history_page_typed(
+        &self,
+        conversation_id: impl Into<String>,
+        before_turn_id: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationHistoryPageResponse, TypedRequestError> {
+        self.request_handle()
+            .request_conversation_history_page_typed(conversation_id, before_turn_id, limit)
+            .await
+    }
+
+    pub async fn request_online_nodes_typed(
+        &self,
+    ) -> Result<OnlineNodeListResponse, TypedRequestError> {
+        self.request_handle().request_online_nodes_typed().await
+    }
+
+    pub async fn select_target_node_typed(
+        &self,
+        node_id: impl Into<String>,
+    ) -> Result<SelectTargetNodeResponse, TypedRequestError> {
+        self.request_handle().select_target_node_typed(node_id).await
     }
 
     pub fn submit_turn(&self, input: UserTurnInput) -> Result<()> {
@@ -230,6 +282,88 @@ impl AppServerRequestHandle {
         }
     }
 
+    pub async fn request_conversation_list_typed(
+        &self,
+    ) -> Result<ConversationListResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/list".to_string(),
+            params: None,
+        })
+        .await
+    }
+
+    pub async fn request_conversation_status_typed(
+        &self,
+        conversation_id: impl Into<String>,
+    ) -> Result<ConversationStatusResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/status".to_string(),
+            params: Some(serde_json::json!({
+                "conversation_id": conversation_id.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn request_conversation_history_typed(
+        &self,
+        conversation_id: impl Into<String>,
+    ) -> Result<ConversationHistoryResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/history".to_string(),
+            params: Some(serde_json::json!({
+                "conversation_id": conversation_id.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn request_conversation_history_page_typed(
+        &self,
+        conversation_id: impl Into<String>,
+        before_turn_id: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationHistoryPageResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/historyPage".to_string(),
+            params: Some(serde_json::json!({
+                "conversation_id": conversation_id.into(),
+                "before_turn_id": before_turn_id,
+                "limit": limit,
+            })),
+        })
+        .await
+    }
+
+    pub async fn request_online_nodes_typed(
+        &self,
+    ) -> Result<OnlineNodeListResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "hub/node/list".to_string(),
+            params: None,
+        })
+        .await
+    }
+
+    pub async fn select_target_node_typed(
+        &self,
+        node_id: impl Into<String>,
+    ) -> Result<SelectTargetNodeResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "hub/node/select".to_string(),
+            params: Some(serde_json::json!({
+                "node_id": node_id.into(),
+            })),
+        })
+        .await
+    }
+
     pub fn resolve_server_request(
         &self,
         conversation_id: impl Into<String>,
@@ -273,6 +407,10 @@ impl AppServerRequestHandle {
             },
         )
     }
+}
+
+fn next_request_id() -> RequestId {
+    RequestId::Integer(REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
 pub(crate) fn event_requires_delivery(event: &AppServerEvent) -> bool {

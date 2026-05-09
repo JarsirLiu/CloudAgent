@@ -6,7 +6,7 @@ use crate::session::subscriptions::ConversationSubscriptions;
 use crate::turn::service as turn_service;
 use agent_core::AgentHost;
 use agent_core::ConversationTurn;
-use agent_core::{ServerRequest, ServerRequestDecision};
+use agent_core::{ServerRequest, ServerRequestDecision, TurnState};
 use agent_protocol::{AppClientCommand, AppServerMessage};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -340,7 +340,27 @@ pub(crate) fn merge_active_turn(
         return;
     };
     if let Some(existing) = turns.iter_mut().find(|turn| turn.id == active_turn.id) {
-        *existing = active_turn;
+        let mut merged_items = existing.items.clone();
+        for active_item in active_turn.items {
+            if let Some(index) = merged_items
+                .iter()
+                .position(|existing_item| existing_item.id() == active_item.id())
+            {
+                merged_items[index] = active_item;
+            } else {
+                merged_items.push(active_item);
+            }
+        }
+        existing.items = merged_items;
+        existing.rollout_start_index =
+            existing.rollout_start_index.min(active_turn.rollout_start_index);
+        existing.rollout_end_index = existing.rollout_end_index.max(active_turn.rollout_end_index);
+        if !matches!(
+            existing.state,
+            TurnState::Completed | TurnState::Failed | TurnState::Cancelled
+        ) {
+            existing.state = active_turn.state;
+        }
     } else {
         turns.push(active_turn);
     }
@@ -352,16 +372,49 @@ mod tests {
     use agent_core::{ConversationTurn, TranscriptItem, TurnState};
 
     #[test]
-    fn active_turn_snapshot_replaces_matching_rollout_turn() {
-        let mut turns = vec![turn("turn-1", "old")];
+    fn active_turn_snapshot_merges_matching_rollout_turn_without_dropping_existing_items() {
+        let mut turns = vec![ConversationTurn {
+            id: "turn-1".to_string(),
+            state: TurnState::Completed,
+            items: vec![
+                TranscriptItem::Reasoning {
+                    id: "reasoning:1".to_string(),
+                    title: "Reasoning".to_string(),
+                    text: "thinking".to_string(),
+                },
+                TranscriptItem::AgentMessage {
+                    id: "assistant:1".to_string(),
+                    text: "final answer".to_string(),
+                },
+            ],
+            rollout_start_index: 1,
+            rollout_end_index: 4,
+        }];
 
-        merge_active_turn(&mut turns, Some(turn("turn-1", "live")));
+        merge_active_turn(
+            &mut turns,
+            Some(ConversationTurn {
+                id: "turn-1".to_string(),
+                state: TurnState::Running,
+                items: vec![TranscriptItem::Reasoning {
+                    id: "reasoning:1".to_string(),
+                    title: "Reasoning".to_string(),
+                    text: "thinking".to_string(),
+                }],
+                rollout_start_index: 1,
+                rollout_end_index: 3,
+            }),
+        );
 
         assert_eq!(turns.len(), 1);
         assert!(matches!(
             &turns[0].items[..],
-            [TranscriptItem::AgentMessage { text, .. }] if text == "live"
+            [
+                TranscriptItem::Reasoning { .. },
+                TranscriptItem::AgentMessage { text, .. }
+            ] if text == "final answer"
         ));
+        assert!(matches!(turns[0].state, TurnState::Completed));
     }
 
     #[test]

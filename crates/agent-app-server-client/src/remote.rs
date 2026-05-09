@@ -975,7 +975,7 @@ mod tests {
             write_half.flush().await.expect("flush list response");
         });
 
-        let client = RemoteAppServerClient::connect(test_config(address.to_string()))
+        let mut client = RemoteAppServerClient::connect(test_config(address.to_string()))
             .await
             .expect("connect client");
         let request_handle = client.request_handle();
@@ -987,6 +987,12 @@ mod tests {
         assert_eq!(response.conversations.len(), 1);
         assert_eq!(response.conversations[0].conversation_id, "conversation-1");
         assert_eq!(response.conversations[0].title.as_deref(), Some("Alpha"));
+        if let Some(event) = client.try_next_event() {
+            assert!(
+                matches!(event, AppServerEvent::Disconnected { .. }),
+                "typed conversation/list should not emit a duplicate notification event: {event:?}"
+            );
+        }
 
         client.shutdown().await.expect("shutdown client");
         server.await.expect("server task");

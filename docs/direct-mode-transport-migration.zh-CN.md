@@ -160,12 +160,38 @@ CloudAgent 不要求目录和名字逐字复制 Codex，但传输层原则必须
 - `target`：surface 想要连接的目标
 - `transport`：底层承载方式
 - `client surface`：surface 依赖的统一客户端 API
+- `data_root_dir`：应用数据根目录，承载 conversations / logs / memory，和 workspace_root 分离
 
 特别说明：
 
 - `conversation` 不是 `session`
 - `local-node` 是 target/deployment 概念，不是长期 client 协议名
 - `hub-node` 是 routing target 概念，不是长期 client 协议名
+
+## 数据根约定
+
+为了和 Codex 一样把“工作区语义”和“应用数据语义”分开，CloudAgent 现在要求：
+
+- `workspace_root` 只表示工具执行、仓库读写、相对路径解析的根
+- `data_root_dir` 表示应用数据根
+- `conversation_store_dir` 与 `memory.root_dir` 默认从 `data_root_dir` 派生
+- `logs` 也必须写入 `data_root_dir/logs`
+
+默认规则：
+
+- dev 模式：`data_root_dir = <workspace_root>/data`
+- release 模式：`data_root_dir = ~/.cloudagent/data`
+
+默认派生目录：
+
+- `conversation_store_dir = <data_root_dir>/conversations`
+- `memory.root_dir = <data_root_dir>/state/memory`
+- `logs = <data_root_dir>/logs`
+
+只有在高级场景下，才应该单独覆盖：
+
+- `conversation_store_dir`
+- `memory.root_dir`
 
 ## 目标分层
 
@@ -398,6 +424,23 @@ pub enum AppServerClient {
 
 - CLI 连接本地 node 时走 `Remote`
 - CLI 初始化、切会话、请求历史、审批响应全部通过统一 client API
+- CLI 启动 bootstrap 使用 typed `conversation/history` / `conversation/status`
+- CLI 不再依赖同名 `ConversationHistory` / `ConversationStatus` notification 作为首屏初始化来源
+
+补充约束：
+
+- `conversation/list`
+- `conversation/status`
+- `conversation/history`
+- `conversation/historyPage`
+
+这四类同名 notification 只保留“增量同步 / 投影视图刷新”语义。
+
+它们不再承担：
+
+- typed request 的镜像回放
+- 首屏 bootstrap 的主来源
+- 同一 client 上 request/response 成功后的重复确认
 
 ### Phase 5：实现 Direct Mode adapter 接入边界
 

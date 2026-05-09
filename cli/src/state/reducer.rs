@@ -3,7 +3,8 @@ use agent_core::conversation::{ConversationSummary, ConversationTurn, Transcript
 use agent_core::turn::{TurnId, TurnItemKind};
 use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
 use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, RequestId,
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
+    RequestId,
 };
 
 const ERR_TRANSPORT_CLOSED_PREFIX: &str = "ERR_TRANSPORT_CLOSED:";
@@ -50,6 +51,7 @@ pub(crate) struct ServerMessageReduce {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ServerAction {
     SetConversationList(Vec<ConversationSummary>),
+    SetFrontendMode(FrontendMode),
     SwitchConversation(String),
     ClearCurrentTurnUsage,
     SetTokenUsage {
@@ -118,12 +120,20 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     let mut actions = Vec::new();
     match message {
         AppServerMessage::Notification(notification) => match notification {
-            AppServerNotification::FrontendStateChanged { .. } => {}
+            AppServerNotification::FrontendStateChanged { mode, .. } => {
+                actions.push(ServerAction::SetFrontendMode(*mode));
+            }
             AppServerNotification::TurnStarted { turn_id, .. } => {
                 actions.push(ServerAction::ClearCurrentTurnUsage);
                 actions.push(ServerAction::BindActiveTurn(turn_id.clone()));
             }
-            AppServerNotification::ConversationStatus { .. } => {}
+            AppServerNotification::ConversationStatus { snapshot, .. } => {
+                let mode = match snapshot.conversation_status {
+                    agent_core::ConversationStatus::Busy => FrontendMode::Running,
+                    agent_core::ConversationStatus::Idle => FrontendMode::Idle,
+                };
+                actions.push(ServerAction::SetFrontendMode(mode));
+            }
             AppServerNotification::ConversationHistory { turns, .. } => {
                 actions.push(ServerAction::ReplaceHistory(turns.clone()));
             }

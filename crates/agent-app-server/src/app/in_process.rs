@@ -15,6 +15,7 @@ enum ServerMessage {
 pub struct InProcessClientHandle {
     command_tx: mpsc::UnboundedSender<ServerMessage>,
     event_rx: mpsc::UnboundedReceiver<AppServerMessage>,
+    state: Arc<Mutex<ServerState>>,
 }
 
 #[derive(Clone)]
@@ -49,6 +50,10 @@ impl InProcessClientHandle {
         let _ = done_rx.await;
         Ok(())
     }
+
+    pub(crate) fn state(&self) -> Arc<Mutex<ServerState>> {
+        self.state.clone()
+    }
 }
 
 pub struct InProcessServer;
@@ -63,13 +68,14 @@ pub fn start_in_process(
     let (event_tx, event_rx) = mpsc::unbounded_channel::<AppServerMessage>();
     let state = Arc::new(Mutex::new(ServerState::new(conversation_id.clone())));
 
+    let state_for_task = state.clone();
     tokio::spawn(async move {
-        session_state::hydrate_active_conversation(&runtime, &state).await;
+        session_state::hydrate_active_conversation(&runtime, &state_for_task).await;
         while let Some(message) = command_rx.recv().await {
             match message {
                 ServerMessage::Command(AppClientCommand::Exit) => {
                     let tasks = {
-                        let mut guard = state.lock().await;
+                        let mut guard = state_for_task.lock().await;
                         guard.take_all_turn_tasks()
                     };
                     for task in tasks {
@@ -87,7 +93,7 @@ pub fn start_in_process(
                         runtime.clone(),
                         command,
                         &event_tx,
-                        state.clone(),
+                        state_for_task.clone(),
                         auto_approve,
                         auto_approve_reason.clone(),
                     )
@@ -107,7 +113,7 @@ pub fn start_in_process(
                 }
                 ServerMessage::Shutdown { done } => {
                     let tasks = {
-                        let mut guard = state.lock().await;
+                        let mut guard = state_for_task.lock().await;
                         guard.take_all_turn_tasks()
                     };
                     for task in tasks {
@@ -123,5 +129,6 @@ pub fn start_in_process(
     InProcessClientHandle {
         command_tx,
         event_rx,
+        state,
     }
 }

@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Debug)]
 pub struct AgentContext {
     pub workspace_root: PathBuf,
+    pub data_root_dir: PathBuf,
     pub conversation_store_dir: PathBuf,
     pub default_shell_timeout_ms: u64,
 }
