@@ -5,6 +5,7 @@ use agent_app_server_client::{
 use anyhow::{Result, anyhow};
 use std::process::Stdio;
 use std::time::Duration;
+use tokio::time::Instant;
 
 pub(crate) async fn create_client(
     config: &ConsoleConfig,
@@ -46,22 +47,144 @@ async fn create_local_node_client(
     {
         Ok(client) => Ok(client),
         Err(first_error) => {
-            std::process::Command::new(program)
+            let mut child = std::process::Command::new(program)
                 .args(args)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()?;
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            AppServerClient::local_node(LocalNodeClientConfig {
-                address: address.to_string(),
-            })
+            wait_for_service(
+                || {
+                    AppServerClient::local_node(LocalNodeClientConfig {
+                        address: address.to_string(),
+                    })
+                },
+                Some(&mut child),
+                Duration::from_secs(5),
+                Duration::from_millis(100),
+            )
             .await
-            .map_err(|second_error| {
+            .map_err(|wait_error| {
                 anyhow!(
-                    "failed to connect to local node at {address}; initial error: {first_error}; retry after launching node failed: {second_error}"
+                    "failed to connect to local node at {address}; initial error: {first_error}; {wait_error}"
                 )
             })
         }
+    }
+}
+
+async fn wait_for_service<T, F, Fut>(
+    mut connect_once: F,
+    mut child: Option<&mut std::process::Child>,
+    timeout: Duration,
+    retry_interval: Duration,
+) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let deadline = Instant::now() + timeout;
+    let mut last_error = None;
+
+    loop {
+        if let Some(process) = child.as_deref_mut()
+            && let Some(status) = process.try_wait()?
+        {
+            let detail = last_error.unwrap_or_else(|| "service did not accept connections".into());
+            return Err(anyhow!(
+                "launched process exited before the service became reachable (status: {status}); last connection error: {detail}"
+            ));
+        }
+
+        match connect_once().await {
+            Ok(client) => return Ok(client),
+            Err(error) => last_error = Some(error.to_string()),
+        }
+
+        if Instant::now() >= deadline {
+            let detail = last_error.unwrap_or_else(|| "service did not accept connections".into());
+            return Err(anyhow!(
+                "service did not become reachable within {} ms; last connection error: {detail}",
+                timeout.as_millis()
+            ));
+        }
+
+        tokio::time::sleep(retry_interval).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wait_for_service;
+    use anyhow::{Result, anyhow};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::Duration;
+    use tokio::net::{TcpListener, TcpStream};
+
+    #[tokio::test]
+    async fn waits_for_service_until_it_becomes_reachable() {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe listener");
+        let addr = probe.local_addr().expect("probe local addr");
+        drop(probe);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let listener = TcpListener::bind(addr)
+                .await
+                .expect("bind delayed listener");
+            let _ = listener.accept().await.expect("accept one client");
+        });
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let result = wait_for_service(
+            {
+                let attempts = attempts.clone();
+                move || {
+                    let attempts = attempts.clone();
+                    async move {
+                        attempts.fetch_add(1, Ordering::Relaxed);
+                        TcpStream::connect(addr)
+                            .await
+                            .map(|_| ())
+                            .map_err(|err| anyhow!(err))
+                    }
+                }
+            },
+            None,
+            Duration::from_secs(2),
+            Duration::from_millis(50),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "service should become reachable: {result:?}"
+        );
+        assert!(
+            attempts.load(Ordering::Relaxed) >= 1,
+            "should attempt to connect at least once"
+        );
+    }
+
+    #[tokio::test]
+    async fn times_out_when_service_never_starts() {
+        let result: Result<()> = wait_for_service(
+            || async { Err(anyhow!("connection refused")) },
+            None,
+            Duration::from_millis(150),
+            Duration::from_millis(25),
+        )
+        .await;
+
+        let error = result.expect_err("service should time out");
+        assert!(
+            error
+                .to_string()
+                .contains("service did not become reachable within"),
+            "unexpected timeout error: {error}"
+        );
     }
 }
