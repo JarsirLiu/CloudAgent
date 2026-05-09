@@ -3,6 +3,7 @@ use crate::app::clipboard_paste::paste_image_to_temp_png;
 use crate::app::conversation::actions::handle_tui_input;
 use crate::app::conversation::event_router;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
+use crate::state::NoticeLevel;
 use crate::terminal::{FrameRequester, UiEvent};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
 use agent_protocol::{AppServerMessage, AppServerNotification};
@@ -88,11 +89,8 @@ where
                 return;
             }
 
-            app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
-                "conversation",
-                format!("Failed to paste image: {err}"),
-                crate::ui::widgets::history_cell::HistoryTone::Warning,
-            ));
+            app.bottom_pane
+                .show_transient_notice(NoticeLevel::Warn, format!("Failed to paste image: {err}"));
         }
     }
 }
@@ -403,12 +401,11 @@ mod tests {
             ))
         });
 
-        let live_cell = app
-            .live_cells()
-            .last()
-            .expect("warning live cell should be created");
-        let body = live_cell.body().to_string();
-        assert!(body.contains("Failed to paste image"));
-        assert!(body.contains("missing"));
+        let status = app.bottom_pane.build_status_view_model(&app);
+        let banner = status
+            .live_banner
+            .expect("warning banner should be created");
+        assert!(banner.contains("Failed to paste image"));
+        assert!(banner.contains("missing"));
     }
 }

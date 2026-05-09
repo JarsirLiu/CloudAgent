@@ -182,8 +182,7 @@ impl TuiApp {
     }
 
     pub(crate) fn current_mode(&self) -> FrontendMode {
-        self.bottom_pane
-            .current_mode(self.run_state.frontend_mode)
+        self.bottom_pane.current_mode(self.run_state.frontend_mode)
     }
 
     pub(crate) fn sync_frontend_mode(&mut self, mode: FrontendMode) {
