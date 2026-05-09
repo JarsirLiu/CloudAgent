@@ -1,10 +1,13 @@
-use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, forward_event};
+use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, TypedRequestError, forward_event};
 use agent_protocol::{
-    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcMessage, RequestId,
+    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcMessage,
+    JsonRpcRequest, RequestId,
 };
 use anyhow::{Context, Result, anyhow};
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::io::{self, ErrorKind};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -81,6 +84,13 @@ impl StdioAppServerClient {
         }
     }
 
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request_handle().request_typed(request).await
+    }
+
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         self.event_rx.recv().await
     }
@@ -117,6 +127,19 @@ impl StdioAppServerRequestHandle {
         self.command_tx
             .send(command)
             .map_err(|_| anyhow!("stdio app-server command channel is closed"))
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        Err(TypedRequestError::Transport {
+            method: request.method,
+            source: io::Error::new(
+                ErrorKind::Unsupported,
+                "typed requests are not implemented for the stdio client yet",
+            ),
+        })
     }
 }
 

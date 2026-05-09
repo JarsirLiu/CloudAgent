@@ -1,9 +1,11 @@
-use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, forward_event};
+use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, TypedRequestError, forward_event};
 use agent_app_server::{InProcessClientHandle, InProcessClientSender, start_in_process};
 use agent_core::AgentHost;
-use agent_protocol::AppClientCommand;
+use agent_protocol::{AppClientCommand, JsonRpcRequest};
 use anyhow::Result;
+use serde::de::DeserializeOwned;
 use std::sync::Arc;
+use std::{io, io::ErrorKind};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -58,6 +60,13 @@ impl InProcessAppServerClient {
         }
     }
 
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request_handle().request_typed(request).await
+    }
+
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         self.event_rx.recv().await
     }
@@ -78,6 +87,19 @@ impl InProcessAppServerClient {
 impl InProcessAppServerRequestHandle {
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.sender.send_command(command)
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        Err(TypedRequestError::Transport {
+            method: request.method,
+            source: io::Error::new(
+                ErrorKind::Unsupported,
+                "typed requests are not implemented for the in-process client yet",
+            ),
+        })
     }
 }
 

@@ -2,6 +2,7 @@ use crate::node::runtime::NodeRuntime;
 use crate::node::worker_manager::NodeEvent;
 use agent_protocol::{
     AppServerMessage, AppServerMessageEnvelope, AppServerNotification, JsonRpcMessage,
+    JsonRpcResponse, RequestId,
 };
 use anyhow::Result;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -71,6 +72,24 @@ where
         event_seq: None,
     };
     let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
+    writer.write_all(payload.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub(crate) async fn write_jsonrpc_response<W>(
+    writer: &mut W,
+    request_id: RequestId,
+    result: serde_json::Value,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let payload = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
+        id: request_id,
+        result,
+    }))?;
     writer.write_all(payload.as_bytes()).await?;
     writer.write_all(b"\n").await?;
     writer.flush().await?;

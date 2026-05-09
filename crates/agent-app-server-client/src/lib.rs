@@ -4,10 +4,14 @@ mod stdio;
 
 use agent_core::ServerRequestDecision;
 use agent_protocol::{
-    AppServerMessage, AppServerNotification, NotificationDelivery, UserTurnInput,
-    classify_notification,
+    AppServerMessage, AppServerNotification, JsonRpcErrorPayload, JsonRpcRequest,
+    NotificationDelivery, UserTurnInput, classify_notification,
 };
 use anyhow::Result;
+use serde::de::DeserializeOwned;
+use std::error::Error;
+use std::fmt;
+use std::io::Error as IoError;
 use tokio::sync::mpsc;
 
 use in_process::InProcessAppServerRequestHandle;
@@ -49,6 +53,44 @@ pub enum AppServerRequestHandle {
     Stdio(StdioAppServerRequestHandle),
 }
 
+#[derive(Debug)]
+pub enum TypedRequestError {
+    Transport {
+        method: String,
+        source: IoError,
+    },
+    Server {
+        method: String,
+        source: JsonRpcErrorPayload,
+    },
+    Deserialize {
+        method: String,
+        source: serde_json::Error,
+    },
+}
+
+impl fmt::Display for TypedRequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transport { method, source } => write!(f, "{method} transport error: {source}"),
+            Self::Server { method, source } => write!(f, "{method} failed: {}", source.message),
+            Self::Deserialize { method, source } => {
+                write!(f, "{method} response decode error: {source}")
+            }
+        }
+    }
+}
+
+impl Error for TypedRequestError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Transport { source, .. } => Some(source),
+            Self::Server { .. } => None,
+            Self::Deserialize { source, .. } => Some(source),
+        }
+    }
+}
+
 impl AppServerClient {
     pub fn in_process(config: InProcessClientConfig) -> Self {
         Self::InProcess(in_process::InProcessAppServerClient::start(config))
@@ -82,6 +124,17 @@ impl AppServerClient {
         }
     }
 
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        match self {
+            Self::InProcess(client) => client.request_typed(request).await,
+            Self::LocalNode(client) => client.request_typed(request).await,
+            Self::Stdio(client) => client.request_typed(request).await,
+        }
+    }
+
     pub fn submit_turn(&self, input: UserTurnInput) -> Result<()> {
         self.send_command(agent_protocol::AppClientCommand::SubmitTurn(input))
     }
@@ -97,6 +150,19 @@ impl AppServerClient {
             request_id,
             decision,
         })
+    }
+
+    pub fn reject_server_request(
+        &self,
+        conversation_id: impl Into<String>,
+        request_id: agent_protocol::RequestId,
+        reason: impl Into<String>,
+    ) -> Result<()> {
+        self.resolve_server_request(
+            conversation_id,
+            request_id,
+            agent_core::ServerRequestDecision::decline(Some(reason.into())),
+        )
     }
 
     pub fn interrupt_turn(&self, conversation_id: impl Into<String>) -> Result<()> {
@@ -170,6 +236,17 @@ impl AppServerRequestHandle {
         self.send_command(agent_protocol::AppClientCommand::SubmitTurn(input))
     }
 
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        match self {
+            Self::InProcess(handle) => handle.request_typed(request).await,
+            Self::LocalNode(handle) => handle.request_typed(request).await,
+            Self::Stdio(handle) => handle.request_typed(request).await,
+        }
+    }
+
     pub fn resolve_server_request(
         &self,
         conversation_id: impl Into<String>,
@@ -181,6 +258,19 @@ impl AppServerRequestHandle {
             request_id,
             decision,
         })
+    }
+
+    pub fn reject_server_request(
+        &self,
+        conversation_id: impl Into<String>,
+        request_id: agent_protocol::RequestId,
+        reason: impl Into<String>,
+    ) -> Result<()> {
+        self.resolve_server_request(
+            conversation_id,
+            request_id,
+            agent_core::ServerRequestDecision::decline(Some(reason.into())),
+        )
     }
 
     pub fn interrupt_turn(&self, conversation_id: impl Into<String>) -> Result<()> {

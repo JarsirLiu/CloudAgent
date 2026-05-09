@@ -1,20 +1,20 @@
-use crate::{
-    AppServerConnectInfo, AppServerEvent,
-    stdio::{read_events_from_with_disconnect_message, write_commands_to},
-};
+use crate::{AppServerConnectInfo, AppServerEvent, TypedRequestError};
 use agent_protocol::{
-    AppClientCommand, AppServerMessageEnvelope, JsonRpcError, JsonRpcMessage, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse, RequestId, TransportClientInfo,
-    TransportInitializeCapabilities, TransportInitializeParams, TransportInitializeResult,
+    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, ConversationListResponse,
+    JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
+    JsonRpcResponse, RequestId, TransportClientInfo, TransportInitializeCapabilities,
+    TransportInitializeParams, TransportInitializeResult,
 };
-use anyhow::{Result, anyhow};
-use std::collections::VecDeque;
+use anyhow::{Context, Result, anyhow};
+use serde::de::DeserializeOwned;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
+use std::{io, io::ErrorKind};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
@@ -42,16 +42,32 @@ impl LocalNodeClientConfig {
 }
 
 pub struct LocalNodeAppServerClient {
-    command_tx: mpsc::UnboundedSender<AppClientCommand>,
+    command_tx: mpsc::UnboundedSender<LocalNodeOutbound>,
     event_rx: mpsc::Receiver<AppServerEvent>,
     pending_events: VecDeque<AppServerEvent>,
+    request_counter: Arc<AtomicI64>,
     writer_task: JoinHandle<Result<()>>,
     reader_task: JoinHandle<Result<()>>,
 }
 
 #[derive(Clone)]
 pub struct LocalNodeAppServerRequestHandle {
-    command_tx: mpsc::UnboundedSender<AppClientCommand>,
+    command_tx: mpsc::UnboundedSender<LocalNodeOutbound>,
+    request_counter: Arc<AtomicI64>,
+}
+
+enum LocalNodeOutbound {
+    Command(AppClientCommand),
+    Request {
+        request: JsonRpcRequest,
+        response_tx: oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>,
+    },
+    Shutdown,
+}
+
+enum JsonRpcResponseEnvelope {
+    Result(serde_json::Value),
+    Error(JsonRpcErrorPayload),
 }
 
 impl LocalNodeAppServerClient {
@@ -78,18 +94,38 @@ impl LocalNodeAppServerClient {
         let event_capacity = config.client.channel_capacity.max(1);
         let (event_tx, event_rx) = mpsc::channel(event_capacity);
         let request_counter = Arc::new(AtomicI64::new(1));
+        let request_counter_for_writer = request_counter.clone();
+        let pending_requests = Arc::new(Mutex::new(HashMap::<
+            RequestId,
+            oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>,
+        >::new()));
+        let pending_requests_for_writer = pending_requests.clone();
+        let pending_requests_for_reader = pending_requests.clone();
 
         let writer_task = tokio::spawn(async move {
-            write_commands_to(&mut writer, &mut command_rx, request_counter).await
+            write_outbound_messages_to(
+                &mut writer,
+                &mut command_rx,
+                request_counter_for_writer,
+                pending_requests_for_writer,
+            )
+            .await
         });
         let reader_task = tokio::spawn(async move {
-            read_events_from_with_disconnect_message(reader, event_tx, "local node closed").await
+            read_transport_messages_from(
+                reader,
+                event_tx,
+                "local node closed",
+                pending_requests_for_reader,
+            )
+            .await
         });
 
         Ok(Self {
             command_tx,
             event_rx,
             pending_events,
+            request_counter,
             writer_task,
             reader_task,
         })
@@ -97,14 +133,22 @@ impl LocalNodeAppServerClient {
 
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(command)
+            .send(LocalNodeOutbound::Command(command))
             .map_err(|_| anyhow!("local node command channel is closed"))
     }
 
     pub fn request_handle(&self) -> LocalNodeAppServerRequestHandle {
         LocalNodeAppServerRequestHandle {
             command_tx: self.command_tx.clone(),
+            request_counter: self.request_counter.clone(),
         }
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request_handle().request_typed(request).await
     }
 
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
@@ -126,10 +170,12 @@ impl LocalNodeAppServerClient {
             command_tx,
             event_rx: _,
             pending_events: _,
+            request_counter: _,
             writer_task,
             reader_task,
         } = self;
 
+        let _ = command_tx.send(LocalNodeOutbound::Shutdown);
         drop(command_tx);
         writer_task.await??;
         reader_task.await??;
@@ -140,9 +186,186 @@ impl LocalNodeAppServerClient {
 impl LocalNodeAppServerRequestHandle {
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(command)
+            .send(LocalNodeOutbound::Command(command))
             .map_err(|_| anyhow!("local node command channel is closed"))
     }
+
+    pub async fn request_conversation_list(&self) -> Result<ConversationListResponse> {
+        self.request_typed(JsonRpcRequest {
+            id: RequestId::Integer(
+                self.request_counter
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ),
+            method: "conversation/list".to_string(),
+            params: None,
+        })
+        .await
+        .map_err(anyhow::Error::from)
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        let method = request.method.clone();
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(LocalNodeOutbound::Request {
+                request,
+                response_tx,
+            })
+            .map_err(|_| TypedRequestError::Transport {
+                method: method.clone(),
+                source: io::Error::new(
+                    ErrorKind::BrokenPipe,
+                    "local node command channel is closed",
+                ),
+            })?;
+
+        let response = response_rx
+            .await
+            .map_err(|_| TypedRequestError::Transport {
+                method: method.clone(),
+                source: io::Error::new(
+                    ErrorKind::BrokenPipe,
+                    "local node request channel is closed",
+                ),
+            })?
+            .map_err(|source| TypedRequestError::Transport {
+                method: method.clone(),
+                source,
+            })?;
+
+        let value = match response {
+            JsonRpcResponseEnvelope::Result(value) => value,
+            JsonRpcResponseEnvelope::Error(source) => {
+                return Err(TypedRequestError::Server { method, source });
+            }
+        };
+
+        serde_json::from_value(value)
+            .map_err(|source| TypedRequestError::Deserialize { method, source })
+    }
+}
+
+async fn write_outbound_messages_to<W>(
+    writer: &mut W,
+    command_rx: &mut mpsc::UnboundedReceiver<LocalNodeOutbound>,
+    request_counter: Arc<AtomicI64>,
+    pending_requests: Arc<
+        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
+    >,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    while let Some(outbound) = command_rx.recv().await {
+        match outbound {
+            LocalNodeOutbound::Command(command) => {
+                let envelope = AppClientCommandEnvelope {
+                    request_id: RequestId::Integer(
+                        request_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    ),
+                    command,
+                };
+                let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
+                writer.write_all(payload.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;
+            }
+            LocalNodeOutbound::Request {
+                request,
+                response_tx,
+            } => {
+                pending_requests
+                    .lock()
+                    .await
+                    .insert(request.id.clone(), response_tx);
+                let payload = serde_json::to_string(&JsonRpcMessage::Request(request))?;
+                writer.write_all(payload.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;
+            }
+            LocalNodeOutbound::Shutdown => break,
+        }
+    }
+    Ok(())
+}
+
+async fn read_transport_messages_from<R>(
+    reader: R,
+    event_tx: mpsc::Sender<AppServerEvent>,
+    disconnect_message: &str,
+    pending_requests: Arc<
+        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
+    >,
+) -> Result<()>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut lines = reader.lines();
+    let mut skipped_events = 0usize;
+    let mut last_seq_by_conversation: HashMap<String, u64> = HashMap::new();
+
+    while let Some(line) = lines.next_line().await? {
+        let message: JsonRpcMessage =
+            serde_json::from_str(&line).context("failed to parse local node transport event")?;
+        match message {
+            JsonRpcMessage::Response(JsonRpcResponse { id, result }) => {
+                if let Some(response_tx) = pending_requests.lock().await.remove(&id) {
+                    let _ = response_tx.send(Ok(JsonRpcResponseEnvelope::Result(result)));
+                }
+            }
+            JsonRpcMessage::Error(JsonRpcError { id, error }) => {
+                if let Some(response_tx) = pending_requests.lock().await.remove(&id) {
+                    let _ = response_tx.send(Ok(JsonRpcResponseEnvelope::Error(error)));
+                }
+            }
+            JsonRpcMessage::Notification(_) | JsonRpcMessage::Request(_) => {
+                let envelope = AppServerMessageEnvelope::try_from(message)?;
+                if let (Some(conversation_id), Some(event_seq)) =
+                    (envelope.message.conversation_id(), envelope.event_seq)
+                {
+                    let last_seq = last_seq_by_conversation
+                        .entry(conversation_id.to_string())
+                        .or_insert(0);
+                    if event_seq <= *last_seq {
+                        continue;
+                    }
+                    *last_seq = event_seq;
+                }
+
+                if !crate::forward_event(
+                    &event_tx,
+                    &mut skipped_events,
+                    AppServerEvent::Message(envelope.message),
+                )
+                .await
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    let mut pending = pending_requests.lock().await;
+    for (_, response_tx) in pending.drain() {
+        let _ = response_tx.send(Err(io::Error::new(
+            ErrorKind::BrokenPipe,
+            disconnect_message.to_string(),
+        )));
+    }
+    drop(pending);
+
+    let _ = crate::forward_event(
+        &event_tx,
+        &mut skipped_events,
+        AppServerEvent::Disconnected {
+            message: disconnect_message.to_string(),
+        },
+    )
+    .await;
+    Ok(())
 }
 
 async fn perform_initialize_handshake<R, W>(
@@ -639,6 +862,120 @@ mod tests {
             )) => assert_eq!(message, "hello before ready"),
             other => panic!("unexpected event: {other:?}"),
         }
+
+        client.shutdown().await.expect("shutdown client");
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn local_node_request_handle_reads_conversation_list_response() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let address = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept client");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half).lines();
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read initialize line")
+                .expect("initialize payload");
+            let JsonRpcMessage::Request(JsonRpcRequest { id, method, .. }) =
+                serde_json::from_str(&line).expect("initialize jsonrpc")
+            else {
+                panic!("expected initialize request");
+            };
+            assert_eq!(method, "initialize");
+
+            let initialize_response =
+                serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
+                    id,
+                    result: serde_json::to_value(TransportInitializeResult {
+                        server_info: agent_protocol::TransportServerInfo {
+                            name: "gatewayd".to_string(),
+                            version: "0.0.0-test".to_string(),
+                        },
+                        protocol_version: "1".to_string(),
+                        transport: "local-node".to_string(),
+                    })
+                    .expect("serialize initialize result"),
+                }))
+                .expect("serialize initialize response");
+            write_half
+                .write_all(initialize_response.as_bytes())
+                .await
+                .expect("write initialize response");
+            write_half
+                .write_all(b"\n")
+                .await
+                .expect("write initialize newline");
+            write_half.flush().await.expect("flush initialize response");
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read initialized line")
+                .expect("initialized payload");
+            let JsonRpcMessage::Notification(JsonRpcNotification { method, .. }) =
+                serde_json::from_str(&line).expect("initialized jsonrpc")
+            else {
+                panic!("expected initialized notification");
+            };
+            assert_eq!(method, "initialized");
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read list request")
+                .expect("list request payload");
+            let JsonRpcMessage::Request(JsonRpcRequest { id, method, .. }) =
+                serde_json::from_str(&line).expect("conversation list jsonrpc")
+            else {
+                panic!("expected list request");
+            };
+            assert_eq!(method, "conversation/list");
+
+            let response = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
+                id,
+                result: serde_json::json!({
+                    "conversations": [
+                        {
+                            "conversation_id": "conversation-1",
+                            "title": "Alpha",
+                            "message_count": 3,
+                            "updated_at_ms": 42
+                        }
+                    ]
+                }),
+            }))
+            .expect("serialize list response");
+            write_half
+                .write_all(response.as_bytes())
+                .await
+                .expect("write list response");
+            write_half
+                .write_all(b"\n")
+                .await
+                .expect("write list newline");
+            write_half.flush().await.expect("flush list response");
+        });
+
+        let client = LocalNodeAppServerClient::connect(test_config(address.to_string()))
+            .await
+            .expect("connect client");
+        let request_handle = client.request_handle();
+        let response = request_handle
+            .request_conversation_list()
+            .await
+            .expect("conversation list response");
+
+        assert_eq!(response.conversations.len(), 1);
+        assert_eq!(response.conversations[0].conversation_id, "conversation-1");
+        assert_eq!(response.conversations[0].title.as_deref(), Some("Alpha"));
 
         client.shutdown().await.expect("shutdown client");
         server.await.expect("server task");

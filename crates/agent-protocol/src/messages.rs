@@ -50,6 +50,11 @@ pub struct OnlineNodeSummary {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationListResponse {
+    pub conversations: Vec<ConversationSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppClientCommand {
     SubmitTurn(UserTurnInput),

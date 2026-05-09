@@ -1,10 +1,10 @@
-use crate::node::message_sync::write_app_server_message;
+use crate::node::message_sync::{write_app_server_message, write_jsonrpc_response};
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
 use agent_core::conversation::ConversationSummary;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
-    JsonRpcMessage,
+    ConversationListResponse, JsonRpcMessage, RequestId,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
@@ -36,6 +36,13 @@ where
         conversation_list_response(&envelope.command, session.active_conversation_id(), runtime)
             .await
     {
+        maybe_write_list_conversations_response(
+            writer,
+            &envelope.command,
+            &envelope.request_id,
+            &message,
+        )
+        .await?;
         write_app_server_message(writer, message).await?;
         return Ok(true);
     }
@@ -48,6 +55,36 @@ where
         .send_command(&target_conversation, envelope.command)
         .await?;
     Ok(true)
+}
+
+async fn maybe_write_list_conversations_response<W>(
+    writer: &mut W,
+    command: &AppClientCommand,
+    request_id: &RequestId,
+    message: &AppServerMessage,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    if !matches!(command, AppClientCommand::ListConversations) {
+        return Ok(());
+    }
+    let AppServerMessage::Notification(AppServerNotification::ConversationList {
+        conversations,
+        ..
+    }) = message
+    else {
+        return Ok(());
+    };
+
+    write_jsonrpc_response(
+        writer,
+        request_id.clone(),
+        serde_json::to_value(ConversationListResponse {
+            conversations: conversations.clone(),
+        })?,
+    )
+    .await
 }
 
 fn hub_mode_only_response(

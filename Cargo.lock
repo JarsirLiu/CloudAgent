@@ -28,6 +28,7 @@ dependencies = [
  "agent-core",
  "agent-protocol",
  "anyhow",
+ "serde",
  "serde_json",
  "tokio",
 ]
