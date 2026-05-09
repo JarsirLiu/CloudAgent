@@ -371,6 +371,7 @@ fn format_tokens(value: u64) -> String {
 mod tests {
     use crate::app::TuiApp;
     use crate::state::NoticeLevel;
+    use agent_protocol::FrontendMode;
     use std::path::PathBuf;
 
     fn test_app() -> TuiApp {
@@ -384,11 +385,16 @@ mod tests {
         )
     }
 
+    fn mark_running(app: &mut TuiApp) {
+        app.sync_frontend_mode(FrontendMode::Running);
+        app.bottom_pane.on_turn_started();
+    }
+
     #[test]
     fn active_tool_status_overrides_live_label() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 1;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane
             .live_label_override_for_test(Some("Working".to_string()));
         app.bottom_pane
@@ -412,7 +418,7 @@ mod tests {
     fn reconnect_live_label_animates_when_no_active_tool_or_notice() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 2;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane.live_label_override_for_test(Some(
             "reconnecting (stream retry 2, next in 1.0s)".to_string(),
         ));
@@ -435,7 +441,7 @@ mod tests {
     fn generic_live_label_hides_when_active_cell_is_visible() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 0;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane
             .live_label_override_for_test(Some("Thinking".to_string()));
         app.transcript_owner.push_live_cell(
@@ -456,7 +462,7 @@ mod tests {
     fn generic_live_label_does_not_render_external_banner_without_active_cell() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 0;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane
             .live_label_override_for_test(Some("Thinking".to_string()));
 
@@ -473,6 +479,7 @@ mod tests {
     #[test]
     fn working_without_runtime_does_not_show_elapsed_hint() {
         let mut app = test_app();
+        app.sync_frontend_mode(FrontendMode::Running);
         app.bottom_pane
             .live_label_override_for_test(Some("Working".to_string()));
 
@@ -487,7 +494,7 @@ mod tests {
     fn compaction_runtime_status_renders_as_live_banner_and_clears_cleanly() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 3;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane.on_context_compaction_started(12_345);
 
         let during = app.bottom_pane.build_status_view_model(&app);
@@ -508,7 +515,7 @@ mod tests {
     fn transient_notice_renders_above_runtime_banner_and_expires() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 1;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane
             .active_tool_title_override_for_test(Some("running command: rg cli".to_string()));
         app.bottom_pane.show_transient_notice(

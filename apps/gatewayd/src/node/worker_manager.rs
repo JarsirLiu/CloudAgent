@@ -135,12 +135,9 @@ impl WorkerManager {
                 loop {
                     tokio::select! {
                         maybe_request = request_rx.recv() => {
-                            match maybe_request {
-                                Some(WorkerTypedRequest { request, response_tx, .. }) => {
-                                    let response = client.request_typed::<serde_json::Value>(request).await;
-                                    let _ = response_tx.send(response);
-                                }
-                                None => {}
+                            if let Some(WorkerTypedRequest { request, response_tx, .. }) = maybe_request {
+                                let response = client.request_typed::<serde_json::Value>(request).await;
+                                let _ = response_tx.send(response);
                             }
                         }
                         maybe_command = command_rx.recv() => {

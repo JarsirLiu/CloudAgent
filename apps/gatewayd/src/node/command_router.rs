@@ -53,7 +53,7 @@ where
                 write_jsonrpc_error(writer, request_id, error).await?;
             }
             HubModeOnlyResponse::Notification(message) => {
-                write_app_server_message(writer, message).await?;
+                write_app_server_message(writer, *message).await?;
             }
         }
         return Ok(true);
@@ -247,7 +247,7 @@ enum HubModeOnlyResponse {
         request_id: RequestId,
         error: JsonRpcErrorPayload,
     },
-    Notification(AppServerMessage),
+    Notification(Box<AppServerMessage>),
 }
 
 fn hub_mode_only_error_response(
@@ -270,12 +270,12 @@ fn hub_mode_only_error_response(
                 data: None,
             },
         }),
-        JsonRpcMessage::Notification(_) => Some(HubModeOnlyResponse::Notification(
+        JsonRpcMessage::Notification(_) => Some(HubModeOnlyResponse::Notification(Box::new(
             AppServerMessage::Notification(AppServerNotification::Error {
                 conversation_id: "default".to_string(),
                 message,
             }),
-        )),
+        ))),
         JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => None,
     }
 }
@@ -534,9 +534,13 @@ mod tests {
         )
         .expect("error response");
         match message {
-            super::HubModeOnlyResponse::Notification(AppServerMessage::Notification(
-                AppServerNotification::Error { message, .. },
-            )) => {
+            super::HubModeOnlyResponse::Notification(message) => {
+                let AppServerMessage::Notification(AppServerNotification::Error {
+                    message, ..
+                }) = *message
+                else {
+                    panic!("unexpected notification payload");
+                };
                 assert!(message.contains("hub mode only"));
                 assert!(message.contains("ListOnlineNodes"));
             }

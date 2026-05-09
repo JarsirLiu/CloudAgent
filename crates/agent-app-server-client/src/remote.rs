@@ -70,6 +70,10 @@ enum JsonRpcResponseEnvelope {
     Error(JsonRpcErrorPayload),
 }
 
+type PendingRequestSender = oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>;
+type PendingRequestMap = HashMap<RequestId, PendingRequestSender>;
+type SharedPendingRequests = Arc<Mutex<PendingRequestMap>>;
+
 impl RemoteAppServerClient {
     pub async fn connect(config: RemoteClientConfig) -> Result<Self> {
         let stream = timeout(config.connect_timeout, TcpStream::connect(&config.address))
@@ -105,10 +109,7 @@ impl RemoteAppServerClient {
         let (event_tx, event_rx) = mpsc::channel(event_capacity);
         let request_counter = Arc::new(AtomicI64::new(1));
         let request_counter_for_writer = request_counter.clone();
-        let pending_requests = Arc::new(Mutex::new(HashMap::<
-            RequestId,
-            oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>,
-        >::new()));
+        let pending_requests = Arc::new(Mutex::new(PendingRequestMap::new()));
         let pending_requests_for_writer = pending_requests.clone();
         let pending_requests_for_reader = pending_requests.clone();
 
@@ -262,9 +263,7 @@ async fn write_outbound_messages_to<W>(
     writer: &mut W,
     command_rx: &mut mpsc::UnboundedReceiver<RemoteOutbound>,
     request_counter: Arc<AtomicI64>,
-    pending_requests: Arc<
-        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
-    >,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
@@ -306,9 +305,7 @@ async fn read_transport_messages_from<R>(
     reader: R,
     event_tx: mpsc::Sender<AppServerEvent>,
     disconnect_message: &str,
-    pending_requests: Arc<
-        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
-    >,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()>
 where
     R: AsyncBufRead + Unpin,

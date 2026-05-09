@@ -224,6 +224,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "manual smoke test: requires fresh prebuilt gatewayd/agentd binaries"]
     async fn local_node_remote_smoke_supports_startup_typed_reads() {
         let exe_dir = current_binary_dir();
         let gatewayd = exe_dir.join(exe_name("gatewayd"));
@@ -267,24 +268,30 @@ mod tests {
         .expect("connect local node");
 
         let conversation_id = "smoke-startup";
-        let history: ConversationHistoryResponse = client
-            .request_typed(JsonRpcRequest {
+        let history: ConversationHistoryResponse = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.request_typed(JsonRpcRequest {
                 id: RequestId::String("smoke-history".to_string()),
                 method: "conversation/history".to_string(),
                 params: Some(serde_json::json!({ "conversation_id": conversation_id })),
-            })
-            .await
-            .expect("history response");
+            }),
+        )
+        .await
+        .expect("history request timed out")
+        .expect("history response");
         assert!(history.turns.is_empty());
 
-        let status: ConversationStatusResponse = client
-            .request_typed(JsonRpcRequest {
+        let status: ConversationStatusResponse = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.request_typed(JsonRpcRequest {
                 id: RequestId::String("smoke-status".to_string()),
                 method: "conversation/status".to_string(),
                 params: Some(serde_json::json!({ "conversation_id": conversation_id })),
-            })
-            .await
-            .expect("status response");
+            }),
+        )
+        .await
+        .expect("status request timed out")
+        .expect("status response");
         assert_eq!(status.snapshot.conversation_id, conversation_id);
         assert!(
             client.try_next_event().is_none(),

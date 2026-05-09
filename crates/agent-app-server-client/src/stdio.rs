@@ -48,6 +48,10 @@ enum JsonRpcResponseEnvelope {
     Error(JsonRpcErrorPayload),
 }
 
+type PendingRequestSender = oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>;
+type PendingRequestMap = HashMap<RequestId, PendingRequestSender>;
+type SharedPendingRequests = Arc<Mutex<PendingRequestMap>>;
+
 impl StdioAppServerClient {
     pub async fn spawn(config: StdioClientConfig) -> Result<Self> {
         let mut command = Command::new(&config.program);
@@ -73,10 +77,7 @@ impl StdioAppServerClient {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_CAPACITY);
         let request_counter = Arc::new(AtomicI64::new(1));
-        let pending_requests = Arc::new(Mutex::new(HashMap::<
-            RequestId,
-            oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>,
-        >::new()));
+        let pending_requests = Arc::new(Mutex::new(PendingRequestMap::new()));
 
         tokio::spawn(write_commands(
             stdin,
@@ -200,9 +201,7 @@ async fn write_commands(
     mut stdin: ChildStdin,
     mut command_rx: mpsc::UnboundedReceiver<StdioOutbound>,
     request_counter: Arc<AtomicI64>,
-    pending_requests: Arc<
-        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
-    >,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()> {
     write_commands_to(
         &mut stdin,
@@ -217,9 +216,7 @@ async fn write_commands_to<W>(
     writer: &mut W,
     command_rx: &mut mpsc::UnboundedReceiver<StdioOutbound>,
     request_counter: Arc<AtomicI64>,
-    pending_requests: Arc<
-        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
-    >,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
@@ -257,9 +254,7 @@ where
 async fn read_events(
     stdout: tokio::process::ChildStdout,
     event_tx: mpsc::Sender<AppServerEvent>,
-    pending_requests: Arc<
-        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
-    >,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()> {
     read_events_from(BufReader::new(stdout), event_tx, pending_requests).await
 }
@@ -267,9 +262,7 @@ async fn read_events(
 async fn read_events_from<R>(
     reader: R,
     event_tx: mpsc::Sender<AppServerEvent>,
-    pending_requests: Arc<
-        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
-    >,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
@@ -287,9 +280,7 @@ async fn read_events_from_with_disconnect_message<R>(
     reader: R,
     event_tx: mpsc::Sender<AppServerEvent>,
     disconnect_message: &str,
-    pending_requests: Arc<
-        Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
-    >,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
