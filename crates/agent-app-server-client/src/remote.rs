@@ -19,14 +19,14 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 #[derive(Clone, Debug)]
-pub struct LocalNodeClientConfig {
+pub struct RemoteClientConfig {
     pub address: String,
     pub client: AppServerConnectInfo,
     pub connect_timeout: Duration,
     pub initialize_timeout: Duration,
 }
 
-impl LocalNodeClientConfig {
+impl RemoteClientConfig {
     fn initialize_params(&self) -> TransportInitializeParams {
         TransportInitializeParams {
             client_info: TransportClientInfo {
@@ -41,8 +41,8 @@ impl LocalNodeClientConfig {
     }
 }
 
-pub struct LocalNodeAppServerClient {
-    command_tx: mpsc::UnboundedSender<LocalNodeOutbound>,
+pub struct RemoteAppServerClient {
+    command_tx: mpsc::UnboundedSender<RemoteOutbound>,
     event_rx: mpsc::Receiver<AppServerEvent>,
     pending_events: VecDeque<AppServerEvent>,
     request_counter: Arc<AtomicI64>,
@@ -51,12 +51,12 @@ pub struct LocalNodeAppServerClient {
 }
 
 #[derive(Clone)]
-pub struct LocalNodeAppServerRequestHandle {
-    command_tx: mpsc::UnboundedSender<LocalNodeOutbound>,
+pub struct RemoteAppServerRequestHandle {
+    command_tx: mpsc::UnboundedSender<RemoteOutbound>,
     request_counter: Arc<AtomicI64>,
 }
 
-enum LocalNodeOutbound {
+enum RemoteOutbound {
     Command(AppClientCommand),
     Request {
         request: JsonRpcRequest,
@@ -70,8 +70,8 @@ enum JsonRpcResponseEnvelope {
     Error(JsonRpcErrorPayload),
 }
 
-impl LocalNodeAppServerClient {
-    pub async fn connect(config: LocalNodeClientConfig) -> Result<Self> {
+impl RemoteAppServerClient {
+    pub async fn connect(config: RemoteClientConfig) -> Result<Self> {
         let stream = timeout(config.connect_timeout, TcpStream::connect(&config.address))
             .await
             .map_err(|_| anyhow!("timed out connecting to local node at {}", config.address))?
@@ -133,12 +133,12 @@ impl LocalNodeAppServerClient {
 
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(LocalNodeOutbound::Command(command))
+            .send(RemoteOutbound::Command(command))
             .map_err(|_| anyhow!("local node command channel is closed"))
     }
 
-    pub fn request_handle(&self) -> LocalNodeAppServerRequestHandle {
-        LocalNodeAppServerRequestHandle {
+    pub fn request_handle(&self) -> RemoteAppServerRequestHandle {
+        RemoteAppServerRequestHandle {
             command_tx: self.command_tx.clone(),
             request_counter: self.request_counter.clone(),
         }
@@ -166,7 +166,7 @@ impl LocalNodeAppServerClient {
     }
 
     pub async fn shutdown(self) -> Result<()> {
-        let LocalNodeAppServerClient {
+        let RemoteAppServerClient {
             command_tx,
             event_rx: _,
             pending_events: _,
@@ -175,7 +175,7 @@ impl LocalNodeAppServerClient {
             reader_task,
         } = self;
 
-        let _ = command_tx.send(LocalNodeOutbound::Shutdown);
+        let _ = command_tx.send(RemoteOutbound::Shutdown);
         drop(command_tx);
         writer_task.await??;
         reader_task.await??;
@@ -183,10 +183,10 @@ impl LocalNodeAppServerClient {
     }
 }
 
-impl LocalNodeAppServerRequestHandle {
+impl RemoteAppServerRequestHandle {
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(LocalNodeOutbound::Command(command))
+            .send(RemoteOutbound::Command(command))
             .map_err(|_| anyhow!("local node command channel is closed"))
     }
 
@@ -210,7 +210,7 @@ impl LocalNodeAppServerRequestHandle {
         let method = request.method.clone();
         let (response_tx, response_rx) = oneshot::channel();
         self.command_tx
-            .send(LocalNodeOutbound::Request {
+            .send(RemoteOutbound::Request {
                 request,
                 response_tx,
             })
@@ -250,7 +250,7 @@ impl LocalNodeAppServerRequestHandle {
 
 async fn write_outbound_messages_to<W>(
     writer: &mut W,
-    command_rx: &mut mpsc::UnboundedReceiver<LocalNodeOutbound>,
+    command_rx: &mut mpsc::UnboundedReceiver<RemoteOutbound>,
     request_counter: Arc<AtomicI64>,
     pending_requests: Arc<
         Mutex<HashMap<RequestId, oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>>>,
@@ -261,7 +261,7 @@ where
 {
     while let Some(outbound) = command_rx.recv().await {
         match outbound {
-            LocalNodeOutbound::Command(command) => {
+            RemoteOutbound::Command(command) => {
                 let envelope = AppClientCommandEnvelope {
                     request_id: RequestId::Integer(
                         request_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -273,7 +273,7 @@ where
                 writer.write_all(b"\n").await?;
                 writer.flush().await?;
             }
-            LocalNodeOutbound::Request {
+            RemoteOutbound::Request {
                 request,
                 response_tx,
             } => {
@@ -286,7 +286,7 @@ where
                 writer.write_all(b"\n").await?;
                 writer.flush().await?;
             }
-            LocalNodeOutbound::Shutdown => break,
+            RemoteOutbound::Shutdown => break,
         }
     }
     Ok(())
@@ -371,7 +371,7 @@ where
 async fn perform_initialize_handshake<R, W>(
     reader: &mut R,
     writer: &mut W,
-    config: &LocalNodeClientConfig,
+    config: &RemoteClientConfig,
 ) -> Result<VecDeque<AppServerEvent>>
 where
     R: AsyncBufRead + Unpin,
@@ -456,7 +456,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{LocalNodeAppServerClient, LocalNodeClientConfig};
+    use super::{RemoteAppServerClient, RemoteClientConfig};
     use crate::{AppServerConnectInfo, AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY};
     use agent_protocol::{
         AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerMessageEnvelope,
@@ -469,8 +469,8 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
-    fn test_config(address: String) -> LocalNodeClientConfig {
-        LocalNodeClientConfig {
+    fn test_config(address: String) -> RemoteClientConfig {
+        RemoteClientConfig {
             address,
             client: AppServerConnectInfo {
                 client_name: "cloudagent-cli".to_string(),
@@ -573,7 +573,7 @@ mod tests {
             write_half.flush().await.expect("flush event");
         });
 
-        let mut client = LocalNodeAppServerClient::connect(test_config(address.to_string()))
+        let mut client = RemoteAppServerClient::connect(test_config(address.to_string()))
             .await
             .expect("connect client");
 
@@ -672,7 +672,7 @@ mod tests {
             saw_eof_server.store(true, Ordering::SeqCst);
         });
 
-        let client = LocalNodeAppServerClient::connect(test_config(address.to_string()))
+        let client = RemoteAppServerClient::connect(test_config(address.to_string()))
             .await
             .expect("connect client");
 
@@ -729,8 +729,7 @@ mod tests {
             write_half.flush().await.expect("flush initialize error");
         });
 
-        let error = match LocalNodeAppServerClient::connect(test_config(address.to_string())).await
-        {
+        let error = match RemoteAppServerClient::connect(test_config(address.to_string())).await {
             Ok(_) => panic!("connect should fail when initialize is rejected"),
             Err(error) => error,
         };
@@ -756,7 +755,7 @@ mod tests {
 
         let mut config = test_config(address.to_string());
         config.initialize_timeout = Duration::from_millis(50);
-        let error = match LocalNodeAppServerClient::connect(config).await {
+        let error = match RemoteAppServerClient::connect(config).await {
             Ok(_) => panic!("connect should time out when initialize hangs"),
             Err(error) => error,
         };
@@ -852,7 +851,7 @@ mod tests {
             assert_eq!(method, "initialized");
         });
 
-        let mut client = LocalNodeAppServerClient::connect(test_config(address.to_string()))
+        let mut client = RemoteAppServerClient::connect(test_config(address.to_string()))
             .await
             .expect("connect client");
 
@@ -964,7 +963,7 @@ mod tests {
             write_half.flush().await.expect("flush list response");
         });
 
-        let client = LocalNodeAppServerClient::connect(test_config(address.to_string()))
+        let client = RemoteAppServerClient::connect(test_config(address.to_string()))
             .await
             .expect("connect client");
         let request_handle = client.request_handle();

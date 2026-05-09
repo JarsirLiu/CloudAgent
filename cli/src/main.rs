@@ -14,7 +14,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 enum RequestedConsoleTarget {
     Public(AppServerTarget),
     Embedded,
-    WorkerStdio,
 }
 
 #[tokio::main]
@@ -174,12 +173,8 @@ fn requested_console_target(
             }))
         }
         "embedded" if allow_internal_targets => Ok(RequestedConsoleTarget::Embedded),
-        "worker-stdio" if allow_internal_targets => Ok(RequestedConsoleTarget::WorkerStdio),
         "embedded" => {
             bail!("target 'embedded' is internal-only and not part of the supported user path")
-        }
-        "worker-stdio" => {
-            bail!("target 'worker-stdio' is internal-only and not part of the supported user path")
         }
         other => bail!("unknown target '{other}'. supported targets: local-node, hub-node"),
     }
@@ -219,7 +214,7 @@ fn internal_targets_enabled() -> bool {
 
 fn resolve_console_target(
     args: &[OsString],
-    conversation_id: &str,
+    _conversation_id: &str,
     runtime: Option<&std::sync::Arc<agent_core::AgentHost>>,
     requested_target: RequestedConsoleTarget,
 ) -> Result<(String, ConsoleBootstrap)> {
@@ -256,33 +251,6 @@ fn resolve_console_target(
                     .ok_or_else(|| anyhow::anyhow!("embedded target requires a local runtime"))?,
             },
         )),
-        RequestedConsoleTarget::WorkerStdio => {
-            let program = arg_value(args, "--app-server-bin")
-                .or_else(|| std::env::var_os("CLOUDAGENT_APP_SERVER_BIN"))
-                .unwrap_or_else(|| {
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|path| {
-                            path.parent().map(|parent| parent.join(exe_name("agentd")))
-                        })
-                        .map(|path| path.into_os_string())
-                        .unwrap_or_else(|| OsString::from(exe_name("agentd")))
-                });
-            let remote_conversation = arg_value(args, "--conversation")
-                .and_then(|value| value.into_string().ok())
-                .unwrap_or_else(|| conversation_id.to_string());
-            Ok((
-                "worker-stdio".to_string(),
-                ConsoleBootstrap::WorkerStdio {
-                    program,
-                    args: vec![
-                        OsString::from("app-server-stdio"),
-                        OsString::from("--conversation"),
-                        OsString::from(remote_conversation),
-                    ],
-                },
-            ))
-        }
     }
 }
 
@@ -397,41 +365,6 @@ mod tests {
             .expect("resolve initial conversation");
 
         assert!(conversation_id.starts_with("draft-"));
-    }
-
-    #[test]
-    fn worker_stdio_target_maps_to_worker_bootstrap() {
-        let args = vec![
-            OsString::from("--target"),
-            OsString::from("worker-stdio"),
-            OsString::from("--app-server-bin"),
-            OsString::from("custom-agentd.exe"),
-            OsString::from("--conversation"),
-            OsString::from("remote-conversation"),
-        ];
-        let requested = requested_console_target(&args, true).expect("requested target");
-        let (target_label, bootstrap) =
-            resolve_console_target(&args, "local-conversation", None, requested)
-                .expect("worker-stdio target should resolve");
-
-        assert_eq!(target_label, "worker-stdio");
-        match bootstrap {
-            ConsoleBootstrap::WorkerStdio { program, args } => {
-                assert_eq!(program, OsString::from("custom-agentd.exe"));
-                assert_eq!(
-                    args,
-                    vec![
-                        OsString::from("app-server-stdio"),
-                        OsString::from("--conversation"),
-                        OsString::from("remote-conversation"),
-                    ]
-                );
-            }
-            other => panic!(
-                "unexpected bootstrap: {}",
-                std::any::type_name_of_val(&other)
-            ),
-        }
     }
 
     #[test]

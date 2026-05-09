@@ -1,5 +1,6 @@
 use crate::app::TuiApp;
 use crate::app::conversation::actions::execute_server_action;
+use crate::state::reducer::TurnDispatch;
 use crate::state::reducer::apply_server_message;
 use agent_app_server_client::AppServerEvent;
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
@@ -9,6 +10,11 @@ pub(crate) fn handle_client_event(app: &mut TuiApp, event: AppServerEvent) {
         AppServerEvent::Message(message) => handle_server_message(app, &message),
         AppServerEvent::Lagged { .. } => {}
         AppServerEvent::Disconnected { message } => {
+            if !app.can_submit_turn() {
+                app.apply_turn_dispatch(TurnDispatch::Failed {
+                    error: message.clone(),
+                });
+            }
             app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
                 "conversation",
                 message,

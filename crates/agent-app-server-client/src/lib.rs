@@ -1,5 +1,5 @@
 mod in_process;
-mod local_node;
+mod remote;
 mod stdio;
 
 use agent_core::ServerRequestDecision;
@@ -16,11 +16,9 @@ use tokio::sync::mpsc;
 
 use in_process::InProcessAppServerRequestHandle;
 pub use in_process::InProcessClientConfig;
-use local_node::LocalNodeAppServerRequestHandle;
-pub use local_node::LocalNodeClientConfig;
-pub type RemoteClientConfig = LocalNodeClientConfig;
-use stdio::StdioAppServerRequestHandle;
-pub use stdio::StdioClientConfig;
+use remote::RemoteAppServerRequestHandle;
+pub use remote::{RemoteAppServerClient, RemoteClientConfig};
+pub use stdio::{StdioAppServerClient, StdioClientConfig};
 
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 128;
 
@@ -43,15 +41,13 @@ pub enum AppServerEvent {
 
 pub enum AppServerClient {
     InProcess(in_process::InProcessAppServerClient),
-    LocalNode(local_node::LocalNodeAppServerClient),
-    Stdio(stdio::StdioAppServerClient),
+    Remote(remote::RemoteAppServerClient),
 }
 
 #[derive(Clone)]
 pub enum AppServerRequestHandle {
     InProcess(InProcessAppServerRequestHandle),
-    LocalNode(LocalNodeAppServerRequestHandle),
-    Stdio(StdioAppServerRequestHandle),
+    Remote(RemoteAppServerRequestHandle),
 }
 
 #[derive(Debug)]
@@ -97,35 +93,23 @@ impl AppServerClient {
         Self::InProcess(in_process::InProcessAppServerClient::start(config))
     }
 
-    pub async fn stdio(config: StdioClientConfig) -> Result<Self> {
-        Ok(Self::Stdio(
-            stdio::StdioAppServerClient::spawn(config).await?,
-        ))
-    }
-
-    pub async fn local_node(config: LocalNodeClientConfig) -> Result<Self> {
-        Ok(Self::LocalNode(
-            local_node::LocalNodeAppServerClient::connect(config).await?,
-        ))
-    }
-
     pub async fn remote(config: RemoteClientConfig) -> Result<Self> {
-        Self::local_node(config).await
+        Ok(Self::Remote(
+            remote::RemoteAppServerClient::connect(config).await?,
+        ))
     }
 
     pub fn send_command(&self, command: agent_protocol::AppClientCommand) -> Result<()> {
         match self {
             Self::InProcess(client) => client.send_command(command),
-            Self::LocalNode(client) => client.send_command(command),
-            Self::Stdio(client) => client.send_command(command),
+            Self::Remote(client) => client.send_command(command),
         }
     }
 
     pub fn request_handle(&self) -> AppServerRequestHandle {
         match self {
             Self::InProcess(client) => AppServerRequestHandle::InProcess(client.request_handle()),
-            Self::LocalNode(client) => AppServerRequestHandle::LocalNode(client.request_handle()),
-            Self::Stdio(client) => AppServerRequestHandle::Stdio(client.request_handle()),
+            Self::Remote(client) => AppServerRequestHandle::Remote(client.request_handle()),
         }
     }
 
@@ -135,8 +119,7 @@ impl AppServerClient {
     {
         match self {
             Self::InProcess(client) => client.request_typed(request).await,
-            Self::LocalNode(client) => client.request_typed(request).await,
-            Self::Stdio(client) => client.request_typed(request).await,
+            Self::Remote(client) => client.request_typed(request).await,
         }
     }
 
@@ -206,24 +189,21 @@ impl AppServerClient {
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         match self {
             Self::InProcess(client) => client.next_event().await,
-            Self::LocalNode(client) => client.next_event().await,
-            Self::Stdio(client) => client.next_event().await,
+            Self::Remote(client) => client.next_event().await,
         }
     }
 
     pub fn try_next_event(&mut self) -> Option<AppServerEvent> {
         match self {
             Self::InProcess(client) => client.try_next_event(),
-            Self::LocalNode(client) => client.try_next_event(),
-            Self::Stdio(client) => client.try_next_event(),
+            Self::Remote(client) => client.try_next_event(),
         }
     }
 
     pub async fn shutdown(self) -> Result<()> {
         match self {
             Self::InProcess(client) => client.shutdown().await,
-            Self::LocalNode(client) => client.shutdown().await,
-            Self::Stdio(client) => client.shutdown().await,
+            Self::Remote(client) => client.shutdown().await,
         }
     }
 }
@@ -232,8 +212,7 @@ impl AppServerRequestHandle {
     pub fn send_command(&self, command: agent_protocol::AppClientCommand) -> Result<()> {
         match self {
             Self::InProcess(handle) => handle.send_command(command),
-            Self::LocalNode(handle) => handle.send_command(command),
-            Self::Stdio(handle) => handle.send_command(command),
+            Self::Remote(handle) => handle.send_command(command),
         }
     }
 
@@ -247,8 +226,7 @@ impl AppServerRequestHandle {
     {
         match self {
             Self::InProcess(handle) => handle.request_typed(request).await,
-            Self::LocalNode(handle) => handle.request_typed(request).await,
-            Self::Stdio(handle) => handle.request_typed(request).await,
+            Self::Remote(handle) => handle.request_typed(request).await,
         }
     }
 

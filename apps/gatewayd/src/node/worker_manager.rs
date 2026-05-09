@@ -1,4 +1,4 @@
-use agent_app_server_client::{AppServerClient, AppServerEvent, StdioClientConfig};
+use agent_app_server_client::{AppServerEvent, StdioAppServerClient, StdioClientConfig};
 use agent_protocol::AppClientCommand;
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
@@ -8,6 +8,7 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::time::{Duration, Instant};
 
 const IDLE_WORKER_TTL: Duration = Duration::from_secs(300);
+const ERR_TRANSPORT_CLOSED_PREFIX: &str = "ERR_TRANSPORT_CLOSED:";
 
 #[derive(Clone)]
 pub(crate) struct WorkerManager {
@@ -78,7 +79,7 @@ impl WorkerManager {
         conversation_id: &str,
     ) -> Result<&'a mut WorkerHandle> {
         if !state.workers.contains_key(conversation_id) {
-            let mut client = AppServerClient::stdio(StdioClientConfig {
+            let mut client = StdioAppServerClient::spawn(StdioClientConfig {
                 program: self.worker_program.clone(),
                 args: worker_stdio_args(conversation_id),
             })
@@ -117,7 +118,7 @@ impl WorkerManager {
                                 Some(AppServerEvent::Disconnected { message }) => {
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: conversation_id_owned.clone(),
-                                        message,
+                                        message: normalize_worker_disconnect_message(&message),
                                         is_error: true,
                                     });
                                     return Result::<()>::Ok(());
@@ -125,7 +126,9 @@ impl WorkerManager {
                                 None => {
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: conversation_id_owned.clone(),
-                                        message: "worker event stream ended".to_string(),
+                                        message: format!(
+                                            "{ERR_TRANSPORT_CLOSED_PREFIX} worker event stream ended unexpectedly"
+                                        ),
                                         is_error: true,
                                     });
                                     return Result::<()>::Ok(());
@@ -212,6 +215,15 @@ fn should_evict_worker(handle: &WorkerHandle, now: Instant) -> bool {
     handle.worker.is_finished() || now.duration_since(handle.last_active_at) >= IDLE_WORKER_TTL
 }
 
+fn normalize_worker_disconnect_message(message: &str) -> String {
+    match message.trim() {
+        "stdio app server closed" => {
+            format!("{ERR_TRANSPORT_CLOSED_PREFIX} worker app server closed unexpectedly")
+        }
+        other => format!("{ERR_TRANSPORT_CLOSED_PREFIX} {other}"),
+    }
+}
+
 fn worker_stdio_args(conversation_id: &str) -> Vec<OsString> {
     vec![
         OsString::from("app-server-stdio"),
@@ -223,8 +235,8 @@ fn worker_stdio_args(conversation_id: &str) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::{
-        IDLE_WORKER_TTL, NodeEvent, WorkerHandle, WorkerManager, should_evict_worker,
-        worker_stdio_args,
+        IDLE_WORKER_TTL, NodeEvent, WorkerHandle, WorkerManager,
+        normalize_worker_disconnect_message, should_evict_worker, worker_stdio_args,
     };
     use anyhow::Result;
     use std::ffi::OsString;
@@ -240,6 +252,18 @@ mod tests {
                 OsString::from("--conversation"),
                 OsString::from("conversation-42"),
             ]
+        );
+    }
+
+    #[test]
+    fn normalizes_worker_disconnect_messages() {
+        assert_eq!(
+            normalize_worker_disconnect_message("stdio app server closed"),
+            "ERR_TRANSPORT_CLOSED: worker app server closed unexpectedly"
+        );
+        assert_eq!(
+            normalize_worker_disconnect_message("local node closed"),
+            "ERR_TRANSPORT_CLOSED: local node closed"
         );
     }
 

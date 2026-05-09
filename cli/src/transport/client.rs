@@ -1,7 +1,6 @@
 use crate::app::{ConsoleBootstrap, ConsoleConfig};
 use agent_app_server_client::{
     AppServerClient, AppServerConnectInfo, InProcessClientConfig, RemoteClientConfig,
-    StdioClientConfig,
 };
 use anyhow::{Result, anyhow};
 use std::process::Stdio;
@@ -25,13 +24,6 @@ pub(crate) async fn create_client(
                 auto_approve: config.auto_approve,
                 auto_approve_reason: config.auto_approve_reason.clone(),
             }))
-        }
-        ConsoleBootstrap::WorkerStdio { program, args } => {
-            AppServerClient::stdio(StdioClientConfig {
-                program: program.clone(),
-                args: args.clone(),
-            })
-            .await
         }
     }
 }

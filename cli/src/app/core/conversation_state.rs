@@ -150,16 +150,21 @@ impl TuiApp {
                 }
             }
             TurnDispatch::Failed { error } => {
-                if let Some(content) = self.run_state.pending_submitted_input.take() {
-                    self.bottom_pane.restore_submission(&content);
-                }
+                let restored_draft =
+                    if let Some(content) = self.run_state.pending_submitted_input.take() {
+                        self.bottom_pane.restore_submission(&content);
+                        true
+                    } else {
+                        false
+                    };
                 self.transcript_owner
                     .clear_active_turn(self.run_state.expand_tool_details);
-                self.push_live_cell(HistoryCell::info(
-                    "turn",
-                    format!("failed: {error}\ndraft restored for retry"),
-                    HistoryTone::Error,
-                ));
+                let message = if restored_draft {
+                    format!("failed: {error}\ndraft restored for retry")
+                } else {
+                    format!("failed: {error}")
+                };
+                self.push_live_cell(HistoryCell::info("turn", message, HistoryTone::Error));
             }
             TurnDispatch::Cancelled { reason } => {
                 self.run_state.pending_submitted_input = None;

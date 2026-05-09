@@ -46,10 +46,6 @@ pub enum ConsoleBootstrap {
     Embedded {
         runtime: Arc<AgentHost>,
     },
-    WorkerStdio {
-        program: OsString,
-        args: Vec<OsString>,
-    },
 }
 
 pub(crate) struct TuiApp {

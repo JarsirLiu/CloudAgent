@@ -1052,6 +1052,36 @@ fn failed_turn_restores_non_image_input_semantics_as_editable_text() {
 }
 
 #[test]
+fn failed_turn_without_pending_draft_does_not_claim_restore() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.transcript_owner
+        .start_local_user(local_input("hello"), false);
+    app.transcript_owner
+        .bind_turn_id("turn-1".to_string(), false);
+
+    app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Failed {
+        error: "worker app server closed unexpectedly".to_string(),
+    });
+
+    let active = app
+        .transcript_owner
+        .active_cell()
+        .map(|cell| cell.body().to_string())
+        .unwrap_or_default();
+    assert!(active.contains("failed: worker app server closed unexpectedly"));
+    assert!(!active.contains("draft restored for retry"));
+    assert!(app.can_submit_turn());
+}
+
+#[test]
 fn active_reasoning_transcript_matches_reasoning_card_ui() {
     let mut app = TuiApp::new(
         "default".to_string(),
