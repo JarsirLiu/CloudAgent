@@ -1,23 +1,19 @@
-use crate::node::conversation_registry::ConversationRegistry;
 use crate::node::message_sync::write_app_server_message;
-use crate::node::worker_manager::{NodeEvent, WorkerManager};
+use crate::node::runtime::NodeRuntime;
+use crate::node::session_state::NodeSessionState;
 use agent_core::conversation::ConversationSummary;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
     JsonRpcMessage,
 };
 use anyhow::{Context, Result};
-use std::sync::Arc;
 use tokio::io::AsyncWrite;
-use tokio::sync::{Mutex, broadcast};
 
 pub(crate) async fn handle_command_line<W>(
     line: &str,
-    active_conversation_id: &mut String,
-    workers: &WorkerManager,
-    conversations: &Arc<Mutex<ConversationRegistry>>,
+    runtime: &NodeRuntime,
+    session: &mut NodeSessionState,
     writer: &mut W,
-    active_subscription: &mut Option<broadcast::Receiver<NodeEvent>>,
 ) -> Result<bool>
 where
     W: AsyncWrite + Unpin,
@@ -30,16 +26,18 @@ where
     }
 
     if let Some(message) =
-        conversation_list_response(&envelope.command, active_conversation_id, conversations).await
+        conversation_list_response(&envelope.command, session.active_conversation_id(), runtime)
+            .await
     {
         write_app_server_message(writer, message).await?;
         return Ok(true);
     }
 
-    let target_conversation =
-        target_conversation_id(active_conversation_id, conversations, &envelope.command).await;
-    *active_subscription = Some(workers.subscribe(&target_conversation).await?);
-    workers
+    let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
+    *session.active_subscription_mut() =
+        Some(runtime.workers().subscribe(&target_conversation).await?);
+    runtime
+        .workers()
         .send_command(&target_conversation, envelope.command)
         .await?;
     Ok(true)
@@ -48,12 +46,12 @@ where
 async fn conversation_list_response(
     command: &AppClientCommand,
     active_conversation_id: &str,
-    conversations: &Arc<Mutex<ConversationRegistry>>,
+    runtime: &NodeRuntime,
 ) -> Option<AppServerMessage> {
     if !matches!(command, AppClientCommand::ListConversations) {
         return None;
     }
-    let summaries: Vec<ConversationSummary> = conversations.lock().await.summaries();
+    let summaries: Vec<ConversationSummary> = runtime.conversations().lock().await.summaries();
     Some(AppServerMessage::Notification(
         AppServerNotification::ConversationList {
             conversation_id: active_conversation_id.to_string(),
@@ -63,8 +61,8 @@ async fn conversation_list_response(
 }
 
 pub(crate) async fn target_conversation_id(
-    active_conversation_id: &mut String,
-    conversations: &Arc<Mutex<ConversationRegistry>>,
+    session: &mut NodeSessionState,
+    runtime: &NodeRuntime,
     command: &AppClientCommand,
 ) -> String {
     match command {
@@ -91,16 +89,16 @@ pub(crate) async fn target_conversation_id(
         | AppClientCommand::DeleteConversation { conversation_id }
         | AppClientCommand::SubscribeConversation { conversation_id }
         | AppClientCommand::UnsubscribeConversation { conversation_id } => {
-            let mut registry = conversations.lock().await;
+            let mut registry = runtime.conversations().lock().await;
             registry.touch(conversation_id);
             if let AppClientCommand::SetConversationTitle { title, .. } = command {
                 registry.set_title(conversation_id, title.clone());
             }
-            *active_conversation_id = conversation_id.clone();
+            session.set_active_conversation_id(conversation_id.clone());
             conversation_id.clone()
         }
         AppClientCommand::ListConversations | AppClientCommand::Exit => {
-            active_conversation_id.to_string()
+            session.active_conversation_id().to_string()
         }
     }
 }
@@ -108,21 +106,22 @@ pub(crate) async fn target_conversation_id(
 #[cfg(test)]
 mod tests {
     use super::{conversation_list_response, target_conversation_id};
-    use crate::node::conversation_registry::ConversationRegistry;
+    use crate::node::runtime::NodeRuntime;
+    use crate::node::session_state::NodeSessionState;
+    use crate::node::worker_manager::WorkerManager;
     use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
+    use std::ffi::OsString;
 
     #[test]
     fn list_conversations_routes_to_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
-            let mut active = "conversation-1".to_string();
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+            let mut session = NodeSessionState::new("conversation-1");
             assert_eq!(
                 target_conversation_id(
-                    &mut active,
-                    &conversations,
+                    &mut session,
+                    &runtime,
                     &AppClientCommand::ListConversations,
                 )
                 .await,
@@ -135,18 +134,18 @@ mod tests {
     fn switch_conversation_updates_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
-            let mut active = "conversation-1".to_string();
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+            let mut session = NodeSessionState::new("conversation-1");
             let command = AppClientCommand::SwitchConversation {
                 conversation_id: "conversation-2".to_string(),
             };
 
             assert_eq!(
-                target_conversation_id(&mut active, &conversations, &command).await,
+                target_conversation_id(&mut session, &runtime, &command).await,
                 "conversation-2"
             );
-            assert_eq!(active, "conversation-2");
-            assert_eq!(conversations.lock().await.summaries().len(), 1);
+            assert_eq!(session.active_conversation_id(), "conversation-2");
+            assert_eq!(runtime.conversations().lock().await.summaries().len(), 1);
         });
     }
 
@@ -154,9 +153,9 @@ mod tests {
     fn list_conversations_uses_node_shared_registry() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
             {
-                let mut registry = conversations.lock().await;
+                let mut registry = runtime.conversations().lock().await;
                 registry.touch("conversation-1");
                 registry.set_title("conversation-1", "Alpha".to_string());
             }
@@ -164,7 +163,7 @@ mod tests {
             let message = conversation_list_response(
                 &AppClientCommand::ListConversations,
                 "conversation-1",
-                &conversations,
+                &runtime,
             )
             .await
             .expect("conversation list message");

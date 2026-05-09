@@ -1,17 +1,15 @@
-use crate::node::conversation_registry::ConversationRegistry;
+use crate::node::runtime::NodeRuntime;
 use crate::node::worker_manager::NodeEvent;
 use agent_protocol::{
     AppServerMessage, AppServerMessageEnvelope, AppServerNotification, JsonRpcMessage,
 };
 use anyhow::Result;
-use std::sync::Arc;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::sync::Mutex;
 
 pub(crate) async fn write_node_event<W>(
     writer: &mut W,
     event: NodeEvent,
-    conversations: &Arc<Mutex<ConversationRegistry>>,
+    runtime: &NodeRuntime,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
@@ -34,19 +32,16 @@ where
             }
         }),
     };
-    sync_registry_from_message(conversations, &message).await;
+    sync_registry_from_message(runtime, &message).await;
     write_app_server_message(writer, message).await
 }
 
-pub(crate) async fn sync_registry_from_message(
-    conversations: &Arc<Mutex<ConversationRegistry>>,
-    message: &AppServerMessage,
-) {
+pub(crate) async fn sync_registry_from_message(runtime: &NodeRuntime, message: &AppServerMessage) {
     let AppServerMessage::Notification(notification) = message else {
         return;
     };
 
-    let mut registry = conversations.lock().await;
+    let mut registry = runtime.conversations().lock().await;
     match notification {
         AppServerNotification::ConversationList { conversations, .. } => {
             registry.replace_from_summaries(conversations);
@@ -85,21 +80,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::sync_registry_from_message;
-    use crate::node::conversation_registry::ConversationRegistry;
+    use crate::node::runtime::NodeRuntime;
+    use crate::node::worker_manager::WorkerManager;
     use agent_core::conversation::ConversationSummary;
     use agent_protocol::{AppServerMessage, AppServerNotification};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
+    use std::ffi::OsString;
 
     #[test]
     fn worker_conversation_list_replaces_shared_registry_state() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let conversations = Arc::new(Mutex::new(ConversationRegistry::default()));
-            conversations.lock().await.touch("stale");
+            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe")));
+            runtime.conversations().lock().await.touch("stale");
 
             sync_registry_from_message(
-                &conversations,
+                &runtime,
                 &AppServerMessage::Notification(AppServerNotification::ConversationList {
                     conversation_id: "conversation-1".to_string(),
                     conversations: vec![ConversationSummary {
@@ -112,7 +107,7 @@ mod tests {
             )
             .await;
 
-            let summaries = conversations.lock().await.summaries();
+            let summaries = runtime.conversations().lock().await.summaries();
             assert_eq!(summaries.len(), 1);
             assert_eq!(summaries[0].conversation_id, "conversation-1");
             assert_eq!(summaries[0].title.as_deref(), Some("Alpha"));
