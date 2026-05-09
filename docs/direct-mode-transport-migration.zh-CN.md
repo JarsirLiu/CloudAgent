@@ -1,1076 +1,616 @@
 # CloudAgent 直连模式传输层切换与分阶段迁移方案
 
-## 目的
+## 文档定位
 
-本文档用于把当前 CloudAgent 的本地 CLI / app-server / daemon 结构，逐步迁移到更接近 Codex 的分层形态，并优先完成 `Direct Mode` 开发所需的传输层切换。
+本文档是 CloudAgent 传输层迁移的**主实施文档**。
 
-本文档关注的不是 Hub 本身，而是为下一步 Hub 接入打好边界。
+本文档同时约束两件事：
 
-本文档完成后，系统应先具备以下能力：
+1. 产品目标
+2. 实现路径
 
-- CLI 不再直接耦合 `agentd` 的本地运行方式
-- CLI 可以通过统一 client 抽象连接不同目标
-- 本地存在一个轻量常驻 `node`
-- `node` 可以按需拉起 `worker`
-- `Direct Mode` 可以基于 `node -> worker` 结构继续开发
-- `Hub Mode` 可以在后续作为新的 target 和 transport 接入，而不重写 CLI 主逻辑
-- `Hub Mode` 下 CLI 必须能够查看在线设备并选择目标节点
+产品目标不能跑偏，实现路径也不能再偏离 `Codex` 的稳定传输层做法。
+
+本文档替代“只讨论 node/worker 分层，不约束 client/transport 形状”的旧理解。
+
+本文档默认参考以下实现基线：
+
+- [D:\\learn\\AIbac\\JiangFang\\codex\\codex-rs\\app-server-client\\src\\lib.rs](/D:/learn/AIbac/JiangFang/codex/codex-rs/app-server-client/src/lib.rs:1)
+- [D:\\learn\\AIbac\\JiangFang\\codex\\codex-rs\\app-server-client\\src\\remote.rs](/D:/learn/AIbac/JiangFang/codex/codex-rs/app-server-client/src/remote.rs:1)
+- [D:\\learn\\AIbac\\JiangFang\\codex\\codex-rs\\tui\\src\\lib.rs](/D:/learn/AIbac/JiangFang/codex/codex-rs/tui/src/lib.rs:284)
+
+本文档的核心要求只有一句话：
+
+- **CloudAgent 的 CLI / Web / App / IM 入口，最终都必须通过统一稳定的 app-server client surface 与 core 对接，而不能各自发明一套协议。**
+
+## 目标
+
+本文档完成后，系统必须支持以下能力：
+
+### Direct Mode
+
+`Direct Mode` 不是本机 CLI 连本机 agent。
+
+`Direct Mode` 指的是：
+
+- 远程用户通过 `IM / App / Web` 等入口
+- 直接连接某一台具体设备上的 `node`
+- 由该设备上的 `node` attach 或拉起本地 `worker`
+- 远程用户与该远程设备上的 agent 进行交互
+
+调用链：
+
+- `IM/App/Web -> target node -> worker`
+
+### Hub Mode
+
+`Hub Mode` 指的是：
+
+- 用户先登录统一入口
+- 查看在线设备
+- 选择目标设备
+- 由 `hub` 路由到目标设备上的 `node`
+- 再由目标 `node` attach 或拉起本地 `worker`
+
+调用链：
+
+- `CLI/Web/App/IM -> hub -> target node -> worker`
+
+### 同账号多设备
+
+系统最终必须支持：
+
+- 用户在任意设备登录
+- 与自己账号下任意在线设备上的 agent 交互
+- 同时也能与当前登录设备自己本机的 agent 交互
 
 ## 范围边界
 
-本文档的实施范围分为两层：
+本轮必须完成：
 
-- 本轮必须完成：`Direct Mode`
-- 本轮必须预留：`Hub Mode` 所需的 CLI / target / 路由边界
+- 统一稳定的 app-server transport surface
+- 可支撑 `Direct Mode` 的 `node -> worker` 执行底座
+- 为 `Hub Mode` 预留稳定的 target / remote / routing 边界
 
-本轮不做的事情：
+本轮必须预留但不必完整实现：
 
-- Hub 服务本体实现
-- 节点注册与心跳完整闭环
-- 远程文件中转
-- 多节点 attach 的最终产品化
+- hub 服务本体
+- 节点注册与心跳闭环
+- 在线设备目录的完整产品化
+- Web/App/IM 平台 adapter 的最终实现
 
-本轮必须禁止的做法：
+本轮明确不允许：
 
-- 长期保留多套并行主路径
-- 用“兼容模式”替代真正的切换
-- 用“回退到旧实现”掩盖新架构未完成
-- 在 CLI、node、worker 三层同时保留两套常驻主语义
+- 让 CLI、Web、IM 各自直连 `core`
+- 长期保留 `LocalNode`、`Hub`、`Stdio` 三套外部协议语义
+- 用“旧路径自动回退”掩盖新架构未完成
+- 把 `node` 对外暴露成私有业务命令代理，而不是正式 remote app-server host
 
-允许存在的仅有一种过渡：
+## 最终架构
 
-- 某些旧入口可在极短迁移阶段存在
-- 但必须有明确删除阶段和删除提交
+长期稳定目标如下：
+
+- `surface -> AppServerClient::{InProcess|Remote} -> app-server host -> core`
+
+其中：
+
+- `surface` 指 CLI / Web / App / IM adapter
+- `AppServerClient` 是统一 facade
+- `InProcess` 仅用于本地嵌入式调试或开发场景
+- `Remote` 是长期稳定的一等传输形态
+- `app-server host` 在本项目里可由 `gatewayd` 或未来 `hubd` 对外提供
+- `core` 指 `agent-core + agent-app-server`
+
+对本项目的落地映射是：
+
+- `Direct Mode`：`surface -> Remote -> gatewayd(node) -> worker(agentd) -> core`
+- `Hub Mode`：`surface -> Remote -> hubd -> gatewayd(node) -> worker(agentd) -> core`
+
+## 与 Codex 的对齐原则
+
+CloudAgent 不要求目录和名字逐字复制 Codex，但传输层原则必须对齐：
+
+1. surface 只依赖统一 `AppServerClient`
+2. target 与 transport 分离
+3. transport 长期只保留 `InProcess` 与 `Remote`
+4. remote transport 必须有明确握手
+5. request/response 与 event stream 必须分清
+6. server request 的 resolve/reject 必须是统一 client API，不是 UI 手拼命令
+7. 断连、回压、事件丢失语义必须统一
 
 ## 当前现状
 
 当前仓库已经具备以下基础：
 
-- `agent-core` 已经统一了 `conversation / turn / item` 的核心模型
-- `agent-protocol` 已经定义了 `AppClientCommand` 和 `AppServerMessage`
-- `agent-app-server` 已经具备 worker 对外会话协议边界
-- `agent-app-server-client` 已经具备 `InProcess` 和 `Stdio` 两种接法
-- `cli` 已经以事件驱动方式消费 app-server 返回的数据
+- `agent-core` 已统一 `conversation / turn / item` 模型
+- `agent-protocol` 已定义 `AppClientCommand`、`AppServerMessage`
+- `agent-app-server` 已具备 worker 对外协议边界
+- `gatewayd` 已具备 resident node、conversation registry、worker reuse、idle recycle 基础
+- `cli` 已开始 target 化，并通过 `agent-app-server-client` 消费事件
 
-当前关键文件：
+关键文件：
 
-- CLI 连接配置：[cli/src/app/core/types.rs](/D:/learn/gifti/cloudagent/cli/src/app/core/types.rs:1)
-- CLI 连接创建：[cli/src/transport/client.rs](/D:/learn/gifti/cloudagent/cli/src/transport/client.rs:1)
-- CLI 启动参数：[cli/src/main.rs](/D:/learn/gifti/cloudagent/cli/src/main.rs:1)
-- worker 宿主入口：[apps/agentd/src/main.rs](/D:/learn/gifti/cloudagent/apps/agentd/src/main.rs:1)
-- app-server 边界：[crates/agent-app-server/src/lib.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server/src/lib.rs:1)
-- gateway 占位入口：[apps/gatewayd/src/main.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/main.rs:1)
+- [cli/src/app/core/types.rs](/D:/learn/gifti/cloudagent/cli/src/app/core/types.rs:1)
+- [cli/src/transport/client.rs](/D:/learn/gifti/cloudagent/cli/src/transport/client.rs:1)
+- [cli/src/main.rs](/D:/learn/gifti/cloudagent/cli/src/main.rs:1)
+- [crates/agent-app-server-client/src/lib.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server-client/src/lib.rs:1)
+- [crates/agent-app-server-client/src/local_node.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server-client/src/local_node.rs:1)
+- [apps/gatewayd/src/node/server.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/node/server.rs:1)
+- [apps/gatewayd/src/node/command_router.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/node/command_router.rs:1)
 
-## 与 Codex 的主要差距
+## 当前差距
 
-当前实现与 Codex 风格最主要的差距不在 UI，而在 client 和 target 分层不完整。
+当前实现距离本文档目标，最核心的差距有 6 个：
 
-Codex 风格具备以下特征：
+1. `LocalNode` 仍是独立 client variant，而不是统一 `Remote`
+2. `gatewayd` 对外仍偏 node 私有协议，而不是正式 remote app-server host
+3. `request_handle` 已开始存在，但 `request_typed` 还未完整建立
+4. CLI 仍主要围绕命令流思考，而不是稳定 request/response 面
+5. `Direct Mode` 的平台 adapter 边界还未正式落入统一 remote surface
+6. `Hub Mode` 只有 target 和协议预留，没有正式 remote routing host
 
-- TUI 只依赖统一的 `AppServerClient`
-- `AppServerClient` 同时支持 embedded 和 remote
-- 目标选择与传输实现分离
-- 远程连接是一等实现，不是本地 stdio 的变体
-- app-server client 负责初始化、事件语义、回压、断连、server request 回传
+## 术语约定
 
-当前 CloudAgent 还缺：
+为了避免概念混淆，本文档统一使用：
 
-- 一等的 `LocalNode` client
-- 类似 `AppServerTarget` 的目标抽象
-- 常驻 `node`
-- `node -> worker` 生命周期管理
-- 统一的本地 node 监听入口
+- `conversation`：长期会话本体
+- `session`：某个入口对 conversation 的一次连接或附着上下文
+- `turn`：一次输入到输出完成的执行轮次
+- `item`：turn 内部事件
+- `target`：surface 想要连接的目标
+- `transport`：底层承载方式
+- `client surface`：surface 依赖的统一客户端 API
 
-但与 Codex 的一个重要策略差异是：
-
-- Codex 会保留 embedded / remote 共存能力
-- CloudAgent 在本轮直连模式切换后，不应长期保留多条并行主路径
-
-本项目的目标不是“支持尽可能多的旧入口”，而是“尽快把主路径切换为 `cli -> node -> worker`”。
-
-## 目标架构
-
-第一阶段目标架构如下：
-
-- CLI
-- Local Node
-- Worker
-
-调用链：
-
-- `cli -> local node -> worker`
-
-其中：
-
-- CLI 负责展示、输入、会话交互
-- Local Node 负责常驻监听、attach / spawn / recycle
-- Worker 负责真正执行 agent turn
-
-第二阶段再继续：
-
-- `IM adapter -> local node -> worker`
-
-第三阶段再继续：
-
-- `cli/web/im -> hub -> node -> worker`
-
-第四阶段可自然扩展为：
-
-- `web/app -> hub -> target node -> worker`
-
-## 迁移原则
-
-迁移过程中必须保持以下原则：
-
-1. 不重写 CLI 主交互逻辑
-2. 不破坏现有 `Conversation / Turn / Item` 模型
-3. 不让 Hub 设计反向污染 Direct Mode 的最小闭环
-4. `node` 只承担控制面和路由面，不承担重执行
-5. `worker` 仍然复用 `agent-app-server` 和 `agent-core`
-6. transport 切换过程中尽量保持 `AppClientCommand` 和 `AppServerMessage` 不变
-7. 先补 target 和 client facade，再补 node 进程
-8. 迁移完成后，CLI 主路径只能保留 `local-node`
-9. 旧路径只能作为短期施工脚手架，不能成为长期降级方案
-
-## 新的概念映射
-
-### 术语约定
-
-为了避免与操作系统线程或语言线程模型混淆，CloudAgent 在本文档中统一使用：
-
-- `conversation`
-- `session`
-- `turn`
-- `item`
-
-其中：
-
-- `conversation` 表示长期会话
-- `session` 表示某个客户端或入口对 conversation 的一次连接、附着或交互上下文
-- `turn` 表示一次输入到输出完成的执行轮次
-- `item` 表示 turn 内部的消息、工具调用、审批请求、工具结果等事件
-
-如果提到 Codex 中的 `thread`，在 CloudAgent 的语境里应映射为 `conversation`。
-
-需要特别避免的混淆：
+特别说明：
 
 - `conversation` 不是 `session`
-- 一个 `conversation` 可以同时被多个 `session` attach
-- `session` 可以断开和重连，但 `conversation` 仍然存在
+- `local-node` 是 target/deployment 概念，不是长期 client 协议名
+- `hub-node` 是 routing target 概念，不是长期 client 协议名
 
-建议引入三个层次。
+## 目标分层
 
 ### 1. Target
 
-Target 是 CLI 想要连接的目标，而不是底层传输实现。
+Target 表达“我要连谁”，不表达“我怎么传”。
 
-第一阶段建议形态：
+建议长期形态：
 
 ```rust
 pub enum AppServerTarget {
     LocalNode,
-    HubNode {
-        node_id: String,
-    },
+    HubNode { node_id: String },
 }
 ```
 
 含义：
 
-- `LocalNode`：CLI 连接本地常驻 node，由 node 决定 attach 或 spawn worker
-- `HubNode`：CLI 通过 Hub 连接某个远端节点上的 conversation
+- `LocalNode`：连接本地或已知单设备 node
+- `HubNode`：通过 hub 路由到目标 node
 
-说明：
+### 2. Client Surface
 
-- `Embedded`
-- `WorkerStdio`
+Client surface 表达“surface 如何使用 app-server”，必须长期稳定。
 
-不应成为长期 target。
-
-它们若在迁移中短暂存在，只能作为内部施工态，不应作为最终公开主入口。
-
-### 2. Client
-
-Client 是 CLI 上层真正依赖的统一接口。
-
-建议形态：
+建议长期形态：
 
 ```rust
 pub enum AppServerClient {
-    LocalNode(...),
-    Hub(...),
+    InProcess(...),
+    Remote(...),
 }
 ```
 
-本轮必须完成：
-
-- `LocalNode`
-
-本轮必须预留但不实现完整能力：
-
-- `Hub`
+这一点必须与 Codex 对齐。
 
 说明：
 
-- `InProcess`
-- `Stdio`
+- `LocalNode` 不应成为长期 `AppServerClient` variant
+- `Hub` 也不应成为长期 `AppServerClient` variant
+- `local-node` 与 `hub-node` 只影响 target 与连接参数，不应分裂 client 协议
 
-若在迁移施工期继续存在，也应下沉为 node 或测试内部使用的实现细节，而不是 CLI 长期对外模型。
+### 3. App-Server Host
 
-### 3. Node
+对外提供正式 remote app-server 协议的宿主。
 
-Node 是常驻目标，不是 CLI transport 的别名。
+本项目中：
 
-职责：
+- `gatewayd` 是 node 侧 remote app-server host
+- `hubd` 是 hub 侧 remote routing/app-server host
 
-- 监听本地 CLI 或 IM adapter 请求
-- 维护 `conversation_id -> worker handle` 映射
-- 在需要时拉起 worker
-- 将 worker 事件流转发给连接方
-- 管理 worker 空闲回收
+### 4. Worker
+
+执行宿主，负责真正的 agent turn。
+
+本项目中：
+
+- `agentd` 逐步收敛成 worker
+
+## 稳定传输层规范
+
+为了让 CLI、Web、App、IM 都能稳定接 core，必须先冻结统一协议面。
+
+### 必须具备的握手
+
+- `initialize`
+- `initialized`
+
+### 必须具备的 request/response 面
+
+- `list_conversations`
+- `request_conversation_history`
+- `request_conversation_history_page`
+- `request_conversation_status`
+- `list_online_nodes`
+- 后续 hub 所需的 target/select/read 能力
+
+### 必须具备的 command/notification 能力
+
+- `submit_turn`
+- `interrupt_turn`
+- `switch_conversation`
+- `set_conversation_title`
+- `archive_conversation`
+- `delete_conversation`
+
+### 必须具备的 server-request 能力
+
+- `resolve_server_request`
+- `reject_server_request`
+
+### 必须具备的事件语义
+
+- `delta`
+- `item_started`
+- `item_completed`
+- `turn_started`
+- `turn_completed`
+- `server_request_requested`
+- `server_request_resolved`
+- `disconnected`
+- `lagged`
+- `error`
+
+### 必须具备的错误分层
+
+- transport error
+- server error
+- deserialize error
+
+这应对应类似 Codex 的 `TypedRequestError`。
+
+## 传输承载选择
+
+本文档不把传输承载和协议面绑死。
+
+允许的承载：
+
+- loopback websocket
+- loopback tcp
+- named pipe
+
+但必须先满足：
+
+- 统一 remote client surface
+- 统一 initialize/initialized
+- 统一 request/response correlation
+- 统一 event stream
+
+也就是说，先定协议，再选 carrier。
 
 ## 推荐目录映射
 
-### 保留
+### 保留并复用
 
 - `crates/agent-core`
 - `crates/agent-protocol`
 - `crates/agent-app-server`
+- `crates/agent-app-server-client`
 - `cli`
 
-### 演进
+### 继续演进
 
-- `apps/agentd` 逐步演进为 `worker`
-- `apps/gatewayd` 逐步演进为 `node`
-- `crates/agent-app-server-client` 增加 `LocalNode` 实现
+- `apps/agentd` 逐步收敛为 worker
+- `apps/gatewayd` 逐步收敛为 node 侧 remote app-server host
+- `crates/agent-gateway` 用于 Direct Mode / IM adapter 统一抽象
 
-### 后续可重命名
+### 后续新增
 
-- `apps/agentd` -> `apps/cloudagent-worker`
-- `apps/gatewayd` -> `apps/cloudagent-node`
+- `apps/hubd`：Hub Mode 远端路由与在线设备控制面
 
-第一阶段不强制改名，先改职责。
+## 分阶段迁移
 
-## 阶段总览
-
-建议按 7 个阶段完成。
-
-### Phase 0：冻结协议边界与术语
+### Phase 0：冻结目标、术语与验收标准
 
 目标：
 
-- 先定义哪些协议短期内不变
-- 给 Direct Mode 切换留稳定基线
-
-需要保持稳定的部分：
-
-- `AppClientCommand`
-- `AppServerMessage`
-- `AppServerNotification`
-- `AppServerRequest`
-- CLI 对 `conversation_id` 的使用方式
+- 统一 Direct Mode 的定义
+- 统一 Hub Mode 的定义
+- 明确长期 client surface 必须对齐 Codex
 
 本阶段产出：
 
 - 本文档
-- 迁移分支
+- 对齐整改文档
+- 验收标准
 
-### Phase 1：引入 Target 抽象并宣布唯一主路径
-
-目标：
-
-- 让 CLI 先从“按 transport 选择连接”切换到“按 target 选择连接”
+### Phase 1：冻结 target，停止继续发明新外部语义
 
 目标：
 
-- 对外目标模型只保留 `LocalNode`
-- 为未来 Hub 预留 `HubNode`
-- `ConsoleConnection` 不再作为长期对外语义
+- CLI 对外只暴露 target
+- target 只表达连接目标
 
-需要修改：
+必须完成：
 
-- [cli/src/app/core/types.rs](/D:/learn/gifti/cloudagent/cli/src/app/core/types.rs:1)
-- [cli/src/main.rs](/D:/learn/gifti/cloudagent/cli/src/main.rs:1)
-- [cli/src/transport/client.rs](/D:/learn/gifti/cloudagent/cli/src/transport/client.rs:1)
+- `AppServerTarget::{LocalNode, HubNode}`
+- 帮助文本与参数不再继续扩散旧 transport 语义
+- `Embedded/WorkerStdio` 仅保留为内部开发路径
 
-建议动作：
-
-1. 新增 `AppServerTarget`
-2. CLI 参数正式切为 `--target`
-3. 不再新增任何 `--transport` 兼容语义
-4. 旧 `--transport` 若仍存在，只允许在极短施工阶段内部转接，并在后续提交删除
-5. 文档和帮助文本从这一阶段开始将 `local-node` 设为唯一目标方向
-
-验收标准：
-
-- CLI 对外语义已从 transport 切到 target
-- UI 层无感知 target 内部细节
-- 文档中已不再把 embedded 视为长期路径
-
-### Phase 2：扩展 agent-app-server-client facade 并移除 CLI 对旧接法的直接依赖
+### Phase 2：统一 app-server client facade
 
 目标：
 
-- 让 `agent-app-server-client` 成为真正统一的 client facade
+- 把 `agent-app-server-client` 收敛成长期统一 surface
 
-当前不足：
+必须完成：
 
-- 目前 client 较薄
-- 主要针对本地直接接法
-- 没有一等 `LocalNode`
-- 没有为未来 `Hub` 保留统一事件面
+- `AppServerClient::{InProcess, Remote}`
+- `AppServerRequestHandle`
+- `request_typed`
+- `resolve_server_request`
+- `reject_server_request`
+- `TypedRequestError`
 
-建议新增：
+本阶段要求：
 
-- `crates/agent-app-server-client/src/local_node.rs`
+- `LocalNode` 只能作为过渡 shim 或 connect helper
+- 不能再作为长期公开 variant
 
-建议补齐能力：
-
-- `send_command`
-- `next_event`
-- `try_next_event`
-- `shutdown`
-- 断连语义
-- 初始化握手
-- 事件回压策略
-
-建议动作：
-
-1. 在 `agent-app-server-client` 中新增 `LocalNodeClient`
-2. 在 `AppServerClient` 中增加 `LocalNode` variant
-3. 预留 `HubClient` variant，但本轮不接真实 Hub
-4. 把事件丢失 / lagged / disconnect 语义统一下来
-5. 让 CLI 不关心它是 worker 还是 node
-
-建议优先使用的本地传输：
-
-- 第一优先：loopback WebSocket
-- 第二优先：named pipe
-
-不建议第一阶段用复杂的跨平台 socket 抽象把自己拖住。
-
-验收标准：
-
-- `LocalNode` 已成为 CLI 的正式连接面
-- `Hub` 所需事件面已有预留
-- CLI 不再直接依赖旧接法语义
-
-### Phase 3：把 gatewayd 实做为 Local Node
+### Phase 3：把 gatewayd 对外边界改成正式 remote app-server host
 
 目标：
 
-- 把 `apps/gatewayd` 从占位程序变成真正的本地 node
+- 让 `gatewayd` 对外不再表现为 node 私有命令代理
 
-当前状态：
+必须完成：
 
-- [apps/gatewayd/src/main.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/main.rs:1) 仍是 placeholder
+- 正式握手
+- request/response correlation
+- event stream
+- transport disconnect semantics
+- `conversation/list` 等 request 的正式远端响应
 
-本阶段职责：
+保留内部职责：
 
-- 监听本地连接
-- 接收来自 CLI 的命令
-- 找到会话对应 worker
-- 不存在则 spawn worker
-- 透传 worker 事件
+- `conversation registry`
+- `worker manager`
+- `idle recycle`
+- `shared conversation list`
 
-建议拆分模块：
-
-- `apps/gatewayd/src/main.rs`
-- `apps/gatewayd/src/node/mod.rs`
-- `apps/gatewayd/src/node/server.rs`
-- `apps/gatewayd/src/node/conversation_registry.rs`
-- `apps/gatewayd/src/node/worker_manager.rs`
-- `apps/gatewayd/src/node/transport.rs`
-
-建议最小内部数据结构：
-
-```rust
-struct WorkerConversationHandle {
-    conversation_id: String,
-    client: AppServerClient,
-    last_active_at: Instant,
-}
-```
-
-```rust
-struct ConversationRegistry {
-    by_conversation: HashMap<String, WorkerConversationHandle>,
-}
-```
-
-如果未来需要追踪连接方，再单独增加：
-
-```rust
-struct ClientSessionHandle {
-    session_id: String,
-    conversation_id: String,
-    target_node_id: Option<String>,
-}
-```
-
-这里要刻意保持：
-
-- `ConversationRegistry` 管会话本体和 worker 归属
-- `ClientSessionHandle` 管连接方上下文
-
-建议最小 node 行为：
-
-1. `SwitchConversation`
-2. `SubmitTurn`
-3. `InterruptTurn`
-4. `ListConversations`
-5. `RequestConversationHistory`
-6. `ResolveServerRequest`
-
-第一阶段不必一次性支持所有未来的远程文件和附件中转。
-
-验收标准：
-
-- `gatewayd` 可以常驻启动
-- CLI 可以连上 `LocalNode`
-- 首次 turn 会触发 worker 启动
-- 已有会话会复用现有 worker
-
-### Phase 4：收敛 agentd 为 Worker 角色并删除 CLI 对旧路径的主依赖
+### Phase 4：让 CLI 通过统一 Remote client 连接 local-node
 
 目标：
 
-- `agentd` 从多角色入口收敛成 worker 宿主
+- CLI 继续只依赖统一 `AppServerClient`
+- `local-node` 只是 connect target，不是协议特例
 
-当前问题：
+必须完成：
 
-- `agentd` 同时承担 ready/console/app-server-stdio 多角色
+- CLI 连接本地 node 时走 `Remote`
+- CLI 初始化、切会话、请求历史、审批响应全部通过统一 client API
 
-建议保留的能力：
-
-- `app-server-stdio`
-
-建议弱化的能力：
-
-- `console`
-
-建议处理方式：
-
-1. `agentd` 继续保留 `app-server-stdio`
-2. `gatewayd` 内部通过 stdio 拉起 `agentd`
-3. CLI 彻底不再直接连接 worker
-4. `console` 只保留给开发调试
-5. `InProcess` 和 CLI 直连 `Stdio` 不再作为用户主入口
-
-如果后续重命名：
-
-- `agentd` => `cloudagent-worker`
-
-这一阶段先不强制改名，先确保职责清晰。
-
-验收标准：
-
-- worker 只负责执行
-- node 只负责路由和生命周期
-- CLI 不再直接依赖 runtime
-- 从用户视角，旧直连 worker 路径已退出主流程
-
-### Phase 5：CLI 默认切到 LocalNode
+### Phase 5：实现 Direct Mode adapter 接入边界
 
 目标：
 
-- 正式完成“传输层切换”
+- 让 IM/App/Web adapter 也走同一套 remote surface
 
-这一步才算你要的核心落地。
+必须完成：
 
-建议默认策略：
+- adapter 不直连 core
+- adapter 不发明新协议
+- adapter 通过 `gatewayd` 的正式 remote app-server host 与 worker 交互
 
-- CLI 唯一正式主路径为 `--target local-node`
-- 不再把 `embedded` 和 `worker-stdio` 作为正式用户模式保留
-
-CLI 需要调整的点：
-
-- 启动帮助文本
-- 参数解析
-- 错误提示
-- node 不可用时的显式失败提示
-
-建议行为：
-
-1. CLI 只尝试连接本地 node
-2. 若 node 不存在，应显式报错或由 CLI 拉起 node 后再连接
-3. 不允许静默回退到 embedded
-4. 不允许为了“先跑起来”偷偷切回旧路径
-
-建议修改文件：
-
-- [cli/src/main.rs](/D:/learn/gifti/cloudagent/cli/src/main.rs:1)
-- [cli/src/transport/client.rs](/D:/learn/gifti/cloudagent/cli/src/transport/client.rs:1)
-- [cli/src/app/core/types.rs](/D:/learn/gifti/cloudagent/cli/src/app/core/types.rs:1)
-
-验收标准：
-
-- 用户不需要关心 worker 进程存在与否
-- 本地 CLI 已默认走 `cli -> node -> worker`
-- 现有 CLI 交互体验不发生明显退化
-- 用户侧不再暴露旧 transport 语义
-
-### Phase 6：为 Direct Mode adapter 接入预留接口
+### Phase 6：实现 Hub Mode host
 
 目标：
 
-- 在 node 稳定后，为 Telegram / 企业微信等直连平台适配做准备
+- 支持在线设备发现和目标节点切换
 
-本阶段不要求立刻实现平台 adapter，但要留好接口。
+必须完成：
 
-建议新增统一输入输出模型：
+- `hubd`
+- node 注册与心跳
+- 在线设备列表
+- target node 路由
+- CLI/Web/App 的 hub 连接目标
 
-```rust
-struct GatewayMessage {
-    conversation_id: String,
-    sender_id: String,
-    content: Vec<InputItem>,
-}
-```
+## 详细 Commit 方案
 
-```rust
-enum GatewayOutbound {
-    Text(String),
-    ApprovalRequest { ... },
-    ToolNotice(String),
-}
-```
-
-建议新建：
-
-- `crates/agent-gateway/src/lib.rs`
-- `crates/agent-gateway/src/message.rs`
-- `crates/agent-gateway/src/adapter/mod.rs`
-
-本阶段目标不是做完 Telegram，而是让 `node` 知道“CLI 和 IM 最终都会被映射成同一种会话输入”。
-
-验收标准：
-
-- CLI 以外的入口可以复用 node 的会话路由
-- `Direct Mode` 开发不再需要改 CLI 主逻辑
-
-### Phase 7：为 Hub Mode 的 CLI 在线设备视图预留协议
-
-目标：
-
-- 明确 Hub 模式下 CLI 必须支持在线设备列表
-- 在本轮迁移中把所需协议边界预留出来
-
-本阶段不实现真实 Hub，但必须定义清楚未来 CLI 需要什么。
-
-Hub 模式下 CLI 至少要支持：
-
-1. 查看在线节点列表
-2. 查看节点标签、版本、能力摘要
-3. 选择目标节点
-4. attach 到目标节点上的 conversation
-5. 创建新 conversation 并显式指定目标节点
-
-建议新增协议模型：
-
-```rust
-struct OnlineNodeSummary {
-    node_id: String,
-    display_name: String,
-    labels: Vec<String>,
-    version: String,
-    online: bool,
-}
-```
-
-```rust
-enum AppClientCommand {
-    // existing...
-    ListOnlineNodes,
-    SelectTargetNode { node_id: String },
-}
-```
-
-说明：
-
-- `ListOnlineNodes` 在 Direct Mode 下不应实现为“伪造一个单节点列表”
-- 它是 Hub Mode 专属能力
-- Direct Mode 下调用该能力应明确报“当前模式不支持”
-
-验收标准：
-
-- 文档层已明确 CLI 在 Hub Mode 下必须支持在线设备列表
-- 当前协议设计不阻碍后续新增该能力
-
-## Web / App 多目标节点切换预留
-
-这部分不是当前直连模式的立即交付范围，但必须在本次迁移中提前预留边界。
-
-### 目标
-
-未来 Web 或 App 接入后，应支持：
-
-- 查看在线节点列表
-- 选择目标节点
-- 在不同目标节点间切换
-- attach 到目标节点上的既有 `conversation`
-- 在当前选中节点上发起新的 `conversation`
-
-### 设计要求
-
-为了支持多节点切换，本次迁移阶段应避免把“当前会话一定属于本机”写死在协议和状态里。
-
-至少要预留以下模型：
-
-```rust
-struct ConversationTarget {
-    node_id: Option<String>,
-    conversation_id: String,
-}
-```
-
-含义：
-
-- `node_id = None` 表示本地或当前默认目标
-- `node_id = Some(...)` 表示明确指定某个远端节点
-
-若需要描述某次前端连接本身，建议单独使用：
-
-```rust
-struct FrontendSession {
-    session_id: String,
-    active_target: ConversationTarget,
-}
-```
-
-这样可以明确区分：
-
-- `ConversationTarget` 是“要连接哪个 conversation”
-- `FrontendSession` 是“谁正在连接它”
-
-### Direct Mode 下的表现
-
-在 `Direct Mode` 下：
-
-- Web/App 若直接接入本机 node，只能操作该 node 管理的会话
-- 不天然支持跨机器切换
-- 不提供在线设备列表
-- 不提供多节点选择器
-
-因此 Direct Mode 解决的是：
-
-- 如何与一台机器上的 `conversation` 稳定交互
-
-### Hub Mode 下的表现
-
-在 `Hub Mode` 下：
-
-- Web/App 通过 Hub 获取在线节点列表
-- 用户选择目标 node
-- Hub 按 `node_id + conversation_id` 路由到对应节点
-- CLI 同样必须通过 Hub 获取在线节点列表
-- CLI 同样必须能够切换目标节点
-
-因此 Hub Mode 解决的是：
-
-- 如何在多台机器之间切换目标节点并继续对话
-
-### 本次迁移需要预留的边界
-
-虽然当前只做直连模式，但本次改造中应尽量满足：
-
-1. `conversation_id` 不被写死为“仅本机唯一”
-2. node 内部会话注册表未来可扩展为带 `node_id` 的路由信息
-3. CLI 的 target 设计未来能自然扩展到 Web/App 的节点选择器
-4. `agent-gateway` 的输入输出模型不依赖 CLI 私有语义
-
-### 对前端的直接收益
-
-如果本次迁移按本文档执行，未来 Web/App 侧不需要重做会话主逻辑，只需要新增：
-
-- 节点列表接口
-- 节点选择 UI
-- 当前目标节点状态展示
-
-而不需要重写：
-
-- `conversation` 输入协议
-- turn 事件流处理
-- worker attach / resume 主逻辑
-
-## 具体文件映射
-
-### 一、CLI 层
-
-建议修改：
-
-- [cli/src/main.rs](/D:/learn/gifti/cloudagent/cli/src/main.rs:1)
-  - 增加 `--target`
-  - 支持 `local-node`
-  - 为未来 `hub-node:<id>` 预留解析入口
-
-- [cli/src/app/core/types.rs](/D:/learn/gifti/cloudagent/cli/src/app/core/types.rs:1)
-  - 新增 `AppServerTarget`
-  - 逐步弱化 `ConsoleConnection` 作为对外入口的地位
-
-- [cli/src/transport/client.rs](/D:/learn/gifti/cloudagent/cli/src/transport/client.rs:1)
-  - 新增 `create_client_from_target`
-  - 接入 `LocalNodeClient`
-
-大概率不需要大改：
-
-- `cli/src/app/runtime/*`
-- `cli/src/app/conversation/*`
-- `cli/src/state/*`
-- `cli/src/ui/*`
-
-后续在 Hub Mode 必改：
-
-- 节点列表视图
-- 节点选择状态
-- 当前目标节点展示
-
-### 二、Client facade 层
-
-建议修改：
-
-- [crates/agent-app-server-client/src/lib.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server-client/src/lib.rs:1)
-  - 增加 `LocalNode`
-  - 统一事件语义
-
-建议新增：
-
-- `crates/agent-app-server-client/src/local_node.rs`
-
-### 三、Node 层
-
-建议修改：
-
-- [apps/gatewayd/src/main.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/main.rs:1)
-
-建议新增：
-
-- `apps/gatewayd/src/node/mod.rs`
-- `apps/gatewayd/src/node/server.rs`
-- `apps/gatewayd/src/node/conversation_registry.rs`
-- `apps/gatewayd/src/node/worker_manager.rs`
-- `apps/gatewayd/src/node/local_transport.rs`
-
-### 四、Worker 层
-
-建议复用：
-
-- [apps/agentd/src/main.rs](/D:/learn/gifti/cloudagent/apps/agentd/src/main.rs:1)
-- [crates/agent-app-server/src/lib.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server/src/lib.rs:1)
-
-第一阶段只做收敛，不做重写。
-
-## Transport 选择建议
-
-### 第一阶段推荐
-
-本地 node transport 选：
-
-- loopback WebSocket
-
-原因：
-
-- 便于和后续 Hub / Remote 模型保持接近
-- 调试方便
-- CLI 和 node 分层清晰
-- 后续 `RemoteNodeClient` 复用思路多
-
-### 第一阶段不推荐
-
-- 一上来用 Named Pipe 作为唯一实现
-
-原因：
-
-- Windows 友好，但后续与 hub/ws 思维割裂
-- 调试成本高
-- 更容易把问题埋进 transport 细节
-
-可接受策略：
-
-- 第一阶段先用 loopback WebSocket
-- 后续若需要，再补 Named Pipe 优化本地体验
-
-## 参数策略
-
-建议最终 CLI 参数：
-
-- `--target local-node`
-- `--target hub-node:<node-id>`
-
-施工阶段允许的短期内部参数：
-
-- `--target embedded`
-- `--target worker-stdio`
-
-但要求：
-
-1. 只用于施工与测试
-2. 不作为最终文档主入口
-3. 必须在迁移后续提交中删除或隐藏
-
-建议环境变量：
-
-- `CLOUDAGENT_APP_SERVER_TARGET`
-- `CLOUDAGENT_LOCAL_NODE_ADDR`
-- `CLOUDAGENT_HUB_ADDR`
-
-## 风险点
-
-### 1. 事件顺序风险
-
-若 `node` 转发事件时顺序变化，会导致 CLI transcript 异常。
-
-要求：
-
-- `TurnStarted`
-- `ItemStarted`
-- `Delta`
-- `ItemCompleted`
-- `TurnCompleted`
-
-必须维持相对顺序。
-
-### 2. 断连语义风险
-
-CLI 现在依赖明确的断连信号。
-
-要求：
-
-- 本地 node 断开时，要产生和现有 client 兼容的断连事件
-
-### 3. 会话复用风险
-
-`conversation_id -> worker` 的复用如果实现错误，会导致串会话。
-
-要求：
-
-- node 内部必须显式维护映射表
-- 切会话时不能只靠“当前活跃会话”猜测
-
-### 4. 审批请求风险
-
-审批请求是 Direct Mode 和 Hub Mode 以后都会敏感的部分。
-
-要求：
-
-- node 不能吞掉 `ServerRequest`
-- 请求超时、worker 结束、CLI 断连时要有明确清理逻辑
-
-## 测试与验收建议
-
-### 单元测试
-
-优先补：
-
-- target 解析
-- local-node client 收发
-- node conversation registry
-- worker spawn / reuse / cleanup
-- disconnect / lagged 语义
-
-### 集成测试
-
-至少覆盖：
-
-1. CLI `embedded`
-2. CLI `worker-stdio`
-3. CLI `local-node`
-4. `local-node` 下重复提交同一会话
-5. `local-node` 下切换不同会话
-6. `local-node` 下审批请求往返
-7. `local-node` 下 worker 异常退出
-
-### 手工验收
-
-必须能演示：
-
-1. 启动本地 node
-2. CLI 连接 node
-3. 发送首次消息，node 自动拉 worker
-4. 第二条消息复用同一 worker 会话
-5. 切到另一个会话，node 拉起另一 worker 或 attach
-6. 中断 turn
-7. worker 退出后再次发送消息，node 能恢复
-
-## 推荐实施顺序
-
-按 commit 粒度建议如下。
+下面的 commit 顺序是**强约束实施顺序**。除非出现重大阻塞，不应跳步。
 
 ### Commit 01
 
-目标：
-
-- 新增迁移文档
-- 固化术语
-- 明确唯一主路径目标
+- `docs(architecture): redefine direct mode and codex-aligned transport goals`
 
 内容：
 
-- 新增 [docs/direct-mode-transport-migration.zh-CN.md](/D:/learn/gifti/cloudagent/docs/direct-mode-transport-migration.zh-CN.md:1)
-- 修订 [docs/hub-node-worker-architecture.zh-CN.md](/D:/learn/gifti/cloudagent/docs/hub-node-worker-architecture.zh-CN.md:1)
+- 修正文档中 `Direct Mode` 的定义
+- 明确 `Direct Mode = IM/App/Web -> target node -> worker`
+- 明确 `Hub Mode = surface -> hub -> target node -> worker`
+- 明确本文档是主实施文档
 
 ### Commit 02
 
-目标：
-
-- 引入 `AppServerTarget`
+- `refactor(cli): freeze target model as local-node and hub-node`
 
 内容：
 
-- 修改 [cli/src/app/core/types.rs](/D:/learn/gifti/cloudagent/cli/src/app/core/types.rs:1)
-- 从 `ConsoleConnection` 外显语义切换到 `AppServerTarget`
-- 保留旧结构仅作为内部施工细节
+- 收敛 `AppServerTarget`
+- 对外仅保留 target 语义
+- 清理公开帮助文本中的旧 transport 词汇
+
+涉及文件：
+
+- [cli/src/app/core/types.rs](/D:/learn/gifti/cloudagent/cli/src/app/core/types.rs:1)
+- [cli/src/main.rs](/D:/learn/gifti/cloudagent/cli/src/main.rs:1)
 
 ### Commit 03
 
-目标：
-
-- CLI 参数切到 `--target`
+- `refactor(app-server-client): introduce codex-style typed request facade`
 
 内容：
 
-- 修改 [cli/src/main.rs](/D:/learn/gifti/cloudagent/cli/src/main.rs:1)
-- 新增 `local-node`
-- 预留 `hub-node:<id>`
-- 帮助文本不再强调 `--transport`
+- 新增 `TypedRequestError`
+- 新增统一 `request_typed`
+- 统一 `AppServerRequestHandle`
+- 把 `resolve_server_request/reject_server_request` 提升成正式 API
+
+涉及文件：
+
+- [crates/agent-app-server-client/src/lib.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server-client/src/lib.rs:1)
+- [crates/agent-app-server-client/src/in_process.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server-client/src/in_process.rs:1)
+- [crates/agent-app-server-client/src/stdio.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server-client/src/stdio.rs:1)
+- [crates/agent-app-server-client/src/local_node.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server-client/src/local_node.rs:1)
 
 ### Commit 04
 
-目标：
-
-- 扩展 client facade
+- `refactor(app-server-client): rename local-node transport as transitional remote shim`
 
 内容：
 
-- 修改 [crates/agent-app-server-client/src/lib.rs](/D:/learn/gifti/cloudagent/crates/agent-app-server-client/src/lib.rs:1)
-- 新增 `crates/agent-app-server-client/src/local_node.rs`
-- 统一 `disconnect / lagged / shutdown` 语义
+- 明确 `local_node.rs` 是过渡层
+- 开始把公开语义收敛到 `Remote`
+- 不再把 `LocalNode` 当长期 variant 宣传
 
 ### Commit 05
 
-目标：
-
-- 创建本地 node 基础骨架
+- `feat(gatewayd): expose remote app-server handshake and request host`
 
 内容：
 
-- 扩展 [apps/gatewayd/src/main.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/main.rs:1)
-- 新增：
-  - `apps/gatewayd/src/node/mod.rs`
-  - `apps/gatewayd/src/node/server.rs`
-  - `apps/gatewayd/src/node/conversation_registry.rs`
-  - `apps/gatewayd/src/node/worker_manager.rs`
-  - `apps/gatewayd/src/node/local_transport.rs`
+- `gatewayd` 对外具备正式 remote host 边界
+- request/response correlation 正式化
+- 初始化、断连、错误语义统一
+
+涉及文件：
+
+- [apps/gatewayd/src/node/server.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/node/server.rs:1)
+- [apps/gatewayd/src/node/command_router.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/node/command_router.rs:1)
+- [apps/gatewayd/src/node/message_sync.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/node/message_sync.rs:1)
 
 ### Commit 06
 
-目标：
-
-- 打通 node 拉起 worker
+- `refactor(gatewayd): move node-private routing behind remote host boundary`
 
 内容：
 
-- `gatewayd` 通过 stdio 拉起 `agentd app-server-stdio`
-- 管理 `conversation_id -> worker` 映射
-- 支持首次启动 worker
+- `conversation -> worker` 路由继续保留在 node 内部
+- 对外不再暴露 node 私有业务 contract
+- 内外边界彻底分清
 
 ### Commit 07
 
-目标：
-
-- 打通 `cli -> local node -> worker`
+- `refactor(cli): connect local-node target through remote app-server client`
 
 内容：
 
-- CLI 通过 `LocalNodeClient` 发命令
-- node 转发到 worker
-- worker 事件回流到 CLI
+- CLI 连本地 node 改为统一 `Remote`
+- CLI 的历史读取、列表请求、审批响应都走统一 facade
+
+涉及文件：
+
+- [cli/src/transport/client.rs](/D:/learn/gifti/cloudagent/cli/src/transport/client.rs:1)
+- [cli/src/app/conversation/actions.rs](/D:/learn/gifti/cloudagent/cli/src/app/conversation/actions.rs:1)
 
 ### Commit 08
 
-目标：
-
-- 删除 CLI 对旧主路径的依赖
+- `test(cli): add startup smoke coverage for remote local-node transport`
 
 内容：
 
-- CLI 不再默认 `Embedded`
-- CLI 不再默认 `WorkerStdio`
-- 旧路径若仍保留，只允许在测试或内部调试中使用
+- 覆盖启动
+- 覆盖初始化握手
+- 覆盖请求历史
+- 覆盖切会话
+- 覆盖 server request 响应
+- 覆盖断连提示
 
 ### Commit 09
 
-目标：
-
-- 清理旧参数和旧帮助文案
+- `feat(agent-gateway): route direct adapters through unified remote client surface`
 
 内容：
 
-- 删除或隐藏 `--transport` 主文档入口
-- 清理旧错误提示
-- 清理旧路径说明
+- Direct Mode adapter 不直连 core
+- 统一从 `agent-gateway` 走 remote client surface
 
 ### Commit 10
 
-目标：
-
-- 收敛 `agentd` 为 worker 角色
+- `feat(protocol): reserve hub remote routing requests and online node reads`
 
 内容：
 
-- 调整 [apps/agentd/src/main.rs](/D:/learn/gifti/cloudagent/apps/agentd/src/main.rs:1)
-- 明确 `console` 只用于开发
-- 主路径仅为 node 拉 worker
+- 预留 `Hub Mode` 的 request/response 面
+- 包括在线设备读取和 target node 选择
 
 ### Commit 11
 
-目标：
-
-- 增加 Direct Mode 所需测试
+- `feat(hubd): add minimal online node registry and routing host`
 
 内容：
 
-- local-node client 测试
-- node conversation registry 测试
-- worker spawn / reuse / cleanup 测试
-- CLI 集成测试
+- 新增 `hubd`
+- 最小在线设备目录
+- 最小 target node 路由
 
 ### Commit 12
 
-目标：
-
-- 为 Hub Mode CLI 在线设备视图预留协议
+- `refactor(app-server-client): collapse client variants to in-process and remote`
 
 内容：
 
-- 在协议层预留 `ListOnlineNodes`
-- 在 target 层预留 `HubNode`
-- 不实现真实 Hub
+- 正式把长期 client surface 收敛为：
+  - `InProcess`
+  - `Remote`
 
 ### Commit 13
 
-目标：
-
-- 开始 Direct Mode 平台 adapter
+- `chore(transport): remove obsolete direct local-node protocol terminology`
 
 内容：
 
-- `agent-gateway` 初始抽象
-- `GatewayMessage`
-- `GatewayOutbound`
+- 清理遗留命名
+- 删除不再需要的旧语义
+- 文档、帮助、测试命名同步
 
-## 本文档对应的结论
+## 验收标准
 
-这次“传输层切换”不应理解为重写 CLI，而应理解为：
+只有满足以下条件，才算本文档目标完成：
 
-- 保持现有 CLI 事件驱动结构
-- 把 CLI 底下的连接目标从“本地 runtime/worker”逐步切到“本地 node”
-- 让 node 成为 Direct Mode 的真正入口
+1. CLI、Web、App、IM 都不直接碰 `core`
+2. CLI、Web、App、IM 都通过统一 app-server client surface 工作
+3. 长期 transport 形态收敛为 `InProcess` 与 `Remote`
+4. `local-node` 是 target/deployment 概念，不是长期 client 协议名
+5. `gatewayd` 对外是正式 remote app-server host
+6. `Direct Mode` 可通过 IM/App/Web 与远程设备上的 agent 稳定交互
+7. `Hub Mode` 可查看在线设备并连接目标设备上的 agent
+8. 初始化、请求历史、切会话、审批请求、断连、lagged 语义在各 surface 下一致
+9. CLI 可以稳定启动并完成基本交互
+10. 全量测试与 CI 通过
 
-完成这份方案后，下一步就可以专注开发：
+## 实施要求
 
-- `Direct Mode`
+后续所有代码提交必须遵守：
 
-而不是继续在 CLI 和 worker 的耦合关系上反复返工。
+1. 不再把 `LocalNode` 当成长期协议终点
+2. 不再新增绕过统一 client surface 的快捷实现
+3. 每个 commit 只推进一个清晰目标
+4. 每个 commit 都要带测试或验收说明
+5. 每完成一个阶段，都要回到本文档核对是否偏离
 
-Hub 应作为下一阶段，在 `node` 和 `client` 已经分层稳定之后再接入。
+## 一句话总结
+
+本文档的目标不是“先把直连凑出来”，而是：
+
+- **用 Codex 风格的统一传输层，把 Direct Mode 和 Hub Mode 都建立在同一套稳定 app-server surface 上。**
