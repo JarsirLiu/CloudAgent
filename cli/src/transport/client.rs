@@ -40,11 +40,7 @@ async fn create_local_node_client(
     program: &std::ffi::OsString,
     args: &[std::ffi::OsString],
 ) -> Result<AppServerClient> {
-    match AppServerClient::local_node(LocalNodeClientConfig {
-        address: address.to_string(),
-    })
-    .await
-    {
+    match connect_local_node_once(address).await {
         Ok(client) => Ok(client),
         Err(first_error) => {
             let mut child = std::process::Command::new(program)
@@ -54,11 +50,7 @@ async fn create_local_node_client(
                 .stderr(Stdio::null())
                 .spawn()?;
             wait_for_service(
-                || {
-                    AppServerClient::local_node(LocalNodeClientConfig {
-                        address: address.to_string(),
-                    })
-                },
+                || connect_local_node_once(address),
                 Some(&mut child),
                 Duration::from_secs(5),
                 Duration::from_millis(100),
@@ -71,6 +63,22 @@ async fn create_local_node_client(
             })
         }
     }
+}
+
+async fn connect_local_node_once(address: &str) -> Result<AppServerClient> {
+    AppServerClient::local_node(LocalNodeClientConfig {
+        address: address.to_string(),
+        client_name: env!("CARGO_PKG_NAME").to_string(),
+        client_version: option_env!("CLOUDAGENT_BUILD_VERSION")
+            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            .to_string(),
+        experimental_api: true,
+        opt_out_notification_methods: Vec::new(),
+        channel_capacity: agent_app_server_client::DEFAULT_EVENT_CHANNEL_CAPACITY,
+        connect_timeout: Duration::from_secs(1),
+        initialize_timeout: Duration::from_secs(5),
+    })
+    .await
 }
 
 async fn wait_for_service<T, F, Fut>(
