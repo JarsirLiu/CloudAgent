@@ -1,5 +1,6 @@
 use crate::node::command_router::handle_command_message;
 use crate::node::message_sync::write_node_event;
+use crate::node::platform_manager::PlatformManager;
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
 use crate::node::worker_manager::NodeEvent;
@@ -28,10 +29,16 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
         .await
         .with_context(|| format!("failed to bind gatewayd remote host on {listen_address}"))?;
     tracing::info!("gatewayd remote app-server host listening on {listen_address}");
-    let runtime = NodeRuntime::new(crate::node::worker_manager::WorkerManager::new(
-        worker_program,
-        data_root_dir,
-    ));
+    let platforms = PlatformManager::load(data_root_dir.as_deref()).await?;
+    let runtime = NodeRuntime::new(
+        crate::node::worker_manager::WorkerManager::new(worker_program, data_root_dir),
+        platforms,
+        listen_address.clone(),
+    );
+    runtime
+        .platforms()
+        .sync_desired_state(&listen_address)
+        .await?;
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
@@ -266,6 +273,7 @@ fn arg_value(args: &[OsString], name: &str) -> Option<OsString> {
 #[cfg(test)]
 mod tests {
     use super::{arg_value, handle_transport_line};
+    use crate::node::platform_manager::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
     use crate::node::worker_manager::WorkerManager;
@@ -274,18 +282,23 @@ mod tests {
         TransportInitializeParams,
     };
     use std::ffi::OsString;
-    use std::path::PathBuf;
     use tokio::io::{AsyncBufReadExt, BufReader, duplex};
 
     fn test_worker_manager() -> WorkerManager {
+        let root =
+            std::env::temp_dir().join(format!("cloudagent-gatewayd-tests-{}", std::process::id()));
+        WorkerManager::new(OsString::from("agentd.exe"), Some(root.into_os_string()))
+    }
+
+    async fn test_runtime() -> NodeRuntime {
         let root = std::env::temp_dir().join(format!(
-            "cloudagent-gatewayd-tests-{}",
+            "cloudagent-gatewayd-platform-tests-{}",
             std::process::id()
         ));
-        WorkerManager::new(
-            OsString::from("agentd.exe"),
-            Some(PathBuf::from(root).into_os_string()),
-        )
+        let platforms = PlatformManager::load(Some(root.as_os_str()))
+            .await
+            .expect("platform manager");
+        NodeRuntime::new(test_worker_manager(), platforms, "127.0.0.1:47070")
     }
 
     #[test]
@@ -314,7 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_business_requests_before_initialize() {
-        let runtime = NodeRuntime::new(test_worker_manager());
+        let runtime = test_runtime().await;
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
         let request = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
@@ -342,7 +355,7 @@ mod tests {
 
     #[tokio::test]
     async fn initialize_then_initialized_marks_session_ready() {
-        let runtime = NodeRuntime::new(test_worker_manager());
+        let runtime = test_runtime().await;
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
         let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
@@ -393,7 +406,7 @@ mod tests {
 
     #[tokio::test]
     async fn unsupported_request_after_initialize_returns_jsonrpc_error() {
-        let runtime = NodeRuntime::new(test_worker_manager());
+        let runtime = test_runtime().await;
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
 

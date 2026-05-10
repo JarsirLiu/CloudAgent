@@ -6,8 +6,9 @@ use agent_core::ServerRequestDecision;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
     ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
-    JsonRpcErrorPayload, JsonRpcRequest, NotificationDelivery, OnlineNodeListResponse, RequestId,
-    SelectTargetNodeResponse, UserTurnInput, classify_notification,
+    JsonRpcErrorPayload, JsonRpcRequest, NotificationDelivery, OnlineNodeListResponse,
+    PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
+    RequestId, SelectTargetNodeResponse, UserTurnInput, classify_notification,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;
@@ -176,6 +177,31 @@ impl AppServerClient {
     ) -> Result<SelectTargetNodeResponse, TypedRequestError> {
         self.request_handle()
             .select_target_node_typed(node_id)
+            .await
+    }
+
+    pub async fn request_platform_list_typed(
+        &self,
+    ) -> Result<PlatformControlListResponse, TypedRequestError> {
+        self.request_handle().request_platform_list_typed().await
+    }
+
+    pub async fn request_platform_status_typed(
+        &self,
+        platform: impl Into<String>,
+    ) -> Result<PlatformControlStatusResponse, TypedRequestError> {
+        self.request_handle()
+            .request_platform_status_typed(platform)
+            .await
+    }
+
+    pub async fn set_platform_enabled_typed(
+        &self,
+        platform: impl Into<String>,
+        enabled: bool,
+    ) -> Result<PlatformControlUpdateResponse, TypedRequestError> {
+        self.request_handle()
+            .set_platform_enabled_typed(platform, enabled)
             .await
     }
 
@@ -363,6 +389,47 @@ impl AppServerRequestHandle {
             method: "hub/node/select".to_string(),
             params: Some(serde_json::json!({
                 "node_id": node_id.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn request_platform_list_typed(
+        &self,
+    ) -> Result<PlatformControlListResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "platform/list".to_string(),
+            params: None,
+        })
+        .await
+    }
+
+    pub async fn request_platform_status_typed(
+        &self,
+        platform: impl Into<String>,
+    ) -> Result<PlatformControlStatusResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "platform/status".to_string(),
+            params: Some(serde_json::json!({
+                "platform": platform.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn set_platform_enabled_typed(
+        &self,
+        platform: impl Into<String>,
+        enabled: bool,
+    ) -> Result<PlatformControlUpdateResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "platform/setEnabled".to_string(),
+            params: Some(serde_json::json!({
+                "platform": platform.into(),
+                "enabled": enabled,
             })),
         })
         .await

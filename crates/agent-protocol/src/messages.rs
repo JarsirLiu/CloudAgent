@@ -85,6 +85,29 @@ pub struct SelectTargetNodeResponse {
     pub node_id: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlatformControlEntry {
+    pub platform: String,
+    pub enabled: bool,
+    pub managed_by: String,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlatformControlListResponse {
+    pub platforms: Vec<PlatformControlEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlatformControlStatusResponse {
+    pub platform: PlatformControlEntry,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlatformControlUpdateResponse {
+    pub platform: PlatformControlEntry,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppClientCommand {
@@ -116,6 +139,7 @@ pub enum AppClientCommand {
     },
     ListConversations,
     ListOnlineNodes,
+    ListPlatforms,
     SetConversationTitle {
         conversation_id: String,
         title: String,
@@ -128,6 +152,13 @@ pub enum AppClientCommand {
     },
     SelectTargetNode {
         node_id: String,
+    },
+    GetPlatformStatus {
+        platform: String,
+    },
+    SetPlatformEnabled {
+        platform: String,
+        enabled: bool,
     },
     ArchiveConversation {
         conversation_id: String,
@@ -170,7 +201,10 @@ impl AppClientCommand {
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
             Self::ListConversations
             | Self::ListOnlineNodes
+            | Self::ListPlatforms
             | Self::SelectTargetNode { .. }
+            | Self::GetPlatformStatus { .. }
+            | Self::SetPlatformEnabled { .. }
             | Self::Exit => None,
         }
     }

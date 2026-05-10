@@ -117,6 +117,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::sync_registry_from_message;
+    use crate::node::platform_manager::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::worker_manager::WorkerManager;
     use agent_core::conversation::ConversationSummary;
@@ -127,7 +128,17 @@ mod tests {
     fn worker_conversation_list_replaces_shared_registry_state() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+            let root = std::env::temp_dir().join(format!(
+                "cloudagent-gatewayd-platform-tests-{}",
+                std::process::id()
+            ));
+            let runtime = NodeRuntime::new(
+                WorkerManager::new(OsString::from("agentd.exe"), None),
+                PlatformManager::load(Some(root.as_os_str()))
+                    .await
+                    .expect("platform manager"),
+                "127.0.0.1:47070",
+            );
             runtime.conversations().lock().await.touch("stale");
 
             sync_registry_from_message(

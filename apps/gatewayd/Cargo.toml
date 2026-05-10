@@ -10,7 +10,9 @@ agent-app-server-client = { path = "../../crates/agent-app-server-client" }
 agent-core = { path = "../../crates/agent-core" }
 agent-gateway = { path = "../../crates/agent-gateway" }
 agent-protocol = { path = "../../crates/agent-protocol" }
+serde.workspace = true
 serde_json.workspace = true
+tempfile = "3"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

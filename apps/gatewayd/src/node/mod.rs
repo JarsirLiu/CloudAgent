@@ -1,6 +1,7 @@
 mod command_router;
 mod conversation_registry;
 mod message_sync;
+mod platform_manager;
 mod runtime;
 mod server;
 mod session_state;

@@ -1,3 +1,6 @@
+pub mod feishu;
+pub mod wecom;
+
 use crate::{GatewayMessage, GatewayOutbound};
 use anyhow::Result;
 use async_trait::async_trait;

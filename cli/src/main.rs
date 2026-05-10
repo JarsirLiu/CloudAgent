@@ -1,7 +1,12 @@
+use agent_app_server_client::AppServerClient;
+use agent_protocol::{
+    PlatformControlEntry, PlatformControlListResponse, PlatformControlStatusResponse,
+};
 use anyhow::{Result, bail};
 use cli::agent_host::build_agent_host;
 use cli::app::cli_settings::load_cli_settings;
 use cli::terminal::apply_color_cli_preference;
+use cli::transport::client::create_local_node_client;
 use cli::{AppServerTarget, ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
 use infra_store::JsonConversationStore;
@@ -40,6 +45,9 @@ async fn main() -> Result<()> {
     };
     let mut config = config;
     apply_data_dir_cli_override(&mut config, &args);
+    if maybe_handle_platform_command(&args, &config.runtime.data_root_dir).await? {
+        return Ok(());
+    }
     if let Ok(Some(settings)) = load_cli_settings(&config.runtime.conversation_store_dir) {
         config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
         config.cli.permission_mode = settings.permission_mode;
@@ -78,6 +86,56 @@ async fn main() -> Result<()> {
         bootstrap,
     })
     .await
+}
+
+async fn maybe_handle_platform_command(
+    args: &[OsString],
+    data_root_dir: &std::path::Path,
+) -> Result<bool> {
+    let Some(command) = args.first().and_then(|arg| arg.to_str()) else {
+        return Ok(false);
+    };
+    if command != "platform" {
+        return Ok(false);
+    }
+    let client = create_platform_management_client(args, data_root_dir).await?;
+
+    let action = args.get(1).and_then(|arg| arg.to_str()).unwrap_or("list");
+    match action {
+        "list" => {
+            print_platform_list(&client).await?;
+        }
+        "status" => {
+            if let Some(platform) = args.get(2).and_then(|arg| arg.to_str()) {
+                print_platform_status(&client, platform).await?;
+            } else {
+                print_platform_list(&client).await?;
+            }
+        }
+        "enable" => {
+            let platform = args
+                .get(2)
+                .and_then(|arg| arg.to_str())
+                .ok_or_else(|| anyhow::anyhow!("usage: cloudagent platform enable <platform>"))?;
+            let response = client.set_platform_enabled_typed(platform, true).await?;
+            println!("enabled platform `{platform}` via local node");
+            print_single_platform(&response.platform);
+        }
+        "disable" => {
+            let platform = args
+                .get(2)
+                .and_then(|arg| arg.to_str())
+                .ok_or_else(|| anyhow::anyhow!("usage: cloudagent platform disable <platform>"))?;
+            let response = client.set_platform_enabled_typed(platform, false).await?;
+            println!("disabled platform `{platform}` via local node");
+            print_single_platform(&response.platform);
+        }
+        other => bail!(
+            "unknown platform action `{other}`. supported actions: list, status, enable, disable"
+        ),
+    }
+
+    Ok(true)
 }
 
 fn build_runtime(config: AgentConfig) -> Result<std::sync::Arc<agent_core::AgentHost>> {
@@ -305,6 +363,10 @@ fn print_help() {
 cloudagent cli
 
 Usage:
+  cloudagent platform list [--data-dir PATH]
+  cloudagent platform status [PLATFORM] [--data-dir PATH]
+  cloudagent platform enable PLATFORM [--data-dir PATH]
+  cloudagent platform disable PLATFORM [--data-dir PATH]
   cloudagent start [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--data-dir PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--data-dir PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent --help
@@ -313,6 +375,7 @@ Usage:
 Options:
   -h, --help                 Show this help text
       -V, --version              Show the CLI version
+      platform                  Manage IM platform desired state for the resident node
       --target TARGET        Target selection: local-node (default) or hub-node (reserved)
       --node-bin PATH        node binary path when using local-node
       --node-addr ADDR       node listen address when using local-node
@@ -327,6 +390,50 @@ Options:
 
 fn print_version() {
     println!("{}", display_version());
+}
+
+async fn print_platform_list(client: &AppServerClient) -> Result<()> {
+    let response: PlatformControlListResponse = client.request_platform_list_typed().await?;
+    for entry in response.platforms {
+        print_single_platform(&entry);
+    }
+    Ok(())
+}
+
+async fn print_platform_status(client: &AppServerClient, platform: &str) -> Result<()> {
+    let response: PlatformControlStatusResponse =
+        client.request_platform_status_typed(platform).await?;
+    print_single_platform(&response.platform);
+    Ok(())
+}
+
+fn print_single_platform(entry: &PlatformControlEntry) {
+    let enabled = if entry.enabled { "enabled" } else { "disabled" };
+    println!(
+        "- {}: {enabled}, managed_by={}, updated_at_ms={}",
+        entry.platform, entry.managed_by, entry.updated_at_ms
+    );
+}
+
+async fn create_platform_management_client(
+    args: &[OsString],
+    data_root_dir: &std::path::Path,
+) -> Result<AppServerClient> {
+    let address = arg_value(args, "--node-addr")
+        .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
+        .and_then(|value| value.into_string().ok())
+        .unwrap_or_else(|| default_node_addr().to_string());
+    let program = arg_value(args, "--node-bin")
+        .or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
+        .unwrap_or_else(default_node_bin);
+    let node_args = vec![
+        OsString::from("serve"),
+        OsString::from("--listen"),
+        OsString::from(address.clone()),
+        OsString::from("--data-dir"),
+        data_root_dir.as_os_str().to_os_string(),
+    ];
+    create_local_node_client(&address, &program, &node_args).await
 }
 
 fn display_version() -> &'static str {

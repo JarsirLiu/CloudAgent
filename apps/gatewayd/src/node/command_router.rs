@@ -8,7 +8,9 @@ use agent_core::conversation::ConversationSummary;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
     ConversationHistoryPageResponse, ConversationHistoryResponse, ConversationListResponse,
-    ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, RequestId,
+    ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest,
+    PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
+    RequestId,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
@@ -177,6 +179,16 @@ where
         AppClientCommand::ListConversations => {
             serde_json::to_value(read_conversation_list(runtime, &target_conversation).await?)?
         }
+        AppClientCommand::ListPlatforms => serde_json::to_value(runtime.platforms().list().await)?,
+        AppClientCommand::GetPlatformStatus { platform } => {
+            serde_json::to_value(runtime.platforms().status(platform).await?)?
+        }
+        AppClientCommand::SetPlatformEnabled { platform, enabled } => serde_json::to_value(
+            runtime
+                .platforms()
+                .set_enabled(platform, *enabled, runtime.listen_address())
+                .await?,
+        )?,
         _ => {
             let value = runtime
                 .workers()
@@ -212,6 +224,7 @@ fn typed_request_from_command(
 ) -> Option<JsonRpcRequest> {
     let (method, params) = match command {
         AppClientCommand::ListConversations => ("conversation/list", serde_json::Value::Null),
+        AppClientCommand::ListPlatforms => ("platform/list", serde_json::Value::Null),
         AppClientCommand::RequestConversationStatus { conversation_id } => (
             "conversation/status",
             serde_json::json!({ "conversation_id": conversation_id }),
@@ -231,6 +244,14 @@ fn typed_request_from_command(
                 "before_turn_id": before_turn_id,
                 "limit": limit,
             }),
+        ),
+        AppClientCommand::GetPlatformStatus { platform } => (
+            "platform/status",
+            serde_json::json!({ "platform": platform }),
+        ),
+        AppClientCommand::SetPlatformEnabled { platform, enabled } => (
+            "platform/setEnabled",
+            serde_json::json!({ "platform": platform, "enabled": enabled }),
         ),
         _ => return None,
     };
@@ -343,6 +364,43 @@ async fn sync_typed_read_registry(
                 turns: response.turns,
             })
         }
+        AppClientCommand::ListPlatforms => {
+            let response: PlatformControlListResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: conversation_id.to_string(),
+                message: format!("platforms: {}", response.platforms.len()),
+            })
+        }
+        AppClientCommand::GetPlatformStatus { .. } => {
+            let response: PlatformControlStatusResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: conversation_id.to_string(),
+                message: format!(
+                    "platform `{}` is {}",
+                    response.platform.platform,
+                    if response.platform.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                ),
+            })
+        }
+        AppClientCommand::SetPlatformEnabled { .. } => {
+            let response: PlatformControlUpdateResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: conversation_id.to_string(),
+                message: format!(
+                    "platform `{}` {}",
+                    response.platform.platform,
+                    if response.platform.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                ),
+            })
+        }
         AppClientCommand::RequestConversationStatus { .. } => {
             let response: ConversationStatusResponse = serde_json::from_value(value.clone())?;
             AppServerMessage::Notification(AppServerNotification::ConversationStatus {
@@ -417,7 +475,10 @@ pub(crate) async fn target_conversation_id(
         }
         AppClientCommand::ListConversations
         | AppClientCommand::ListOnlineNodes
+        | AppClientCommand::ListPlatforms
         | AppClientCommand::SelectTargetNode { .. }
+        | AppClientCommand::GetPlatformStatus { .. }
+        | AppClientCommand::SetPlatformEnabled { .. }
         | AppClientCommand::Exit => session.active_conversation_id().to_string(),
     }
 }
@@ -428,6 +489,7 @@ mod tests {
         conversation_list_notification, ensure_session_subscription, read_conversation_list,
         target_conversation_id,
     };
+    use crate::node::platform_manager::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
     use crate::node::worker_manager::{NodeEvent, WorkerManager};
@@ -437,25 +499,30 @@ mod tests {
         RequestId,
     };
     use std::ffi::OsString;
-    use std::path::PathBuf;
     use tokio::sync::broadcast;
 
     fn test_worker_manager() -> WorkerManager {
+        let root =
+            std::env::temp_dir().join(format!("cloudagent-gatewayd-tests-{}", std::process::id()));
+        WorkerManager::new(OsString::from("agentd.exe"), Some(root.into_os_string()))
+    }
+
+    async fn test_runtime() -> NodeRuntime {
         let root = std::env::temp_dir().join(format!(
-            "cloudagent-gatewayd-tests-{}",
+            "cloudagent-gatewayd-platform-tests-{}",
             std::process::id()
         ));
-        WorkerManager::new(
-            OsString::from("agentd.exe"),
-            Some(PathBuf::from(root).into_os_string()),
-        )
+        let platforms = PlatformManager::load(Some(root.as_os_str()))
+            .await
+            .expect("platform manager");
+        NodeRuntime::new(test_worker_manager(), platforms, "127.0.0.1:47070")
     }
 
     #[test]
     fn list_conversations_routes_to_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(test_worker_manager());
+            let runtime = test_runtime().await;
             let mut session = NodeSessionState::new("conversation-1");
             assert_eq!(
                 target_conversation_id(
@@ -473,7 +540,7 @@ mod tests {
     fn switch_conversation_updates_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(test_worker_manager());
+            let runtime = test_runtime().await;
             let mut session = NodeSessionState::new("conversation-1");
             let command = AppClientCommand::SwitchConversation {
                 conversation_id: "conversation-2".to_string(),
@@ -492,7 +559,7 @@ mod tests {
     fn list_conversations_uses_node_shared_registry() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(test_worker_manager());
+            let runtime = test_runtime().await;
             {
                 let mut registry = runtime.conversations().lock().await;
                 registry.touch("conversation-1");
@@ -529,7 +596,7 @@ mod tests {
     fn empty_registry_still_returns_a_typed_conversation_list_result() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(test_worker_manager());
+            let runtime = test_runtime().await;
             let response = read_conversation_list(&runtime, "conversation-1").await;
             assert!(response.is_ok());
         });
@@ -595,7 +662,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_session_subscription_replaces_stale_receiver() {
-        let runtime = NodeRuntime::new(test_worker_manager());
+        let runtime = test_runtime().await;
         let mut session = NodeSessionState::new("conversation-1");
         let (_, stale_rx) = broadcast::channel::<NodeEvent>(1);
         *session.active_subscription_mut() = Some(stale_rx);

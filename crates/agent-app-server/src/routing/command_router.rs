@@ -275,6 +275,9 @@ pub(crate) async fn handle_command(
             session_service::report_hub_mode_only_command(event_tx, &state, "ListOnlineNodes")
                 .await;
         }
+        AppClientCommand::ListPlatforms => {
+            report_node_managed_only_command(event_tx, &state, "ListPlatforms").await;
+        }
         AppClientCommand::CreateConversation { conversation_id } => {
             session_service::create_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
@@ -299,6 +302,12 @@ pub(crate) async fn handle_command(
         AppClientCommand::SelectTargetNode { .. } => {
             session_service::report_hub_mode_only_command(event_tx, &state, "SelectTargetNode")
                 .await;
+        }
+        AppClientCommand::GetPlatformStatus { .. } => {
+            report_node_managed_only_command(event_tx, &state, "GetPlatformStatus").await;
+        }
+        AppClientCommand::SetPlatformEnabled { .. } => {
+            report_node_managed_only_command(event_tx, &state, "SetPlatformEnabled").await;
         }
         AppClientCommand::ArchiveConversation { conversation_id } => {
             session_service::archive_conversation(&runtime, event_tx, &state, conversation_id)
@@ -346,6 +355,25 @@ pub(crate) async fn handle_command(
     }
 
     Ok(())
+}
+
+async fn report_node_managed_only_command(
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    command_name: &str,
+) {
+    let conversation_id = {
+        let guard = state.lock().await;
+        guard
+            .notification_anchor_conversation_id("default")
+            .to_string()
+    };
+    let _ = event_tx.send(AppServerMessage::Notification(
+        agent_protocol::AppServerNotification::Error {
+            conversation_id,
+            message: format!("node-managed only: `{command_name}` is not available for embedded app-server targets"),
+        },
+    ));
 }
 
 pub(crate) fn merge_active_turn(

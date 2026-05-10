@@ -28,7 +28,7 @@ pub(crate) async fn create_client(
     }
 }
 
-async fn create_local_node_client(
+pub async fn create_local_node_client(
     address: &str,
     program: &std::ffi::OsString,
     args: &[std::ffi::OsString],

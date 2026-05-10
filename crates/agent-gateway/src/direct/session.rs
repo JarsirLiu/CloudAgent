@@ -4,6 +4,7 @@ use crate::direct::{app_server_message_to_outbound, gateway_message_to_command};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
 use agent_protocol::{AppServerMessage, TurnPolicy};
 use anyhow::Result;
+use tokio::time::{Duration, timeout};
 
 #[derive(Clone, Debug)]
 pub enum DirectNodeEvent {
@@ -139,8 +140,7 @@ where
         };
         let command = gateway_message_to_command(message, self.turn_policy.clone());
         self.active_conversation_id = command.conversation_id().map(ToOwned::to_owned);
-        self.node_client()
-            .send_command(command)?;
+        self.node_client().send_command(command)?;
         Ok(PumpStatus::Active)
     }
 
@@ -149,6 +149,44 @@ where
             return Ok(PumpStatus::NodeClosed);
         };
         self.handle_node_event(event).await
+    }
+
+    pub async fn run_until_closed(&mut self, poll_interval: Duration) -> Result<PumpStatus> {
+        loop {
+            if let Some(event) = self
+                .node_client_mut()
+                .try_next_event()
+                .map(DirectNodeEvent::from)
+            {
+                let status = self.handle_node_event(event).await?;
+                if status != PumpStatus::Active {
+                    return Ok(status);
+                }
+                continue;
+            }
+
+            match timeout(poll_interval, self.adapter.next_message()).await {
+                Ok(Ok(Some(message))) => {
+                    let command = gateway_message_to_command(message, self.turn_policy.clone());
+                    self.active_conversation_id = command.conversation_id().map(ToOwned::to_owned);
+                    self.node_client().send_command(command)?;
+                }
+                Ok(Ok(None)) => return Ok(PumpStatus::AdapterClosed),
+                Ok(Err(err)) => return Err(err),
+                Err(_) => {
+                    if let Some(event) = self
+                        .node_client_mut()
+                        .try_next_event()
+                        .map(DirectNodeEvent::from)
+                    {
+                        let status = self.handle_node_event(event).await?;
+                        if status != PumpStatus::Active {
+                            return Ok(status);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -301,7 +339,10 @@ mod tests {
     type TestDirectGatewaySession = DirectGatewaySession<FakeAdapter>;
 
     impl TestDirectGatewaySession {
-        async fn handle_node_event_for_test(&mut self, event: DirectNodeEvent) -> Result<PumpStatus> {
+        async fn handle_node_event_for_test(
+            &mut self,
+            event: DirectNodeEvent,
+        ) -> Result<PumpStatus> {
             self.handle_node_event(event).await
         }
     }

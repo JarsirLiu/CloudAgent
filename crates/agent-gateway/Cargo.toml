@@ -10,5 +10,12 @@ async-trait.workspace = true
 agent-app-server-client = { path = "../agent-app-server-client" }
 agent-core = { path = "../agent-core" }
 agent-protocol = { path = "../agent-protocol" }
+feishu-sdk = { version = "0.1.2", features = ["websocket"] }
+futures-util = "0.3"
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 shared = { path = "../shared" }
 tokio.workspace = true
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tracing.workspace = true
