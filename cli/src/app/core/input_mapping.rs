@@ -114,6 +114,21 @@ impl TuiApp {
                 base_url: String::new(),
                 model: String::new(),
             }),
+            InputPaneAction::Composer(ComposerIntent::Gateway) => {
+                Some(ParsedInput::LocalGatewayOpen)
+            }
+            InputPaneAction::Composer(ComposerIntent::GatewaySelect(platform)) => {
+                Some(ParsedInput::LocalGatewaySelect(platform))
+            }
+            InputPaneAction::Composer(ComposerIntent::GatewaySave {
+                platform,
+                enabled,
+                updates,
+            }) => Some(ParsedInput::LocalGatewaySave {
+                platform,
+                enabled,
+                updates,
+            }),
             InputPaneAction::Composer(ComposerIntent::ConfigSave {
                 api_key,
                 base_url,

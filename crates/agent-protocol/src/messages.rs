@@ -86,9 +86,24 @@ pub struct SelectTargetNodeResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NodeStatusResponse {
+    pub listen_address: String,
+    pub worker_running: bool,
+    pub platform_runtime_count: usize,
+    pub managed_platform_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NodeStopResponse {
+    pub stopping: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlatformControlEntry {
     pub platform: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub configured: bool,
     pub managed_by: String,
     pub updated_at_ms: u64,
 }
@@ -106,6 +121,22 @@ pub struct PlatformControlStatusResponse {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlatformControlUpdateResponse {
     pub platform: PlatformControlEntry,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlatformConfigField {
+    pub key: String,
+    pub value: Option<String>,
+    pub is_secret: bool,
+    pub is_set: bool,
+    pub required: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlatformConfigResponse {
+    pub platform: String,
+    pub configured: bool,
+    pub fields: Vec<PlatformConfigField>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -140,6 +171,8 @@ pub enum AppClientCommand {
     ListConversations,
     ListOnlineNodes,
     ListPlatforms,
+    GetNodeStatus,
+    StopNode,
     SetConversationTitle {
         conversation_id: String,
         title: String,
@@ -156,9 +189,21 @@ pub enum AppClientCommand {
     GetPlatformStatus {
         platform: String,
     },
+    GetPlatformConfig {
+        platform: String,
+    },
     SetPlatformEnabled {
         platform: String,
         enabled: bool,
+    },
+    SetPlatformConfigValue {
+        platform: String,
+        key: String,
+        value: String,
+    },
+    ClearPlatformConfigValue {
+        platform: String,
+        key: String,
     },
     ArchiveConversation {
         conversation_id: String,
@@ -202,9 +247,14 @@ impl AppClientCommand {
             Self::ListConversations
             | Self::ListOnlineNodes
             | Self::ListPlatforms
+            | Self::GetNodeStatus
+            | Self::StopNode
             | Self::SelectTargetNode { .. }
             | Self::GetPlatformStatus { .. }
+            | Self::GetPlatformConfig { .. }
             | Self::SetPlatformEnabled { .. }
+            | Self::SetPlatformConfigValue { .. }
+            | Self::ClearPlatformConfigValue { .. }
             | Self::Exit => None,
         }
     }

@@ -169,6 +169,8 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "conversation/list" => Ok(AppClientCommand::ListConversations),
         "hub/node/list" => Ok(AppClientCommand::ListOnlineNodes),
         "platform/list" => Ok(AppClientCommand::ListPlatforms),
+        "node/status" => Ok(AppClientCommand::GetNodeStatus),
+        "node/stop" => Ok(AppClientCommand::StopNode),
         "conversation/create" => Ok(AppClientCommand::CreateConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
@@ -185,9 +187,21 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "platform/status" => Ok(AppClientCommand::GetPlatformStatus {
             platform: value_field(params, "platform")?,
         }),
+        "platform/config" => Ok(AppClientCommand::GetPlatformConfig {
+            platform: value_field(params, "platform")?,
+        }),
         "platform/setEnabled" => Ok(AppClientCommand::SetPlatformEnabled {
             platform: value_field(params.clone(), "platform")?,
             enabled: value_field(params, "enabled")?,
+        }),
+        "platform/config/set" => Ok(AppClientCommand::SetPlatformConfigValue {
+            platform: value_field(params.clone(), "platform")?,
+            key: value_field(params.clone(), "key")?,
+            value: value_field(params, "value")?,
+        }),
+        "platform/config/clear" => Ok(AppClientCommand::ClearPlatformConfigValue {
+            platform: value_field(params.clone(), "platform")?,
+            key: value_field(params, "key")?,
         }),
         "conversation/archive" => Ok(AppClientCommand::ArchiveConversation {
             conversation_id: value_field(params, "conversation_id")?,
@@ -256,6 +270,8 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         AppClientCommand::ListConversations => ("conversation/list", Value::Null),
         AppClientCommand::ListOnlineNodes => ("hub/node/list", Value::Null),
         AppClientCommand::ListPlatforms => ("platform/list", Value::Null),
+        AppClientCommand::GetNodeStatus => ("node/status", Value::Null),
+        AppClientCommand::StopNode => ("node/stop", Value::Null),
         AppClientCommand::CreateConversation { conversation_id } => (
             "conversation/create",
             serde_json::json!({ "conversation_id": conversation_id }),
@@ -278,9 +294,25 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             "platform/status",
             serde_json::json!({ "platform": platform }),
         ),
+        AppClientCommand::GetPlatformConfig { platform } => (
+            "platform/config",
+            serde_json::json!({ "platform": platform }),
+        ),
         AppClientCommand::SetPlatformEnabled { platform, enabled } => (
             "platform/setEnabled",
             serde_json::json!({ "platform": platform, "enabled": enabled }),
+        ),
+        AppClientCommand::SetPlatformConfigValue {
+            platform,
+            key,
+            value,
+        } => (
+            "platform/config/set",
+            serde_json::json!({ "platform": platform, "key": key, "value": value }),
+        ),
+        AppClientCommand::ClearPlatformConfigValue { platform, key } => (
+            "platform/config/clear",
+            serde_json::json!({ "platform": platform, "key": key }),
         ),
         AppClientCommand::ArchiveConversation { conversation_id } => (
             "conversation/archive",

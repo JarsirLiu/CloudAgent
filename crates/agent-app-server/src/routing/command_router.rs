@@ -278,6 +278,12 @@ pub(crate) async fn handle_command(
         AppClientCommand::ListPlatforms => {
             report_node_managed_only_command(event_tx, &state, "ListPlatforms").await;
         }
+        AppClientCommand::GetNodeStatus => {
+            report_node_managed_only_command(event_tx, &state, "GetNodeStatus").await;
+        }
+        AppClientCommand::StopNode => {
+            report_node_managed_only_command(event_tx, &state, "StopNode").await;
+        }
         AppClientCommand::CreateConversation { conversation_id } => {
             session_service::create_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
@@ -306,8 +312,17 @@ pub(crate) async fn handle_command(
         AppClientCommand::GetPlatformStatus { .. } => {
             report_node_managed_only_command(event_tx, &state, "GetPlatformStatus").await;
         }
+        AppClientCommand::GetPlatformConfig { .. } => {
+            report_node_managed_only_command(event_tx, &state, "GetPlatformConfig").await;
+        }
         AppClientCommand::SetPlatformEnabled { .. } => {
             report_node_managed_only_command(event_tx, &state, "SetPlatformEnabled").await;
+        }
+        AppClientCommand::SetPlatformConfigValue { .. } => {
+            report_node_managed_only_command(event_tx, &state, "SetPlatformConfigValue").await;
+        }
+        AppClientCommand::ClearPlatformConfigValue { .. } => {
+            report_node_managed_only_command(event_tx, &state, "ClearPlatformConfigValue").await;
         }
         AppClientCommand::ArchiveConversation { conversation_id } => {
             session_service::archive_conversation(&runtime, event_tx, &state, conversation_id)

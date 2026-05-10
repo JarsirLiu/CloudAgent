@@ -4,6 +4,7 @@ pub mod completion_popup;
 pub mod config_panel;
 pub mod filter_picker;
 pub mod footer;
+pub mod gateway_panel;
 pub mod history_cell;
 pub mod input_pane;
 pub mod paste_burst;

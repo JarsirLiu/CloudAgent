@@ -5,6 +5,7 @@ use crate::ui::widgets::chat_composer::ChatComposer;
 use crate::ui::widgets::config_panel::ConfigPanel;
 use crate::ui::widgets::filter_picker::FilterPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
+use crate::ui::widgets::gateway_panel::GatewayPanel;
 use crate::ui::widgets::permissions_picker::PermissionsPicker;
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
@@ -12,7 +13,7 @@ use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
 use agent_core::ConversationSummary;
 use agent_core::InputItem;
 use agent_core::ServerRequestDecisionKind;
-use agent_protocol::{FrontendMode, RequestId};
+use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::layout::{Constraint, Layout};
@@ -411,6 +412,21 @@ impl InputPane {
         self.view_stack.clear();
         self.view_stack
             .push(Box::new(ConfigPanel::new(api_key, base_url, model)));
+    }
+
+    pub fn set_gateway_list_panel(&mut self, entries: Vec<PlatformControlEntry>) {
+        self.view_stack.clear();
+        self.view_stack.push(Box::new(GatewayPanel::list(entries)));
+    }
+
+    pub fn set_gateway_edit_panel(
+        &mut self,
+        entry: PlatformControlEntry,
+        config: PlatformConfigResponse,
+    ) {
+        self.view_stack.clear();
+        self.view_stack
+            .push(Box::new(GatewayPanel::edit(entry, config)));
     }
 
     pub fn dismiss_server_request(&mut self, request_id: &RequestId) {

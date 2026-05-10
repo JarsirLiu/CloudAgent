@@ -1,4 +1,8 @@
-use crate::{GatewayApprovalRequest, GatewayMessage, GatewayOutbound};
+use crate::{
+    GatewayApprovalRequest, GatewayMessage, GatewayOutbound, GatewayProgressKind,
+    GatewayProgressUpdate,
+};
+use agent_core::TranscriptItem;
 use agent_core::ServerRequestDecision;
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, TurnPolicy,
@@ -33,6 +37,54 @@ fn notification_to_outbound(notification: &AppServerNotification) -> Option<Gate
             conversation_id: conversation_id.clone(),
             delta: delta.clone(),
         }),
+        AppServerNotification::TurnCompleted {
+            conversation_id, ..
+        } => Some(GatewayOutbound::FlushText {
+            conversation_id: conversation_id.clone(),
+        }),
+        AppServerNotification::ItemCompleted {
+            conversation_id,
+            item: TranscriptItem::AgentMessage { text, .. },
+            ..
+        } => Some(GatewayOutbound::FinalText {
+            conversation_id: conversation_id.clone(),
+            text: text.clone(),
+        }),
+        AppServerNotification::PlanDelta {
+            conversation_id,
+            delta,
+            ..
+        } => progress_outbound(
+            conversation_id,
+            GatewayProgressKind::Plan,
+            delta,
+            true,
+        ),
+        AppServerNotification::ReasoningSummaryTextDelta {
+            conversation_id,
+            delta,
+            ..
+        } => progress_outbound(
+            conversation_id,
+            GatewayProgressKind::Reasoning,
+            delta,
+            true,
+        ),
+        AppServerNotification::ReasoningTextDelta {
+            conversation_id,
+            delta,
+            ..
+        } => progress_outbound(
+            conversation_id,
+            GatewayProgressKind::Reasoning,
+            delta,
+            true,
+        ),
+        AppServerNotification::ItemCompleted {
+            conversation_id,
+            item,
+            ..
+        } => completed_item_to_outbound(conversation_id, item),
         AppServerNotification::ServerRequestResolved {
             conversation_id,
             decision,
@@ -52,10 +104,12 @@ fn notification_to_outbound(notification: &AppServerNotification) -> Option<Gate
             conversation_id,
             delta,
             ..
-        } => Some(GatewayOutbound::ToolNotice {
-            conversation_id: conversation_id.clone(),
-            message: delta.clone(),
-        }),
+        } => progress_outbound(
+            conversation_id,
+            GatewayProgressKind::Tool,
+            delta,
+            true,
+        ),
         AppServerNotification::Info {
             conversation_id,
             message,
@@ -72,6 +126,112 @@ fn notification_to_outbound(notification: &AppServerNotification) -> Option<Gate
         }),
         _ => None,
     }
+}
+
+fn completed_item_to_outbound(
+    conversation_id: &str,
+    item: &TranscriptItem,
+) -> Option<GatewayOutbound> {
+    match item {
+        TranscriptItem::Reasoning { title, text, .. } => Some(GatewayOutbound::Progress(
+            GatewayProgressUpdate {
+                conversation_id: conversation_id.to_string(),
+                kind: GatewayProgressKind::Reasoning,
+                summary: format_reasoning_summary(title, text),
+                streaming: false,
+            },
+        )),
+        TranscriptItem::ToolResult {
+            tool_name,
+            summary,
+            content,
+            ..
+        } => Some(GatewayOutbound::Progress(GatewayProgressUpdate {
+            conversation_id: conversation_id.to_string(),
+            kind: GatewayProgressKind::Tool,
+            summary: format_completed_tool_message(tool_name, summary, content),
+            streaming: false,
+        })),
+        TranscriptItem::CommandExecution {
+            tool_name,
+            summary,
+            aggregated_output,
+            ..
+        } => Some(GatewayOutbound::Progress(GatewayProgressUpdate {
+            conversation_id: conversation_id.to_string(),
+            kind: GatewayProgressKind::Tool,
+            summary: format_completed_tool_message(
+                tool_name,
+                summary,
+                aggregated_output.as_deref().unwrap_or_default(),
+            ),
+            streaming: false,
+        })),
+        TranscriptItem::FileChange {
+            tool_name,
+            summary,
+            path,
+            ..
+        } => Some(GatewayOutbound::Progress(GatewayProgressUpdate {
+            conversation_id: conversation_id.to_string(),
+            kind: GatewayProgressKind::Tool,
+            summary: format_completed_tool_message(tool_name, summary, path),
+            streaming: false,
+        })),
+        _ => None,
+    }
+}
+
+fn progress_outbound(
+    conversation_id: &str,
+    kind: GatewayProgressKind,
+    raw: &str,
+    streaming: bool,
+) -> Option<GatewayOutbound> {
+    let summary = normalize_progress_text(raw);
+    if summary.is_empty() {
+        return None;
+    }
+    Some(GatewayOutbound::Progress(GatewayProgressUpdate {
+        conversation_id: conversation_id.to_string(),
+        kind,
+        summary,
+        streaming,
+    }))
+}
+
+fn normalize_progress_text(raw: &str) -> String {
+    let flattened = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    flattened.trim().to_string()
+}
+
+fn format_reasoning_summary(title: &str, text: &str) -> String {
+    let title = title.trim();
+    let text = normalize_progress_text(text);
+    if title.is_empty() {
+        return text;
+    }
+    if text.is_empty() {
+        return title.to_string();
+    }
+    format!("{title}: {text}")
+}
+
+fn format_completed_tool_message(tool_name: &str, summary: &str, detail: &str) -> String {
+    let tool_name = tool_name.trim();
+    let summary = normalize_progress_text(summary);
+    let detail = normalize_progress_text(detail);
+
+    if !summary.is_empty() && !detail.is_empty() && summary != detail {
+        return format!("{tool_name}: {summary}\n{detail}");
+    }
+    if !summary.is_empty() {
+        return format!("{tool_name}: {summary}");
+    }
+    if !detail.is_empty() {
+        return format!("{tool_name}: {detail}");
+    }
+    tool_name.to_string()
 }
 
 fn request_to_outbound(request: &AppServerRequest) -> Option<GatewayOutbound> {
@@ -198,6 +358,33 @@ mod tests {
     }
 
     #[test]
+    fn completed_agent_message_maps_to_final_text_outbound() {
+        let outbound = app_server_message_to_outbound(&AppServerMessage::Notification(
+            AppServerNotification::ItemCompleted {
+                conversation_id: "conversation-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                call_id: None,
+                item: agent_core::TranscriptItem::AgentMessage {
+                    id: "assistant:1".to_string(),
+                    text: "final answer".to_string(),
+                },
+            },
+        ))
+        .expect("final text outbound");
+
+        match outbound {
+            GatewayOutbound::FinalText {
+                conversation_id,
+                text,
+            } => {
+                assert_eq!(conversation_id, "conversation-1");
+                assert_eq!(text, "final answer");
+            }
+            other => panic!("unexpected outbound: {other:?}"),
+        }
+    }
+
+    #[test]
     fn approval_resolution_maps_to_info_outbound() {
         let outbound = app_server_message_to_outbound(&AppServerMessage::Notification(
             AppServerNotification::ServerRequestResolved {
@@ -231,13 +418,20 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_messages_are_ignored() {
+    fn turn_completed_maps_to_flush_text_outbound() {
         let outbound = app_server_message_to_outbound(&AppServerMessage::Notification(
             AppServerNotification::TurnCompleted {
                 conversation_id: "conversation-1".to_string(),
                 turn_id: "turn-1".to_string(),
             },
-        ));
-        assert!(outbound.is_none());
+        ))
+        .expect("flush outbound");
+
+        match outbound {
+            GatewayOutbound::FlushText { conversation_id } => {
+                assert_eq!(conversation_id, "conversation-1");
+            }
+            other => panic!("unexpected outbound: {other:?}"),
+        }
     }
 }

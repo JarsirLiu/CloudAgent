@@ -9,8 +9,7 @@ use crate::ui::widgets::input_pane::{
 use crate::ui::widgets::session_picker::SessionPickerMode;
 use agent_core::InputItem;
 use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
-use agent_protocol::FrontendMode;
-use agent_protocol::RequestId;
+use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use std::path::PathBuf;
@@ -222,6 +221,18 @@ impl BottomPaneController {
 
     pub(crate) fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {
         self.input_pane.set_config_panel(api_key, base_url, model);
+    }
+
+    pub(crate) fn set_gateway_list_panel(&mut self, entries: Vec<PlatformControlEntry>) {
+        self.input_pane.set_gateway_list_panel(entries);
+    }
+
+    pub(crate) fn set_gateway_edit_panel(
+        &mut self,
+        entry: PlatformControlEntry,
+        config: PlatformConfigResponse,
+    ) {
+        self.input_pane.set_gateway_edit_panel(entry, config);
     }
 
     pub(crate) fn dismiss_server_request(&mut self, request_id: &RequestId) {

@@ -102,6 +102,22 @@ impl WorkerManager {
             })?
     }
 
+    pub(crate) async fn is_worker_running(&self) -> bool {
+        self.state.lock().await.worker.is_some()
+    }
+
+    pub(crate) async fn shutdown(&self) -> Result<()> {
+        let evicted = {
+            let mut state = self.state.lock().await;
+            state.worker.take()
+        };
+        if let Some(handle) = evicted {
+            drop(handle.command_tx);
+            handle.worker.await??;
+        }
+        Ok(())
+    }
+
     async fn send_command_inner(
         &self,
         conversation_id: &str,

@@ -12,6 +12,7 @@ pub(crate) enum SlashCommand {
     Filter,
     Permissions,
     Config,
+    Gateway,
     Clear,
     Exit,
 }
@@ -120,6 +121,14 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         name: "config",
         aliases: &[],
         description: "open api config panel (api key / base url / model)",
+        argument_hint: None,
+        supports_inline_args: false,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Gateway,
+        name: "gateway",
+        aliases: &[],
+        description: "open platform gateway panel (status / enable / config)",
         argument_hint: None,
         supports_inline_args: false,
     },

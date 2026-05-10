@@ -15,9 +15,21 @@ use agent_protocol::{AppClientCommand, UserTurnInput};
 use anyhow::Result;
 use config::AgentConfig;
 use std::fs;
+use std::fmt::Display;
 
 fn show_local_notice(app: &mut TuiApp, level: NoticeLevel, message: impl Into<String>) {
     app.bottom_pane.show_transient_notice(level, message.into());
+}
+
+fn platform_request_notice(action: &str, err: &impl Display) -> String {
+    let detail = err.to_string();
+    if detail.contains("unsupported request method: platform/") {
+        return format!(
+            "Platform management is unavailable on the connected node while trying to {action}. \
+Restart the local gatewayd with the latest build, then try /gateway again."
+        );
+    }
+    format!("Failed to {action}: {detail}")
 }
 
 pub(crate) async fn handle_tui_input(
@@ -103,6 +115,110 @@ pub(crate) async fn handle_tui_input(
                 app,
                 NoticeLevel::Info,
                 "Saved API Key / Base URL / Model to ~/.cloudagent/config.toml.",
+            );
+            return Ok(false);
+        }
+        ParsedInput::LocalGatewayOpen => {
+            let response = match client.request_platform_list_typed().await {
+                Ok(response) => response,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("load platform list", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            app.bottom_pane.set_gateway_list_panel(response.platforms);
+            return Ok(false);
+        }
+        ParsedInput::LocalGatewaySelect(platform) => {
+            let status = match client.request_platform_status_typed(&platform).await {
+                Ok(status) => status,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("load platform status", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            let config = match client.request_platform_config_typed(&platform).await {
+                Ok(config) => config,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("load platform config", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            app.bottom_pane
+                .set_gateway_edit_panel(status.platform, config);
+            return Ok(false);
+        }
+        ParsedInput::LocalGatewaySave {
+            platform,
+            enabled,
+            updates,
+        } => {
+            for update in updates {
+                let result = match update.value {
+                    Some(value) => client
+                        .set_platform_config_value_typed(&platform, update.key, value)
+                        .await,
+                    None => client
+                        .clear_platform_config_value_typed(&platform, update.key)
+                        .await,
+                };
+                if let Err(err) = result {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("save platform config", &err),
+                    );
+                    return Ok(false);
+                }
+            }
+            let status = match client.set_platform_enabled_typed(&platform, enabled).await {
+                Ok(status) => status,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("update platform state", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            let config = match client.request_platform_config_typed(&platform).await {
+                Ok(config) => config,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("reload platform config", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            let enabled_label = if status.platform.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            };
+            app.bottom_pane
+                .set_gateway_edit_panel(status.platform, config);
+            show_local_notice(
+                app,
+                NoticeLevel::Info,
+                format!(
+                    "Saved gateway settings for `{platform}`; connection is now {}",
+                    enabled_label
+                ),
             );
             return Ok(false);
         }

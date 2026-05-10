@@ -1,4 +1,6 @@
-use crate::{GatewayApprovalRequest, GatewayOutbound};
+use crate::{
+    GatewayApprovalRequest, GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate,
+};
 use agent_core::ServerRequest;
 use agent_protocol::RequestId;
 
@@ -17,6 +19,19 @@ pub enum FeishuOutboundMessage {
         request_id: RequestId,
         body: String,
     },
+    Progress {
+        conversation_id: String,
+        kind: FeishuProgressKind,
+        summary: String,
+        streaming: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeishuProgressKind {
+    Plan,
+    Reasoning,
+    Tool,
 }
 
 impl FeishuOutboundMessage {
@@ -29,6 +44,9 @@ impl FeishuOutboundMessage {
                 conversation_id, ..
             }
             | Self::ApprovalCard {
+                conversation_id, ..
+            }
+            | Self::Progress {
                 conversation_id, ..
             } => conversation_id,
         }
@@ -44,6 +62,17 @@ impl From<GatewayOutbound> for FeishuOutboundMessage {
             } => Self::Text {
                 conversation_id,
                 text: delta,
+            },
+            GatewayOutbound::FlushText { conversation_id } => Self::Text {
+                conversation_id,
+                text: String::new(),
+            },
+            GatewayOutbound::FinalText {
+                conversation_id,
+                text,
+            } => Self::Text {
+                conversation_id,
+                text,
             },
             GatewayOutbound::ApprovalRequest(GatewayApprovalRequest {
                 conversation_id,
@@ -64,21 +93,41 @@ impl From<GatewayOutbound> for FeishuOutboundMessage {
                 })
                 .to_string(),
             },
-            GatewayOutbound::ToolNotice {
+            GatewayOutbound::Progress(GatewayProgressUpdate {
                 conversation_id,
-                message,
-            }
-            | GatewayOutbound::Info {
+                kind,
+                summary,
+                streaming,
+            }) => Self::Progress {
                 conversation_id,
-                message,
-            }
-            | GatewayOutbound::Error {
+                kind: kind.into(),
+                summary,
+                streaming,
+            },
+            GatewayOutbound::Info {
                 conversation_id,
                 message,
             } => Self::Text {
                 conversation_id,
                 text: message,
             },
+            GatewayOutbound::Error {
+                conversation_id,
+                message,
+            } => Self::Text {
+                conversation_id,
+                text: format!("Error: {message}"),
+            },
+        }
+    }
+}
+
+impl From<GatewayProgressKind> for FeishuProgressKind {
+    fn from(kind: GatewayProgressKind) -> Self {
+        match kind {
+            GatewayProgressKind::Plan => Self::Plan,
+            GatewayProgressKind::Reasoning => Self::Reasoning,
+            GatewayProgressKind::Tool => Self::Tool,
         }
     }
 }

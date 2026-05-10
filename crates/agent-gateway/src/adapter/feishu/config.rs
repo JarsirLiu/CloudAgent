@@ -7,6 +7,7 @@ pub struct FeishuAdapterConfig {
     pub domain: String,
     pub enable_cards: bool,
     pub thread_isolation: bool,
+    pub reply_to_trigger: bool,
 }
 
 impl FeishuAdapterConfig {
@@ -32,6 +33,7 @@ impl Default for FeishuAdapterConfig {
             domain: "https://open.feishu.cn".to_string(),
             enable_cards: true,
             thread_isolation: true,
+            reply_to_trigger: true,
         }
     }
 }

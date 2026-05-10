@@ -351,6 +351,10 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
             "Use /config to set your OpenAI-compatible API key, base URL, and model.",
             Style::default().fg(Color::Gray),
         )),
+        Line::from(Span::styled(
+            "Use /gateway to configure and enable IM platforms like Feishu and WeCom.",
+            Style::default().fg(Color::Gray),
+        )),
         Line::from(""),
         Line::from(Span::styled(
             "About this project",

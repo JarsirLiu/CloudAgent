@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "platforms": {
+    "feishu": {
+      "platform": "feishu",
+      "enabled": true,
+      "configured": false,
+      "managed_by": "node",
+      "updated_at_ms": 1778415587715
+    },
+    "wecom": {
+      "platform": "wecom",
+      "enabled": false,
+      "configured": false,
+      "managed_by": "node",
+      "updated_at_ms": 0
+    },
+    "weixin": {
+      "platform": "weixin",
+      "enabled": false,
+      "configured": false,
+      "managed_by": "node",
+      "updated_at_ms": 0
+    }
+  }
+}

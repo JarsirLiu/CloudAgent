@@ -117,7 +117,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::sync_registry_from_message;
-    use crate::node::platform_manager::PlatformManager;
+    use crate::node::platform::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::worker_manager::WorkerManager;
     use agent_core::conversation::ConversationSummary;

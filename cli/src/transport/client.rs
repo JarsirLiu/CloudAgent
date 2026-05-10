@@ -3,6 +3,8 @@ use agent_app_server_client::{
     AppServerClient, AppServerConnectInfo, InProcessClientConfig, RemoteClientConfig,
 };
 use anyhow::{Result, anyhow};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -41,16 +43,11 @@ pub async fn create_local_node_client(
                     "failed to connect to local node at {address}: {first_error}; an existing local node is already listening but did not complete the transport handshake. stop the stale `gatewayd` process and retry"
                 ));
             }
-            let mut child = std::process::Command::new(program)
-                .args(args)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
+            let mut child = spawn_local_node_process(program, args)?;
             wait_for_service(
                 || connect_local_node_once(address),
                 Some(&mut child),
-                Duration::from_secs(5),
+                local_node_launch_timeout(program, args),
                 Duration::from_millis(100),
             )
             .await
@@ -68,6 +65,105 @@ fn existing_node_looks_unhealthy(error: &anyhow::Error) -> bool {
     message.contains("local node closed during initialize")
         || message.contains("local node initialize failed")
         || message.contains("timed out initializing local node")
+}
+
+fn local_node_launch_timeout(program: &std::ffi::OsString, args: &[std::ffi::OsString]) -> Duration {
+    if launches_gatewayd_via_cargo(program, args) {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(5)
+    }
+}
+
+fn launches_gatewayd_via_cargo(program: &std::ffi::OsString, args: &[std::ffi::OsString]) -> bool {
+    let program = program.to_string_lossy().to_ascii_lowercase();
+    if !(program == "cargo" || program.ends_with("\\cargo.exe") || program.ends_with("/cargo")) {
+        return false;
+    }
+
+    args.iter()
+        .map(|arg| arg.to_string_lossy().to_ascii_lowercase())
+        .take(4)
+        .any(|arg| arg == "gatewayd")
+}
+
+fn spawn_local_node_process(
+    program: &OsString,
+    args: &[OsString],
+) -> Result<std::process::Child> {
+    if launches_gatewayd_via_cargo(program, args) {
+        return spawn_workspace_built_local_node(program, args);
+    }
+
+    Ok(std::process::Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?)
+}
+
+fn spawn_workspace_built_local_node(
+    program: &OsString,
+    args: &[OsString],
+) -> Result<std::process::Child> {
+    let target_dir = parse_cargo_target_dir(args)
+        .ok_or_else(|| anyhow!("missing --target-dir in cargo-based local node launcher"))?;
+    let service_args = args
+        .iter()
+        .position(|arg| arg == "--")
+        .map(|index| args[index + 1..].to_vec())
+        .ok_or_else(|| anyhow!("missing `--` separator in cargo-based local node launcher"))?;
+
+    let status = std::process::Command::new(program)
+        .args([
+            OsString::from("build"),
+            OsString::from("-p"),
+            OsString::from("gatewayd"),
+            OsString::from("-p"),
+            OsString::from("agentd"),
+            OsString::from("--target-dir"),
+            target_dir.clone().into_os_string(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if !status.success() {
+        return Err(anyhow!(
+            "failed to build local node toolchain via cargo (status: {status})"
+        ));
+    }
+
+    let gatewayd_bin = target_dir.join(debug_exe_name("gatewayd"));
+    let agentd_bin = target_dir.join(debug_exe_name("agentd"));
+    let mut final_args = service_args;
+    final_args.extend([
+        OsString::from("--worker-bin"),
+        agentd_bin.clone().into_os_string(),
+    ]);
+
+    Ok(std::process::Command::new(gatewayd_bin)
+        .args(final_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?)
+}
+
+fn parse_cargo_target_dir(args: &[OsString]) -> Option<PathBuf> {
+    args.windows(2)
+        .find(|pair| pair[0] == "--target-dir")
+        .map(|pair| PathBuf::from(&pair[1]))
+}
+
+fn debug_exe_name(base: &str) -> PathBuf {
+    let exe = if cfg!(windows) {
+        format!("{base}.exe")
+    } else {
+        base.to_string()
+    };
+    Path::new("debug").join(exe)
 }
 
 async fn connect_local_node_once(address: &str) -> Result<AppServerClient> {

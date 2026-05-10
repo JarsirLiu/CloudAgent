@@ -1,4 +1,4 @@
-use crate::{GatewayApprovalRequest, GatewayOutbound};
+use crate::{GatewayApprovalRequest, GatewayOutbound, GatewayProgressUpdate};
 use agent_core::ServerRequest;
 use agent_protocol::RequestId;
 
@@ -38,6 +38,17 @@ impl From<GatewayOutbound> for WecomOutboundMessage {
                 conversation_id,
                 text: delta,
             },
+            GatewayOutbound::FlushText { conversation_id } => Self::Text {
+                conversation_id,
+                text: String::new(),
+            },
+            GatewayOutbound::FinalText {
+                conversation_id,
+                text,
+            } => Self::Text {
+                conversation_id,
+                text,
+            },
             GatewayOutbound::ApprovalRequest(GatewayApprovalRequest {
                 conversation_id,
                 request_id,
@@ -47,20 +58,27 @@ impl From<GatewayOutbound> for WecomOutboundMessage {
                 request_id,
                 body: approval_description(&request),
             },
-            GatewayOutbound::ToolNotice {
+            GatewayOutbound::Progress(GatewayProgressUpdate {
                 conversation_id,
-                message,
-            }
-            | GatewayOutbound::Info {
+                summary,
+                ..
+            }) => Self::Text {
                 conversation_id,
-                message,
-            }
-            | GatewayOutbound::Error {
+                text: summary,
+            },
+            GatewayOutbound::Info {
                 conversation_id,
                 message,
             } => Self::Text {
                 conversation_id,
                 text: message,
+            },
+            GatewayOutbound::Error {
+                conversation_id,
+                message,
+            } => Self::Text {
+                conversation_id,
+                text: format!("Error: {message}"),
             },
         }
     }

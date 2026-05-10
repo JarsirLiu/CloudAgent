@@ -6,9 +6,11 @@ use agent_core::ServerRequestDecision;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
     ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
-    JsonRpcErrorPayload, JsonRpcRequest, NotificationDelivery, OnlineNodeListResponse,
+    JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
+    NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
-    RequestId, SelectTargetNodeResponse, UserTurnInput, classify_notification,
+    RequestId, SelectTargetNodeResponse, UserTurnInput,
+    classify_notification,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;
@@ -186,6 +188,14 @@ impl AppServerClient {
         self.request_handle().request_platform_list_typed().await
     }
 
+    pub async fn request_node_status_typed(&self) -> Result<NodeStatusResponse, TypedRequestError> {
+        self.request_handle().request_node_status_typed().await
+    }
+
+    pub async fn stop_node_typed(&self) -> Result<NodeStopResponse, TypedRequestError> {
+        self.request_handle().stop_node_typed().await
+    }
+
     pub async fn request_platform_status_typed(
         &self,
         platform: impl Into<String>,
@@ -202,6 +212,36 @@ impl AppServerClient {
     ) -> Result<PlatformControlUpdateResponse, TypedRequestError> {
         self.request_handle()
             .set_platform_enabled_typed(platform, enabled)
+            .await
+    }
+
+    pub async fn request_platform_config_typed(
+        &self,
+        platform: impl Into<String>,
+    ) -> Result<PlatformConfigResponse, TypedRequestError> {
+        self.request_handle()
+            .request_platform_config_typed(platform)
+            .await
+    }
+
+    pub async fn set_platform_config_value_typed(
+        &self,
+        platform: impl Into<String>,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<PlatformConfigResponse, TypedRequestError> {
+        self.request_handle()
+            .set_platform_config_value_typed(platform, key, value)
+            .await
+    }
+
+    pub async fn clear_platform_config_value_typed(
+        &self,
+        platform: impl Into<String>,
+        key: impl Into<String>,
+    ) -> Result<PlatformConfigResponse, TypedRequestError> {
+        self.request_handle()
+            .clear_platform_config_value_typed(platform, key)
             .await
     }
 
@@ -405,6 +445,24 @@ impl AppServerRequestHandle {
         .await
     }
 
+    pub async fn request_node_status_typed(&self) -> Result<NodeStatusResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "node/status".to_string(),
+            params: None,
+        })
+        .await
+    }
+
+    pub async fn stop_node_typed(&self) -> Result<NodeStopResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "node/stop".to_string(),
+            params: None,
+        })
+        .await
+    }
+
     pub async fn request_platform_status_typed(
         &self,
         platform: impl Into<String>,
@@ -430,6 +488,54 @@ impl AppServerRequestHandle {
             params: Some(serde_json::json!({
                 "platform": platform.into(),
                 "enabled": enabled,
+            })),
+        })
+        .await
+    }
+
+    pub async fn request_platform_config_typed(
+        &self,
+        platform: impl Into<String>,
+    ) -> Result<PlatformConfigResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "platform/config".to_string(),
+            params: Some(serde_json::json!({
+                "platform": platform.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn set_platform_config_value_typed(
+        &self,
+        platform: impl Into<String>,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<PlatformConfigResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "platform/config/set".to_string(),
+            params: Some(serde_json::json!({
+                "platform": platform.into(),
+                "key": key.into(),
+                "value": value.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn clear_platform_config_value_typed(
+        &self,
+        platform: impl Into<String>,
+        key: impl Into<String>,
+    ) -> Result<PlatformConfigResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "platform/config/clear".to_string(),
+            params: Some(serde_json::json!({
+                "platform": platform.into(),
+                "key": key.into(),
             })),
         })
         .await

@@ -85,7 +85,10 @@ cp configs/config.toml.example ~/.cloudagent/config.toml
 git clone https://github.com/JarsirLiu/CloudAgent.git
 cd CloudAgent
 
-# 2) Start CLI (dev mode)
+# 2) Start local node (dev mode)
+cargo run -p gatewayd
+
+# 3) Start CLI (dev mode)
 cargo run -p cli
 ```
 

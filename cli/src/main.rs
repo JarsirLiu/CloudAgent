@@ -1,6 +1,7 @@
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
-    PlatformControlEntry, PlatformControlListResponse, PlatformControlStatusResponse,
+    NodeStatusResponse, PlatformConfigResponse, PlatformControlEntry,
+    PlatformControlListResponse, PlatformControlStatusResponse,
 };
 use anyhow::{Result, bail};
 use cli::agent_host::build_agent_host;
@@ -45,6 +46,9 @@ async fn main() -> Result<()> {
     };
     let mut config = config;
     apply_data_dir_cli_override(&mut config, &args);
+    if maybe_handle_node_command(&args, &config.runtime.data_root_dir).await? {
+        return Ok(());
+    }
     if maybe_handle_platform_command(&args, &config.runtime.data_root_dir).await? {
         return Ok(());
     }
@@ -130,11 +134,40 @@ async fn maybe_handle_platform_command(
             println!("disabled platform `{platform}` via local node");
             print_single_platform(&response.platform);
         }
+        "config" => {
+            handle_platform_config_command(&client, args).await?;
+        }
         other => bail!(
-            "unknown platform action `{other}`. supported actions: list, status, enable, disable"
+            "unknown platform action `{other}`. supported actions: list, status, enable, disable, config"
         ),
     }
 
+    Ok(true)
+}
+
+async fn maybe_handle_node_command(
+    args: &[OsString],
+    data_root_dir: &std::path::Path,
+) -> Result<bool> {
+    let Some(command) = args.first().and_then(|arg| arg.to_str()) else {
+        return Ok(false);
+    };
+    if command != "node" {
+        return Ok(false);
+    }
+    let client = create_platform_management_client(args, data_root_dir).await?;
+    let action = args.get(1).and_then(|arg| arg.to_str()).unwrap_or("status");
+    match action {
+        "status" => print_node_status(&client).await?,
+        "stop" => {
+            let response = client.stop_node_typed().await?;
+            println!(
+                "node stop requested: {}",
+                if response.stopping { "accepted" } else { "ignored" }
+            );
+        }
+        other => bail!("unknown node action `{other}`. supported actions: status, stop"),
+    }
     Ok(true)
 }
 
@@ -301,22 +334,27 @@ fn resolve_console_target(
             let address = arg_value(args, "--node-addr")
                 .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
                 .and_then(|value| value.into_string().ok())
-                .unwrap_or_else(|| default_node_addr().to_string());
-            let program = arg_value(args, "--node-bin")
+                .unwrap_or_else(default_node_addr);
+            let (program, mut launch_args) = if let Some(program) = arg_value(args, "--node-bin")
                 .or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
-                .unwrap_or_else(default_node_bin);
+            {
+                (program, Vec::new())
+            } else {
+                default_node_launcher()
+            };
+            launch_args.extend([
+                OsString::from("serve"),
+                OsString::from("--listen"),
+                OsString::from(address.clone()),
+                OsString::from("--data-dir"),
+                data_root_dir.as_os_str().to_os_string(),
+            ]);
             Ok((
                 AppServerTarget::LocalNode.label().to_string(),
                 ConsoleBootstrap::LocalNode {
                     address: address.clone(),
                     program,
-                    args: vec![
-                        OsString::from("serve"),
-                        OsString::from("--listen"),
-                        OsString::from(address),
-                        OsString::from("--data-dir"),
-                        data_root_dir.as_os_str().to_os_string(),
-                    ],
+                    args: launch_args,
                 },
             ))
         }
@@ -334,19 +372,66 @@ fn resolve_console_target(
     }
 }
 
-fn default_node_bin() -> OsString {
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| {
-            path.parent()
-                .map(|parent| parent.join(exe_name("gatewayd")))
-        })
-        .map(|path| path.into_os_string())
-        .unwrap_or_else(|| OsString::from(exe_name("gatewayd")))
+fn default_node_launcher() -> (OsString, Vec<OsString>) {
+    if should_launch_gatewayd_via_cargo() {
+        let target_dir = std::env::current_dir()
+            .ok()
+            .map(|dir| dir.join("target").join(".cloudagent-local-node"))
+            .unwrap_or_else(|| PathBuf::from("target").join(".cloudagent-local-node"));
+        return (
+            OsString::from("cargo"),
+            vec![
+                OsString::from("run"),
+                OsString::from("-p"),
+                OsString::from("gatewayd"),
+                OsString::from("--target-dir"),
+                target_dir.into_os_string(),
+                OsString::from("--"),
+            ],
+        );
+    }
+
+    (
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| {
+                path.parent()
+                    .map(|parent| parent.join(exe_name("gatewayd")))
+            })
+            .map(|path| path.into_os_string())
+            .unwrap_or_else(|| OsString::from(exe_name("gatewayd"))),
+        Vec::new(),
+    )
 }
 
-fn default_node_addr() -> &'static str {
-    "127.0.0.1:47070"
+fn should_launch_gatewayd_via_cargo() -> bool {
+    if std::env::var("CLOUDAGENT_RELEASE_MODE").ok().as_deref() == Some("1") {
+        return false;
+    }
+
+    if std::env::var_os("CLOUDAGENT_NODE_BIN").is_some() {
+        return false;
+    }
+
+    cfg!(debug_assertions) && std::env::current_dir().is_ok_and(|dir| dir.join("Cargo.toml").exists())
+}
+
+fn default_node_addr() -> String {
+    if should_launch_gatewayd_via_cargo() {
+        return format!("127.0.0.1:{}", workspace_scoped_node_port());
+    }
+    "127.0.0.1:47070".to_string()
+}
+
+fn workspace_scoped_node_port() -> u16 {
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "cloudagent".to_string());
+    let hash = cwd.bytes().fold(0u32, |acc, byte| {
+        acc.wrapping_mul(16777619).wrapping_add(u32::from(byte))
+    });
+    47070 + (hash % 1000) as u16
 }
 
 fn wants_help(args: &[OsString]) -> bool {
@@ -367,6 +452,11 @@ Usage:
   cloudagent platform status [PLATFORM] [--data-dir PATH]
   cloudagent platform enable PLATFORM [--data-dir PATH]
   cloudagent platform disable PLATFORM [--data-dir PATH]
+  cloudagent platform config get PLATFORM [--data-dir PATH]
+  cloudagent platform config set PLATFORM KEY VALUE [--data-dir PATH]
+  cloudagent platform config clear PLATFORM KEY [--data-dir PATH]
+  cloudagent node status [--data-dir PATH]
+  cloudagent node stop [--data-dir PATH]
   cloudagent start [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--data-dir PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent [--target TARGET] [--node-bin PATH] [--node-addr ADDR] [--data-dir PATH] [--conversation ID] [--color WHEN] [--no-color]
   cloudagent --help
@@ -376,6 +466,7 @@ Options:
   -h, --help                 Show this help text
       -V, --version              Show the CLI version
       platform                  Manage IM platform desired state for the resident node
+      node                      Manage resident node lifecycle (status / stop)
       --target TARGET        Target selection: local-node (default) or hub-node (reserved)
       --node-bin PATH        node binary path when using local-node
       --node-addr ADDR       node listen address when using local-node
@@ -415,6 +506,72 @@ fn print_single_platform(entry: &PlatformControlEntry) {
     );
 }
 
+async fn handle_platform_config_command(client: &AppServerClient, args: &[OsString]) -> Result<()> {
+    let action = args.get(2).and_then(|arg| arg.to_str()).unwrap_or("get");
+    match action {
+        "get" => {
+            let platform = args.get(3).and_then(|arg| arg.to_str()).ok_or_else(|| {
+                anyhow::anyhow!("usage: cloudagent platform config get <platform>")
+            })?;
+            let response = client.request_platform_config_typed(platform).await?;
+            print_platform_config(&response);
+        }
+        "set" => {
+            let platform = args.get(3).and_then(|arg| arg.to_str()).ok_or_else(|| {
+                anyhow::anyhow!("usage: cloudagent platform config set <platform> <key> <value>")
+            })?;
+            let key = args.get(4).and_then(|arg| arg.to_str()).ok_or_else(|| {
+                anyhow::anyhow!("usage: cloudagent platform config set <platform> <key> <value>")
+            })?;
+            let value = args.get(5).and_then(|arg| arg.to_str()).ok_or_else(|| {
+                anyhow::anyhow!("usage: cloudagent platform config set <platform> <key> <value>")
+            })?;
+            let response = client
+                .set_platform_config_value_typed(platform, key, value)
+                .await?;
+            print_platform_config(&response);
+        }
+        "clear" => {
+            let platform = args.get(3).and_then(|arg| arg.to_str()).ok_or_else(|| {
+                anyhow::anyhow!("usage: cloudagent platform config clear <platform> <key>")
+            })?;
+            let key = args.get(4).and_then(|arg| arg.to_str()).ok_or_else(|| {
+                anyhow::anyhow!("usage: cloudagent platform config clear <platform> <key>")
+            })?;
+            let response = client
+                .clear_platform_config_value_typed(platform, key)
+                .await?;
+            print_platform_config(&response);
+        }
+        other => {
+            bail!("unknown platform config action `{other}`. supported actions: get, set, clear")
+        }
+    }
+    Ok(())
+}
+
+fn print_platform_config(response: &PlatformConfigResponse) {
+    println!(
+        "platform `{}`: {}",
+        response.platform,
+        if response.configured {
+            "configured"
+        } else {
+            "incomplete"
+        }
+    );
+    for field in &response.fields {
+        let value = field.value.clone().unwrap_or_else(|| "<unset>".to_string());
+        let required = if field.required {
+            "required"
+        } else {
+            "optional"
+        };
+        let secret = if field.is_secret { ", secret" } else { "" };
+        println!("- {}: {} ({required}{secret})", field.key, value);
+    }
+}
+
 async fn create_platform_management_client(
     args: &[OsString],
     data_root_dir: &std::path::Path,
@@ -422,18 +579,40 @@ async fn create_platform_management_client(
     let address = arg_value(args, "--node-addr")
         .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
         .and_then(|value| value.into_string().ok())
-        .unwrap_or_else(|| default_node_addr().to_string());
-    let program = arg_value(args, "--node-bin")
+        .unwrap_or_else(default_node_addr);
+    let (program, mut node_args) = if let Some(program) = arg_value(args, "--node-bin")
         .or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
-        .unwrap_or_else(default_node_bin);
-    let node_args = vec![
+    {
+        (program, Vec::new())
+    } else {
+        default_node_launcher()
+    };
+    node_args.extend([
         OsString::from("serve"),
         OsString::from("--listen"),
         OsString::from(address.clone()),
         OsString::from("--data-dir"),
         data_root_dir.as_os_str().to_os_string(),
-    ];
+    ]);
     create_local_node_client(&address, &program, &node_args).await
+}
+
+async fn print_node_status(client: &AppServerClient) -> Result<()> {
+    let response: NodeStatusResponse = client.request_node_status_typed().await?;
+    println!("listen_address: {}", response.listen_address);
+    println!(
+        "worker: {}",
+        if response.worker_running {
+            "running"
+        } else {
+            "idle"
+        }
+    );
+    println!(
+        "platform_runtimes: {}/{}",
+        response.platform_runtime_count, response.managed_platform_count
+    );
+    Ok(())
 }
 
 fn display_version() -> &'static str {
@@ -533,6 +712,7 @@ mod tests {
     fn local_node_target_maps_to_node_bootstrap() {
         let args = vec![OsString::from("--target"), OsString::from("local-node")];
         let requested = requested_console_target(&args, false).expect("requested target");
+        let expected_address = super::default_node_addr();
         let (target_label, bootstrap) = resolve_console_target(
             &args,
             "local-conversation",
@@ -549,17 +729,42 @@ mod tests {
                 program,
                 args,
             } => {
-                assert_eq!(address, "127.0.0.1:47070");
-                assert!(program.to_string_lossy().contains("gatewayd"));
-                assert_eq!(
-                    args,
+                assert_eq!(address, expected_address);
+                let program_display = program.to_string_lossy();
+                assert!(
+                    program_display.contains("gatewayd") || program_display == "cargo",
+                    "unexpected launcher: {program_display}"
+                );
+                let expected_args = if program_display == "cargo" {
+                    let expected_target_dir = std::env::current_dir()
+                        .expect("current dir")
+                        .join("target")
+                        .join(".cloudagent-local-node");
                     vec![
+                        OsString::from("run"),
+                        OsString::from("-p"),
+                        OsString::from("gatewayd"),
+                        OsString::from("--target-dir"),
+                        expected_target_dir.into_os_string(),
+                        OsString::from("--"),
                         OsString::from("serve"),
                         OsString::from("--listen"),
-                        OsString::from("127.0.0.1:47070"),
+                        OsString::from(expected_address.as_str()),
                         OsString::from("--data-dir"),
                         OsString::from("D:\\learn\\gifti\\cloudagent\\data"),
                     ]
+                } else {
+                    vec![
+                        OsString::from("serve"),
+                        OsString::from("--listen"),
+                        OsString::from(expected_address.as_str()),
+                        OsString::from("--data-dir"),
+                        OsString::from("D:\\learn\\gifti\\cloudagent\\data"),
+                    ]
+                };
+                assert_eq!(
+                    args,
+                    expected_args
                 );
             }
             other => panic!(

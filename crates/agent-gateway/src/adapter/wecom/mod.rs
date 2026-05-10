@@ -2,8 +2,10 @@ mod client;
 mod config;
 mod inbound;
 mod outbound;
+mod render;
 
 use crate::adapter::GatewayAdapter;
+use crate::adapter::spawn_platform_bridge;
 use crate::default_poll_interval;
 use crate::direct::{DirectGatewaySession, PumpStatus};
 use crate::{GatewayMessage, GatewayOutbound};
@@ -17,6 +19,7 @@ pub use client::{WecomPlatformClient, WecomPlatformEvent};
 pub use config::WecomAdapterConfig;
 pub use inbound::WecomInboundMessage;
 pub use outbound::WecomOutboundMessage;
+use render::WecomOutboundRenderer;
 
 pub struct WecomGatewayAdapter {
     inbound_rx: mpsc::Receiver<GatewayMessage>,
@@ -66,35 +69,26 @@ pub fn spawn_runtime(
     node_client: AppServerClient,
     turn_policy: TurnPolicy,
 ) -> Result<WecomRuntimeHandle> {
-    let mut client = WecomPlatformClient::new(config)?;
+    let client = WecomPlatformClient::new(config)?;
     let (inbound_tx, inbound_rx) = mpsc::channel(128);
-    let (outbound_tx, mut outbound_rx) = mpsc::channel(128);
+    let (outbound_tx, outbound_rx) = mpsc::channel(128);
     let mut session = DirectGatewaySession::new(
         WecomGatewayAdapter::new(inbound_rx, outbound_tx),
         node_client,
         turn_policy,
     );
-
-    let bridge_task = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                event = client.next_platform_event() => {
-                    let Some(event) = event? else {
-                        break;
-                    };
-                    let WecomPlatformEvent::Message(message) = event;
-                    inbound_tx.send(message.into_gateway_message()).await?;
-                }
-                outbound = outbound_rx.recv() => {
-                    let Some(outbound) = outbound else {
-                        break;
-                    };
-                    client.send_platform_message(outbound.into()).await?;
-                }
-            }
-        }
-        Ok(())
-    });
+    let bridge_task = spawn_platform_bridge(
+        client,
+        inbound_tx,
+        outbound_rx,
+        WecomOutboundRenderer::default(),
+        |client| Box::pin(client.next_platform_event()),
+        |client, rendered| Box::pin(client.send_platform_message(rendered)),
+        |event| {
+            let WecomPlatformEvent::Message(message) = event;
+            Some(message.into_gateway_message())
+        },
+    );
 
     let session_task =
         tokio::spawn(async move { session.run_until_closed(default_poll_interval()).await });

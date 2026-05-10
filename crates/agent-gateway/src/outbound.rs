@@ -9,16 +9,35 @@ pub struct GatewayApprovalRequest {
 }
 
 #[derive(Clone, Debug)]
+pub enum GatewayProgressKind {
+    Plan,
+    Reasoning,
+    Tool,
+}
+
+#[derive(Clone, Debug)]
+pub struct GatewayProgressUpdate {
+    pub conversation_id: String,
+    pub kind: GatewayProgressKind,
+    pub summary: String,
+    pub streaming: bool,
+}
+
+#[derive(Clone, Debug)]
 pub enum GatewayOutbound {
     TextDelta {
         conversation_id: String,
         delta: String,
     },
-    ApprovalRequest(GatewayApprovalRequest),
-    ToolNotice {
+    FlushText {
         conversation_id: String,
-        message: String,
     },
+    FinalText {
+        conversation_id: String,
+        text: String,
+    },
+    ApprovalRequest(GatewayApprovalRequest),
+    Progress(GatewayProgressUpdate),
     Info {
         conversation_id: String,
         message: String,

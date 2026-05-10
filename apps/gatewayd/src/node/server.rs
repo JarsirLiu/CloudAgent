@@ -1,6 +1,6 @@
 use crate::node::command_router::handle_command_message;
 use crate::node::message_sync::write_node_event;
-use crate::node::platform_manager::PlatformManager;
+use crate::node::platform::PlatformManager;
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
 use crate::node::worker_manager::NodeEvent;
@@ -18,7 +18,7 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     let listen_address = arg_value(args, "--listen")
         .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
         .and_then(|value| value.into_string().ok())
-        .unwrap_or_else(|| default_listen_address().to_string());
+        .unwrap_or_else(default_listen_address);
     let worker_program = arg_value(args, "--worker-bin")
         .or_else(|| std::env::var_os("CLOUDAGENT_WORKER_BIN"))
         .unwrap_or_else(default_worker_bin);
@@ -35,22 +35,40 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
         platforms,
         listen_address.clone(),
     );
-    runtime
-        .platforms()
-        .sync_desired_state(&listen_address)
-        .await?;
+    let platform_runtime = runtime.clone();
+    let platform_listen_address = listen_address.clone();
+    tokio::spawn(async move {
+        if let Err(error) = platform_runtime
+            .platforms()
+            .sync_desired_state(&platform_listen_address)
+            .await
+        {
+            tracing::warn!("failed to sync desired platform state: {error}");
+        }
+    });
 
     loop {
-        let (stream, peer_addr) = listener.accept().await?;
-        tracing::debug!("accepted remote app-server client from {peer_addr}");
-        let runtime = runtime.clone();
-        tokio::spawn(async move {
-            let (reader, writer) = stream.into_split();
-            if let Err(error) = run_connection(BufReader::new(reader), writer, runtime).await {
-                tracing::warn!("gatewayd remote host connection failed: {error}");
+        tokio::select! {
+            accept = listener.accept() => {
+                let (stream, peer_addr) = accept?;
+                tracing::debug!("accepted remote app-server client from {peer_addr}");
+                let runtime = runtime.clone();
+                tokio::spawn(async move {
+                    let (reader, writer) = stream.into_split();
+                    if let Err(error) = run_connection(BufReader::new(reader), writer, runtime).await {
+                        tracing::warn!("gatewayd remote host connection failed: {error}");
+                    }
+                });
             }
-        });
+            _ = runtime.wait_for_shutdown() => {
+                tracing::info!("gatewayd received node shutdown request");
+                break;
+            }
+        }
     }
+
+    runtime.shutdown().await?;
+    Ok(())
 }
 
 async fn run_connection<R, W>(reader: R, mut writer: W, runtime: NodeRuntime) -> Result<()>
@@ -244,8 +262,8 @@ where
     Ok(())
 }
 
-fn default_listen_address() -> &'static str {
-    "127.0.0.1:47070"
+fn default_listen_address() -> String {
+    format!("127.0.0.1:{}", workspace_scoped_node_port())
 }
 
 fn default_worker_bin() -> OsString {
@@ -270,10 +288,21 @@ fn arg_value(args: &[OsString], name: &str) -> Option<OsString> {
         .map(|pair| pair[1].clone())
 }
 
+fn workspace_scoped_node_port() -> u16 {
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "cloudagent".to_string());
+    let hash = cwd.bytes().fold(0u32, |acc, byte| {
+        acc.wrapping_mul(16777619).wrapping_add(u32::from(byte))
+    });
+    47070 + (hash % 1000) as u16
+}
+
 #[cfg(test)]
 mod tests {
     use super::{arg_value, handle_transport_line};
-    use crate::node::platform_manager::PlatformManager;
+    use crate::node::platform::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
     use crate::node::worker_manager::WorkerManager;

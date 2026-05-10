@@ -1,3 +1,4 @@
+use crate::input::intent::GatewayConfigUpdate;
 use crate::state::NoticeLevel;
 use agent_core::conversation::{ConversationSummary, ConversationTurn, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind};
@@ -30,6 +31,13 @@ pub(crate) enum UiInputEvent {
         api_key: String,
         base_url: String,
         model: String,
+    },
+    LocalGatewayOpen,
+    LocalGatewaySelect(String),
+    LocalGatewaySave {
+        platform: String,
+        enabled: bool,
+        updates: Vec<GatewayConfigUpdate>,
     },
     ServerRequestAnswer {
         request_id: RequestId,

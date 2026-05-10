@@ -1,6 +1,12 @@
 use agent_core::conversation::InputItem;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewayConfigUpdate {
+    pub(crate) key: String,
+    pub(crate) value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ComposerIntent {
     Submit(Vec<InputItem>),
     Interrupt,
@@ -14,6 +20,13 @@ pub(crate) enum ComposerIntent {
     Filter(String),
     Permissions(String),
     Config,
+    Gateway,
+    GatewaySelect(String),
+    GatewaySave {
+        platform: String,
+        enabled: bool,
+        updates: Vec<GatewayConfigUpdate>,
+    },
     ConfigSave {
         api_key: String,
         base_url: String,

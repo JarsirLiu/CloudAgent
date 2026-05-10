@@ -9,8 +9,8 @@ use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
     ConversationHistoryPageResponse, ConversationHistoryResponse, ConversationListResponse,
     ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest,
-    PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
-    RequestId,
+    NodeStatusResponse, NodeStopResponse, PlatformConfigResponse, PlatformControlListResponse,
+    PlatformControlStatusResponse, PlatformControlUpdateResponse, RequestId,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
@@ -74,7 +74,9 @@ where
     }
 
     let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
-    ensure_session_subscription(runtime, session, &target_conversation).await?;
+    if command_requires_worker(&envelope.command) {
+        ensure_session_subscription(runtime, session, &target_conversation).await?;
+    }
     if let Some(request) = typed_request_from_command(&envelope.command, &envelope.request_id) {
         match envelope.command {
             AppClientCommand::RequestConversationStatus { .. } => {
@@ -173,20 +175,46 @@ where
     };
 
     let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
-    ensure_session_subscription(runtime, session, &target_conversation).await?;
+    if command_requires_worker(&envelope.command) {
+        ensure_session_subscription(runtime, session, &target_conversation).await?;
+    }
 
     let result = match &envelope.command {
         AppClientCommand::ListConversations => {
             serde_json::to_value(read_conversation_list(runtime, &target_conversation).await?)?
         }
         AppClientCommand::ListPlatforms => serde_json::to_value(runtime.platforms().list().await)?,
+        AppClientCommand::GetNodeStatus => serde_json::to_value(runtime.status().await)?,
+        AppClientCommand::StopNode => {
+            runtime.request_shutdown();
+            serde_json::to_value(NodeStopResponse { stopping: true })?
+        }
         AppClientCommand::GetPlatformStatus { platform } => {
             serde_json::to_value(runtime.platforms().status(platform).await?)?
+        }
+        AppClientCommand::GetPlatformConfig { platform } => {
+            serde_json::to_value(runtime.platforms().config(platform).await?)?
         }
         AppClientCommand::SetPlatformEnabled { platform, enabled } => serde_json::to_value(
             runtime
                 .platforms()
                 .set_enabled(platform, *enabled, runtime.listen_address())
+                .await?,
+        )?,
+        AppClientCommand::SetPlatformConfigValue {
+            platform,
+            key,
+            value,
+        } => serde_json::to_value(
+            runtime
+                .platforms()
+                .set_config_value(platform, key, value, runtime.listen_address())
+                .await?,
+        )?,
+        AppClientCommand::ClearPlatformConfigValue { platform, key } => serde_json::to_value(
+            runtime
+                .platforms()
+                .clear_config_value(platform, key, runtime.listen_address())
                 .await?,
         )?,
         _ => {
@@ -225,6 +253,8 @@ fn typed_request_from_command(
     let (method, params) = match command {
         AppClientCommand::ListConversations => ("conversation/list", serde_json::Value::Null),
         AppClientCommand::ListPlatforms => ("platform/list", serde_json::Value::Null),
+        AppClientCommand::GetNodeStatus => ("node/status", serde_json::Value::Null),
+        AppClientCommand::StopNode => ("node/stop", serde_json::Value::Null),
         AppClientCommand::RequestConversationStatus { conversation_id } => (
             "conversation/status",
             serde_json::json!({ "conversation_id": conversation_id }),
@@ -249,9 +279,25 @@ fn typed_request_from_command(
             "platform/status",
             serde_json::json!({ "platform": platform }),
         ),
+        AppClientCommand::GetPlatformConfig { platform } => (
+            "platform/config",
+            serde_json::json!({ "platform": platform }),
+        ),
         AppClientCommand::SetPlatformEnabled { platform, enabled } => (
             "platform/setEnabled",
             serde_json::json!({ "platform": platform, "enabled": enabled }),
+        ),
+        AppClientCommand::SetPlatformConfigValue {
+            platform,
+            key,
+            value,
+        } => (
+            "platform/config/set",
+            serde_json::json!({ "platform": platform, "key": key, "value": value }),
+        ),
+        AppClientCommand::ClearPlatformConfigValue { platform, key } => (
+            "platform/config/clear",
+            serde_json::json!({ "platform": platform, "key": key }),
         ),
         _ => return None,
     };
@@ -371,6 +417,26 @@ async fn sync_typed_read_registry(
                 message: format!("platforms: {}", response.platforms.len()),
             })
         }
+        AppClientCommand::GetNodeStatus => {
+            let response: NodeStatusResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: conversation_id.to_string(),
+                message: format!(
+                    "node listening on {} · worker {} · platform runtimes {}/{}",
+                    response.listen_address,
+                    if response.worker_running { "running" } else { "idle" },
+                    response.platform_runtime_count,
+                    response.managed_platform_count
+                ),
+            })
+        }
+        AppClientCommand::StopNode => {
+            let _: NodeStopResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: conversation_id.to_string(),
+                message: "node shutdown requested".to_string(),
+            })
+        }
         AppClientCommand::GetPlatformStatus { .. } => {
             let response: PlatformControlStatusResponse = serde_json::from_value(value.clone())?;
             AppServerMessage::Notification(AppServerNotification::Info {
@@ -382,6 +448,23 @@ async fn sync_typed_read_registry(
                         "enabled"
                     } else {
                         "disabled"
+                    }
+                ),
+            })
+        }
+        AppClientCommand::GetPlatformConfig { .. }
+        | AppClientCommand::SetPlatformConfigValue { .. }
+        | AppClientCommand::ClearPlatformConfigValue { .. } => {
+            let response: PlatformConfigResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: conversation_id.to_string(),
+                message: format!(
+                    "platform `{}` config is {}",
+                    response.platform,
+                    if response.configured {
+                        "configured"
+                    } else {
+                        "incomplete"
                     }
                 ),
             })
@@ -432,6 +515,20 @@ async fn ensure_session_subscription(
     Ok(())
 }
 
+fn command_requires_worker(command: &AppClientCommand) -> bool {
+    !matches!(
+        command,
+        AppClientCommand::ListPlatforms
+            | AppClientCommand::GetPlatformStatus { .. }
+            | AppClientCommand::GetPlatformConfig { .. }
+            | AppClientCommand::SetPlatformEnabled { .. }
+            | AppClientCommand::SetPlatformConfigValue { .. }
+            | AppClientCommand::ClearPlatformConfigValue { .. }
+            | AppClientCommand::GetNodeStatus
+            | AppClientCommand::StopNode
+    )
+}
+
 pub(crate) async fn target_conversation_id(
     session: &mut NodeSessionState,
     runtime: &NodeRuntime,
@@ -476,9 +573,14 @@ pub(crate) async fn target_conversation_id(
         AppClientCommand::ListConversations
         | AppClientCommand::ListOnlineNodes
         | AppClientCommand::ListPlatforms
+        | AppClientCommand::GetNodeStatus
+        | AppClientCommand::StopNode
         | AppClientCommand::SelectTargetNode { .. }
         | AppClientCommand::GetPlatformStatus { .. }
+        | AppClientCommand::GetPlatformConfig { .. }
         | AppClientCommand::SetPlatformEnabled { .. }
+        | AppClientCommand::SetPlatformConfigValue { .. }
+        | AppClientCommand::ClearPlatformConfigValue { .. }
         | AppClientCommand::Exit => session.active_conversation_id().to_string(),
     }
 }
@@ -489,7 +591,7 @@ mod tests {
         conversation_list_notification, ensure_session_subscription, read_conversation_list,
         target_conversation_id,
     };
-    use crate::node::platform_manager::PlatformManager;
+    use crate::node::platform::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
     use crate::node::worker_manager::{NodeEvent, WorkerManager};
