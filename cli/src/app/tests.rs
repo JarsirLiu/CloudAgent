@@ -859,6 +859,105 @@ fn reset_notice_is_suppressed_after_local_clear() {
 }
 
 #[test]
+fn server_notice_uses_transient_status_banner_instead_of_transcript_cell() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::PushNoticeCell {
+            label: "conversation".to_string(),
+            message: "Deleted conversation `draft-1778341755002`".to_string(),
+            level: crate::state::NoticeLevel::Info,
+        },
+    );
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(
+        status.live_banner.as_deref(),
+        Some("Deleted conversation `draft-1778341755002`")
+    );
+    assert_eq!(
+        status.live_banner_level,
+        Some(crate::state::NoticeLevel::Info)
+    );
+    assert!(app.transcript_owner.active_cell().is_none());
+    assert!(!app.transcript_owner.has_transcript_content());
+
+    app.bottom_pane.expire_transient_notice_for_test();
+    assert!(app.bottom_pane.handle_tick());
+
+    let cleared = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(cleared.live_banner, None);
+}
+
+#[test]
+fn server_error_uses_transient_status_banner_instead_of_transcript_cell() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::PushErrorCell("interrupt requested".to_string()),
+    );
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(status.live_banner.as_deref(), Some("interrupt requested"));
+    assert_eq!(
+        status.live_banner_level,
+        Some(crate::state::NoticeLevel::Error)
+    );
+    assert!(app.transcript_owner.active_cell().is_none());
+    assert!(!app.transcript_owner.has_transcript_content());
+}
+
+#[test]
+fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::ShowServerRequestPrompt {
+            request_id: agent_protocol::RequestId::String("req-1".to_string()),
+            title: "approval".to_string(),
+            detail: "detail".to_string(),
+            notice: "Command approval required".to_string(),
+        },
+    );
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(
+        status.live_banner.as_deref(),
+        Some("Command approval required")
+    );
+    assert_eq!(
+        status.live_banner_level,
+        Some(crate::state::NoticeLevel::Warn)
+    );
+    assert!(app.transcript_owner.active_cell().is_none());
+    assert!(!app.transcript_owner.has_transcript_content());
+}
+
+#[test]
 fn generic_live_notice_does_not_keep_mode_running() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -1049,6 +1148,36 @@ fn failed_turn_restores_non_image_input_semantics_as_editable_text() {
     assert!(rendered.contains("[Attachment: spec.pdf (application/pdf)]"));
     assert!(rendered.contains("@workspace (D:\\learn\\gifti\\cloudagent)"));
     assert!(rendered.contains("#browser-use (plugin://browser-use)"));
+}
+
+#[test]
+fn failed_turn_without_pending_draft_does_not_claim_restore() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.transcript_owner
+        .start_local_user(local_input("hello"), false);
+    app.transcript_owner
+        .bind_turn_id("turn-1".to_string(), false);
+
+    app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Failed {
+        error: "worker app server closed unexpectedly".to_string(),
+    });
+
+    let active = app
+        .transcript_owner
+        .active_cell()
+        .map(|cell| cell.body().to_string())
+        .unwrap_or_default();
+    assert!(active.contains("failed: worker app server closed unexpectedly"));
+    assert!(!active.contains("draft restored for retry"));
+    assert!(app.can_submit_turn());
 }
 
 #[test]

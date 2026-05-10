@@ -3,6 +3,7 @@ use crate::app::clipboard_paste::paste_image_to_temp_png;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permission_profile::turn_policy_for_mode;
 use crate::input::intent::ComposerIntent;
+use crate::state::NoticeLevel;
 use crate::ui::widgets::input_pane::InputPaneAction;
 use agent_protocol::AppClientCommand;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -42,15 +43,14 @@ impl TuiApp {
             self.run_state.expand_tool_details = !self.run_state.expand_tool_details;
             self.transcript_owner
                 .set_expand_details(self.run_state.expand_tool_details);
-            self.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
-                "conversation",
+            self.bottom_pane.show_transient_notice(
+                NoticeLevel::Info,
                 if self.run_state.expand_tool_details {
-                    "Tool details expanded"
+                    "Tool details expanded".to_string()
                 } else {
-                    "Tool details collapsed"
+                    "Tool details collapsed".to_string()
                 },
-                crate::ui::widgets::history_cell::HistoryTone::Control,
-            ));
+            );
             return None;
         }
         if matches_image_paste_shortcut(key)
@@ -175,11 +175,8 @@ where
     match paste_image() {
         Ok(path) => app.bottom_pane.attach_image(path),
         Err(err) => {
-            app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
-                "conversation",
-                format!("Failed to paste image: {err}"),
-                crate::ui::widgets::history_cell::HistoryTone::Warning,
-            ));
+            app.bottom_pane
+                .show_transient_notice(NoticeLevel::Warn, format!("Failed to paste image: {err}"));
             true
         }
     }
@@ -234,12 +231,11 @@ mod tests {
         });
 
         assert!(handled);
-        let live_cell = app
-            .live_cells()
-            .last()
-            .expect("warning live cell should be created");
-        let body = live_cell.body().to_string();
-        assert!(body.contains("Failed to paste image"));
+        let status = app.bottom_pane.build_status_view_model(&app);
+        let banner = status
+            .live_banner
+            .expect("warning banner should be created");
+        assert!(banner.contains("Failed to paste image"));
     }
 
     #[test]

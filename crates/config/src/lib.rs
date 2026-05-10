@@ -42,6 +42,7 @@ pub struct LlmConfig {
 pub struct RuntimeConfig {
     pub system_prompt: String,
     pub max_tool_roundtrips: Option<usize>,
+    pub data_root_dir: PathBuf,
     pub conversation_store_dir: PathBuf,
     pub model_context_window: u64,
     pub context_compaction_trigger_ratio: f32,
@@ -112,6 +113,7 @@ struct PartialLlmConfig {
 struct PartialRuntimeConfig {
     system_prompt: Option<String>,
     max_tool_roundtrips: Option<Option<usize>>,
+    data_root_dir: Option<PathBuf>,
     #[serde(alias = "session_store_dir")]
     conversation_store_dir: Option<PathBuf>,
     model_context_window: Option<u64>,
@@ -212,15 +214,17 @@ impl AgentConfig {
     }
 
     fn defaults(workspace_root: PathBuf) -> Self {
+        let data_root_dir = workspace_root.join("data");
         let memory = MemoryConfig {
-            root_dir: workspace_root.join("data").join("state").join("memory"),
+            root_dir: data_root_dir.join("state").join("memory"),
             ..MemoryConfig::default()
         };
         Self {
             runtime: RuntimeConfig {
                 system_prompt: default_system_prompt(),
                 max_tool_roundtrips: None,
-                conversation_store_dir: workspace_root.join("data").join("conversations"),
+                data_root_dir: data_root_dir.clone(),
+                conversation_store_dir: data_root_dir.join("conversations"),
                 model_context_window: 200_000,
                 context_compaction_trigger_ratio: 0.90,
                 context_compaction_target_tokens: 36_000,
@@ -264,6 +268,8 @@ impl AgentConfig {
     }
 
     fn apply_partial(&mut self, partial: PartialAgentConfig) {
+        let mut conversation_store_overridden = false;
+        let mut memory_root_overridden = false;
         if let Some(llm) = partial.llm {
             if let Some(value) = llm.base_url {
                 self.llm.base_url = value;
@@ -298,7 +304,11 @@ impl AgentConfig {
             if let Some(value) = runtime.max_tool_roundtrips {
                 self.runtime.max_tool_roundtrips = value.map(|v| v.max(1));
             }
+            if let Some(value) = runtime.data_root_dir {
+                self.runtime.data_root_dir = absolutize_path(&self.workspace_root, value);
+            }
             if let Some(value) = runtime.conversation_store_dir {
+                conversation_store_overridden = true;
                 self.runtime.conversation_store_dir = absolutize_path(&self.workspace_root, value);
             }
             if let Some(value) = runtime.model_context_window {
@@ -330,6 +340,7 @@ impl AgentConfig {
                     self.runtime.memory.mode = parse_memory_mode(&value);
                 }
                 if let Some(value) = memory.root_dir {
+                    memory_root_overridden = true;
                     self.runtime.memory.root_dir = absolutize_path(&self.workspace_root, value);
                 }
                 if let Some(value) = memory.max_inject_chars {
@@ -409,6 +420,12 @@ impl AgentConfig {
                         .max(1_024);
             }
         }
+        if !conversation_store_overridden {
+            self.runtime.conversation_store_dir = self.runtime.data_root_dir.join("conversations");
+        }
+        if !memory_root_overridden {
+            self.runtime.memory.root_dir = self.runtime.data_root_dir.join("state").join("memory");
+        }
 
         if let Some(tools) = partial.tools {
             if let Some(value) = tools.default_shell_timeout_ms {
@@ -438,6 +455,8 @@ impl AgentConfig {
     }
 
     fn apply_env_overrides(&mut self) {
+        let mut conversation_store_overridden = false;
+        let mut memory_root_overridden = false;
         if let Ok(value) = env::var("CLOUDAGENT_LLM_BASE_URL") {
             self.llm.base_url = value;
         }
@@ -479,7 +498,12 @@ impl AgentConfig {
             self.runtime.max_tool_roundtrips = Some(parsed.max(1));
         }
         if let Ok(value) = env::var("CLOUDAGENT_CONVERSATION_STORE_DIR") {
+            conversation_store_overridden = true;
             self.runtime.conversation_store_dir =
+                absolutize_path(&self.workspace_root, PathBuf::from(value));
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_DATA_ROOT_DIR") {
+            self.runtime.data_root_dir =
                 absolutize_path(&self.workspace_root, PathBuf::from(value));
         }
         if let Ok(value) = env::var("CLOUDAGENT_MODEL_CONTEXT_WINDOW")
@@ -573,6 +597,11 @@ impl AgentConfig {
         if let Ok(value) = env::var("CLOUDAGENT_MEMORY_MODE") {
             self.runtime.memory.mode = parse_memory_mode(&value);
         }
+        if let Ok(value) = env::var("CLOUDAGENT_MEMORY_ROOT_DIR") {
+            memory_root_overridden = true;
+            self.runtime.memory.root_dir =
+                absolutize_path(&self.workspace_root, PathBuf::from(value));
+        }
         if let Ok(value) = env::var("CLOUDAGENT_ENABLE_SKILL_BUCKET")
             && let Ok(parsed) = value.parse::<bool>()
         {
@@ -608,16 +637,22 @@ impl AgentConfig {
         {
             self.runtime.context_budget_safety_buffer_tokens = parsed.max(512);
         }
+        if !conversation_store_overridden {
+            self.runtime.conversation_store_dir = self.runtime.data_root_dir.join("conversations");
+        }
+        if !memory_root_overridden {
+            self.runtime.memory.root_dir = self.runtime.data_root_dir.join("state").join("memory");
+        }
     }
 
     pub fn load_user_only(workspace_root: impl Into<PathBuf>) -> Result<Self> {
         let workspace_root = workspace_root.into();
         let mut config = Self::defaults(workspace_root.clone());
         if let Some(home) = user_home_dir() {
-            config.runtime.conversation_store_dir =
-                home.join(".cloudagent").join("data").join("conversations");
-        }
-        if let Some(home) = user_home_dir() {
+            let data_root = home.join(".cloudagent").join("data");
+            config.runtime.data_root_dir = data_root.clone();
+            config.runtime.conversation_store_dir = data_root.join("conversations");
+            config.runtime.memory.root_dir = data_root.join("state").join("memory");
             let config_path = home.join(".cloudagent").join("config.toml");
             if config_path.exists() {
                 let text = std::fs::read_to_string(&config_path)

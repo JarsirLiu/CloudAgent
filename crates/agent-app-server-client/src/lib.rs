@@ -1,16 +1,39 @@
 mod in_process;
+mod remote;
 mod stdio;
 
+use agent_core::ServerRequestDecision;
 use agent_protocol::{
-    AppServerMessage, AppServerNotification, NotificationDelivery, classify_notification,
+    AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
+    ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
+    JsonRpcErrorPayload, JsonRpcRequest, NotificationDelivery, OnlineNodeListResponse, RequestId,
+    SelectTargetNodeResponse, UserTurnInput, classify_notification,
 };
 use anyhow::Result;
+use serde::de::DeserializeOwned;
+use std::error::Error;
+use std::fmt;
+use std::io::Error as IoError;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::mpsc;
 
+use in_process::InProcessAppServerRequestHandle;
 pub use in_process::InProcessClientConfig;
-pub use stdio::StdioClientConfig;
+use remote::RemoteAppServerRequestHandle;
+pub use remote::{RemoteAppServerClient, RemoteClientConfig};
+pub use stdio::{StdioAppServerClient, StdioClientConfig};
 
 pub const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 128;
+static REQUEST_ID_COUNTER: AtomicI64 = AtomicI64::new(1);
+
+#[derive(Clone, Debug)]
+pub struct AppServerConnectInfo {
+    pub client_name: String,
+    pub client_version: String,
+    pub experimental_api: bool,
+    pub opt_out_notification_methods: Vec<String>,
+    pub channel_capacity: usize,
+}
 
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -22,7 +45,51 @@ pub enum AppServerEvent {
 
 pub enum AppServerClient {
     InProcess(in_process::InProcessAppServerClient),
-    Stdio(stdio::StdioAppServerClient),
+    Remote(remote::RemoteAppServerClient),
+}
+
+#[derive(Clone)]
+pub enum AppServerRequestHandle {
+    InProcess(InProcessAppServerRequestHandle),
+    Remote(RemoteAppServerRequestHandle),
+}
+
+#[derive(Debug)]
+pub enum TypedRequestError {
+    Transport {
+        method: String,
+        source: IoError,
+    },
+    Server {
+        method: String,
+        source: JsonRpcErrorPayload,
+    },
+    Deserialize {
+        method: String,
+        source: serde_json::Error,
+    },
+}
+
+impl fmt::Display for TypedRequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transport { method, source } => write!(f, "{method} transport error: {source}"),
+            Self::Server { method, source } => write!(f, "{method} failed: {}", source.message),
+            Self::Deserialize { method, source } => {
+                write!(f, "{method} response decode error: {source}")
+            }
+        }
+    }
+}
+
+impl Error for TypedRequestError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Transport { source, .. } => Some(source),
+            Self::Server { .. } => None,
+            Self::Deserialize { source, .. } => Some(source),
+        }
+    }
 }
 
 impl AppServerClient {
@@ -30,17 +97,126 @@ impl AppServerClient {
         Self::InProcess(in_process::InProcessAppServerClient::start(config))
     }
 
-    pub async fn stdio(config: StdioClientConfig) -> Result<Self> {
-        Ok(Self::Stdio(
-            stdio::StdioAppServerClient::spawn(config).await?,
+    pub async fn remote(config: RemoteClientConfig) -> Result<Self> {
+        Ok(Self::Remote(
+            remote::RemoteAppServerClient::connect(config).await?,
         ))
     }
 
     pub fn send_command(&self, command: agent_protocol::AppClientCommand) -> Result<()> {
         match self {
             Self::InProcess(client) => client.send_command(command),
-            Self::Stdio(client) => client.send_command(command),
+            Self::Remote(client) => client.send_command(command),
         }
+    }
+
+    pub fn request_handle(&self) -> AppServerRequestHandle {
+        match self {
+            Self::InProcess(client) => AppServerRequestHandle::InProcess(client.request_handle()),
+            Self::Remote(client) => AppServerRequestHandle::Remote(client.request_handle()),
+        }
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        match self {
+            Self::InProcess(client) => client.request_typed(request).await,
+            Self::Remote(client) => client.request_typed(request).await,
+        }
+    }
+
+    pub async fn request_conversation_list_typed(
+        &self,
+    ) -> Result<ConversationListResponse, TypedRequestError> {
+        self.request_handle()
+            .request_conversation_list_typed()
+            .await
+    }
+
+    pub async fn request_conversation_status_typed(
+        &self,
+        conversation_id: impl Into<String>,
+    ) -> Result<ConversationStatusResponse, TypedRequestError> {
+        self.request_handle()
+            .request_conversation_status_typed(conversation_id)
+            .await
+    }
+
+    pub async fn request_conversation_history_typed(
+        &self,
+        conversation_id: impl Into<String>,
+    ) -> Result<ConversationHistoryResponse, TypedRequestError> {
+        self.request_handle()
+            .request_conversation_history_typed(conversation_id)
+            .await
+    }
+
+    pub async fn request_conversation_history_page_typed(
+        &self,
+        conversation_id: impl Into<String>,
+        before_turn_id: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationHistoryPageResponse, TypedRequestError> {
+        self.request_handle()
+            .request_conversation_history_page_typed(conversation_id, before_turn_id, limit)
+            .await
+    }
+
+    pub async fn request_online_nodes_typed(
+        &self,
+    ) -> Result<OnlineNodeListResponse, TypedRequestError> {
+        self.request_handle().request_online_nodes_typed().await
+    }
+
+    pub async fn select_target_node_typed(
+        &self,
+        node_id: impl Into<String>,
+    ) -> Result<SelectTargetNodeResponse, TypedRequestError> {
+        self.request_handle()
+            .select_target_node_typed(node_id)
+            .await
+    }
+
+    pub fn submit_turn(&self, input: UserTurnInput) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::SubmitTurn(input))
+    }
+
+    pub fn resolve_server_request(
+        &self,
+        conversation_id: impl Into<String>,
+        request_id: agent_protocol::RequestId,
+        decision: ServerRequestDecision,
+    ) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::ResolveServerRequest {
+            conversation_id: conversation_id.into(),
+            request_id,
+            decision,
+        })
+    }
+
+    pub fn reject_server_request(
+        &self,
+        conversation_id: impl Into<String>,
+        request_id: agent_protocol::RequestId,
+        reason: impl Into<String>,
+    ) -> Result<()> {
+        self.resolve_server_request(
+            conversation_id,
+            request_id,
+            agent_core::ServerRequestDecision::decline(Some(reason.into())),
+        )
+    }
+
+    pub fn interrupt_turn(&self, conversation_id: impl Into<String>) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::InterruptTurn {
+            conversation_id: conversation_id.into(),
+        })
+    }
+
+    pub fn list_conversations(&self) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::ListConversations)
     }
 
     pub fn request_conversation_history(&self, conversation_id: impl Into<String>) -> Result<()> {
@@ -69,23 +245,176 @@ impl AppServerClient {
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         match self {
             Self::InProcess(client) => client.next_event().await,
-            Self::Stdio(client) => client.next_event().await,
+            Self::Remote(client) => client.next_event().await,
         }
     }
 
     pub fn try_next_event(&mut self) -> Option<AppServerEvent> {
         match self {
             Self::InProcess(client) => client.try_next_event(),
-            Self::Stdio(client) => client.try_next_event(),
+            Self::Remote(client) => client.try_next_event(),
         }
     }
 
     pub async fn shutdown(self) -> Result<()> {
         match self {
             Self::InProcess(client) => client.shutdown().await,
-            Self::Stdio(client) => client.shutdown().await,
+            Self::Remote(client) => client.shutdown().await,
         }
     }
+}
+
+impl AppServerRequestHandle {
+    pub fn send_command(&self, command: agent_protocol::AppClientCommand) -> Result<()> {
+        match self {
+            Self::InProcess(handle) => handle.send_command(command),
+            Self::Remote(handle) => handle.send_command(command),
+        }
+    }
+
+    pub fn submit_turn(&self, input: UserTurnInput) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::SubmitTurn(input))
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        match self {
+            Self::InProcess(handle) => handle.request_typed(request).await,
+            Self::Remote(handle) => handle.request_typed(request).await,
+        }
+    }
+
+    pub async fn request_conversation_list_typed(
+        &self,
+    ) -> Result<ConversationListResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/list".to_string(),
+            params: None,
+        })
+        .await
+    }
+
+    pub async fn request_conversation_status_typed(
+        &self,
+        conversation_id: impl Into<String>,
+    ) -> Result<ConversationStatusResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/status".to_string(),
+            params: Some(serde_json::json!({
+                "conversation_id": conversation_id.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn request_conversation_history_typed(
+        &self,
+        conversation_id: impl Into<String>,
+    ) -> Result<ConversationHistoryResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/history".to_string(),
+            params: Some(serde_json::json!({
+                "conversation_id": conversation_id.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn request_conversation_history_page_typed(
+        &self,
+        conversation_id: impl Into<String>,
+        before_turn_id: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationHistoryPageResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/historyPage".to_string(),
+            params: Some(serde_json::json!({
+                "conversation_id": conversation_id.into(),
+                "before_turn_id": before_turn_id,
+                "limit": limit,
+            })),
+        })
+        .await
+    }
+
+    pub async fn request_online_nodes_typed(
+        &self,
+    ) -> Result<OnlineNodeListResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "hub/node/list".to_string(),
+            params: None,
+        })
+        .await
+    }
+
+    pub async fn select_target_node_typed(
+        &self,
+        node_id: impl Into<String>,
+    ) -> Result<SelectTargetNodeResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "hub/node/select".to_string(),
+            params: Some(serde_json::json!({
+                "node_id": node_id.into(),
+            })),
+        })
+        .await
+    }
+
+    pub fn resolve_server_request(
+        &self,
+        conversation_id: impl Into<String>,
+        request_id: agent_protocol::RequestId,
+        decision: ServerRequestDecision,
+    ) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::ResolveServerRequest {
+            conversation_id: conversation_id.into(),
+            request_id,
+            decision,
+        })
+    }
+
+    pub fn reject_server_request(
+        &self,
+        conversation_id: impl Into<String>,
+        request_id: agent_protocol::RequestId,
+        reason: impl Into<String>,
+    ) -> Result<()> {
+        self.resolve_server_request(
+            conversation_id,
+            request_id,
+            agent_core::ServerRequestDecision::decline(Some(reason.into())),
+        )
+    }
+
+    pub fn interrupt_turn(&self, conversation_id: impl Into<String>) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::InterruptTurn {
+            conversation_id: conversation_id.into(),
+        })
+    }
+
+    pub fn list_conversations(&self) -> Result<()> {
+        self.send_command(agent_protocol::AppClientCommand::ListConversations)
+    }
+
+    pub fn request_conversation_history(&self, conversation_id: impl Into<String>) -> Result<()> {
+        self.send_command(
+            agent_protocol::AppClientCommand::RequestConversationHistory {
+                conversation_id: conversation_id.into(),
+            },
+        )
+    }
+}
+
+fn next_request_id() -> RequestId {
+    RequestId::Integer(REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
 pub(crate) fn event_requires_delivery(event: &AppServerEvent) -> bool {

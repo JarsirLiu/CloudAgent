@@ -1,5 +1,6 @@
 use crate::app::TuiApp;
 use crate::app::runtime::display::should_show_welcome;
+use crate::state::NoticeLevel;
 use crate::terminal::Frame;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, ChatSurfaceModel, build_chat_surface_model};
 use crate::ui::widgets::welcome::WelcomeScreen;
@@ -60,7 +61,12 @@ impl ChatSurface {
         );
 
         render_body_area(app, frame, layout.body_area, surface_model);
-        render_status_area(frame, layout.status_area, status.live_banner.as_deref());
+        render_status_area(
+            frame,
+            layout.status_area,
+            status.live_banner.as_deref(),
+            status.live_banner_level,
+        );
         let bottom = app.bottom_pane.render(
             frame,
             layout.bottom_area,
@@ -259,7 +265,12 @@ fn render_body_area(app: &TuiApp, frame: &mut Frame, area: Rect, model: ChatSurf
     }
 }
 
-fn render_status_area(frame: &mut Frame, area: Rect, live_banner: Option<&str>) {
+fn render_status_area(
+    frame: &mut Frame,
+    area: Rect,
+    live_banner: Option<&str>,
+    live_banner_level: Option<NoticeLevel>,
+) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -269,7 +280,12 @@ fn render_status_area(frame: &mut Frame, area: Rect, live_banner: Option<&str>) 
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             live_banner.to_string(),
-            Style::default().fg(Color::Rgb(140, 140, 155)),
+            Style::default().fg(match live_banner_level {
+                Some(NoticeLevel::Info) => Color::Rgb(120, 170, 235),
+                Some(NoticeLevel::Warn) => Color::Rgb(230, 185, 80),
+                Some(NoticeLevel::Error) => Color::Rgb(235, 120, 120),
+                None => Color::Rgb(140, 140, 155),
+            }),
         ))),
         area,
     );

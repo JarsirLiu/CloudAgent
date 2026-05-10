@@ -73,7 +73,7 @@ impl AgentHost {
 
     pub async fn run_startup_retention_cleanup(&self) {
         let _ = self.store.prune_archived_conversations_if_needed().await;
-        if let Err(err) = verify_audit_chain(&self.context.workspace_root) {
+        if let Err(err) = verify_audit_chain(&self.context.data_root_dir) {
             tracing::warn!("audit chain verify failed on startup: {err:#}");
         }
     }
@@ -232,7 +232,30 @@ impl AgentHost {
 
     pub async fn conversation_status(&self, conversation_id: &str) -> Result<ConversationSnapshot> {
         let history = self.conversation_history_snapshot(conversation_id).await?;
-        let active_turn = self.state.active_turn(conversation_id).await;
+        let mut active_turn = self.state.active_turn(conversation_id).await;
+        if let Some(turn) = active_turn.as_ref()
+            && self
+                .build_turns_from_rollout(conversation_id)
+                .await?
+                .iter()
+                .find(|candidate| candidate.id == turn.turn_id)
+                .is_some_and(|candidate| {
+                    matches!(
+                        candidate.state,
+                        crate::TurnState::Completed
+                            | crate::TurnState::Failed
+                            | crate::TurnState::Cancelled
+                    )
+                })
+        {
+            tracing::warn!(
+                conversation_id,
+                turn_id = turn.turn_id,
+                "detected stale active turn; clearing busy state from rollout terminal snapshot"
+            );
+            self.state.finish_turn(conversation_id).await;
+            active_turn = None;
+        }
         Ok(ConversationSnapshot {
             conversation_id: conversation_id.to_string(),
             conversation_status: if active_turn.is_some() {
@@ -367,7 +390,7 @@ impl AgentHost {
             severity,
             payload_json,
         };
-        append_audit_event_safe(&self.context.workspace_root, &entry);
+        append_audit_event_safe(&self.context.data_root_dir, &entry);
     }
 
     pub(crate) fn audit_turn_tool_started(&self, session_id: &str, turn_id: &str, call: &ToolCall) {

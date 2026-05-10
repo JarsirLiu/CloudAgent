@@ -254,7 +254,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
             .max(1);
         let compaction_triggered_now = estimated_total_tokens > available_history_tokens;
         let _ = append_context_budget_log(
-            &settings.workspace_root,
+            &settings.data_root_dir,
             &ContextBudgetLogEntry {
                 conversation_id: conversation_id.to_string(),
                 turn_id: turn_id.to_string(),
@@ -915,6 +915,7 @@ mod tests {
                 responses: Mutex::new(responses),
                 settings: RegularTurnSettings {
                     workspace_root: workspace.path().to_path_buf(),
+                    data_root_dir: workspace.path().join("data"),
                     llm_temperature: 0.0,
                     pre_llm_filter_enabled: false,
                     max_tool_roundtrips: Some(4),

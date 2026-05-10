@@ -12,19 +12,19 @@ use agent_protocol::{FrontendMode, RequestId};
 impl TuiApp {
     pub(crate) fn new(
         conversation_id: String,
-        connection_label: &str,
+        target_label: &str,
         workspace_root: std::path::PathBuf,
         conversation_store_dir: std::path::PathBuf,
         initial_filter_enabled: bool,
         initial_permission_mode: String,
     ) -> Self {
-        let mut run_state = RunState::new(connection_label);
+        let mut run_state = RunState::new(target_label);
         run_state.pre_llm_filter_enabled = initial_filter_enabled;
         run_state.permission_mode = initial_permission_mode;
         Self {
             conversation_id,
             conversation_summaries: Vec::new(),
-            connection_label: connection_label.to_string(),
+            target_label: target_label.to_string(),
             transcript_owner: TranscriptOwner::default(),
             run_state,
             bottom_pane: BottomPaneController::new(),
@@ -41,7 +41,7 @@ impl TuiApp {
         let filter_enabled = self.run_state.pre_llm_filter_enabled;
         let permission_mode = self.run_state.permission_mode.clone();
         self.transcript_owner.clear();
-        self.run_state = RunState::new(&self.connection_label);
+        self.run_state = RunState::new(&self.target_label);
         self.run_state.pre_llm_filter_enabled = filter_enabled;
         self.run_state.permission_mode = permission_mode;
         self.bottom_pane = BottomPaneController::new();
@@ -131,12 +131,14 @@ impl TuiApp {
         self.run_state.total_turn_usage = None;
         self.run_state.model_context_window = None;
         self.run_state.pending_submitted_input = Some(content.to_vec());
+        self.run_state.frontend_mode = FrontendMode::Running;
         self.bottom_pane.prepare_for_submit();
         self.transcript_owner
             .start_local_user(content.to_vec(), self.run_state.expand_tool_details);
     }
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
+        self.run_state.frontend_mode = FrontendMode::Idle;
         self.bottom_pane.on_turn_finished();
         match dispatch {
             TurnDispatch::Completed => {
@@ -150,16 +152,21 @@ impl TuiApp {
                 }
             }
             TurnDispatch::Failed { error } => {
-                if let Some(content) = self.run_state.pending_submitted_input.take() {
-                    self.bottom_pane.restore_submission(&content);
-                }
+                let restored_draft =
+                    if let Some(content) = self.run_state.pending_submitted_input.take() {
+                        self.bottom_pane.restore_submission(&content);
+                        true
+                    } else {
+                        false
+                    };
                 self.transcript_owner
                     .clear_active_turn(self.run_state.expand_tool_details);
-                self.push_live_cell(HistoryCell::info(
-                    "turn",
-                    format!("failed: {error}\ndraft restored for retry"),
-                    HistoryTone::Error,
-                ));
+                let message = if restored_draft {
+                    format!("failed: {error}\ndraft restored for retry")
+                } else {
+                    format!("failed: {error}")
+                };
+                self.push_live_cell(HistoryCell::info("turn", message, HistoryTone::Error));
             }
             TurnDispatch::Cancelled { reason } => {
                 self.run_state.pending_submitted_input = None;
@@ -175,10 +182,12 @@ impl TuiApp {
     }
 
     pub(crate) fn current_mode(&self) -> FrontendMode {
-        let has_active_turn = self.transcript_owner.active_turn_id().is_some();
-        let has_live_cell = !self.transcript_owner.live_is_empty();
-        self.bottom_pane
-            .current_mode(has_active_turn, has_live_cell)
+        self.bottom_pane.current_mode(self.run_state.frontend_mode)
+    }
+
+    pub(crate) fn sync_frontend_mode(&mut self, mode: FrontendMode) {
+        self.run_state.frontend_mode = mode;
+        self.bottom_pane.sync_frontend_mode(mode);
     }
 
     pub(crate) fn can_submit_turn(&self) -> bool {

@@ -34,10 +34,10 @@ pub struct ContextBudgetLogEntry {
 }
 
 pub fn append_context_budget_log(
-    workspace_root: &Path,
+    data_root_dir: &Path,
     entry: &ContextBudgetLogEntry,
 ) -> Result<()> {
-    let dir = workspace_root.join("data").join("logs");
+    let dir = data_root_dir.join("logs");
     create_dir_all(&dir)?;
     let file = dir.join("context_budget.jsonl");
     let mut handle = OpenOptions::new().create(true).append(true).open(file)?;
@@ -62,8 +62,8 @@ static AUDIT_WRITE_FAILURES: AtomicU64 = AtomicU64::new(0);
 static AUDIT_LAST_ERROR_LOG_MS: AtomicU64 = AtomicU64::new(0);
 static RETENTION_LAST_RUN_MS: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
 
-pub fn append_audit_event_safe(workspace_root: &Path, entry: &AuditEventEntry<'_>) {
-    if let Err(err) = append_audit_event(workspace_root, entry) {
+pub fn append_audit_event_safe(data_root_dir: &Path, entry: &AuditEventEntry<'_>) {
+    if let Err(err) = append_audit_event(data_root_dir, entry) {
         AUDIT_WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
         let last = AUDIT_LAST_ERROR_LOG_MS.load(Ordering::Relaxed);
@@ -77,8 +77,8 @@ pub fn append_audit_event_safe(workspace_root: &Path, entry: &AuditEventEntry<'_
     }
 }
 
-pub fn append_audit_event(workspace_root: &Path, entry: &AuditEventEntry<'_>) -> Result<()> {
-    let dir = workspace_root.join("data").join("logs");
+pub fn append_audit_event(data_root_dir: &Path, entry: &AuditEventEntry<'_>) -> Result<()> {
+    let dir = data_root_dir.join("logs");
     create_dir_all(&dir)?;
     let db_path = dir.join("audit.db");
     let conn = Connection::open(db_path)?;
@@ -114,7 +114,7 @@ pub fn append_audit_event(workspace_root: &Path, entry: &AuditEventEntry<'_>) ->
         params![AUDIT_SCHEMA_VERSION.to_string()],
     )?;
 
-    run_retention_if_due(&conn, workspace_root, chrono::Utc::now().timestamp_millis())?;
+    run_retention_if_due(&conn, data_root_dir, chrono::Utc::now().timestamp_millis())?;
 
     let prev_hash: Option<String> = conn
         .query_row(
@@ -154,8 +154,8 @@ pub fn append_audit_event(workspace_root: &Path, entry: &AuditEventEntry<'_>) ->
     Ok(())
 }
 
-pub fn verify_audit_chain(workspace_root: &Path) -> Result<()> {
-    let db_path = workspace_root.join("data").join("logs").join("audit.db");
+pub fn verify_audit_chain(data_root_dir: &Path) -> Result<()> {
+    let db_path = data_root_dir.join("logs").join("audit.db");
     if !db_path.exists() {
         return Ok(());
     }
@@ -195,8 +195,8 @@ pub fn verify_audit_chain(workspace_root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_retention_if_due(conn: &Connection, workspace_root: &Path, now_ms: i64) -> Result<()> {
-    let key = workspace_root.to_string_lossy().to_string();
+fn run_retention_if_due(conn: &Connection, data_root_dir: &Path, now_ms: i64) -> Result<()> {
+    let key = data_root_dir.to_string_lossy().to_string();
     let map_lock = RETENTION_LAST_RUN_MS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = map_lock.lock().expect("retention map poisoned");
     if let Some(last) = map.get(&key).copied()
@@ -283,7 +283,7 @@ mod tests {
             payload_json: "{}".to_string(),
         };
         append_audit_event(&root, &e).expect("append event");
-        let db = root.join("data").join("logs").join("audit.db");
+        let db = root.join("logs").join("audit.db");
         let conn = Connection::open(&db).expect("open db");
         conn.execute(
             "UPDATE audit_events SET ts_ms = ts_ms - (40 * 24 * 60 * 60 * 1000)",

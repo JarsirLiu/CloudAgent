@@ -12,6 +12,9 @@ pub(crate) async fn hydrate_active_conversation(
     runtime: &Arc<AgentHost>,
     state: &Arc<Mutex<ServerState>>,
 ) {
+    if !state.lock().await.tracks_active_conversation() {
+        return;
+    }
     if let Ok(Some(conversation_id)) = runtime.load_active_conversation().await {
         if conversation_id.trim().is_empty() {
             return;
@@ -29,7 +32,14 @@ pub(crate) async fn apply_active_conversation(
     guard.subscribe(conversation_id);
 }
 
-pub(crate) async fn persist_active_conversation(runtime: &Arc<AgentHost>, conversation_id: &str) {
+pub(crate) async fn persist_active_conversation(
+    runtime: &Arc<AgentHost>,
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: &str,
+) {
+    if !state.lock().await.tracks_active_conversation() {
+        return;
+    }
     let _ = runtime.mark_active_conversation(conversation_id).await;
 }
 
@@ -39,7 +49,8 @@ pub(crate) async fn apply_archive_transition(
     fallback_conversation_id: &str,
 ) -> ArchiveTransition {
     let mut guard = state.lock().await;
-    let was_active = guard.active_conversation_id() == archived_conversation_id;
+    let was_active = guard.tracks_active_conversation()
+        && guard.active_conversation_id() == archived_conversation_id;
     guard.unsubscribe(archived_conversation_id);
     if was_active {
         let fallback = fallback_conversation_id.to_string();
@@ -47,7 +58,9 @@ pub(crate) async fn apply_archive_transition(
         guard.subscribe(fallback);
     }
     ArchiveTransition {
-        active_session_id: guard.active_conversation_id().to_string(),
+        active_session_id: guard
+            .notification_anchor_conversation_id(fallback_conversation_id)
+            .to_string(),
         switched_active: was_active,
     }
 }
@@ -61,7 +74,7 @@ mod tests {
 
     #[tokio::test]
     async fn archive_active_conversation_switches_to_fallback_draft() {
-        let state = Arc::new(Mutex::new(ServerState::new("default".to_string())));
+        let state = Arc::new(Mutex::new(ServerState::new("default".to_string(), false)));
         {
             let mut guard = state.lock().await;
             guard.switch_active_conversation("session-a".to_string());
@@ -78,7 +91,7 @@ mod tests {
 
     #[tokio::test]
     async fn archive_inactive_conversation_keeps_active_unchanged() {
-        let state = Arc::new(Mutex::new(ServerState::new("default".to_string())));
+        let state = Arc::new(Mutex::new(ServerState::new("default".to_string(), false)));
         {
             let mut guard = state.lock().await;
             guard.switch_active_conversation("session-a".to_string());
@@ -89,5 +102,18 @@ mod tests {
         let transition = apply_archive_transition(&state, "session-b", "default").await;
         assert!(!transition.switched_active);
         assert_eq!(transition.active_session_id, "session-a");
+    }
+
+    #[tokio::test]
+    async fn shared_worker_archive_transition_uses_fallback_without_switching_active() {
+        let state = Arc::new(Mutex::new(ServerState::new("default".to_string(), true)));
+        {
+            let mut guard = state.lock().await;
+            guard.subscribe("session-b".to_string());
+        }
+
+        let transition = apply_archive_transition(&state, "session-b", "draft-session").await;
+        assert!(!transition.switched_active);
+        assert_eq!(transition.active_session_id, "draft-session");
     }
 }

@@ -7,6 +7,84 @@ use agent_core::{
 };
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportClientInfo {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportInitializeCapabilities {
+    pub experimental_api: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opt_out_notification_methods: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportInitializeParams {
+    pub client_info: TransportClientInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<TransportInitializeCapabilities>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportServerInfo {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransportInitializeResult {
+    pub server_info: TransportServerInfo,
+    pub protocol_version: String,
+    pub transport: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OnlineNodeSummary {
+    pub node_id: String,
+    pub display_name: String,
+    pub labels: Vec<String>,
+    pub version: String,
+    pub online: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationListResponse {
+    // Typed read surface for conversation index bootstrap / explicit refresh.
+    pub conversations: Vec<ConversationSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationStatusResponse {
+    // Typed read surface for authoritative frontend mode bootstrap.
+    pub snapshot: ConversationSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationHistoryResponse {
+    // Typed read surface for committed transcript bootstrap / explicit refresh.
+    pub turns: Vec<ConversationTurn>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationHistoryPageResponse {
+    // Typed read surface for paged transcript bootstrap / explicit refresh.
+    pub turns: Vec<ConversationTurn>,
+    pub has_more: bool,
+    pub next_before_turn_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OnlineNodeListResponse {
+    pub nodes: Vec<OnlineNodeSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SelectTargetNodeResponse {
+    pub node_id: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppClientCommand {
@@ -37,6 +115,7 @@ pub enum AppClientCommand {
         limit: usize,
     },
     ListConversations,
+    ListOnlineNodes,
     SetConversationTitle {
         conversation_id: String,
         title: String,
@@ -46,6 +125,9 @@ pub enum AppClientCommand {
     },
     SwitchConversation {
         conversation_id: String,
+    },
+    SelectTargetNode {
+        node_id: String,
     },
     ArchiveConversation {
         conversation_id: String,
@@ -86,7 +168,10 @@ impl AppClientCommand {
             | Self::DeleteConversation { conversation_id }
             | Self::SubscribeConversation { conversation_id }
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
-            Self::ListConversations | Self::Exit => None,
+            Self::ListConversations
+            | Self::ListOnlineNodes
+            | Self::SelectTargetNode { .. }
+            | Self::Exit => None,
         }
     }
 }
@@ -94,6 +179,7 @@ impl AppClientCommand {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppServerNotification {
+    // Incremental frontend sync only. This is not a substitute for typed status bootstrap.
     FrontendStateChanged {
         conversation_id: String,
         mode: FrontendMode,
@@ -217,10 +303,14 @@ pub enum AppServerNotification {
         turn_id: TurnId,
         reason: String,
     },
+    // Incremental/state-sync notification only. Clients should not rely on this as the
+    // authoritative bootstrap path for explicit status reads.
     ConversationStatus {
         conversation_id: String,
         snapshot: ConversationSnapshot,
     },
+    // Incremental/state-sync notification only. Clients should bootstrap transcript state
+    // through typed conversation/history reads and treat this as a sync/update channel.
     ConversationHistory {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
@@ -229,15 +319,22 @@ pub enum AppServerNotification {
         conversation_id: String,
         turn: ConversationTurn,
     },
+    // Incremental/state-sync notification only. Typed historyPage remains the bootstrap/read path.
     ConversationHistoryPage {
         conversation_id: String,
         turns: Vec<ConversationTurn>,
         has_more: bool,
         next_before_turn_id: Option<String>,
     },
+    // Incremental/state-sync notification only. Typed conversation/list remains the
+    // authoritative bootstrap/read path.
     ConversationList {
         conversation_id: String,
         conversations: Vec<ConversationSummary>,
+    },
+    OnlineNodeList {
+        conversation_id: String,
+        nodes: Vec<OnlineNodeSummary>,
     },
     ConversationSwitched {
         conversation_id: String,
@@ -337,6 +434,9 @@ impl AppServerNotification {
             | Self::ConversationList {
                 conversation_id, ..
             }
+            | Self::OnlineNodeList {
+                conversation_id, ..
+            }
             | Self::ConversationSwitched {
                 conversation_id, ..
             }
@@ -423,6 +523,7 @@ pub fn classify_notification(
         | AppServerNotification::ConversationHistory { .. }
         | AppServerNotification::ConversationHistoryPage { .. }
         | AppServerNotification::ConversationList { .. }
+        | AppServerNotification::OnlineNodeList { .. }
         | AppServerNotification::ConversationSwitched { .. }
         | AppServerNotification::ConversationSubscriptionChanged { .. }
         | AppServerNotification::FrontendStateChanged { .. } => {

@@ -1,4 +1,5 @@
 use crate::app::TuiApp;
+use crate::state::NoticeLevel;
 use crate::state::bottom_pane_runtime::BottomPaneRuntimeState;
 use crate::state::selectors::status_text_from_mode;
 use crate::terminal::Frame;
@@ -21,6 +22,7 @@ pub(crate) struct StatusViewModel {
     pub(crate) meta: String,
     pub(crate) hint_meta: String,
     pub(crate) live_banner: Option<String>,
+    pub(crate) live_banner_level: Option<NoticeLevel>,
 }
 
 pub(crate) struct BottomPaneController {
@@ -78,26 +80,24 @@ impl BottomPaneController {
         self.on_turn_started();
     }
 
+    pub(crate) fn sync_frontend_mode(&mut self, mode: FrontendMode) {
+        self.runtime.sync_frontend_mode(mode);
+    }
+
     pub(crate) fn derive_mode(
         &self,
+        frontend_mode: FrontendMode,
         requires_action: bool,
-        has_active_turn: bool,
-        _has_live_cell: bool,
     ) -> FrontendMode {
-        let has_runtime_activity = self.runtime.turn_active
-            || self.runtime.live_label.is_some()
-            || self.runtime.active_tool_title.is_some();
         if requires_action {
             FrontendMode::WaitingForServerRequest
-        } else if has_runtime_activity || has_active_turn {
-            FrontendMode::Running
         } else {
-            FrontendMode::Idle
+            frontend_mode
         }
     }
 
-    pub(crate) fn current_mode(&self, has_active_turn: bool, has_live_cell: bool) -> FrontendMode {
-        self.derive_mode(self.requires_action(), has_active_turn, has_live_cell)
+    pub(crate) fn current_mode(&self, frontend_mode: FrontendMode) -> FrontendMode {
+        self.derive_mode(frontend_mode, self.requires_action())
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
@@ -109,7 +109,11 @@ impl BottomPaneController {
     }
 
     pub(crate) fn handle_tick(&mut self) -> bool {
-        self.input_pane.handle_tick()
+        let mut needs_redraw = self.input_pane.handle_tick();
+        if self.runtime.handle_tick() {
+            needs_redraw = true;
+        }
+        needs_redraw
     }
 
     pub(crate) fn composer_has_selection(&self) -> bool {
@@ -155,6 +159,10 @@ impl BottomPaneController {
     pub(crate) fn clear_views(&mut self) {
         self.input_pane.clear_views();
         self.pending_session_picker = None;
+    }
+
+    pub(crate) fn show_transient_notice(&mut self, level: NoticeLevel, message: String) {
+        self.runtime.show_transient_notice(level, message);
     }
 
     pub(crate) fn clear_composer(&mut self) {
@@ -227,7 +235,7 @@ impl BottomPaneController {
     pub(crate) fn build_status_view_model(&self, app: &TuiApp) -> StatusViewModel {
         let mode = app.current_mode();
         let fallback = status_text_from_mode(mode);
-        let live_banner = self.runtime_banner_text();
+        let (live_banner, live_banner_level) = self.runtime_banner_text();
         let text = fallback.to_string();
         let indicator = match mode {
             FrontendMode::Running | FrontendMode::WaitingForServerRequest => {
@@ -276,18 +284,25 @@ impl BottomPaneController {
             meta: parts.join(" · "),
             hint_meta,
             live_banner,
+            live_banner_level,
         }
     }
 
-    fn runtime_banner_text(&self) -> Option<String> {
+    fn runtime_banner_text(&self) -> (Option<String>, Option<NoticeLevel>) {
+        if let Some(notice) = self.runtime.transient_notice.as_ref() {
+            return (Some(notice.message.clone()), Some(notice.level));
+        }
         if let Some(tool_title) = self.runtime.active_tool_title.as_deref() {
-            return Some(tool_title.to_string());
+            return (Some(tool_title.to_string()), None);
         }
-        let live_label = self.runtime.live_label.as_deref()?.trim();
+        let Some(live_label) = self.runtime.live_label.as_deref() else {
+            return (None, None);
+        };
+        let live_label = live_label.trim();
         if live_label.is_empty() || live_label.eq_ignore_ascii_case("working") {
-            return None;
+            return (None, None);
         }
-        Some(live_label.to_string())
+        (Some(live_label.to_string()), None)
     }
 
     #[cfg(test)]
@@ -298,6 +313,11 @@ impl BottomPaneController {
     #[cfg(test)]
     pub(crate) fn active_tool_title_override_for_test(&mut self, title: Option<String>) {
         self.runtime.set_active_tool_title_for_test(title);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expire_transient_notice_for_test(&mut self) {
+        self.runtime.expire_transient_notice_for_test();
     }
 
     #[cfg(test)]
@@ -350,6 +370,8 @@ fn format_tokens(value: u64) -> String {
 #[cfg(test)]
 mod tests {
     use crate::app::TuiApp;
+    use crate::state::NoticeLevel;
+    use agent_protocol::FrontendMode;
     use std::path::PathBuf;
 
     fn test_app() -> TuiApp {
@@ -363,11 +385,16 @@ mod tests {
         )
     }
 
+    fn mark_running(app: &mut TuiApp) {
+        app.sync_frontend_mode(FrontendMode::Running);
+        app.bottom_pane.on_turn_started();
+    }
+
     #[test]
     fn active_tool_status_overrides_live_label() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 1;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane
             .live_label_override_for_test(Some("Working".to_string()));
         app.bottom_pane
@@ -391,7 +418,7 @@ mod tests {
     fn reconnect_live_label_animates_when_no_active_tool_or_notice() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 2;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane.live_label_override_for_test(Some(
             "reconnecting (stream retry 2, next in 1.0s)".to_string(),
         ));
@@ -414,7 +441,7 @@ mod tests {
     fn generic_live_label_hides_when_active_cell_is_visible() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 0;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane
             .live_label_override_for_test(Some("Thinking".to_string()));
         app.transcript_owner.push_live_cell(
@@ -435,7 +462,7 @@ mod tests {
     fn generic_live_label_does_not_render_external_banner_without_active_cell() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 0;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane
             .live_label_override_for_test(Some("Thinking".to_string()));
 
@@ -452,6 +479,7 @@ mod tests {
     #[test]
     fn working_without_runtime_does_not_show_elapsed_hint() {
         let mut app = test_app();
+        app.sync_frontend_mode(FrontendMode::Running);
         app.bottom_pane
             .live_label_override_for_test(Some("Working".to_string()));
 
@@ -466,7 +494,7 @@ mod tests {
     fn compaction_runtime_status_renders_as_live_banner_and_clears_cleanly() {
         let mut app = test_app();
         app.run_state.live_animation_frame = 3;
-        app.bottom_pane.on_turn_started();
+        mark_running(&mut app);
         app.bottom_pane.on_context_compaction_started(12_345);
 
         let during = app.bottom_pane.build_status_view_model(&app);
@@ -481,5 +509,35 @@ mod tests {
         let after = app.bottom_pane.build_status_view_model(&app);
         assert_eq!(after.text, "Working");
         assert_eq!(after.live_banner, None);
+    }
+
+    #[test]
+    fn transient_notice_renders_above_runtime_banner_and_expires() {
+        let mut app = test_app();
+        app.run_state.live_animation_frame = 1;
+        mark_running(&mut app);
+        app.bottom_pane
+            .active_tool_title_override_for_test(Some("running command: rg cli".to_string()));
+        app.bottom_pane.show_transient_notice(
+            NoticeLevel::Info,
+            "Deleted conversation `draft-1`".to_string(),
+        );
+
+        let during = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(
+            during.live_banner.as_deref(),
+            Some("Deleted conversation `draft-1`")
+        );
+        assert_eq!(during.live_banner_level, Some(NoticeLevel::Info));
+
+        app.bottom_pane.expire_transient_notice_for_test();
+        assert!(app.bottom_pane.handle_tick());
+
+        let after = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(
+            after.live_banner.as_deref(),
+            Some("running command: rg cli")
+        );
+        assert_eq!(after.live_banner_level, None);
     }
 }

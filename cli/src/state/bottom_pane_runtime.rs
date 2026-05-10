@@ -1,11 +1,22 @@
 use std::time::Instant;
 
+use crate::state::NoticeLevel;
 use agent_core::{ModelRetryStage, TurnItemKind};
+
+const TRANSIENT_NOTICE_TTL_SECS: u64 = 4;
+
+#[derive(Clone, Debug)]
+pub(crate) struct TransientNotice {
+    pub(crate) message: String,
+    pub(crate) level: NoticeLevel,
+    pub(crate) expires_at: Instant,
+}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BottomPaneRuntimeState {
     pub(crate) active_tool_title: Option<String>,
     pub(crate) live_label: Option<String>,
+    pub(crate) transient_notice: Option<TransientNotice>,
     pub(crate) turn_active: bool,
     pub(crate) turn_started_at: Option<Instant>,
 }
@@ -14,8 +25,29 @@ impl BottomPaneRuntimeState {
     pub(crate) fn reset(&mut self) {
         self.active_tool_title = None;
         self.live_label = None;
+        self.transient_notice = None;
         self.turn_active = false;
         self.turn_started_at = None;
+    }
+
+    pub(crate) fn handle_tick(&mut self) -> bool {
+        if self
+            .transient_notice
+            .as_ref()
+            .is_some_and(|notice| Instant::now() >= notice.expires_at)
+        {
+            self.transient_notice = None;
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn show_transient_notice(&mut self, level: NoticeLevel, message: String) {
+        self.transient_notice = Some(TransientNotice {
+            message,
+            level,
+            expires_at: Instant::now() + std::time::Duration::from_secs(TRANSIENT_NOTICE_TTL_SECS),
+        });
     }
 
     pub(crate) fn on_turn_started(&mut self) {
@@ -51,6 +83,24 @@ impl BottomPaneRuntimeState {
 
     pub(crate) fn on_turn_finished(&mut self) {
         self.reset();
+    }
+
+    pub(crate) fn sync_frontend_mode(&mut self, mode: agent_protocol::FrontendMode) {
+        match mode {
+            agent_protocol::FrontendMode::Idle => self.reset(),
+            agent_protocol::FrontendMode::Running => {
+                if !self.turn_active {
+                    self.turn_active = true;
+                    self.live_label.get_or_insert_with(|| "Working".to_string());
+                }
+            }
+            agent_protocol::FrontendMode::WaitingForServerRequest => {
+                if !self.turn_active {
+                    self.turn_active = true;
+                }
+                self.live_label.get_or_insert_with(|| "Working".to_string());
+            }
+        }
     }
 
     pub(crate) fn on_model_retrying(
@@ -110,6 +160,13 @@ impl BottomPaneRuntimeState {
     #[cfg(test)]
     pub(crate) fn set_active_tool_title_for_test(&mut self, title: Option<String>) {
         self.active_tool_title = title;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expire_transient_notice_for_test(&mut self) {
+        if let Some(notice) = self.transient_notice.as_mut() {
+            notice.expires_at = Instant::now();
+        }
     }
 }
 

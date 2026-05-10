@@ -8,7 +8,7 @@ use crate::app::effects::copy_text_to_clipboard;
 use crate::input::slash_command::slash_command_help_text;
 use crate::state::NoticeLevel;
 use crate::state::reducer::ServerAction;
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
+use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat};
 use agent_app_server_client::AppServerClient;
 use agent_core::{ServerRequestDecision, ServerRequestDecisionKind};
 use agent_protocol::{AppClientCommand, UserTurnInput};
@@ -16,7 +16,11 @@ use anyhow::Result;
 use config::AgentConfig;
 use std::fs;
 
-pub(crate) fn handle_tui_input(
+fn show_local_notice(app: &mut TuiApp, level: NoticeLevel, message: impl Into<String>) {
+    app.bottom_pane.show_transient_notice(level, message.into());
+}
+
+pub(crate) async fn handle_tui_input(
     app: &mut TuiApp,
     client: &AppServerClient,
     input: ParsedInput,
@@ -24,44 +28,28 @@ pub(crate) fn handle_tui_input(
     match input {
         ParsedInput::LocalCopy => {
             let Some(text) = app.transcript_owner.last_copyable_output() else {
-                app.push_live_cell(HistoryCell::info(
-                    "conversation",
+                show_local_notice(
+                    app,
+                    NoticeLevel::Warn,
                     "`/copy` unavailable before first assistant output",
-                    HistoryTone::Warning,
-                ));
+                );
                 return Ok(false);
             };
             match copy_text_to_clipboard(text) {
                 Ok(()) => {
-                    app.push_live_cell(HistoryCell::info(
-                        "conversation",
-                        "Copied latest assistant output",
-                        HistoryTone::Control,
-                    ));
+                    show_local_notice(app, NoticeLevel::Info, "Copied latest assistant output");
                 }
                 Err(err) => {
-                    app.push_live_cell(HistoryCell::info(
-                        "error",
-                        format!("failed to copy: {err}"),
-                        HistoryTone::Error,
-                    ));
+                    show_local_notice(app, NoticeLevel::Error, format!("failed to copy: {err}"));
                 }
             }
         }
         ParsedInput::LocalCopyText(text) => match copy_text_to_clipboard(&text) {
             Ok(()) => {
-                app.push_live_cell(HistoryCell::info(
-                    "conversation",
-                    "Copied selected input text",
-                    HistoryTone::Control,
-                ));
+                show_local_notice(app, NoticeLevel::Info, "Copied selected input text");
             }
             Err(err) => {
-                app.push_live_cell(HistoryCell::info(
-                    "error",
-                    format!("failed to copy: {err}"),
-                    HistoryTone::Error,
-                ));
+                show_local_notice(app, NoticeLevel::Error, format!("failed to copy: {err}"));
             }
         },
         ParsedInput::LocalHelp => {
@@ -72,11 +60,7 @@ pub(crate) fn handle_tui_input(
             ));
         }
         ParsedInput::LocalInputError(message) => {
-            app.push_live_cell(HistoryCell::info(
-                "conversation",
-                message,
-                HistoryTone::Warning,
-            ));
+            show_local_notice(app, NoticeLevel::Warn, message);
         }
         ParsedInput::LocalPermissionMode(mode) => {
             if mode.trim().is_empty() {
@@ -85,13 +69,13 @@ pub(crate) fn handle_tui_input(
                 return Ok(false);
             }
             if let Err(err) = apply_permission_mode(app, mode.trim()) {
-                app.push_live_cell(HistoryCell::info("conversation", err, HistoryTone::Warning));
+                show_local_notice(app, NoticeLevel::Warn, err);
             } else if let Err(err) = persist_cli_settings(app) {
-                app.push_live_cell(HistoryCell::info(
-                    "config",
+                show_local_notice(
+                    app,
+                    NoticeLevel::Warn,
                     format!("failed to persist permission mode: {err}"),
-                    HistoryTone::Warning,
-                ));
+                );
             }
             return Ok(false);
         }
@@ -107,19 +91,19 @@ pub(crate) fn handle_tui_input(
                 return Ok(false);
             }
             if base_url.trim().is_empty() || model.trim().is_empty() {
-                app.push_live_cell(HistoryCell::info(
-                    "config",
+                show_local_notice(
+                    app,
+                    NoticeLevel::Warn,
                     "Base URL and Model cannot be empty.",
-                    HistoryTone::Warning,
-                ));
+                );
                 return Ok(false);
             }
             save_user_llm_config(&api_key, &base_url, &model)?;
-            app.push_live_cell(HistoryCell::info(
-                "config",
+            show_local_notice(
+                app,
+                NoticeLevel::Info,
                 "Saved API Key / Base URL / Model to ~/.cloudagent/config.toml.",
-                HistoryTone::Control,
-            ));
+            );
             return Ok(false);
         }
         ParsedInput::LocalConversationCreate(new_conversation_id) => {
@@ -142,11 +126,7 @@ pub(crate) fn handle_tui_input(
             app.bottom_pane.clear_session_picker();
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
-                app.push_live_cell(HistoryCell::info(
-                    "conversation",
-                    "Usage: /session <session-id>",
-                    HistoryTone::Warning,
-                ));
+                show_local_notice(app, NoticeLevel::Warn, "Usage: /session <session-id>");
                 return Ok(false);
             }
             client.send_command(AppClientCommand::SwitchConversation {
@@ -156,11 +136,7 @@ pub(crate) fn handle_tui_input(
         ParsedInput::LocalConversationTitle(title) => {
             let trimmed = title.trim();
             if trimmed.is_empty() {
-                app.push_live_cell(HistoryCell::info(
-                    "conversation",
-                    "Usage: /title <text>",
-                    HistoryTone::Warning,
-                ));
+                show_local_notice(app, NoticeLevel::Warn, "Usage: /title <text>");
                 return Ok(false);
             }
             client.send_command(AppClientCommand::SetConversationTitle {
@@ -171,11 +147,7 @@ pub(crate) fn handle_tui_input(
         ParsedInput::LocalConversationArchive(target_conversation_id) => {
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
-                app.push_live_cell(HistoryCell::info(
-                    "conversation",
-                    "Usage: /archive <session-id>",
-                    HistoryTone::Warning,
-                ));
+                show_local_notice(app, NoticeLevel::Warn, "Usage: /archive <session-id>");
                 return Ok(false);
             }
             client.send_command(AppClientCommand::ArchiveConversation {
@@ -188,7 +160,11 @@ pub(crate) fn handle_tui_input(
                 app.bottom_pane.request_session_picker(
                     crate::ui::widgets::session_picker::SessionPickerMode::Delete,
                 );
-                client.send_command(AppClientCommand::ListConversations)?;
+                let response = client.request_conversation_list_typed().await?;
+                execute_server_action(
+                    app,
+                    ServerAction::SetConversationList(response.conversations),
+                );
                 return Ok(false);
             }
             client.send_command(AppClientCommand::DeleteConversation {
@@ -201,18 +177,14 @@ pub(crate) fn handle_tui_input(
                 return Ok(false);
             }
             if let Err(usage) = apply_filter_toggle(app, &raw_args) {
-                app.push_live_cell(HistoryCell::info(
-                    "conversation",
-                    usage,
-                    HistoryTone::Warning,
-                ));
+                show_local_notice(app, NoticeLevel::Warn, usage);
                 return Ok(false);
             } else if let Err(err) = persist_cli_settings(app) {
-                app.push_live_cell(HistoryCell::info(
-                    "config",
+                show_local_notice(
+                    app,
+                    NoticeLevel::Warn,
                     format!("failed to persist filter setting: {err}"),
-                    HistoryTone::Warning,
-                ));
+                );
             }
         }
         ParsedInput::Command(command) => {
@@ -227,20 +199,20 @@ pub(crate) fn handle_tui_input(
             }
 
             if matches!(command, AppClientCommand::SubmitTurn(_)) && !app.can_submit_turn() {
-                app.push_live_cell(HistoryCell::info(
-                    "conversation",
+                show_local_notice(
+                    app,
+                    NoticeLevel::Warn,
                     "turn already running; wait, answer the pending request, or interrupt first",
-                    HistoryTone::Warning,
-                ));
+                );
                 return Ok(false);
             }
 
             if let AppClientCommand::ResolveServerRequest { .. } = &command {
-                app.push_live_cell(HistoryCell::info(
-                    "request",
+                show_local_notice(
+                    app,
+                    NoticeLevel::Error,
                     "server requests must be answered through the active approval view",
-                    HistoryTone::Error,
-                ));
+                );
                 return Ok(false);
             }
             if let AppClientCommand::ResetConversation { .. } = &command {
@@ -252,26 +224,39 @@ pub(crate) fn handle_tui_input(
             if let AppClientCommand::SubmitTurn(UserTurnInput { content, .. }) = &command {
                 app.prepare_submitted_turn(content);
             }
-            client.send_command(command)?;
+            match command {
+                AppClientCommand::SubmitTurn(input) => client.submit_turn(input)?,
+                AppClientCommand::InterruptTurn { conversation_id } => {
+                    client.interrupt_turn(conversation_id)?
+                }
+                AppClientCommand::ListConversations => {
+                    let response = client.request_conversation_list_typed().await?;
+                    execute_server_action(
+                        app,
+                        ServerAction::SetConversationList(response.conversations),
+                    );
+                }
+                other => client.send_command(other)?,
+            }
         }
         ParsedInput::ServerRequestAnswer {
             request_id,
             decision,
             reason,
         } => {
-            app.push_live_cell(HistoryCell::info(
-                "request",
+            show_local_notice(
+                app,
+                NoticeLevel::Info,
                 format!("Request {}", decision_label(&decision)),
-                HistoryTone::Control,
-            ));
-            client.send_command(AppClientCommand::ResolveServerRequest {
-                conversation_id: app.conversation_id.clone(),
+            );
+            client.resolve_server_request(
+                app.conversation_id.clone(),
                 request_id,
-                decision: ServerRequestDecision {
+                ServerRequestDecision {
                     decision,
                     reason: Some(reason),
                 },
-            })?;
+            )?;
         }
     }
     Ok(false)
@@ -290,6 +275,9 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     match action {
         ServerAction::SetConversationList(conversations) => {
             app.handle_conversation_list(conversations);
+        }
+        ServerAction::SetFrontendMode(mode) => {
+            app.sync_frontend_mode(mode);
         }
         ServerAction::SwitchConversation(conversation_id) => {
             app.bottom_pane.clear_session_picker();
@@ -416,16 +404,12 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             if app.should_suppress_notice(&label, &message) {
                 return;
             }
-            let tone = match level {
-                NoticeLevel::Info => HistoryTone::Control,
-                NoticeLevel::Warn => HistoryTone::Warning,
-                NoticeLevel::Error => HistoryTone::Error,
-            };
-            app.push_live_cell(HistoryCell::info(label, message, tone));
+            app.bottom_pane.show_transient_notice(level, message);
         }
         ServerAction::PushErrorCell(message) => {
             app.bottom_pane.clear_views();
-            app.push_live_cell(HistoryCell::info("error", message, HistoryTone::Error));
+            app.bottom_pane
+                .show_transient_notice(NoticeLevel::Error, message);
         }
         ServerAction::TurnDispatch(dispatch) => {
             conversation_facade::apply_turn_dispatch(app, dispatch);
@@ -444,7 +428,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                     detail,
                 },
             );
-            app.push_live_cell(HistoryCell::info("request", notice, HistoryTone::Warning));
+            app.bottom_pane
+                .show_transient_notice(NoticeLevel::Warn, notice);
         }
     }
 }

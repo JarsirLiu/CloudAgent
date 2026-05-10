@@ -107,7 +107,7 @@ CloudAgent 不应只支持单一部署方式，而应支持两种运行模式：
 限制：
 
 - 无法天然支持统一节点列表
-- 无法天然支持 attach 到其他机器上的 thread
+- 无法天然支持 attach 到其他机器上的 conversation
 - 跨节点远程互传能力弱
 - 多平台适配要么在每个 node 上配置，要么只在某些 node 上启用
 
@@ -123,7 +123,7 @@ CloudAgent 不应只支持单一部署方式，而应支持两种运行模式：
 但它们通常不能统一解决：
 
 - 多节点服务发现
-- 某条 thread 当前位于哪个 node
+- 某个 conversation 当前位于哪个 node
 - 任意节点之间的文件中转
 - 跨节点 attach
 - 统一权限与审计
@@ -143,7 +143,7 @@ Hub 是系统的公网控制面与中转面。
 
 - 接收各端侧 node 的注册和心跳
 - 维护在线节点目录与能力信息
-- 维护 thread 到 node 的路由映射
+- 维护 conversation 到 node 的路由映射
 - 为 CLI / Web / IM 提供统一接入入口
 - 在客户端与目标 node 之间中转实时事件流
 - 承载远程文件与附件的中转能力
@@ -159,7 +159,7 @@ Node 是每个端侧的轻量常驻守护进程。
 
 - 启动后主动连接 Hub
 - 定期发送心跳
-- 上报本机能力、标签、版本、当前活跃 thread
+- 上报本机能力、标签、版本、当前活跃 conversation
 - 接收 Hub 下发的 attach / start / interrupt / file fetch 等请求
 - 维护本机 worker 生命周期
 - 在无活跃 worker 时按需拉起 worker
@@ -180,7 +180,7 @@ Worker 是真正执行 agent 会话的进程。
 职责：
 
 - 承载 `agent-runtime`
-- 执行 thread / turn / item 生命周期
+- 执行 conversation / turn / item 生命周期
 - 调用 tools
 - 写入本地持久化状态
 - 在被 attach 时恢复已有会话
@@ -209,7 +209,7 @@ CLI、Web、IM 都先接入 Hub，而不是直接接端侧 node。
 流程：
 
 - 客户端先向 Hub 查询在线节点
-- 客户端选择目标 node 或 thread
+- 客户端选择目标 node 或 conversation
 - Hub 将请求路由到目标 node
 - node attach 或拉起 worker
 - worker 事件流经 `worker -> node -> hub -> client` 返回
@@ -242,15 +242,15 @@ Node 与 Worker 建议先采用本机 IPC 通信。
 
 ## 会话模型
 
-建议沿用 Codex 风格的核心模型：
+建议沿用统一的核心会话模型：
 
-- `Thread`
+- `Conversation`
 - `Turn`
 - `Item`
 
 定义：
 
-- `Thread` 表示一个长期会话
+- `Conversation` 表示一个长期会话
 - `Turn` 表示一次用户输入到 agent 输出完成的执行轮次
 - `Item` 表示 turn 内部的消息、工具调用、审批请求、工具结果等事件
 
@@ -357,7 +357,7 @@ Node 与 Worker 建议先采用本机 IPC 通信。
 建议：
 
 - `cloudagent-node -> cloudagent-hub` 注册与心跳
-- Hub 维护在线节点与 thread 路由表
+- Hub 维护在线节点与 conversation 路由表
 - CLI / Web 通过 Hub attach 到目标会话
 
 ### Phase 4：跨节点中转与远程文件
@@ -403,7 +403,7 @@ Node 与 Worker 建议先采用本机 IPC 通信。
 2. Hub 优先承担控制面，不承担端侧私有工具逻辑
 3. node 必须轻量常驻，可低成本保持在线
 4. worker 必须按需拉起，可 attach / interrupt / recycle
-5. thread / turn / item 必须保持统一模型
+5. conversation / turn / item 必须保持统一模型
 6. Direct Mode 和 Hub Mode 必须共享同一套 runtime 与 gateway 抽象
 7. Hub Mode 和 Direct Mode 必须共享同一套会话协议
 

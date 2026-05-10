@@ -3,8 +3,11 @@ use agent_core::conversation::{ConversationSummary, ConversationTurn, Transcript
 use agent_core::turn::{TurnId, TurnItemKind};
 use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
 use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, RequestId,
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
+    RequestId,
 };
+
+const ERR_TRANSPORT_CLOSED_PREFIX: &str = "ERR_TRANSPORT_CLOSED:";
 
 #[derive(Debug, Clone)]
 pub(crate) enum TurnDispatch {
@@ -48,6 +51,7 @@ pub(crate) struct ServerMessageReduce {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ServerAction {
     SetConversationList(Vec<ConversationSummary>),
+    SetFrontendMode(FrontendMode),
     SwitchConversation(String),
     ClearCurrentTurnUsage,
     SetTokenUsage {
@@ -116,12 +120,20 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     let mut actions = Vec::new();
     match message {
         AppServerMessage::Notification(notification) => match notification {
-            AppServerNotification::FrontendStateChanged { .. } => {}
+            AppServerNotification::FrontendStateChanged { mode, .. } => {
+                actions.push(ServerAction::SetFrontendMode(*mode));
+            }
             AppServerNotification::TurnStarted { turn_id, .. } => {
                 actions.push(ServerAction::ClearCurrentTurnUsage);
                 actions.push(ServerAction::BindActiveTurn(turn_id.clone()));
             }
-            AppServerNotification::ConversationStatus { .. } => {}
+            AppServerNotification::ConversationStatus { snapshot, .. } => {
+                let mode = match snapshot.conversation_status {
+                    agent_core::ConversationStatus::Busy => FrontendMode::Running,
+                    agent_core::ConversationStatus::Idle => FrontendMode::Idle,
+                };
+                actions.push(ServerAction::SetFrontendMode(mode));
+            }
             AppServerNotification::ConversationHistory { turns, .. } => {
                 actions.push(ServerAction::ReplaceHistory(turns.clone()));
             }
@@ -265,7 +277,17 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 });
             }
             AppServerNotification::Error { message, .. } => {
-                actions.push(ServerAction::PushErrorCell(message.clone()));
+                if let Some(message) = transport_closed_message(message) {
+                    actions.push(ServerAction::ClearContextCompactionStatus);
+                    actions.push(ServerAction::ClearServerRequestStatus);
+                    actions.push(ServerAction::ClearServerRequestView);
+                    actions.push(ServerAction::ClearLastToolName);
+                    actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
+                        error: message,
+                    }));
+                } else {
+                    actions.push(ServerAction::PushErrorCell(message.clone()));
+                }
             }
             AppServerNotification::ServerRequestRequested { request, .. } => {
                 let _ = request;
@@ -368,6 +390,14 @@ fn summarize_args_preview(arguments_preview: &str) -> String {
     }
     out.push_str("… (truncated)");
     out
+}
+
+fn transport_closed_message(message: &str) -> Option<String> {
+    message
+        .strip_prefix(ERR_TRANSPORT_CLOSED_PREFIX)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(ToOwned::to_owned)
 }
 #[cfg(test)]
 mod tests {
@@ -530,5 +560,27 @@ mod tests {
             Some(ServerAction::SwitchConversation(conversation_id))
                 if conversation_id == "draft-1"
         ));
+    }
+
+    #[test]
+    fn transport_closed_error_finishes_active_turn() {
+        let message = AppServerMessage::Notification(AppServerNotification::Error {
+            conversation_id: "default".to_string(),
+            message: "ERR_TRANSPORT_CLOSED: worker app server closed unexpectedly".to_string(),
+        });
+
+        let reduced = apply_server_message(&message);
+
+        assert!(reduced.actions.iter().any(|action| matches!(
+            action,
+            ServerAction::TurnDispatch(TurnDispatch::Failed { error })
+                if error == "worker app server closed unexpectedly"
+        )));
+        assert!(
+            !reduced
+                .actions
+                .iter()
+                .any(|action| matches!(action, ServerAction::PushErrorCell(_)))
+        );
     }
 }

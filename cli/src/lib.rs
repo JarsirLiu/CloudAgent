@@ -7,4 +7,4 @@ mod text_width;
 pub mod transport;
 pub mod ui;
 
-pub use app::{ConsoleConfig, ConsoleConnection, run_console};
+pub use app::{AppServerTarget, ConsoleBootstrap, ConsoleConfig, run_console};

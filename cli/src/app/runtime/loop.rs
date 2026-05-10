@@ -21,7 +21,7 @@ pub(crate) async fn run_tui_event_loop(
                 RuntimeControl::Continue
             }
             Some(event) = events.recv() => {
-                controller.handle_ui_event(app, client, event, &frame_requester)?
+                controller.handle_ui_event(app, client, event, &frame_requester).await?
             }
             else => break,
         };

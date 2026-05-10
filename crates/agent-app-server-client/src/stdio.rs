@@ -1,16 +1,19 @@
-use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, forward_event};
+use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, TypedRequestError, forward_event};
 use agent_protocol::{
-    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcMessage, RequestId,
+    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcError,
+    JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId,
 };
 use anyhow::{Context, Result, anyhow};
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::io::{self, ErrorKind};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, timeout};
 
@@ -21,11 +24,33 @@ pub struct StdioClientConfig {
 }
 
 pub struct StdioAppServerClient {
-    command_tx: mpsc::UnboundedSender<AppClientCommand>,
+    command_tx: mpsc::UnboundedSender<StdioOutbound>,
     event_rx: mpsc::Receiver<AppServerEvent>,
     child: Arc<Mutex<Child>>,
     reader_task: JoinHandle<Result<()>>,
 }
+
+#[derive(Clone)]
+pub struct StdioAppServerRequestHandle {
+    command_tx: mpsc::UnboundedSender<StdioOutbound>,
+}
+
+enum StdioOutbound {
+    Command(AppClientCommand),
+    Request {
+        request: JsonRpcRequest,
+        response_tx: oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>,
+    },
+}
+
+enum JsonRpcResponseEnvelope {
+    Result(serde_json::Value),
+    Error(JsonRpcErrorPayload),
+}
+
+type PendingRequestSender = oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>;
+type PendingRequestMap = HashMap<RequestId, PendingRequestSender>;
+type SharedPendingRequests = Arc<Mutex<PendingRequestMap>>;
 
 impl StdioAppServerClient {
     pub async fn spawn(config: StdioClientConfig) -> Result<Self> {
@@ -52,9 +77,15 @@ impl StdioAppServerClient {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_CAPACITY);
         let request_counter = Arc::new(AtomicI64::new(1));
+        let pending_requests = Arc::new(Mutex::new(PendingRequestMap::new()));
 
-        tokio::spawn(write_commands(stdin, command_rx, request_counter));
-        let reader_task = tokio::spawn(read_events(stdout, event_tx));
+        tokio::spawn(write_commands(
+            stdin,
+            command_rx,
+            request_counter.clone(),
+            pending_requests.clone(),
+        ));
+        let reader_task = tokio::spawn(read_events(stdout, event_tx, pending_requests));
 
         Ok(Self {
             command_tx,
@@ -66,8 +97,21 @@ impl StdioAppServerClient {
 
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(command)
+            .send(StdioOutbound::Command(command))
             .map_err(|_| anyhow!("stdio app-server command channel is closed"))
+    }
+
+    pub fn request_handle(&self) -> StdioAppServerRequestHandle {
+        StdioAppServerRequestHandle {
+            command_tx: self.command_tx.clone(),
+        }
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request_handle().request_typed(request).await
     }
 
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
@@ -86,7 +130,7 @@ impl StdioAppServerClient {
             reader_task,
         } = self;
 
-        let _ = command_tx.send(AppClientCommand::Exit);
+        let _ = command_tx.send(StdioOutbound::Command(AppClientCommand::Exit));
         drop(command_tx);
 
         let mut child = child.lock().await;
@@ -101,31 +145,108 @@ impl StdioAppServerClient {
     }
 }
 
+impl StdioAppServerRequestHandle {
+    pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
+        self.command_tx
+            .send(StdioOutbound::Command(command))
+            .map_err(|_| anyhow!("stdio app-server command channel is closed"))
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        let method = request.method.clone();
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(StdioOutbound::Request {
+                request,
+                response_tx,
+            })
+            .map_err(|_| TypedRequestError::Transport {
+                method: method.clone(),
+                source: io::Error::new(
+                    ErrorKind::BrokenPipe,
+                    "stdio app-server command channel is closed",
+                ),
+            })?;
+
+        let response = response_rx
+            .await
+            .map_err(|_| TypedRequestError::Transport {
+                method: method.clone(),
+                source: io::Error::new(
+                    ErrorKind::BrokenPipe,
+                    "stdio app-server request channel is closed",
+                ),
+            })?
+            .map_err(|source| TypedRequestError::Transport {
+                method: method.clone(),
+                source,
+            })?;
+
+        let value = match response {
+            JsonRpcResponseEnvelope::Result(value) => value,
+            JsonRpcResponseEnvelope::Error(source) => {
+                return Err(TypedRequestError::Server { method, source });
+            }
+        };
+
+        serde_json::from_value(value)
+            .map_err(|source| TypedRequestError::Deserialize { method, source })
+    }
+}
+
 async fn write_commands(
     mut stdin: ChildStdin,
-    mut command_rx: mpsc::UnboundedReceiver<AppClientCommand>,
+    mut command_rx: mpsc::UnboundedReceiver<StdioOutbound>,
     request_counter: Arc<AtomicI64>,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()> {
-    write_commands_to(&mut stdin, &mut command_rx, request_counter).await
+    write_commands_to(
+        &mut stdin,
+        &mut command_rx,
+        request_counter,
+        pending_requests,
+    )
+    .await
 }
 
 async fn write_commands_to<W>(
     writer: &mut W,
-    command_rx: &mut mpsc::UnboundedReceiver<AppClientCommand>,
+    command_rx: &mut mpsc::UnboundedReceiver<StdioOutbound>,
     request_counter: Arc<AtomicI64>,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
 {
-    while let Some(command) = command_rx.recv().await {
-        let envelope = AppClientCommandEnvelope {
-            request_id: RequestId::Integer(request_counter.fetch_add(1, Ordering::Relaxed)),
-            command,
-        };
-        let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
-        writer.write_all(payload.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await?;
+    while let Some(outbound) = command_rx.recv().await {
+        match outbound {
+            StdioOutbound::Command(command) => {
+                let envelope = AppClientCommandEnvelope {
+                    request_id: RequestId::Integer(request_counter.fetch_add(1, Ordering::Relaxed)),
+                    command,
+                };
+                let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
+                writer.write_all(payload.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;
+            }
+            StdioOutbound::Request {
+                request,
+                response_tx,
+            } => {
+                pending_requests
+                    .lock()
+                    .await
+                    .insert(request.id.clone(), response_tx);
+                let payload = serde_json::to_string(&JsonRpcMessage::Request(request))?;
+                writer.write_all(payload.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;
+            }
+        }
     }
     Ok(())
 }
@@ -133,11 +254,34 @@ where
 async fn read_events(
     stdout: tokio::process::ChildStdout,
     event_tx: mpsc::Sender<AppServerEvent>,
+    pending_requests: SharedPendingRequests,
 ) -> Result<()> {
-    read_events_from(BufReader::new(stdout), event_tx).await
+    read_events_from(BufReader::new(stdout), event_tx, pending_requests).await
 }
 
-async fn read_events_from<R>(reader: R, event_tx: mpsc::Sender<AppServerEvent>) -> Result<()>
+async fn read_events_from<R>(
+    reader: R,
+    event_tx: mpsc::Sender<AppServerEvent>,
+    pending_requests: SharedPendingRequests,
+) -> Result<()>
+where
+    R: AsyncBufRead + Unpin,
+{
+    read_events_from_with_disconnect_message(
+        reader,
+        event_tx,
+        "stdio app server closed",
+        pending_requests,
+    )
+    .await
+}
+
+async fn read_events_from_with_disconnect_message<R>(
+    reader: R,
+    event_tx: mpsc::Sender<AppServerEvent>,
+    disconnect_message: &str,
+    pending_requests: SharedPendingRequests,
+) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
 {
@@ -148,6 +292,21 @@ where
     while let Some(line) = lines.next_line().await? {
         let message: JsonRpcMessage =
             serde_json::from_str(&line).context("failed to parse stdio app-server event")?;
+        match message {
+            JsonRpcMessage::Response(JsonRpcResponse { id, result }) => {
+                if let Some(response_tx) = pending_requests.lock().await.remove(&id) {
+                    let _ = response_tx.send(Ok(JsonRpcResponseEnvelope::Result(result)));
+                }
+                continue;
+            }
+            JsonRpcMessage::Error(JsonRpcError { id, error }) => {
+                if let Some(response_tx) = pending_requests.lock().await.remove(&id) {
+                    let _ = response_tx.send(Ok(JsonRpcResponseEnvelope::Error(error)));
+                }
+                continue;
+            }
+            JsonRpcMessage::Request(_) | JsonRpcMessage::Notification(_) => {}
+        }
         let envelope = AppServerMessageEnvelope::try_from(message)?;
         if let (Some(conversation_id), Some(event_seq)) =
             (envelope.message.conversation_id(), envelope.event_seq)
@@ -172,11 +331,20 @@ where
         }
     }
 
+    let mut pending = pending_requests.lock().await;
+    for (_, response_tx) in pending.drain() {
+        let _ = response_tx.send(Err(io::Error::new(
+            ErrorKind::BrokenPipe,
+            disconnect_message.to_string(),
+        )));
+    }
+    drop(pending);
+
     let _ = forward_event(
         &event_tx,
         &mut skipped_events,
         AppServerEvent::Disconnected {
-            message: "stdio app server closed".to_string(),
+            message: disconnect_message.to_string(),
         },
     )
     .await;
@@ -198,22 +366,25 @@ mod tests {
         let (mut write_side, read_side) = duplex(4096);
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
         let counter = Arc::new(AtomicI64::new(7));
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
 
         command_tx
-            .send(AppClientCommand::SubmitTurn(UserTurnInput {
-                conversation_id: "default".to_string(),
-                content: vec![agent_core::InputItem::Text {
-                    text: "hello".to_string(),
-                }],
-                turn_policy: TurnPolicy {
-                    permission_profile: PermissionProfile::ReadOnly,
-                    approval_policy: ApprovalPolicy::OnRequest,
+            .send(StdioOutbound::Command(AppClientCommand::SubmitTurn(
+                UserTurnInput {
+                    conversation_id: "default".to_string(),
+                    content: vec![agent_core::InputItem::Text {
+                        text: "hello".to_string(),
+                    }],
+                    turn_policy: TurnPolicy {
+                        permission_profile: PermissionProfile::ReadOnly,
+                        approval_policy: ApprovalPolicy::OnRequest,
+                    },
                 },
-            }))
+            )))
             .expect("queue command");
         drop(command_tx);
 
-        write_commands_to(&mut write_side, &mut command_rx, counter)
+        write_commands_to(&mut write_side, &mut command_rx, counter, pending_requests)
             .await
             .expect("write commands");
         drop(write_side);
@@ -278,8 +449,9 @@ mod tests {
                 .expect("write payload");
         });
         let (event_tx, mut event_rx) = mpsc::channel(8);
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
 
-        read_events_from(BufReader::new(read_side), event_tx)
+        read_events_from(BufReader::new(read_side), event_tx, pending_requests)
             .await
             .expect("read events");
         writer.await.expect("writer task");
@@ -348,8 +520,9 @@ mod tests {
                 .expect("write payload");
         });
         let (event_tx, mut event_rx) = mpsc::channel(8);
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
 
-        read_events_from(BufReader::new(read_side), event_tx)
+        read_events_from(BufReader::new(read_side), event_tx, pending_requests)
             .await
             .expect("read events");
         writer.await.expect("writer task");
@@ -364,5 +537,62 @@ mod tests {
             }
         }
         assert_eq!(messages, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn request_handle_reads_typed_jsonrpc_response() {
+        let (mut write_side, read_side) = duplex(4096);
+        let writer = tokio::spawn(async move {
+            let payload = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
+                id: RequestId::Integer(21),
+                result: serde_json::json!({ "conversations": [] }),
+            }))
+            .expect("response");
+            write_side
+                .write_all(format!("{payload}\n").as_bytes())
+                .await
+                .expect("write response");
+        });
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let reader_task = tokio::spawn(read_events_from(
+            BufReader::new(read_side),
+            event_tx,
+            pending_requests.clone(),
+        ));
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let (request_tx, request_rx) = oneshot::channel();
+        command_tx
+            .send(StdioOutbound::Request {
+                request: JsonRpcRequest {
+                    id: RequestId::Integer(21),
+                    method: "conversation/list".to_string(),
+                    params: None,
+                },
+                response_tx: request_tx,
+            })
+            .expect("queue request");
+        drop(command_tx);
+        let (mut sink, _unused_read_side) = duplex(4096);
+        write_commands_to(
+            &mut sink,
+            &mut command_rx,
+            Arc::new(AtomicI64::new(1)),
+            pending_requests,
+        )
+        .await
+        .expect("write request");
+        let response = request_rx
+            .await
+            .expect("response channel")
+            .expect("ok response");
+        match response {
+            JsonRpcResponseEnvelope::Result(value) => {
+                assert_eq!(value["conversations"], serde_json::json!([]));
+            }
+            JsonRpcResponseEnvelope::Error(error) => panic!("unexpected error: {error:?}"),
+        }
+        writer.await.expect("writer");
+        reader_task.await.expect("reader").expect("reader ok");
     }
 }

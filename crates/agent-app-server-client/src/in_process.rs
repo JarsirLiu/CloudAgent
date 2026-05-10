@@ -1,9 +1,11 @@
-use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, forward_event};
+use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, TypedRequestError, forward_event};
 use agent_app_server::{InProcessClientHandle, InProcessClientSender, start_in_process};
 use agent_core::AgentHost;
-use agent_protocol::AppClientCommand;
+use agent_protocol::{AppClientCommand, JsonRpcRequest};
 use anyhow::Result;
+use serde::de::DeserializeOwned;
 use std::sync::Arc;
+use std::{io, io::ErrorKind};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -22,11 +24,17 @@ pub struct InProcessAppServerClient {
     worker: JoinHandle<Result<()>>,
 }
 
+#[derive(Clone)]
+pub struct InProcessAppServerRequestHandle {
+    sender: InProcessClientSender,
+}
+
 impl InProcessAppServerClient {
     pub fn start(config: InProcessClientConfig) -> Self {
         let handle = start_in_process(
             config.runtime,
-            config.conversation_id,
+            Some(config.conversation_id),
+            false,
             config.auto_approve,
             config.auto_approve_reason,
         );
@@ -47,6 +55,19 @@ impl InProcessAppServerClient {
         self.sender.send_command(command)
     }
 
+    pub fn request_handle(&self) -> InProcessAppServerRequestHandle {
+        InProcessAppServerRequestHandle {
+            sender: self.sender.clone(),
+        }
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        self.request_handle().request_typed(request).await
+    }
+
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         self.event_rx.recv().await
     }
@@ -61,6 +82,25 @@ impl InProcessAppServerClient {
         }
         self.worker.await??;
         Ok(())
+    }
+}
+
+impl InProcessAppServerRequestHandle {
+    pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
+        self.sender.send_command(command)
+    }
+
+    pub async fn request_typed<T>(&self, request: JsonRpcRequest) -> Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        Err(TypedRequestError::Transport {
+            method: request.method,
+            source: io::Error::new(
+                ErrorKind::Unsupported,
+                "typed requests are not implemented for the in-process client yet",
+            ),
+        })
     }
 }
 

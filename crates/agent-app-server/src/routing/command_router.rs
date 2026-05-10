@@ -6,7 +6,7 @@ use crate::session::subscriptions::ConversationSubscriptions;
 use crate::turn::service as turn_service;
 use agent_core::AgentHost;
 use agent_core::ConversationTurn;
-use agent_core::{ServerRequest, ServerRequestDecision};
+use agent_core::{ServerRequest, ServerRequestDecision, TurnState};
 use agent_protocol::{AppClientCommand, AppServerMessage};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 
 pub(crate) struct ServerState {
     active_conversation_id: String,
+    emit_all_conversations: bool,
     subscriptions: ConversationSubscriptions,
     server_requests: ServerRequestCoordinator,
     turn_tasks_by_conversation: HashMap<String, Vec<JoinHandle<()>>>,
@@ -25,9 +26,10 @@ pub(crate) struct ServerState {
 }
 
 impl ServerState {
-    pub(crate) fn new(default_conversation_id: String) -> Self {
+    pub(crate) fn new(default_conversation_id: String, emit_all_conversations: bool) -> Self {
         Self {
             active_conversation_id: default_conversation_id.clone(),
+            emit_all_conversations,
             subscriptions: ConversationSubscriptions::new(default_conversation_id),
             server_requests: ServerRequestCoordinator::new(),
             turn_tasks_by_conversation: HashMap::new(),
@@ -84,12 +86,26 @@ impl ServerState {
         &self.active_conversation_id
     }
 
+    pub(crate) fn tracks_active_conversation(&self) -> bool {
+        !self.emit_all_conversations
+    }
+
     pub(crate) fn switch_active_conversation(&mut self, conversation_id: String) {
-        self.active_conversation_id = conversation_id;
+        if self.tracks_active_conversation() {
+            self.active_conversation_id = conversation_id;
+        }
+    }
+
+    pub(crate) fn notification_anchor_conversation_id<'a>(&'a self, fallback: &'a str) -> &'a str {
+        if self.tracks_active_conversation() {
+            self.active_conversation_id()
+        } else {
+            fallback
+        }
     }
 
     pub(crate) fn is_subscribed(&self, conversation_id: &str) -> bool {
-        self.subscriptions.is_subscribed(conversation_id)
+        self.emit_all_conversations || self.subscriptions.is_subscribed(conversation_id)
     }
 
     pub(crate) fn subscribe(&mut self, conversation_id: String) {
@@ -255,6 +271,10 @@ pub(crate) async fn handle_command(
         AppClientCommand::ListConversations => {
             session_service::list_conversations(&runtime, event_tx, &state).await?;
         }
+        AppClientCommand::ListOnlineNodes => {
+            session_service::report_hub_mode_only_command(event_tx, &state, "ListOnlineNodes")
+                .await;
+        }
         AppClientCommand::CreateConversation { conversation_id } => {
             session_service::create_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
@@ -275,6 +295,10 @@ pub(crate) async fn handle_command(
         AppClientCommand::SwitchConversation { conversation_id } => {
             session_service::switch_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;
+        }
+        AppClientCommand::SelectTargetNode { .. } => {
+            session_service::report_hub_mode_only_command(event_tx, &state, "SelectTargetNode")
+                .await;
         }
         AppClientCommand::ArchiveConversation { conversation_id } => {
             session_service::archive_conversation(&runtime, event_tx, &state, conversation_id)
@@ -332,7 +356,30 @@ pub(crate) fn merge_active_turn(
         return;
     };
     if let Some(existing) = turns.iter_mut().find(|turn| turn.id == active_turn.id) {
-        *existing = active_turn;
+        let mut merged_items = existing.items.clone();
+        for active_item in active_turn.items {
+            if let Some(index) = merged_items
+                .iter()
+                .position(|existing_item| existing_item.id() == active_item.id())
+            {
+                merged_items[index] = active_item;
+            } else {
+                merged_items.push(active_item);
+            }
+        }
+        existing.items = merged_items;
+        existing.rollout_start_index = existing
+            .rollout_start_index
+            .min(active_turn.rollout_start_index);
+        existing.rollout_end_index = existing
+            .rollout_end_index
+            .max(active_turn.rollout_end_index);
+        if !matches!(
+            existing.state,
+            TurnState::Completed | TurnState::Failed | TurnState::Cancelled
+        ) {
+            existing.state = active_turn.state;
+        }
     } else {
         turns.push(active_turn);
     }
@@ -341,19 +388,53 @@ pub(crate) fn merge_active_turn(
 #[cfg(test)]
 mod tests {
     use super::merge_active_turn;
+    use crate::routing::command_router::ServerState;
     use agent_core::{ConversationTurn, TranscriptItem, TurnState};
 
     #[test]
-    fn active_turn_snapshot_replaces_matching_rollout_turn() {
-        let mut turns = vec![turn("turn-1", "old")];
+    fn active_turn_snapshot_merges_matching_rollout_turn_without_dropping_existing_items() {
+        let mut turns = vec![ConversationTurn {
+            id: "turn-1".to_string(),
+            state: TurnState::Completed,
+            items: vec![
+                TranscriptItem::Reasoning {
+                    id: "reasoning:1".to_string(),
+                    title: "Reasoning".to_string(),
+                    text: "thinking".to_string(),
+                },
+                TranscriptItem::AgentMessage {
+                    id: "assistant:1".to_string(),
+                    text: "final answer".to_string(),
+                },
+            ],
+            rollout_start_index: 1,
+            rollout_end_index: 4,
+        }];
 
-        merge_active_turn(&mut turns, Some(turn("turn-1", "live")));
+        merge_active_turn(
+            &mut turns,
+            Some(ConversationTurn {
+                id: "turn-1".to_string(),
+                state: TurnState::Running,
+                items: vec![TranscriptItem::Reasoning {
+                    id: "reasoning:1".to_string(),
+                    title: "Reasoning".to_string(),
+                    text: "thinking".to_string(),
+                }],
+                rollout_start_index: 1,
+                rollout_end_index: 3,
+            }),
+        );
 
         assert_eq!(turns.len(), 1);
         assert!(matches!(
             &turns[0].items[..],
-            [TranscriptItem::AgentMessage { text, .. }] if text == "live"
+            [
+                TranscriptItem::Reasoning { .. },
+                TranscriptItem::AgentMessage { text, .. }
+            ] if text == "final answer"
         ));
+        assert!(matches!(turns[0].state, TurnState::Completed));
     }
 
     #[test]
@@ -377,5 +458,18 @@ mod tests {
             rollout_start_index: 0,
             rollout_end_index: 0,
         }
+    }
+
+    #[test]
+    fn shared_worker_state_uses_fallback_notification_anchor() {
+        let mut state = ServerState::new("default".to_string(), true);
+        state.switch_active_conversation("conversation-1".to_string());
+
+        assert!(!state.tracks_active_conversation());
+        assert_eq!(state.active_conversation_id(), "default");
+        assert_eq!(
+            state.notification_anchor_conversation_id("conversation-1"),
+            "conversation-1"
+        );
     }
 }
