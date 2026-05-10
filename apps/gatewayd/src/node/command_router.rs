@@ -437,13 +437,25 @@ mod tests {
         RequestId,
     };
     use std::ffi::OsString;
+    use std::path::PathBuf;
     use tokio::sync::broadcast;
+
+    fn test_worker_manager() -> WorkerManager {
+        let root = std::env::temp_dir().join(format!(
+            "cloudagent-gatewayd-tests-{}",
+            std::process::id()
+        ));
+        WorkerManager::new(
+            OsString::from("agentd.exe"),
+            Some(PathBuf::from(root).into_os_string()),
+        )
+    }
 
     #[test]
     fn list_conversations_routes_to_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+            let runtime = NodeRuntime::new(test_worker_manager());
             let mut session = NodeSessionState::new("conversation-1");
             assert_eq!(
                 target_conversation_id(
@@ -461,7 +473,7 @@ mod tests {
     fn switch_conversation_updates_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+            let runtime = NodeRuntime::new(test_worker_manager());
             let mut session = NodeSessionState::new("conversation-1");
             let command = AppClientCommand::SwitchConversation {
                 conversation_id: "conversation-2".to_string(),
@@ -480,7 +492,7 @@ mod tests {
     fn list_conversations_uses_node_shared_registry() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+            let runtime = NodeRuntime::new(test_worker_manager());
             {
                 let mut registry = runtime.conversations().lock().await;
                 registry.touch("conversation-1");
@@ -517,7 +529,7 @@ mod tests {
     fn empty_registry_still_returns_a_typed_conversation_list_result() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+            let runtime = NodeRuntime::new(test_worker_manager());
             let response = read_conversation_list(&runtime, "conversation-1").await;
             assert!(response.is_ok());
         });
@@ -583,7 +595,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_session_subscription_replaces_stale_receiver() {
-        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+        let runtime = NodeRuntime::new(test_worker_manager());
         let mut session = NodeSessionState::new("conversation-1");
         let (_, stale_rx) = broadcast::channel::<NodeEvent>(1);
         *session.active_subscription_mut() = Some(stale_rx);

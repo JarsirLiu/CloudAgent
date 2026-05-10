@@ -274,7 +274,19 @@ mod tests {
         TransportInitializeParams,
     };
     use std::ffi::OsString;
+    use std::path::PathBuf;
     use tokio::io::{AsyncBufReadExt, BufReader, duplex};
+
+    fn test_worker_manager() -> WorkerManager {
+        let root = std::env::temp_dir().join(format!(
+            "cloudagent-gatewayd-tests-{}",
+            std::process::id()
+        ));
+        WorkerManager::new(
+            OsString::from("agentd.exe"),
+            Some(PathBuf::from(root).into_os_string()),
+        )
+    }
 
     #[test]
     fn parses_serve_flag_values() {
@@ -302,7 +314,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_business_requests_before_initialize() {
-        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+        let runtime = NodeRuntime::new(test_worker_manager());
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
         let request = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
@@ -330,7 +342,7 @@ mod tests {
 
     #[tokio::test]
     async fn initialize_then_initialized_marks_session_ready() {
-        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+        let runtime = NodeRuntime::new(test_worker_manager());
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
         let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
@@ -381,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn unsupported_request_after_initialize_returns_jsonrpc_error() {
-        let runtime = NodeRuntime::new(WorkerManager::new(OsString::from("agentd.exe"), None));
+        let runtime = NodeRuntime::new(test_worker_manager());
         let mut session = NodeSessionState::new("default");
         let (mut writer, reader) = duplex(4096);
 
