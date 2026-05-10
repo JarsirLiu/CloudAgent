@@ -13,6 +13,13 @@
 
 本文档替代“只讨论 node/worker 分层，不约束 client/transport 形状”的旧理解。
 
+本文档同时吸收并替代此前单独存在的 `codex-transport-alignment-remediation.zh-CN.md`。
+
+也就是说：
+
+- 传输层的长期约束以本文档为准
+- 不再维护一份平行的“对齐整改清单”
+
 本文档默认参考以下实现基线：
 
 - [D:\\learn\\AIbac\\JiangFang\\codex\\codex-rs\\app-server-client\\src\\lib.rs](/D:/learn/AIbac/JiangFang/codex/codex-rs/app-server-client/src/lib.rs:1)
@@ -126,7 +133,9 @@ CloudAgent 不要求目录和名字逐字复制 Codex，但传输层原则必须
 - `agent-protocol` 已定义 `AppClientCommand`、`AppServerMessage`
 - `agent-app-server` 已具备 worker 对外协议边界
 - `gatewayd` 已具备 resident node、conversation registry、worker reuse、idle recycle 基础
-- `cli` 已开始 target 化，并通过 `agent-app-server-client` 消费事件
+- `gatewayd` 已具备 remote transport 握手与 typed request/response 基础
+- `cli` 已完成 target 化，并通过 `agent-app-server-client` 消费事件
+- `local-node` 已收敛为 target/deployment 语义，CLI 连接本地 node 已通过统一 `Remote` client 进行
 
 关键文件：
 
@@ -140,14 +149,11 @@ CloudAgent 不要求目录和名字逐字复制 Codex，但传输层原则必须
 
 ## 当前差距
 
-当前实现距离本文档目标，最核心的差距有 6 个：
+当前实现距离本文档目标，剩余的核心差距主要有 3 个：
 
-1. `LocalNode` 仍是独立 client variant，而不是统一 `Remote`
-2. `gatewayd` 对外仍偏 node 私有协议，而不是正式 remote app-server host
-3. `request_handle` 已开始存在，但 `request_typed` 还未完整建立
-4. CLI 仍主要围绕命令流思考，而不是稳定 request/response 面
-5. `Direct Mode` 的平台 adapter 边界还未正式落入统一 remote surface
-6. `Hub Mode` 只有 target 和协议预留，没有正式 remote routing host
+1. `Direct Mode` 的平台 adapter 仍未完全收敛到统一 `AppServerClient` surface，`agent-gateway` 侧还有继续长出一层 direct 专用 client contract 的风险
+2. `Hub Mode` 只有 target、typed request 预留和错误语义，还没有正式的 `hubd`、在线节点目录与 target node 路由闭环
+3. `Web/App/IM` adapter 仍未作为正式产品入口落到同一套 remote surface 上
 
 ## 术语约定
 
@@ -167,6 +173,7 @@ CloudAgent 不要求目录和名字逐字复制 Codex，但传输层原则必须
 - `conversation` 不是 `session`
 - `local-node` 是 target/deployment 概念，不是长期 client 协议名
 - `hub-node` 是 routing target 概念，不是长期 client 协议名
+- `local-node` 与 `hub-node` 不能重新长成第二套 client surface 名词
 
 ## 数据根约定
 
@@ -192,6 +199,11 @@ CloudAgent 不要求目录和名字逐字复制 Codex，但传输层原则必须
 
 - `conversation_store_dir`
 - `memory.root_dir`
+
+明确不允许：
+
+- 让日志、会话、memory 隐式跟随启动目录漂移
+- 让不同 surface 各自定义不同的数据根默认语义
 
 ## 目标分层
 
@@ -233,6 +245,7 @@ pub enum AppServerClient {
 - `LocalNode` 不应成为长期 `AppServerClient` variant
 - `Hub` 也不应成为长期 `AppServerClient` variant
 - `local-node` 与 `hub-node` 只影响 target 与连接参数，不应分裂 client 协议
+- `Direct Mode` adapter 也不应定义长期独立的 node client surface；它可以封装统一 client，但不能重新发明一层并行协议
 
 ### 3. App-Server Host
 
@@ -268,6 +281,27 @@ pub enum AppServerClient {
 - `request_conversation_status`
 - `list_online_nodes`
 - 后续 hub 所需的 target/select/read 能力
+
+补充强约束：
+
+- `conversation/list`
+- `conversation/status`
+- `conversation/history`
+- `conversation/historyPage`
+
+这四类能力的初始化读取与显式读取必须走 typed request/response。
+
+同名 notification 只保留以下职责：
+
+- 增量同步
+- 重连后的状态投影视图刷新
+- node 内部 registry / UI projection 的更新来源
+
+明确不允许：
+
+- typed request 成功后，再向同一 client 回放同名 notification 当初始化面
+- CLI/UI 把同名 notification 当首屏 bootstrap 主来源
+- 让同一能力同时承担“读取面”和“事件面”，形成双源语义
 
 ### 必须具备的 command/notification 能力
 
@@ -453,6 +487,7 @@ pub enum AppServerClient {
 - adapter 不直连 core
 - adapter 不发明新协议
 - adapter 通过 `gatewayd` 的正式 remote app-server host 与 worker 交互
+- adapter 可以有平台侧 message/outbound 抽象，但 node/client 边界必须复用统一 `AppServerClient` 或其等价 facade，而不是长期保留 direct 专用 node client contract
 
 ### Phase 6：实现 Hub Mode host
 

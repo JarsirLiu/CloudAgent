@@ -1,9 +1,9 @@
 use crate::GatewayOutbound;
 use crate::adapter::GatewayAdapter;
 use crate::direct::{app_server_message_to_outbound, gateway_message_to_command};
-use agent_protocol::{AppClientCommand, AppServerMessage, TurnPolicy};
+use agent_app_server_client::{AppServerClient, AppServerEvent};
+use agent_protocol::{AppServerMessage, TurnPolicy};
 use anyhow::Result;
-use async_trait::async_trait;
 
 #[derive(Clone, Debug)]
 pub enum DirectNodeEvent {
@@ -18,11 +18,20 @@ pub enum DirectNodeEvent {
     },
 }
 
-#[async_trait]
-pub trait DirectNodeClient: Send {
-    async fn send_command(&mut self, command: AppClientCommand) -> Result<()>;
-
-    async fn next_event(&mut self) -> Result<Option<DirectNodeEvent>>;
+impl From<AppServerEvent> for DirectNodeEvent {
+    fn from(event: AppServerEvent) -> Self {
+        match event {
+            AppServerEvent::Message(message) => Self::Message(Box::new(message)),
+            AppServerEvent::Lagged { skipped } => Self::Lagged {
+                conversation_id: None,
+                skipped,
+            },
+            AppServerEvent::Disconnected { message } => Self::Disconnected {
+                conversation_id: None,
+                message,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,18 +41,18 @@ pub enum PumpStatus {
     NodeClosed,
 }
 
-pub struct DirectGatewaySession<A, C> {
+pub struct DirectGatewaySession<A> {
     adapter: A,
-    node_client: C,
+    node_client: Option<AppServerClient>,
     turn_policy: TurnPolicy,
     active_conversation_id: Option<String>,
 }
 
-impl<A, C> DirectGatewaySession<A, C> {
-    pub fn new(adapter: A, node_client: C, turn_policy: TurnPolicy) -> Self {
+impl<A> DirectGatewaySession<A> {
+    pub fn new(adapter: A, node_client: AppServerClient, turn_policy: TurnPolicy) -> Self {
         Self {
             adapter,
-            node_client,
+            node_client: Some(node_client),
             turn_policy,
             active_conversation_id: None,
         }
@@ -57,35 +66,32 @@ impl<A, C> DirectGatewaySession<A, C> {
         &mut self.adapter
     }
 
-    pub fn node_client(&self) -> &C {
-        &self.node_client
+    pub fn node_client(&self) -> &AppServerClient {
+        self.node_client
+            .as_ref()
+            .expect("direct gateway session node client is not configured")
     }
 
-    pub fn node_client_mut(&mut self) -> &mut C {
-        &mut self.node_client
+    pub fn node_client_mut(&mut self) -> &mut AppServerClient {
+        self.node_client
+            .as_mut()
+            .expect("direct gateway session node client is not configured")
+    }
+
+    async fn next_node_event(&mut self) -> Result<Option<DirectNodeEvent>> {
+        Ok(self
+            .node_client_mut()
+            .next_event()
+            .await
+            .map(DirectNodeEvent::from))
     }
 }
 
-impl<A, C> DirectGatewaySession<A, C>
+impl<A> DirectGatewaySession<A>
 where
     A: GatewayAdapter,
-    C: DirectNodeClient,
 {
-    pub async fn pump_adapter_once(&mut self) -> Result<PumpStatus> {
-        let Some(message) = self.adapter.next_message().await? else {
-            return Ok(PumpStatus::AdapterClosed);
-        };
-        let command = gateway_message_to_command(message, self.turn_policy.clone());
-        self.active_conversation_id = command.conversation_id().map(ToOwned::to_owned);
-        self.node_client.send_command(command).await?;
-        Ok(PumpStatus::Active)
-    }
-
-    pub async fn pump_node_once(&mut self) -> Result<PumpStatus> {
-        let Some(event) = self.node_client.next_event().await? else {
-            return Ok(PumpStatus::NodeClosed);
-        };
-
+    async fn handle_node_event(&mut self, event: DirectNodeEvent) -> Result<PumpStatus> {
         match event {
             DirectNodeEvent::Message(message) => {
                 if let Some(conversation_id) = message.conversation_id() {
@@ -126,17 +132,34 @@ where
             }
         }
     }
+
+    pub async fn pump_adapter_once(&mut self) -> Result<PumpStatus> {
+        let Some(message) = self.adapter.next_message().await? else {
+            return Ok(PumpStatus::AdapterClosed);
+        };
+        let command = gateway_message_to_command(message, self.turn_policy.clone());
+        self.active_conversation_id = command.conversation_id().map(ToOwned::to_owned);
+        self.node_client()
+            .send_command(command)?;
+        Ok(PumpStatus::Active)
+    }
+
+    pub async fn pump_node_once(&mut self) -> Result<PumpStatus> {
+        let Some(event) = self.next_node_event().await? else {
+            return Ok(PumpStatus::NodeClosed);
+        };
+        self.handle_node_event(event).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectGatewaySession, DirectNodeClient, DirectNodeEvent, PumpStatus};
+    use super::{DirectGatewaySession, DirectNodeEvent, PumpStatus};
     use crate::adapter::GatewayAdapter;
     use crate::{GatewayMessage, GatewayOutbound};
-    use agent_core::{ApprovalPolicy, InputItem, PermissionProfile};
-    use agent_protocol::{
-        AppClientCommand, AppServerMessage, AppServerNotification, TurnPolicy, UserTurnInput,
-    };
+    use agent_app_server_client::AppServerEvent;
+    use agent_core::{ApprovalPolicy, PermissionProfile};
+    use agent_protocol::{AppServerMessage, AppServerNotification, TurnPolicy};
     use anyhow::Result;
     use async_trait::async_trait;
     use std::collections::VecDeque;
@@ -158,23 +181,6 @@ mod tests {
         }
     }
 
-    struct FakeNodeClient {
-        sent_commands: Vec<AppClientCommand>,
-        events: VecDeque<DirectNodeEvent>,
-    }
-
-    #[async_trait]
-    impl DirectNodeClient for FakeNodeClient {
-        async fn send_command(&mut self, command: AppClientCommand) -> Result<()> {
-            self.sent_commands.push(command);
-            Ok(())
-        }
-
-        async fn next_event(&mut self) -> Result<Option<DirectNodeEvent>> {
-            Ok(self.events.pop_front())
-        }
-    }
-
     fn turn_policy() -> TurnPolicy {
         TurnPolicy {
             permission_profile: PermissionProfile::ReadOnly,
@@ -182,66 +188,40 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn adapter_messages_are_forwarded_to_node_client() {
-        let adapter = FakeAdapter {
-            inbound: VecDeque::from([GatewayMessage::new(
-                "conversation-1",
-                "sender-1",
-                vec![InputItem::Text {
-                    text: "hello".to_string(),
-                }],
-            )]),
-            outbound: Vec::new(),
-        };
-        let node_client = FakeNodeClient {
-            sent_commands: Vec::new(),
-            events: VecDeque::new(),
-        };
-        let mut session = DirectGatewaySession::new(adapter, node_client, turn_policy());
+    fn disconnected_event(message: &str) -> DirectNodeEvent {
+        DirectNodeEvent::from(AppServerEvent::Disconnected {
+            message: message.to_string(),
+        })
+    }
 
-        let status = session.pump_adapter_once().await.expect("pump inbound");
-
-        assert_eq!(status, PumpStatus::Active);
-        assert_eq!(session.node_client().sent_commands.len(), 1);
-        match &session.node_client().sent_commands[0] {
-            AppClientCommand::SubmitTurn(UserTurnInput {
+    #[test]
+    fn app_server_disconnect_maps_to_direct_disconnect() {
+        match disconnected_event("node closed") {
+            DirectNodeEvent::Disconnected {
                 conversation_id,
-                content,
-                ..
-            }) => {
-                assert_eq!(conversation_id, "conversation-1");
-                assert_eq!(
-                    content,
-                    &vec![InputItem::Text {
-                        text: "hello".to_string()
-                    }]
-                );
+                message,
+            } => {
+                assert!(conversation_id.is_none());
+                assert_eq!(message, "node closed");
             }
-            other => panic!("unexpected command: {other:?}"),
+            other => panic!("unexpected direct node event: {other:?}"),
         }
     }
 
     #[tokio::test]
     async fn node_messages_are_forwarded_to_adapter() {
-        let adapter = FakeAdapter {
-            inbound: VecDeque::new(),
-            outbound: Vec::new(),
-        };
-        let node_client = FakeNodeClient {
-            sent_commands: Vec::new(),
-            events: VecDeque::from([DirectNodeEvent::Message(Box::new(
+        let mut session = test_session();
+        let status = session
+            .handle_node_event_for_test(DirectNodeEvent::Message(Box::new(
                 AppServerMessage::Notification(AppServerNotification::AgentMessageDelta {
                     conversation_id: "conversation-1".to_string(),
                     turn_id: "turn-1".to_string(),
                     item_id: "assistant:1".to_string(),
                     delta: "hello".to_string(),
                 }),
-            ))]),
-        };
-        let mut session = DirectGatewaySession::new(adapter, node_client, turn_policy());
-
-        let status = session.pump_node_once().await.expect("pump outbound");
+            )))
+            .await
+            .expect("pump outbound");
 
         assert_eq!(status, PumpStatus::Active);
         assert_eq!(session.adapter().outbound.len(), 1);
@@ -258,21 +238,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lagged_events_are_forwarded_to_adapter() {
+        let mut session = test_session();
+        let status = session
+            .handle_node_event_for_test(DirectNodeEvent::Lagged {
+                conversation_id: None,
+                skipped: 3,
+            })
+            .await
+            .expect("pump lagged");
+
+        assert_eq!(status, PumpStatus::Active);
+        match &session.adapter().outbound[0] {
+            GatewayOutbound::Info {
+                conversation_id,
+                message,
+            } => {
+                assert_eq!(conversation_id, "");
+                assert!(message.contains("lagged by 3 events"));
+            }
+            other => panic!("unexpected outbound: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn node_disconnect_surfaces_error_and_closes_session() {
-        let adapter = FakeAdapter {
-            inbound: VecDeque::new(),
-            outbound: Vec::new(),
-        };
-        let node_client = FakeNodeClient {
-            sent_commands: Vec::new(),
-            events: VecDeque::from([DirectNodeEvent::Disconnected {
+        let mut session = test_session();
+        let status = session
+            .handle_node_event_for_test(DirectNodeEvent::Disconnected {
                 conversation_id: Some("conversation-1".to_string()),
                 message: "node closed".to_string(),
-            }]),
-        };
-        let mut session = DirectGatewaySession::new(adapter, node_client, turn_policy());
-
-        let status = session.pump_node_once().await.expect("pump disconnect");
+            })
+            .await
+            .expect("pump disconnect");
 
         assert_eq!(status, PumpStatus::NodeClosed);
         assert_eq!(session.adapter().outbound.len(), 1);
@@ -285,6 +283,26 @@ mod tests {
                 assert_eq!(message, "node closed");
             }
             other => panic!("unexpected outbound: {other:?}"),
+        }
+    }
+
+    fn test_session() -> TestDirectGatewaySession {
+        DirectGatewaySession {
+            adapter: FakeAdapter {
+                inbound: VecDeque::new(),
+                outbound: Vec::new(),
+            },
+            node_client: None,
+            turn_policy: turn_policy(),
+            active_conversation_id: None,
+        }
+    }
+
+    type TestDirectGatewaySession = DirectGatewaySession<FakeAdapter>;
+
+    impl TestDirectGatewaySession {
+        async fn handle_node_event_for_test(&mut self, event: DirectNodeEvent) -> Result<PumpStatus> {
+            self.handle_node_event(event).await
         }
     }
 }
