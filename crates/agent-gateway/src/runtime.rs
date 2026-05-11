@@ -51,6 +51,8 @@ impl MessageHandler for GatewayRuntime {
         let target = OutboundTarget {
             conversation_id: session_key.clone(),
             chat_id: message.chat_id.clone(),
+            chat_type: message.chat_type.clone(),
+            is_reply_chain: message.thread_id.is_some(),
             reply_context: message.reply_context.clone(),
         };
         info!(

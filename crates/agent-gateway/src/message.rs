@@ -18,6 +18,7 @@ pub struct InboundMessage {
 pub struct OutboundMessage {
     pub chat_id: String,
     pub text: String,
+    pub is_group_context: bool,
     pub reply_context: Option<ReplyContext>,
 }
 

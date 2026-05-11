@@ -85,6 +85,14 @@ fn normalize_content(
 }
 
 fn mentions_bot(mentions: &[FeishuMention], bot: &FeishuBotIdentity) -> bool {
+    if mentions.is_empty() {
+        return false;
+    }
+
+    if bot.open_id.trim().is_empty() && bot.name.trim().is_empty() {
+        return true;
+    }
+
     mentions.iter().any(|mention| {
         let open_id_matches = mention
             .id

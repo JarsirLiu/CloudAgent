@@ -36,6 +36,7 @@ pub struct FeishuConfigFile {
     pub encrypt_key: Option<String>,
     pub base_url: Option<String>,
     pub group_only_mentioned: Option<bool>,
+    pub group_reply_without_mention: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -45,6 +46,7 @@ struct FeishuPlatformFile {
     pub verification_token: Option<String>,
     pub encrypt_key: Option<String>,
     pub base_url: Option<String>,
+    pub group_reply_without_mention: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -71,6 +73,7 @@ pub struct FeishuConfig {
     pub encrypt_key: Option<String>,
     pub base_url: String,
     pub group_only_mentioned: bool,
+    pub group_reply_without_mention: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +138,13 @@ pub fn load_gateway_config(explicit_path: Option<&Path>) -> Result<GatewayConfig
         group_only_mentioned: env_bool(
             "FEISHU_GROUP_ONLY_MENTIONED",
             file.feishu.group_only_mentioned,
+            true,
+        ),
+        group_reply_without_mention: env_bool(
+            "FEISHU_GROUP_REPLY_WITHOUT_MENTION",
+            file.feishu
+                .group_reply_without_mention
+                .or(platform_feishu.group_reply_without_mention),
             true,
         ),
     };

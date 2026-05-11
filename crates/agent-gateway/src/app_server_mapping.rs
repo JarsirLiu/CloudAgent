@@ -67,6 +67,38 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
                 target: target.clone(),
             }])
         }
+        AppServerNotification::TurnFailed {
+            conversation_id,
+            turn_id,
+            error,
+        } => {
+            info!(
+                conversation_id = %conversation_id,
+                turn_id = %turn_id,
+                error_preview = %preview(error, 120),
+                "gateway.runtime.event.turn_failed"
+            );
+            EventFlow::Completed(vec![GatewayOutbound::Error {
+                target: target.clone(),
+                message: error.clone(),
+            }])
+        }
+        AppServerNotification::TurnCancelled {
+            conversation_id,
+            turn_id,
+            reason,
+        } => {
+            info!(
+                conversation_id = %conversation_id,
+                turn_id = %turn_id,
+                reason_preview = %preview(reason, 120),
+                "gateway.runtime.event.turn_cancelled"
+            );
+            EventFlow::Completed(vec![GatewayOutbound::Info {
+                target: target.clone(),
+                message: format!("本轮已取消: {reason}"),
+            }])
+        }
         AppServerNotification::ItemCompleted {
             conversation_id,
             turn_id,
@@ -97,21 +129,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
         | AppServerNotification::ReasoningTextDelta { delta, .. } => {
             progress_outbound(target, GatewayProgressKind::Reasoning, delta, true, false)
         }
-        AppServerNotification::ItemCompleted {
-            conversation_id,
-            turn_id,
-            call_id,
-            item,
-        } => {
-            info!(
-                conversation_id = %conversation_id,
-                turn_id = %turn_id,
-                call_id = ?call_id,
-                item_kind = %transcript_item_kind(item),
-                "gateway.runtime.event.item_completed"
-            );
-            completed_item_to_outbound(target, item)
-        }
+        AppServerNotification::ItemCompleted { item, .. } => completed_item_to_outbound(target, item),
         AppServerNotification::CommandExecutionOutputDelta { delta, .. }
         | AppServerNotification::ToolOutputDelta { delta, .. }
         | AppServerNotification::FileChangeOutputDelta { delta, .. } => {
@@ -290,18 +308,6 @@ fn format_reasoning_summary(title: &str, text: &str) -> String {
     format!("{title}: {text}")
 }
 
-fn transcript_item_kind(item: &TranscriptItem) -> &'static str {
-    match item {
-        TranscriptItem::UserMessage { .. } => "user_message",
-        TranscriptItem::AgentMessage { .. } => "agent_message",
-        TranscriptItem::Reasoning { .. } => "reasoning",
-        TranscriptItem::ToolResult { .. } => "tool_result",
-        TranscriptItem::CommandExecution { .. } => "command_execution",
-        TranscriptItem::FileChange { .. } => "file_change",
-        TranscriptItem::SystemMessage { .. } => "system_message",
-    }
-}
-
 fn preview(text: &str, max_chars: usize) -> String {
     let mut out = String::new();
     for (idx, ch) in text.chars().enumerate() {
@@ -312,4 +318,54 @@ fn preview(text: &str, max_chars: usize) -> String {
         out.push(ch);
     }
     out.replace('\n', "\\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EventFlow, map_app_server_event};
+    use crate::gateway_outbound::OutboundTarget;
+    use agent_app_server_client::AppServerEvent;
+    use agent_protocol::{AppServerMessage, AppServerNotification};
+
+    fn target() -> OutboundTarget {
+        OutboundTarget {
+            conversation_id: "agent:main:feishu:dm:oc_1".to_string(),
+            chat_id: "oc_1".to_string(),
+            chat_type: Some("p2p".to_string()),
+            is_reply_chain: false,
+            reply_context: None,
+        }
+    }
+
+    #[test]
+    fn turn_failed_completes_with_error() {
+        let event = AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::TurnFailed {
+                conversation_id: "agent:main:feishu:dm:oc_1".to_string(),
+                turn_id: "turn-1".to_string(),
+                error: "boom".to_string(),
+            },
+        ));
+
+        match map_app_server_event(&target(), event) {
+            EventFlow::Completed(outbounds) => assert_eq!(outbounds.len(), 1),
+            EventFlow::Continue(_) => panic!("turn failed should complete"),
+        }
+    }
+
+    #[test]
+    fn turn_cancelled_completes_with_info() {
+        let event = AppServerEvent::Message(AppServerMessage::Notification(
+            AppServerNotification::TurnCancelled {
+                conversation_id: "agent:main:feishu:dm:oc_1".to_string(),
+                turn_id: "turn-1".to_string(),
+                reason: "cancelled".to_string(),
+            },
+        ));
+
+        match map_app_server_event(&target(), event) {
+            EventFlow::Completed(outbounds) => assert_eq!(outbounds.len(), 1),
+            EventFlow::Continue(_) => panic!("turn cancelled should complete"),
+        }
+    }
 }

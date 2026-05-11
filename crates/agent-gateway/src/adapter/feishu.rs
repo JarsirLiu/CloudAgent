@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, timeout};
-use tracing::info;
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Default)]
 pub struct FeishuAdapterConfig {
@@ -33,6 +33,7 @@ pub struct FeishuAdapterConfig {
     pub thread_isolation: bool,
     pub reply_to_trigger: bool,
     pub group_only_mentioned: bool,
+    pub group_reply_without_mention: bool,
 }
 
 impl FeishuAdapterConfig {
@@ -78,6 +79,7 @@ pub fn spawn_runtime(
                 config.domain
             },
             group_only_mentioned: config.group_only_mentioned,
+            group_reply_without_mention: config.group_reply_without_mention,
         },
         llm: LlmConfig {
             base_url: String::new(),
@@ -281,6 +283,8 @@ impl MessageHandler for NodeBackedHandler {
                 target: OutboundTarget {
                     conversation_id: session_key,
                     chat_id: message.chat_id.clone(),
+                    chat_type: message.chat_type.clone(),
+                    is_reply_chain: message.thread_id.is_some(),
                     reply_context: message.reply_context.clone(),
                 },
                 message: format!(
@@ -297,6 +301,8 @@ impl MessageHandler for NodeBackedHandler {
         let target = OutboundTarget {
             conversation_id: session_key.clone(),
             chat_id: message.chat_id.clone(),
+            chat_type: message.chat_type.clone(),
+            is_reply_chain: message.thread_id.is_some(),
             reply_context: message.reply_context.clone(),
         };
         info!(
@@ -374,7 +380,7 @@ impl MessageHandler for NodeBackedHandler {
                 }
             };
             if event_conversation_id(&event) != Some(session_key.as_str()) {
-                info!(
+                debug!(
                     session_key = %session_key,
                     event_conversation_id = ?event_conversation_id(&event),
                     "gateway.platform_runtime.event.skipped_foreign_conversation"
@@ -386,7 +392,7 @@ impl MessageHandler for NodeBackedHandler {
                 if let Some(event_turn_id) = event_turn_id
                     && event_turn_id != bound_turn_id
                 {
-                    info!(
+                    debug!(
                         session_key = %session_key,
                         active_turn_id = %bound_turn_id,
                         event_turn_id = %event_turn_id,
@@ -408,7 +414,7 @@ impl MessageHandler for NodeBackedHandler {
                         "gateway.platform_runtime.turn.bound"
                     );
                 } else {
-                    info!(
+                    debug!(
                         session_key = %session_key,
                         event_turn_id = %event_turn_id,
                         "gateway.platform_runtime.event.skipped_until_turn_start"

@@ -4,6 +4,8 @@ use crate::message::ReplyContext;
 pub struct OutboundTarget {
     pub conversation_id: String,
     pub chat_id: String,
+    pub chat_type: Option<String>,
+    pub is_reply_chain: bool,
     pub reply_context: Option<ReplyContext>,
 }
 

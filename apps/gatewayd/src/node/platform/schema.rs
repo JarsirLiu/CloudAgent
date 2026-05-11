@@ -57,6 +57,9 @@ pub(crate) fn build_feishu_config(
         enable_cards: optional_bool_value(&values, "enable_cards").unwrap_or(true),
         thread_isolation: optional_bool_value(&values, "thread_isolation").unwrap_or(true),
         reply_to_trigger: optional_bool_value(&values, "reply_to_trigger").unwrap_or(true),
+        group_only_mentioned: optional_bool_value(&values, "group_only_mentioned").unwrap_or(true),
+        group_reply_without_mention: optional_bool_value(&values, "group_reply_without_mention")
+            .unwrap_or(true),
         ..Default::default()
     })
 }
@@ -81,26 +84,6 @@ pub(crate) fn specs_for(platform: &str) -> &'static [PlatformFieldSpec] {
                 key: "app_secret",
                 required: true,
                 secret: true,
-            },
-            PlatformFieldSpec {
-                key: "domain",
-                required: false,
-                secret: false,
-            },
-            PlatformFieldSpec {
-                key: "enable_cards",
-                required: false,
-                secret: false,
-            },
-            PlatformFieldSpec {
-                key: "thread_isolation",
-                required: false,
-                secret: false,
-            },
-            PlatformFieldSpec {
-                key: "reply_to_trigger",
-                required: false,
-                secret: false,
             },
         ],
         "wecom" => &[
@@ -171,6 +154,10 @@ fn env_name(platform: &str, key: &str) -> Option<&'static str> {
         ("feishu", "enable_cards") => Some("CLOUDAGENT_FEISHU_ENABLE_CARDS"),
         ("feishu", "thread_isolation") => Some("CLOUDAGENT_FEISHU_THREAD_ISOLATION"),
         ("feishu", "reply_to_trigger") => Some("CLOUDAGENT_FEISHU_REPLY_TO_TRIGGER"),
+        ("feishu", "group_only_mentioned") => Some("CLOUDAGENT_FEISHU_GROUP_ONLY_MENTIONED"),
+        ("feishu", "group_reply_without_mention") => {
+            Some("CLOUDAGENT_FEISHU_GROUP_REPLY_WITHOUT_MENTION")
+        }
         ("wecom", "bot_id") => Some("CLOUDAGENT_WECOM_BOT_ID"),
         ("wecom", "bot_secret") => Some("CLOUDAGENT_WECOM_BOT_SECRET"),
         _ => None,
@@ -215,6 +202,11 @@ mod tests {
         platform_values.insert("enable_cards".to_string(), "false".to_string());
         platform_values.insert("thread_isolation".to_string(), "false".to_string());
         platform_values.insert("reply_to_trigger".to_string(), "false".to_string());
+        platform_values.insert("group_only_mentioned".to_string(), "false".to_string());
+        platform_values.insert(
+            "group_reply_without_mention".to_string(),
+            "false".to_string(),
+        );
 
         let mut platforms = BTreeMap::new();
         platforms.insert("feishu".to_string(), platform_values);
@@ -228,5 +220,7 @@ mod tests {
         assert!(!config.enable_cards);
         assert!(!config.thread_isolation);
         assert!(!config.reply_to_trigger);
+        assert!(!config.group_only_mentioned);
+        assert!(!config.group_reply_without_mention);
     }
 }

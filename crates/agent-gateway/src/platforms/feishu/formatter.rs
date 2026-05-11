@@ -9,14 +9,17 @@ pub struct FormattedOutboundChunk {
     pub preview_text: String,
 }
 
-pub fn format_text_chunks(text: &str) -> Vec<FormattedOutboundChunk> {
+pub fn format_text_chunks(text: &str, is_group_context: bool) -> Vec<FormattedOutboundChunk> {
     let normalized = text.replace("\r\n", "\n");
-    if prefers_text_mode(&normalized) {
-        let plain_text = if contains_markdown_table(&normalized) {
+    if prefers_text_mode(&normalized, is_group_context) {
+        let mut plain_text = if contains_markdown_table(&normalized) {
             strip_markdown_to_plain_text(&convert_markdown_tables_to_plain_text(&normalized))
         } else {
             strip_markdown_to_plain_text(&normalized)
         };
+        if is_group_context {
+            plain_text = optimize_group_plain_text(&plain_text);
+        }
         return split_plain_text(&plain_text)
             .into_iter()
             .map(|chunk| FormattedOutboundChunk {
@@ -27,7 +30,7 @@ pub fn format_text_chunks(text: &str) -> Vec<FormattedOutboundChunk> {
             .collect();
     }
 
-    if prefers_post_mode(&normalized) {
+    if prefers_post_mode(&normalized, is_group_context) {
         let post_markdown = normalize_markdown_for_post(&normalized);
         return split_post_chunks(&post_markdown)
             .into_iter()
@@ -49,9 +52,13 @@ pub fn format_text_chunks(text: &str) -> Vec<FormattedOutboundChunk> {
         .collect()
 }
 
-fn prefers_post_mode(text: &str) -> bool {
+fn prefers_post_mode(text: &str, is_group_context: bool) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() || contains_markdown_table(trimmed) {
+        return false;
+    }
+
+    if is_group_context && prefers_group_text_mode(trimmed) {
         return false;
     }
 
@@ -69,9 +76,43 @@ fn prefers_post_mode(text: &str) -> bool {
         || (trimmed.contains('[') && trimmed.contains("]("))
 }
 
-fn prefers_text_mode(text: &str) -> bool {
+fn prefers_text_mode(text: &str, is_group_context: bool) -> bool {
     let trimmed = text.trim();
-    trimmed.is_empty() || contains_markdown_table(trimmed) || prefers_plain_text_fallback(trimmed)
+    trimmed.is_empty()
+        || contains_markdown_table(trimmed)
+        || prefers_plain_text_fallback(trimmed)
+        || (is_group_context && prefers_group_text_mode(trimmed))
+}
+
+fn prefers_group_text_mode(text: &str) -> bool {
+    let line_count = text.lines().count();
+    let has_numbered_section = text.lines().any(|line| is_numbered_section_line(line));
+    let has_bulleted_summary = text.lines().any(|line| {
+        split_bulleted_summary_line(line.trim()).is_some()
+    });
+    let heading_count = text
+        .lines()
+        .filter(|line| heading_prefix_len(line.trim_start()).is_some())
+        .count();
+    let list_count = text
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            line.starts_with("- ") || line.starts_with("* ") || has_ordered_list_prefix(line)
+        })
+        .count();
+    let code_fence_count = text.matches("```").count();
+    let link_count = text.matches("](").count();
+
+    text.chars().count() >= 260
+        || line_count >= 8
+        || heading_count >= 2
+        || list_count >= 4
+        || code_fence_count >= 2
+        || link_count >= 2
+        || (heading_count >= 1 && line_count >= 3)
+        || has_numbered_section
+        || has_bulleted_summary
 }
 
 fn contains_markdown_table(text: &str) -> bool {
@@ -175,8 +216,115 @@ fn has_ordered_list_prefix(line: &str) -> bool {
     false
 }
 
+fn is_heading_like_line(line: &str) -> bool {
+    let char_count = line.chars().count();
+    char_count <= 20
+        && !line.starts_with('•')
+        && !has_ordered_list_prefix(line)
+        && !line.contains('：')
+        && !line.contains(':')
+}
+
+fn trim_heading_punctuation(text: &str) -> &str {
+    text.trim_matches(|ch: char| ch.is_whitespace() || matches!(ch, '：' | ':' | '-' | '—'))
+}
+
+fn split_summary_line(line: &str) -> Option<(&str, &str)> {
+    if let Some((label, value)) = line.split_once('：')
+        && label.chars().count() <= 14
+    {
+        return Some((label.trim(), value.trim()));
+    }
+    if let Some((label, value)) = line.split_once(':')
+        && label.chars().count() <= 18
+    {
+        return Some((label.trim(), value.trim()));
+    }
+    None
+}
+
+fn split_bulleted_summary_line(line: &str) -> Option<(String, String)> {
+    let (prefix, remainder) = if let Some(rest) = line.strip_prefix("• ") {
+        ("• ", rest)
+    } else {
+        return None;
+    };
+
+    let (label, value) = split_summary_line(remainder)?;
+    if value.is_empty() {
+        return None;
+    }
+
+    Some((format!("{prefix}{label}"), value.to_string()))
+}
+
+fn is_numbered_section_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    let char_count = trimmed.chars().count();
+    if char_count == 0 || char_count > 80 {
+        return false;
+    }
+
+    let starts_with_numeric_prefix = trimmed
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_digit())
+        || trimmed.starts_with("1️⃣")
+        || trimmed.starts_with("2️⃣")
+        || trimmed.starts_with("3️⃣")
+        || trimmed.starts_with("4️⃣")
+        || trimmed.starts_with("5️⃣")
+        || trimmed.starts_with("6️⃣")
+        || trimmed.starts_with("7️⃣")
+        || trimmed.starts_with("8️⃣")
+        || trimmed.starts_with("9️⃣")
+        || trimmed.starts_with("🔟");
+
+    starts_with_numeric_prefix
+        && (trimmed.contains('—')
+            || trimmed.contains('-')
+            || trimmed.contains('：')
+            || trimmed.contains(':'))
+}
+
 fn split_plain_text(text: &str) -> Vec<String> {
     split_by_limit(text, TEXT_CHUNK_LIMIT)
+}
+
+fn optimize_group_plain_text(text: &str) -> String {
+    let mut lines = Vec::new();
+    let mut previous_blank = false;
+
+    for raw_line in text.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
+            if !previous_blank {
+                lines.push(String::new());
+            }
+            previous_blank = true;
+            continue;
+        }
+
+        previous_blank = false;
+        let normalized = if is_heading_like_line(trimmed) {
+            format!("【{}】", trim_heading_punctuation(trimmed))
+        } else if is_numbered_section_line(trimmed) {
+            format!("【{}】", trim_heading_punctuation(trimmed))
+        } else if let Some((label, value)) = split_bulleted_summary_line(trimmed) {
+            format!("{label}\n  {value}")
+        } else if let Some((label, value)) = split_summary_line(trimmed) {
+            if value.is_empty() {
+                label.to_string()
+            } else {
+                format!("{label}\n{value}")
+            }
+        } else {
+            trimmed.to_string()
+        };
+        lines.push(normalized);
+    }
+
+    collapse_blank_lines(lines.join("\n").trim())
 }
 
 fn split_post_chunks(text: &str) -> Vec<String> {
@@ -254,7 +402,19 @@ fn prefers_plain_text_fallback(text: &str) -> bool {
         .lines()
         .filter(|line| heading_prefix_len(line.trim_start()).is_some())
         .count();
-    code_block_count >= 4 || quote_line_count >= 5 || heading_count >= 8
+    let list_line_count = text
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            line.starts_with("- ") || line.starts_with("* ") || has_ordered_list_prefix(line)
+        })
+        .count();
+    code_block_count >= 4
+        || quote_line_count >= 5
+        || heading_count >= 8
+        || list_line_count >= 8
+        || (heading_count >= 2 && list_line_count >= 4)
+        || (text.chars().count() >= 900 && (heading_count >= 2 || list_line_count >= 6))
 }
 
 fn strip_markdown_to_plain_text(text: &str) -> String {
@@ -526,21 +686,21 @@ mod tests {
 
     #[test]
     fn plain_text_uses_text_mode() {
-        let chunks = format_text_chunks("hello world");
+        let chunks = format_text_chunks("hello world", false);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].msg_type, "text");
     }
 
     #[test]
     fn markdown_list_uses_post_mode() {
-        let chunks = format_text_chunks("- a\n- b");
+        let chunks = format_text_chunks("- a\n- b", false);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].msg_type, "post");
     }
 
     #[test]
     fn markdown_table_falls_back_to_text_mode() {
-        let chunks = format_text_chunks("| a |\n| - |\n| b |");
+        let chunks = format_text_chunks("| a |\n| - |\n| b |", false);
         assert_eq!(chunks[0].msg_type, "text");
     }
 
@@ -548,6 +708,7 @@ mod tests {
     fn markdown_table_is_rewritten_for_mobile_readability() {
         let chunks = format_text_chunks(
             "| 提交哈希 | 提交信息 |\n| --- | --- |\n| `abc` | hello |\n| `def` | world |",
+            false,
         );
         let rendered = chunks[0]
             .content
@@ -562,6 +723,7 @@ mod tests {
     fn text_mode_strips_inline_markdown_noise() {
         let chunks = format_text_chunks(
             "| 项目 | 说明 |\n| --- | --- |\n| [文档](https://example.com) | **重点** |",
+            false,
         );
         let rendered = chunks[0]
             .content
@@ -577,6 +739,7 @@ mod tests {
     fn dense_markdown_prefers_plain_text_fallback() {
         let chunks = format_text_chunks(
             "```rs\nfn a(){}\n```\n```rs\nfn b(){}\n```\n```rs\nfn c(){}\n```\n```rs\nfn d(){}\n```",
+            false,
         );
         assert_eq!(chunks[0].msg_type, "text");
     }
@@ -585,13 +748,17 @@ mod tests {
     fn long_structured_report_prefers_text_mode() {
         let chunks = format_text_chunks(
             "## 最近 3 条 Git 改动\n\n### 1️⃣ 第一项\n- **方向**：统一平台\n- **说明**：这是一个很长的结构化总结，用来测试飞书手机端阅读体验是否优先回退为纯文本。\n\n### 2️⃣ 第二项\n- **方向**：长连接接入\n- **说明**：继续补充多段内容，确保超过结构化回退阈值。",
+            false,
         );
-        assert_eq!(chunks[0].msg_type, "post");
+        assert_eq!(chunks[0].msg_type, "text");
+        let payload = chunks[0].content.to_string();
+        assert!(payload.contains("最近 3 条 Git 改动"));
+        assert!(payload.contains("• 方向：统一平台"));
     }
 
     #[test]
     fn text_mode_strips_heading_prefix_and_keeps_list_readable() {
-        let chunks = format_text_chunks("## 标题\n- **重点**：说明");
+        let chunks = format_text_chunks("## 标题\n- **重点**：说明", false);
         assert_eq!(chunks[0].msg_type, "post");
         let payload = chunks[0].content.to_string();
         assert!(payload.contains("**标题**"));
@@ -601,11 +768,61 @@ mod tests {
 
     #[test]
     fn post_mode_demotes_heading_markers_to_bold_lines() {
-        let chunks = format_text_chunks("## 总体方向\n###2️⃣ 第二项");
+        let chunks = format_text_chunks("## 总体方向\n###2️⃣ 第二项", false);
         assert_eq!(chunks[0].msg_type, "post");
         let payload = chunks[0].content.to_string();
         assert!(payload.contains("**总体方向**"));
         assert!(payload.contains("**2️⃣ 第二项**"));
         assert!(!payload.contains("## 总体方向"));
+    }
+
+    #[test]
+    fn group_context_prefers_text_for_structured_markdown() {
+        let chunks = format_text_chunks(
+            "## 最近 3 条 Git 改动\n\n### 1️⃣ 第一项\n- **方向**：统一平台\n- **说明**：较长结构化总结。\n\n### 2️⃣ 第二项\n- **方向**：长连接接入\n- **说明**：继续补充多段内容。",
+            true,
+        );
+        assert_eq!(chunks[0].msg_type, "text");
+    }
+
+    #[test]
+    fn group_text_mode_optimizes_headings_and_summary_lines() {
+        let chunks = format_text_chunks(
+            "## 总体方向\n方向：统一网关平台\n说明：继续优化群聊阅读体验",
+            true,
+        );
+        let rendered = chunks[0]
+            .content
+            .get("text")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(rendered.contains("【总体方向】"));
+        assert!(rendered.contains("方向\n统一网关平台"));
+        assert!(rendered.contains("说明\n继续优化群聊阅读体验"));
+    }
+
+    #[test]
+    fn group_text_mode_turns_numbered_sections_into_compact_headings() {
+        let chunks = format_text_chunks(
+            "1️⃣ ff39d6a — WIP: unify gateway platform integration",
+            true,
+        );
+        let rendered = chunks[0]
+            .content
+            .get("text")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(rendered.contains("【1️⃣ ff39d6a — WIP: unify gateway platform integration】"));
+    }
+
+    #[test]
+    fn group_text_mode_splits_bulleted_summary_lines() {
+        let chunks = format_text_chunks("• 方向：统一网关平台", true);
+        let rendered = chunks[0]
+            .content
+            .get("text")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(rendered.contains("• 方向\n  统一网关平台"));
     }
 }

@@ -28,6 +28,7 @@ use super::render::FeishuOutboundRenderer;
 use super::types::{FeishuBotIdentity, FeishuMessageEnvelope};
 
 const SEEN_EVENT_LIMIT: usize = 2048;
+const BOT_MESSAGE_TRACK_LIMIT: usize = 1024;
 
 type CardActionCallback =
     dyn Fn(CardAction) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync;
@@ -45,6 +46,7 @@ pub struct FeishuAdapter {
     options: FeishuAdapterOptions,
     seen_events: Arc<Mutex<SeenEvents>>,
     seen_events_path: PathBuf,
+    bot_messages: Arc<Mutex<TrackedBotMessages>>,
     bot_identity: Arc<Mutex<FeishuBotIdentity>>,
     renderer: Arc<Mutex<FeishuOutboundRenderer>>,
     http: reqwest::Client,
@@ -75,6 +77,7 @@ impl FeishuAdapter {
             options,
             seen_events: Arc::new(Mutex::new(seen_events)),
             seen_events_path,
+            bot_messages: Arc::new(Mutex::new(TrackedBotMessages::default())),
             bot_identity: Arc::new(Mutex::new(FeishuBotIdentity::default())),
             renderer: Arc::new(Mutex::new(FeishuOutboundRenderer::default())),
             http,
@@ -85,6 +88,10 @@ impl FeishuAdapter {
         info!("feishu.bot_identity.start");
         match fetch_bot_identity(&self.http, &self.gateway_config).await {
             Ok(identity) => {
+                if identity.open_id.trim().is_empty() && identity.name.trim().is_empty() {
+                    error!("feishu.bot_identity.empty");
+                    return;
+                }
                 info!(
                     bot_open_id = %identity.open_id,
                     bot_name = %identity.name,
@@ -144,6 +151,8 @@ impl FeishuAdapter {
             &envelope,
             &bot_identity,
             self.gateway_config.feishu.group_only_mentioned,
+            self.gateway_config.feishu.group_reply_without_mention,
+            self.replied_to_known_bot_message(&envelope).await,
         );
         match admission {
             AdmissionDecision::Admitted => {
@@ -273,6 +282,7 @@ impl PlatformAdapter for FeishuAdapter {
             app_id = %self.gateway_config.feishu.app_id,
             base_url = %self.gateway_config.feishu.base_url,
             group_only_mentioned = self.gateway_config.feishu.group_only_mentioned,
+            group_reply_without_mention = self.gateway_config.feishu.group_reply_without_mention,
             enable_cards = self.options.enable_cards,
             "feishu.websocket.start"
         );
@@ -309,7 +319,6 @@ impl PlatformAdapter for FeishuAdapter {
         if rendered.is_empty() {
             return Ok(());
         }
-        info!(rendered_count = rendered.len(), "feishu.outbound.rendered");
         for message in rendered {
             info!(
                 chat_id = %message.chat_id,
@@ -317,9 +326,31 @@ impl PlatformAdapter for FeishuAdapter {
                 text_preview = %preview(&message.text, 120),
                 "feishu.outbound.rendered.message"
             );
-            send_message(&self.client, message).await?;
+            let sent_message_ids = send_message(&self.client, message).await?;
+            if !sent_message_ids.is_empty() {
+                let mut tracked = self.bot_messages.lock().await;
+                for message_id in sent_message_ids {
+                    tracked.insert(message_id);
+                }
+            }
         }
         Ok(())
+    }
+}
+
+impl FeishuAdapter {
+    async fn replied_to_known_bot_message(&self, envelope: &FeishuMessageEnvelope) -> bool {
+        let tracked = self.bot_messages.lock().await;
+        envelope
+            .message
+            .parent_id
+            .as_deref()
+            .is_some_and(|id| tracked.contains(id))
+            || envelope
+                .message
+                .root_id
+                .as_deref()
+                .is_some_and(|id| tracked.contains(id))
     }
 }
 
@@ -327,6 +358,31 @@ impl PlatformAdapter for FeishuAdapter {
 struct SeenEvents {
     order: VecDeque<String>,
     set: HashSet<String>,
+}
+
+#[derive(Default)]
+struct TrackedBotMessages {
+    order: VecDeque<String>,
+    set: HashSet<String>,
+}
+
+impl TrackedBotMessages {
+    fn insert(&mut self, message_id: String) {
+        if self.set.contains(&message_id) {
+            return;
+        }
+        self.set.insert(message_id.clone());
+        self.order.push_back(message_id);
+        while self.order.len() > BOT_MESSAGE_TRACK_LIMIT {
+            if let Some(oldest) = self.order.pop_front() {
+                self.set.remove(&oldest);
+            }
+        }
+    }
+
+    fn contains(&self, message_id: &str) -> bool {
+        self.set.contains(message_id)
+    }
 }
 
 impl SeenEvents {
@@ -423,7 +479,7 @@ async fn fetch_bot_identity(
         .unwrap_or_default()
         .to_string();
     if tenant_token.is_empty() {
-        return Ok(FeishuBotIdentity::default());
+        anyhow::bail!("feishu tenant_access_token missing in auth response: {token_json}");
     }
 
     let bot_url = format!(
@@ -440,21 +496,35 @@ async fn fetch_bot_identity(
         .json::<Value>()
         .await
         .context("failed to parse feishu bot info response")?;
+    let identity = parse_bot_identity(&bot_json);
+    if identity.open_id.trim().is_empty() && identity.name.trim().is_empty() {
+        anyhow::bail!("feishu bot info missing open_id and name: {bot_json}");
+    }
+    Ok(identity)
+}
 
-    let data = bot_json.get("data").cloned().unwrap_or(Value::Null);
-    Ok(FeishuBotIdentity {
-        open_id: data
+fn parse_bot_identity(payload: &Value) -> FeishuBotIdentity {
+    let bot = payload
+        .get("bot")
+        .or_else(|| payload.get("data").and_then(|data| data.get("bot")))
+        .or_else(|| payload.get("data"))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    FeishuBotIdentity {
+        open_id: bot
             .get("open_id")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
-        name: data
-            .get("name")
-            .or_else(|| data.get("app_name"))
+        name: bot
+            .get("app_name")
+            .or_else(|| bot.get("bot_name"))
+            .or_else(|| bot.get("name"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
-    })
+    }
 }
 
 fn preview(text: &str, max_chars: usize) -> String {
@@ -467,4 +537,42 @@ fn preview(text: &str, max_chars: usize) -> String {
         out.push(ch);
     }
     out.replace('\n', "\\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_bot_identity;
+    use serde_json::json;
+
+    #[test]
+    fn parse_bot_identity_supports_bot_wrapper_shape() {
+        let payload = json!({
+            "code": 0,
+            "bot": {
+                "open_id": "ou_bot_123",
+                "app_name": "自定义机器人"
+            }
+        });
+
+        let identity = parse_bot_identity(&payload);
+        assert_eq!(identity.open_id, "ou_bot_123");
+        assert_eq!(identity.name, "自定义机器人");
+    }
+
+    #[test]
+    fn parse_bot_identity_supports_nested_data_bot_shape() {
+        let payload = json!({
+            "code": 0,
+            "data": {
+                "bot": {
+                    "open_id": "ou_bot_456",
+                    "bot_name": "CloudAgent Beta"
+                }
+            }
+        });
+
+        let identity = parse_bot_identity(&payload);
+        assert_eq!(identity.open_id, "ou_bot_456");
+        assert_eq!(identity.name, "CloudAgent Beta");
+    }
 }

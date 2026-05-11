@@ -116,6 +116,21 @@ impl GatewayPanel {
         }
         Some(field)
     }
+
+    fn collect_updates(fields: &[EditableField]) -> Vec<GatewayConfigUpdate> {
+        fields
+            .iter()
+            .filter(|field| field.dirty)
+            .map(|field| GatewayConfigUpdate {
+                key: field.key.clone(),
+                value: if field.value.trim().is_empty() {
+                    None
+                } else {
+                    Some(field.value.trim().to_string())
+                },
+            })
+            .collect()
+    }
 }
 
 impl BottomPaneView for GatewayPanel {
@@ -181,21 +196,10 @@ impl BottomPaneView for GatewayPanel {
                         return BottomPaneViewAction::Composer(ComposerIntent::GatewaySave {
                             platform: platform.clone(),
                             enabled: !*enabled,
-                            updates: Vec::new(),
+                            updates: Self::collect_updates(fields),
                         });
                     } else if *selected == fields.len() + 1 {
-                        let updates = fields
-                            .iter()
-                            .filter(|field| field.dirty)
-                            .map(|field| GatewayConfigUpdate {
-                                key: field.key.clone(),
-                                value: if field.value.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(field.value.trim().to_string())
-                                },
-                            })
-                            .collect();
+                        let updates = Self::collect_updates(fields);
                         return BottomPaneViewAction::Composer(ComposerIntent::GatewaySave {
                             platform: platform.clone(),
                             enabled: *enabled,
@@ -526,6 +530,62 @@ mod tests {
                 enabled: true,
                 updates,
             }) if platform == "feishu" && updates.is_empty()
+        ));
+    }
+
+    #[test]
+    fn edit_panel_connection_enter_includes_dirty_field_updates() {
+        let mut panel = GatewayPanel::edit(
+            entry("feishu", false),
+            PlatformConfigResponse {
+                platform: "feishu".to_string(),
+                configured: false,
+                fields: vec![
+                    PlatformConfigField {
+                        key: "app_id".to_string(),
+                        value: None,
+                        required: true,
+                        is_secret: false,
+                        is_set: false,
+                    },
+                    PlatformConfigField {
+                        key: "app_secret".to_string(),
+                        value: None,
+                        required: true,
+                        is_secret: true,
+                        is_set: false,
+                    },
+                ],
+            },
+        );
+
+        let _ = panel.handle_key_event(key(KeyCode::Char('c')));
+        let _ = panel.handle_key_event(key(KeyCode::Char('l')));
+        let _ = panel.handle_key_event(key(KeyCode::Char('i')));
+        let _ = panel.handle_key_event(key(KeyCode::Tab));
+        let _ = panel.handle_key_event(key(KeyCode::Char('s')));
+        let _ = panel.handle_key_event(key(KeyCode::Char('e')));
+        let _ = panel.handle_key_event(key(KeyCode::Char('c')));
+        let _ = panel.handle_key_event(key(KeyCode::Tab));
+        let action = panel.handle_key_event(key(KeyCode::Enter));
+
+        assert!(matches!(
+            action,
+            BottomPaneViewAction::Composer(ComposerIntent::GatewaySave {
+                platform,
+                enabled: true,
+                updates,
+            }) if platform == "feishu"
+                && updates == vec![
+                    GatewayConfigUpdate {
+                        key: "app_id".to_string(),
+                        value: Some("cli".to_string()),
+                    },
+                    GatewayConfigUpdate {
+                        key: "app_secret".to_string(),
+                        value: Some("sec".to_string()),
+                    },
+                ]
         ));
     }
 }

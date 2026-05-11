@@ -39,6 +39,7 @@ impl FeishuOutboundRenderer {
             }
             GatewayOutbound::FlushText { target } => self.flush_buffer_as_final(target),
             GatewayOutbound::FinalText { target, text } => {
+                let is_group = is_group_context(&target);
                 let state = self
                     .conversations
                     .entry(target.conversation_id.clone())
@@ -60,12 +61,14 @@ impl FeishuOutboundRenderer {
                 vec![OutboundMessage {
                     chat_id: target.chat_id,
                     text,
+                    is_group_context: is_group,
                     reply_context: target.reply_context,
                 }]
             }
             GatewayOutbound::Progress(progress) => self.render_progress(progress),
             GatewayOutbound::Info { target, message }
             | GatewayOutbound::Error { target, message } => {
+                let is_group = is_group_context(&target);
                 let summarized = summarize_for_feishu(&message, 220);
                 info!(
                     conversation_id = %target.conversation_id,
@@ -77,6 +80,7 @@ impl FeishuOutboundRenderer {
                 vec![OutboundMessage {
                     chat_id: target.chat_id,
                     text: summarized,
+                    is_group_context: is_group,
                     reply_context: target.reply_context,
                 }]
             }
@@ -123,9 +127,11 @@ impl FeishuOutboundRenderer {
             text_preview = %preview(&text, 120),
             "feishu.renderer.flush.emit"
         );
+        let is_group = is_group_context(&target);
         vec![OutboundMessage {
             chat_id: target.chat_id,
             text,
+            is_group_context: is_group,
             reply_context: target.reply_context,
         }]
     }
@@ -144,15 +150,22 @@ impl FeishuOutboundRenderer {
             GatewayProgressKind::Reasoning => {
                 if progress.streaming {
                     if !state.reasoning_announced {
+                        state.text_buffer.clear();
+                        state.final_text_sent = false;
+                        state.tool_notice_count = 0;
+                        state.last_tool_notice = None;
+                        state.last_tool_notice_at = None;
+                        state.collapsed_multi_tool_notice = false;
                         state.reasoning_announced = true;
                         state.last_progress_at = Some(Instant::now());
+                        let notice = "正在思考中...";
                         info!(
                             conversation_id = %progress.target.conversation_id,
                             kind = "reasoning",
                             decision = "emit_streaming_notice",
                             "feishu.renderer.progress"
                         );
-                        return vec![to_message(progress.target, "正在思考中...".to_string())];
+                        return vec![to_message(progress.target, notice.to_string())];
                     }
                     return Vec::new();
                 }
@@ -182,39 +195,34 @@ impl FeishuOutboundRenderer {
                     state.collapsed_multi_tool_notice = true;
                     state.last_tool_notice = Some(summary.to_string());
                     state.last_tool_notice_at = Some(now);
-                    info!(
-                        conversation_id = %progress.target.conversation_id,
-                        kind = "tool",
-                        decision = "emit_collapsed_multi_tool_notice",
-                        "feishu.renderer.progress"
-                    );
                     return vec![to_message(
                         progress.target,
                         "正在继续处理多个步骤...".to_string(),
                     )];
                 }
-                if state.tool_notice_count >= 2 {
+                let max_tool_notices = 3;
+                if state.tool_notice_count >= max_tool_notices {
                     return Vec::new();
                 }
                 state.tool_notice_count += 1;
                 state.last_tool_notice = Some(summary.to_string());
                 state.last_tool_notice_at = Some(now);
-                info!(
-                    conversation_id = %progress.target.conversation_id,
-                    kind = "tool",
-                    decision = "emit_semantic_notice",
-                    "feishu.renderer.progress"
-                );
                 vec![to_message(progress.target, summary.to_string())]
             }
         }
     }
 }
 
+fn is_group_context(target: &crate::gateway_outbound::OutboundTarget) -> bool {
+    !matches!(target.chat_type.as_deref(), Some("p2p") | Some("dm") | None)
+}
+
 fn to_message(target: crate::gateway_outbound::OutboundTarget, text: String) -> OutboundMessage {
+    let is_group = is_group_context(&target);
     OutboundMessage {
         chat_id: target.chat_id,
         text,
+        is_group_context: is_group,
         reply_context: target.reply_context,
     }
 }
@@ -270,6 +278,8 @@ mod tests {
         OutboundTarget {
             conversation_id: "feishu:p2p:ou_1".to_string(),
             chat_id: "oc_123".to_string(),
+            chat_type: Some("p2p".to_string()),
+            is_reply_chain: false,
             reply_context: None,
         }
     }
@@ -347,6 +357,62 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].text, "正在查看 Git 历史...");
+    }
+
+    #[test]
+    fn group_context_keeps_only_light_reasoning_notice() {
+        let mut renderer = FeishuOutboundRenderer::default();
+        let target = OutboundTarget {
+            conversation_id: "agent:main:feishu:group:oc_group:ou_1".to_string(),
+            chat_id: "oc_group".to_string(),
+            chat_type: Some("group".to_string()),
+            is_reply_chain: false,
+            reply_context: None,
+        };
+
+        let reasoning = renderer.render(GatewayOutbound::Progress(GatewayProgressUpdate {
+            target: target.clone(),
+            kind: GatewayProgressKind::Reasoning,
+            summary: "thinking".to_string(),
+            streaming: true,
+        }));
+        let tool = renderer.render(GatewayOutbound::Progress(GatewayProgressUpdate {
+            target,
+            kind: GatewayProgressKind::Tool,
+            summary: "正在查看 Git 历史...".to_string(),
+            streaming: false,
+        }));
+
+        assert_eq!(reasoning.len(), 1);
+        assert_eq!(reasoning[0].text, "正在思考中...");
+        assert_eq!(tool.len(), 1);
+        assert_eq!(tool[0].text, "正在查看 Git 历史...");
+    }
+
+    #[test]
+    fn new_turn_reasoning_clears_stale_buffer() {
+        let mut renderer = FeishuOutboundRenderer::default();
+        let target = target();
+        renderer.render(GatewayOutbound::TextDelta {
+            target: target.clone(),
+            delta: "stale".to_string(),
+        });
+
+        let _ = renderer.render(GatewayOutbound::Progress(GatewayProgressUpdate {
+            target: target.clone(),
+            kind: GatewayProgressKind::Reasoning,
+            summary: "thinking".to_string(),
+            streaming: true,
+        }));
+
+        renderer.render(GatewayOutbound::TextDelta {
+            target: target.clone(),
+            delta: "fresh".to_string(),
+        });
+        let flushed = renderer.render(GatewayOutbound::FlushText { target });
+
+        assert_eq!(flushed.len(), 1);
+        assert_eq!(flushed[0].text, "fresh");
     }
 
     #[test]
