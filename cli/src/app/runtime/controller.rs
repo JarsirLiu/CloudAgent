@@ -61,7 +61,7 @@ impl RuntimeController {
                 RuntimeControl::Continue
             }
             UiEvent::Tick => {
-                if handle_animation_tick(app) {
+                if handle_animation_tick(app, client).await {
                     frame_requester.schedule_frame();
                 }
                 RuntimeControl::Continue

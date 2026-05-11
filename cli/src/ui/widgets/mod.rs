@@ -13,4 +13,5 @@ pub mod server_request_overlay;
 pub mod session_picker;
 pub mod text_effects;
 pub mod textarea;
+pub mod weixin_binding_view;
 pub mod welcome;

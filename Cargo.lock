@@ -980,6 +980,7 @@ dependencies = [
  "agent-protocol",
  "anyhow",
  "infra-store",
+ "reqwest 0.12.28",
  "rusqlite",
  "rustls",
  "serde",

@@ -117,9 +117,27 @@ impl TuiApp {
             InputPaneAction::Composer(ComposerIntent::Gateway) => {
                 Some(ParsedInput::LocalGatewayOpen)
             }
+            InputPaneAction::Composer(ComposerIntent::WeixinLogin) => {
+                Some(ParsedInput::LocalWeixinLoginStart)
+            }
+            InputPaneAction::Composer(ComposerIntent::WeixinLoginCheck(session_id)) => {
+                Some(ParsedInput::LocalWeixinLoginCheck(session_id))
+            }
             InputPaneAction::Composer(ComposerIntent::GatewaySelect(platform)) => {
                 Some(ParsedInput::LocalGatewaySelect(platform))
             }
+            InputPaneAction::Composer(ComposerIntent::GatewayWeixinLoginStart { platform }) => {
+                Some(ParsedInput::LocalGatewayWeixinLoginStart(platform))
+            }
+            InputPaneAction::Composer(ComposerIntent::GatewayWeixinLoginCheck {
+                platform,
+                session_id,
+                qr_url,
+            }) => Some(ParsedInput::LocalGatewayWeixinLoginCheck {
+                platform,
+                session_id,
+                qr_url,
+            }),
             InputPaneAction::Composer(ComposerIntent::GatewaySave {
                 platform,
                 enabled,

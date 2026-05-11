@@ -42,6 +42,7 @@ pub enum ConsoleBootstrap {
         address: String,
         program: OsString,
         args: Vec<OsString>,
+        expected_data_root_dir: PathBuf,
     },
     Embedded {
         runtime: Arc<AgentHost>,

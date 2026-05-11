@@ -2,6 +2,7 @@ use crate::app::{ConsoleBootstrap, ConsoleConfig};
 use agent_app_server_client::{
     AppServerClient, AppServerConnectInfo, InProcessClientConfig, RemoteClientConfig,
 };
+use agent_protocol::NodeStatusResponse;
 use anyhow::{Result, anyhow};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,8 @@ pub(crate) async fn create_client(
             address,
             program,
             args,
-        } => create_local_node_client(address, program, args).await,
+            expected_data_root_dir,
+        } => create_local_node_client(address, program, args, expected_data_root_dir).await,
         ConsoleBootstrap::Embedded { runtime } => {
             Ok(AppServerClient::in_process(InProcessClientConfig {
                 runtime: runtime.clone(),
@@ -34,9 +36,10 @@ pub async fn create_local_node_client(
     address: &str,
     program: &std::ffi::OsString,
     args: &[std::ffi::OsString],
+    expected_data_root_dir: &Path,
 ) -> Result<AppServerClient> {
     match connect_local_node_once(address).await {
-        Ok(client) => Ok(client),
+        Ok(client) => verify_local_node_data_root(client, address, expected_data_root_dir).await,
         Err(first_error) => {
             if existing_node_looks_unhealthy(&first_error) {
                 return Err(anyhow!(
@@ -44,7 +47,7 @@ pub async fn create_local_node_client(
                 ));
             }
             let mut child = spawn_local_node_process(program, args)?;
-            wait_for_service(
+            let client = wait_for_service(
                 || connect_local_node_once(address),
                 Some(&mut child),
                 local_node_launch_timeout(program, args),
@@ -55,9 +58,36 @@ pub async fn create_local_node_client(
                 anyhow!(
                     "failed to connect to local node at {address}; initial error: {first_error}; {wait_error}"
                 )
-            })
+            })?;
+            verify_local_node_data_root(client, address, expected_data_root_dir).await
         }
     }
+}
+
+async fn verify_local_node_data_root(
+    client: AppServerClient,
+    address: &str,
+    expected_data_root_dir: &Path,
+) -> Result<AppServerClient> {
+    let status: NodeStatusResponse = client
+        .request_node_status_typed()
+        .await
+        .map_err(|error| anyhow!("failed to read local node status at {address}: {error}"))?;
+    let expected = normalize_path_for_compare(expected_data_root_dir);
+    let actual = normalize_path_for_compare(Path::new(&status.data_root_dir));
+    if actual == expected {
+        return Ok(client);
+    }
+    Err(anyhow!(
+        "local node at {address} is using a different data root (expected `{}`, got `{}`). stop the stale `gatewayd` and restart cloudagent so `/session` and IM conversations read the same store",
+        expected_data_root_dir.display(),
+        status.data_root_dir
+    ))
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let normalized = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    normalized.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
 }
 
 fn existing_node_looks_unhealthy(error: &anyhow::Error) -> bool {

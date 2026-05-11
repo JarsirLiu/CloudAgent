@@ -1,6 +1,7 @@
 mod command_router;
 mod conversation_execution;
 mod conversation_registry;
+mod data_root;
 mod device_settings;
 mod message_sync;
 mod platform;

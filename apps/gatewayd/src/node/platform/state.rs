@@ -1,3 +1,4 @@
+use crate::node::data_root::resolve_data_root_dir;
 use agent_protocol::PlatformControlEntry;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -29,18 +30,14 @@ pub(crate) fn ensure_supported_platform(platform: &str) -> Result<()> {
 }
 
 pub(crate) fn platform_control_db_path(data_root_dir: Option<&std::ffi::OsStr>) -> PathBuf {
-    let root = data_root_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("data"));
+    let root = resolve_data_root_dir(data_root_dir);
     root.join("platforms").join("control.db")
 }
 
 pub(crate) fn platform_control_legacy_json_path(
     data_root_dir: Option<&std::ffi::OsStr>,
 ) -> PathBuf {
-    let root = data_root_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("data"));
+    let root = resolve_data_root_dir(data_root_dir);
     root.join("platforms").join("control.json")
 }
 

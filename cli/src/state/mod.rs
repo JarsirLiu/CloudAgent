@@ -7,6 +7,7 @@ use agent_core::ConversationTurn;
 use agent_core::InputItem;
 use agent_core::ModelUsage;
 use agent_protocol::FrontendMode;
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoticeLevel {
@@ -28,6 +29,16 @@ pub struct RunState {
     pub expand_tool_details: bool,
     pub pre_llm_filter_enabled: bool,
     pub permission_mode: String,
+    pub weixin_binding: Option<WeixinBindingState>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WeixinBindingState {
+    pub platform: String,
+    pub session_id: String,
+    pub qr_url: String,
+    pub status: String,
+    pub next_poll_at: Instant,
 }
 
 impl RunState {
@@ -44,6 +55,7 @@ impl RunState {
             expand_tool_details: false,
             pre_llm_filter_enabled: false,
             permission_mode: "ReadOnly".to_string(),
+            weixin_binding: None,
         }
     }
 }

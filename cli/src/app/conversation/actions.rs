@@ -7,8 +7,11 @@ use crate::app::conversation::facade as conversation_facade;
 use crate::app::effects::copy_text_to_clipboard;
 use crate::input::slash_command::slash_command_help_text;
 use crate::state::NoticeLevel;
+use crate::state::WeixinBindingState;
 use crate::state::reducer::ServerAction;
+use crate::ui::widgets::gateway_panel::WeixinLoginSessionView;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat};
+use crate::ui::widgets::weixin_binding_view::WeixinBindingViewModel;
 use agent_app_server_client::AppServerClient;
 use agent_core::{ServerRequestDecision, ServerRequestDecisionKind};
 use agent_protocol::{AppClientCommand, UserTurnInput};
@@ -30,6 +33,43 @@ Restart the local gatewayd with the latest build, then try /gateway again."
         );
     }
     format!("Failed to {action}: {detail}")
+}
+
+async fn reload_gateway_panel(
+    app: &mut TuiApp,
+    client: &AppServerClient,
+    platform: &str,
+    weixin_login: Option<WeixinLoginSessionView>,
+) -> Result<bool> {
+    let status = match client.request_platform_status_typed(platform).await {
+        Ok(status) => status,
+        Err(err) => {
+            show_local_notice(
+                app,
+                NoticeLevel::Error,
+                platform_request_notice("load platform status", &err),
+            );
+            return Ok(false);
+        }
+    };
+    let config = match client.request_platform_config_typed(platform).await {
+        Ok(config) => config,
+        Err(err) => {
+            show_local_notice(
+                app,
+                NoticeLevel::Error,
+                platform_request_notice("load platform config", &err),
+            );
+            return Ok(false);
+        }
+    };
+    if platform == "weixin" {
+        app.bottom_pane
+            .set_gateway_edit_panel_with_weixin_login(status.platform, config, weixin_login);
+    } else {
+        app.bottom_pane.set_gateway_edit_panel(status.platform, config);
+    }
+    Ok(false)
 }
 
 pub(crate) async fn handle_tui_input(
@@ -133,32 +173,210 @@ pub(crate) async fn handle_tui_input(
             app.bottom_pane.set_gateway_list_panel(response.platforms);
             return Ok(false);
         }
-        ParsedInput::LocalGatewaySelect(platform) => {
-            let status = match client.request_platform_status_typed(&platform).await {
-                Ok(status) => status,
+        ParsedInput::LocalWeixinLoginStart => {
+            let response = match client.start_weixin_login_typed().await {
+                Ok(response) => response,
                 Err(err) => {
                     show_local_notice(
                         app,
                         NoticeLevel::Error,
-                        platform_request_notice("load platform status", &err),
+                        platform_request_notice("start weixin login", &err),
                     );
                     return Ok(false);
                 }
             };
-            let config = match client.request_platform_config_typed(&platform).await {
-                Ok(config) => config,
-                Err(err) => {
-                    show_local_notice(
-                        app,
-                        NoticeLevel::Error,
-                        platform_request_notice("load platform config", &err),
-                    );
-                    return Ok(false);
-                }
-            };
-            app.bottom_pane
-                .set_gateway_edit_panel(status.platform, config);
+            app.push_live_cell(HistoryCell::agent(
+                "weixin-login",
+                format!(
+                    "Weixin QR login started.\n\nSession: `{}`\n\nScan URL:\n{}\n\nAfter confirming on phone, run:\n`/weixin-login-check {}`",
+                    response.session_id, response.qr_url, response.session_id
+                ),
+                HistoryFormat::Markdown,
+            ));
+            show_local_notice(
+                app,
+                NoticeLevel::Info,
+                format!("Weixin login session `{}` started", response.session_id),
+            );
             return Ok(false);
+        }
+        ParsedInput::LocalWeixinLoginCheck(session_id) => {
+            let trimmed = session_id.trim();
+            if trimmed.is_empty() {
+                show_local_notice(
+                    app,
+                    NoticeLevel::Warn,
+                    "Usage: /weixin-login-check <session-id>",
+                );
+                return Ok(false);
+            }
+            let response = match client.check_weixin_login_typed(trimmed).await {
+                Ok(response) => response,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("check weixin login", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            let message = match response.status.as_str() {
+                "confirmed" => format!(
+                    "Weixin login confirmed for `{}`. You can now open `/gateway` and enable `weixin`.",
+                    response.account_id.as_deref().unwrap_or("unknown")
+                ),
+                "pending" => format!(
+                    "Weixin login `{}` is still waiting for scan confirmation.",
+                    response.session_id
+                ),
+                "expired" => "Weixin QR expired. Run `/weixin-login` again.".to_string(),
+                _ => response
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "Weixin login session not found.".to_string()),
+            };
+            app.push_live_cell(HistoryCell::agent(
+                "weixin-login",
+                message.clone(),
+                HistoryFormat::Markdown,
+            ));
+            show_local_notice(app, NoticeLevel::Info, message);
+            return Ok(false);
+        }
+        ParsedInput::LocalGatewaySelect(platform) => {
+            return reload_gateway_panel(app, client, &platform, None).await;
+        }
+        ParsedInput::LocalGatewayWeixinLoginStart(platform) => {
+            let response = match client.start_weixin_login_typed().await {
+                Ok(response) => response,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("start weixin login", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            app.push_live_cell(HistoryCell::agent(
+                "weixin-login",
+                format!(
+                    "Weixin QR login started.\n\nSession: `{}`\n\nScan URL:\n{}",
+                    response.session_id, response.qr_url
+                ),
+                HistoryFormat::Markdown,
+            ));
+            show_local_notice(
+                app,
+                NoticeLevel::Info,
+                "Weixin QR login started. Scan with WeChat; this page will check automatically.",
+            );
+            app.run_state.weixin_binding = Some(WeixinBindingState {
+                platform: platform.clone(),
+                session_id: response.session_id.clone(),
+                qr_url: response.qr_url.clone(),
+                status: "waiting for scan".to_string(),
+                next_poll_at: std::time::Instant::now() + std::time::Duration::from_secs(2),
+            });
+            app.bottom_pane.set_weixin_binding_view(WeixinBindingViewModel {
+                platform,
+                session_id: response.session_id,
+                qr_url: response.qr_url,
+                status: "waiting for scan".to_string(),
+            });
+            return Ok(false);
+        }
+        ParsedInput::LocalGatewayWeixinLoginCheck {
+            platform,
+            session_id,
+            qr_url,
+        } => {
+            let response = match client.check_weixin_login_typed(&session_id).await {
+                Ok(response) => response,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("check weixin login", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            match response.status.as_str() {
+                "confirmed" => {
+                    app.run_state.weixin_binding = None;
+                    let status = match client.set_platform_enabled_typed(&platform, true).await {
+                        Ok(status) => status,
+                        Err(err) => {
+                            show_local_notice(
+                                app,
+                                NoticeLevel::Error,
+                                platform_request_notice("enable weixin connection", &err),
+                            );
+                            return Ok(false);
+                        }
+                    };
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Info,
+                        format!(
+                            "Weixin connected as `{}`.",
+                            response.account_id.as_deref().unwrap_or("unknown")
+                        ),
+                    );
+                    let config = match client.request_platform_config_typed(&platform).await {
+                        Ok(config) => config,
+                        Err(err) => {
+                            show_local_notice(
+                                app,
+                                NoticeLevel::Error,
+                                platform_request_notice("reload platform config", &err),
+                            );
+                            return Ok(false);
+                        }
+                    };
+                    app.bottom_pane.set_gateway_edit_panel(status.platform, config);
+                    return Ok(false);
+                }
+                "pending" => {
+                    app.run_state.weixin_binding = Some(WeixinBindingState {
+                        platform: platform.clone(),
+                        session_id: session_id.clone(),
+                        qr_url: qr_url.clone(),
+                        status: "waiting for confirmation".to_string(),
+                        next_poll_at: std::time::Instant::now()
+                            + std::time::Duration::from_secs(2),
+                    });
+                    app.bottom_pane.set_weixin_binding_view(WeixinBindingViewModel {
+                        platform,
+                        session_id,
+                        qr_url,
+                        status: "waiting for confirmation".to_string(),
+                    });
+                    return Ok(false);
+                }
+                "expired" => {
+                    app.run_state.weixin_binding = None;
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Warn,
+                        "Weixin QR expired. Start Connection again.",
+                    );
+                    return reload_gateway_panel(app, client, &platform, None).await;
+                }
+                _ => {
+                    app.run_state.weixin_binding = None;
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Warn,
+                        response
+                            .message
+                            .unwrap_or_else(|| "Weixin login session not found.".to_string()),
+                    );
+                    return reload_gateway_panel(app, client, &platform, None).await;
+                }
+            }
         }
         ParsedInput::LocalGatewaySave {
             platform,
@@ -198,24 +416,38 @@ pub(crate) async fn handle_tui_input(
                     return Ok(false);
                 }
             };
-            let config = match client.request_platform_config_typed(&platform).await {
-                Ok(config) => config,
-                Err(err) => {
-                    show_local_notice(
-                        app,
-                        NoticeLevel::Error,
-                        platform_request_notice("reload platform config", &err),
-                    );
-                    return Ok(false);
-                }
-            };
             let enabled_label = if status.platform.enabled {
                 "enabled"
             } else {
                 "disabled"
             };
-            app.bottom_pane
-                .set_gateway_edit_panel(status.platform, config);
+            if platform == "weixin" {
+                let config = match client.request_platform_config_typed(&platform).await {
+                    Ok(config) => config,
+                    Err(err) => {
+                        show_local_notice(
+                            app,
+                            NoticeLevel::Error,
+                            platform_request_notice("reload platform config", &err),
+                        );
+                        return Ok(false);
+                    }
+                };
+                app.bottom_pane.set_gateway_edit_panel(status.platform, config);
+            } else {
+                let config = match client.request_platform_config_typed(&platform).await {
+                    Ok(config) => config,
+                    Err(err) => {
+                        show_local_notice(
+                            app,
+                            NoticeLevel::Error,
+                            platform_request_notice("reload platform config", &err),
+                        );
+                        return Ok(false);
+                    }
+                };
+                app.bottom_pane.set_gateway_edit_panel(status.platform, config);
+            }
             show_local_notice(
                 app,
                 NoticeLevel::Info,

@@ -9,7 +9,8 @@ use agent_protocol::{
     JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
     NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
-    RequestId, SelectTargetNodeResponse, UserTurnInput, classify_notification,
+    RequestId, SelectTargetNodeResponse, UserTurnInput, WeixinLoginStartResponse,
+    WeixinLoginStatusResponse, classify_notification,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;
@@ -241,6 +242,21 @@ impl AppServerClient {
     ) -> Result<PlatformConfigResponse, TypedRequestError> {
         self.request_handle()
             .clear_platform_config_value_typed(platform, key)
+            .await
+    }
+
+    pub async fn start_weixin_login_typed(
+        &self,
+    ) -> Result<WeixinLoginStartResponse, TypedRequestError> {
+        self.request_handle().start_weixin_login_typed().await
+    }
+
+    pub async fn check_weixin_login_typed(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<WeixinLoginStatusResponse, TypedRequestError> {
+        self.request_handle()
+            .check_weixin_login_typed(session_id)
             .await
     }
 
@@ -535,6 +551,31 @@ impl AppServerRequestHandle {
             params: Some(serde_json::json!({
                 "platform": platform.into(),
                 "key": key.into(),
+            })),
+        })
+        .await
+    }
+
+    pub async fn start_weixin_login_typed(
+        &self,
+    ) -> Result<WeixinLoginStartResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "weixin/login/start".to_string(),
+            params: None,
+        })
+        .await
+    }
+
+    pub async fn check_weixin_login_typed(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<WeixinLoginStatusResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "weixin/login/check".to_string(),
+            params: Some(serde_json::json!({
+                "session_id": session_id.into(),
             })),
         })
         .await

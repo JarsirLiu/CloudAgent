@@ -33,7 +33,15 @@ pub(crate) enum UiInputEvent {
         model: String,
     },
     LocalGatewayOpen,
+    LocalWeixinLoginStart,
+    LocalWeixinLoginCheck(String),
     LocalGatewaySelect(String),
+    LocalGatewayWeixinLoginStart(String),
+    LocalGatewayWeixinLoginCheck {
+        platform: String,
+        session_id: String,
+        qr_url: String,
+    },
     LocalGatewaySave {
         platform: String,
         enabled: bool,

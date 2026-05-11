@@ -1,3 +1,4 @@
+use crate::node::data_root::resolve_data_root_dir;
 use agent_core::{ApprovalPolicy, PermissionProfile};
 use agent_protocol::TurnPolicy;
 use anyhow::Result;
@@ -25,9 +26,7 @@ impl PersistedDeviceSettings {
 }
 
 pub(crate) fn conversation_store_dir(data_root_dir: Option<&std::ffi::OsStr>) -> PathBuf {
-    let root = data_root_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("data"));
+    let root = resolve_data_root_dir(data_root_dir);
     root.join("conversations")
 }
 

@@ -175,6 +175,7 @@ mod tests {
                     .await
                     .expect("platform manager"),
                 "127.0.0.1:47070",
+                root.clone(),
             );
             runtime.conversations().lock().await.touch("stale");
 
@@ -215,6 +216,7 @@ mod tests {
                     .await
                     .expect("platform manager"),
                 "127.0.0.1:47070",
+                root.clone(),
             );
 
             sync_registry_from_message(
@@ -256,6 +258,7 @@ mod tests {
                     .await
                     .expect("platform manager"),
                 "127.0.0.1:47070",
+                root.clone(),
             );
 
             sync_registry_from_message(

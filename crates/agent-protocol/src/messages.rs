@@ -109,6 +109,10 @@ pub struct NodeStatusResponse {
     pub worker_running: bool,
     pub platform_runtime_count: usize,
     pub managed_platform_count: usize,
+    #[serde(default)]
+    pub data_root_dir: String,
+    #[serde(default)]
+    pub conversation_store_dir: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workers: Vec<NodeWorkerStatus>,
 }
@@ -157,6 +161,22 @@ pub struct PlatformConfigResponse {
     pub platform: String,
     pub configured: bool,
     pub fields: Vec<PlatformConfigField>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WeixinLoginStartResponse {
+    pub session_id: String,
+    pub qr_url: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WeixinLoginStatusResponse {
+    pub session_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -225,6 +245,10 @@ pub enum AppClientCommand {
         platform: String,
         key: String,
     },
+    StartWeixinLogin,
+    CheckWeixinLogin {
+        session_id: String,
+    },
     ArchiveConversation {
         conversation_id: String,
     },
@@ -275,6 +299,8 @@ impl AppClientCommand {
             | Self::SetPlatformEnabled { .. }
             | Self::SetPlatformConfigValue { .. }
             | Self::ClearPlatformConfigValue { .. }
+            | Self::StartWeixinLogin
+            | Self::CheckWeixinLogin { .. }
             | Self::Exit => None,
         }
     }

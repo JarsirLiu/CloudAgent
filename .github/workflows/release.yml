@@ -126,9 +126,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $Version = $env:GITHUB_REF_NAME.Substring(1)
-          $Output = "dist/cloudagent-$Version-${{ matrix.target }}.msi"
-          cargo wix --package cli --target ${{ matrix.target }} --profile release --no-build --target-bin-dir "target/${{ matrix.target }}/release" --output $Output
+          pwsh ./scripts/package-windows.ps1 `
+            -Target "${{ matrix.target }}" `
+            -Version "${env:GITHUB_REF_NAME}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

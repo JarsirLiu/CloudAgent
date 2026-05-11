@@ -214,7 +214,7 @@ impl AgentConfig {
     }
 
     fn defaults(workspace_root: PathBuf) -> Self {
-        let data_root_dir = workspace_root.join("data");
+        let data_root_dir = default_workspace_data_root(&workspace_root);
         let memory = MemoryConfig {
             root_dir: data_root_dir.join("state").join("memory"),
             ..MemoryConfig::default()
@@ -648,12 +648,14 @@ impl AgentConfig {
     pub fn load_user_only(workspace_root: impl Into<PathBuf>) -> Result<Self> {
         let workspace_root = workspace_root.into();
         let mut config = Self::defaults(workspace_root.clone());
-        if let Some(home) = user_home_dir() {
-            let data_root = home.join(".cloudagent").join("data");
+        if let Some(data_root) = default_user_data_root() {
             config.runtime.data_root_dir = data_root.clone();
             config.runtime.conversation_store_dir = data_root.join("conversations");
             config.runtime.memory.root_dir = data_root.join("state").join("memory");
-            let config_path = home.join(".cloudagent").join("config.toml");
+            let config_path = data_root
+                .parent()
+                .map(|parent| parent.join("config.toml"))
+                .unwrap_or_else(|| PathBuf::from(".cloudagent").join("config.toml"));
             if config_path.exists() {
                 let text = std::fs::read_to_string(&config_path)
                     .with_context(|| format!("failed to read {}", config_path.display()))?;
@@ -665,6 +667,18 @@ impl AgentConfig {
         config.apply_env_overrides();
         Ok(config)
     }
+}
+
+pub fn default_workspace_data_root(workspace_root: &Path) -> PathBuf {
+    workspace_root.join("data")
+}
+
+pub fn default_user_data_root() -> Option<PathBuf> {
+    user_home_dir().map(|home| home.join(".cloudagent").join("data"))
+}
+
+pub fn release_mode_enabled() -> bool {
+    std::env::var("CLOUDAGENT_RELEASE_MODE").ok().as_deref() == Some("1") || !cfg!(debug_assertions)
 }
 
 fn normalize_input_modalities(value: Vec<InputModality>) -> Vec<InputModality> {

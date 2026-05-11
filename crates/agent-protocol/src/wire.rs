@@ -203,6 +203,10 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
             platform: value_field(params.clone(), "platform")?,
             key: value_field(params, "key")?,
         }),
+        "weixin/login/start" => Ok(AppClientCommand::StartWeixinLogin),
+        "weixin/login/check" => Ok(AppClientCommand::CheckWeixinLogin {
+            session_id: value_field(params, "session_id")?,
+        }),
         "conversation/archive" => Ok(AppClientCommand::ArchiveConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
@@ -313,6 +317,11 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         AppClientCommand::ClearPlatformConfigValue { platform, key } => (
             "platform/config/clear",
             serde_json::json!({ "platform": platform, "key": key }),
+        ),
+        AppClientCommand::StartWeixinLogin => ("weixin/login/start", Value::Null),
+        AppClientCommand::CheckWeixinLogin { session_id } => (
+            "weixin/login/check",
+            serde_json::json!({ "session_id": session_id }),
         ),
         AppClientCommand::ArchiveConversation { conversation_id } => (
             "conversation/archive",

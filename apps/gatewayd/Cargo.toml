@@ -11,6 +11,7 @@ agent-core = { path = "../../crates/agent-core" }
 agent-gateway = { path = "../../crates/agent-gateway" }
 agent-protocol = { path = "../../crates/agent-protocol" }
 infra-store = { path = "../../crates/infra-store" }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true

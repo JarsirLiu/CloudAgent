@@ -2,18 +2,20 @@ use super::config_store::{
     PlatformConfigState, load_config_state, persist_config_state, platform_config_dir,
 };
 use super::control_store::{load_control_state, persist_control_state};
-use super::runtime_control::{RunningPlatformRuntime, spawn_feishu_runtime, spawn_wecom_runtime};
+use super::runtime_control::{RunningPlatformRuntime, spawn_feishu_runtime, spawn_wecom_runtime, spawn_weixin_runtime};
 use super::schema::{config_response, supported_specs_for, validate_platform_config};
 use super::state::{PlatformControlState, default_entry, ensure_supported_platform, now_ms};
 use agent_protocol::{
     PlatformConfigResponse, PlatformControlListResponse, PlatformControlStatusResponse,
-    PlatformControlUpdateResponse,
+    PlatformControlUpdateResponse, WeixinLoginStartResponse, WeixinLoginStatusResponse,
 };
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 #[derive(Clone)]
 pub(crate) struct PlatformManager {
@@ -32,6 +34,7 @@ impl PlatformManager {
                 persisted,
                 config,
                 runtimes: BTreeMap::new(),
+                weixin_login_sessions: BTreeMap::new(),
             })),
             data_root_dir: data_root_dir.map(|path| path.to_os_string()),
             config_dir,
@@ -160,6 +163,96 @@ impl PlatformManager {
         Ok(())
     }
 
+    pub(crate) async fn start_weixin_login(&self) -> Result<WeixinLoginStartResponse> {
+        let session_id = format!("weixin-login-{}", now_ms()?);
+        let qr = request_weixin_qr().await?;
+        let task = tokio::spawn(run_weixin_login_poll(
+            qr.qrcode_value.clone(),
+            qr.base_url.clone(),
+        ));
+        self.inner.lock().await.weixin_login_sessions.insert(
+            session_id.clone(),
+            WeixinLoginSession {
+                qr_url: qr.qr_url.clone(),
+                task,
+            },
+        );
+        Ok(WeixinLoginStartResponse {
+            session_id,
+            qr_url: qr.qr_url,
+        })
+    }
+
+    pub(crate) async fn check_weixin_login(
+        &self,
+        session_id: &str,
+    ) -> Result<WeixinLoginStatusResponse> {
+        let session = {
+            let mut state = self.inner.lock().await;
+            state.weixin_login_sessions.remove(session_id)
+        };
+        let Some(session) = session else {
+            return Ok(WeixinLoginStatusResponse {
+                session_id: session_id.to_string(),
+                status: "missing".to_string(),
+                account_id: None,
+                message: Some("扫码会话不存在或已结束".to_string()),
+            });
+        };
+        if !session.task.is_finished() {
+            self.inner.lock().await.weixin_login_sessions.insert(
+                session_id.to_string(),
+                session,
+            );
+            return Ok(WeixinLoginStatusResponse {
+                session_id: session_id.to_string(),
+                status: "pending".to_string(),
+                account_id: None,
+                message: Some(session_id.to_string()),
+            });
+        }
+        let result = session.task.await??;
+        match result {
+            WeixinLoginPollResult::Confirmed(credentials) => {
+                {
+                    let mut state = self.inner.lock().await;
+                    let entry = state.config.platforms.entry("weixin".to_string()).or_default();
+                    entry.insert("account_id".to_string(), credentials.account_id.clone());
+                    entry.insert("token".to_string(), credentials.token.clone());
+                    entry.insert("base_url".to_string(), credentials.base_url.clone());
+                }
+                self.persist_config().await?;
+                Ok(WeixinLoginStatusResponse {
+                    session_id: session_id.to_string(),
+                    status: "confirmed".to_string(),
+                    account_id: Some(credentials.account_id),
+                    message: Some("微信凭据已写入本地配置".to_string()),
+                })
+            }
+            WeixinLoginPollResult::Pending => {
+                self.inner.lock().await.weixin_login_sessions.insert(
+                    session_id.to_string(),
+                    WeixinLoginSession {
+                        qr_url: session.qr_url,
+                        task: tokio::spawn(async { Ok(WeixinLoginPollResult::Pending) }),
+                    },
+                );
+                Ok(WeixinLoginStatusResponse {
+                    session_id: session_id.to_string(),
+                    status: "pending".to_string(),
+                    account_id: None,
+                    message: Some("等待扫码确认".to_string()),
+                })
+            }
+            WeixinLoginPollResult::Expired => Ok(WeixinLoginStatusResponse {
+                session_id: session_id.to_string(),
+                status: "expired".to_string(),
+                account_id: None,
+                message: Some("二维码已过期，请重新执行 /weixin-login".to_string()),
+            }),
+        }
+    }
+
     pub(crate) async fn runtime_count(&self) -> usize {
         self.inner.lock().await.runtimes.len()
     }
@@ -177,7 +270,7 @@ impl PlatformManager {
         match platform {
             "feishu" => self.apply_feishu(enabled, node_address).await,
             "wecom" => self.apply_wecom(enabled, node_address).await,
-            "weixin" => Ok(()),
+            "weixin" => self.apply_weixin(enabled, node_address).await,
             other => bail!("unsupported platform `{other}`"),
         }
     }
@@ -202,6 +295,18 @@ impl PlatformManager {
             self.ensure_runtime_started("wecom", runtime).await;
         } else {
             self.stop_runtime("wecom").await;
+        }
+        Ok(())
+    }
+
+    async fn apply_weixin(&self, enabled: bool, node_address: &str) -> Result<()> {
+        if enabled {
+            let config = self.inner.lock().await.config.clone();
+            let runtime =
+                spawn_weixin_runtime(node_address, &config, self.data_root_dir.as_deref()).await?;
+            self.ensure_runtime_started("weixin", runtime).await;
+        } else {
+            self.stop_runtime("weixin").await;
         }
         Ok(())
     }
@@ -285,6 +390,127 @@ struct PlatformManagerState {
     persisted: PlatformControlState,
     config: PlatformConfigState,
     runtimes: BTreeMap<String, RunningPlatformRuntime>,
+    weixin_login_sessions: BTreeMap<String, WeixinLoginSession>,
+}
+
+struct WeixinLoginSession {
+    qr_url: String,
+    task: JoinHandle<Result<WeixinLoginPollResult>>,
+}
+
+struct WeixinQrPayload {
+    qrcode_value: String,
+    qr_url: String,
+    base_url: String,
+}
+
+struct WeixinCredentials {
+    account_id: String,
+    token: String,
+    base_url: String,
+}
+
+enum WeixinLoginPollResult {
+    Pending,
+    Confirmed(WeixinCredentials),
+    Expired,
+}
+
+async fn request_weixin_qr() -> Result<WeixinQrPayload> {
+    let response = reqwest::get("https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3")
+        .await
+        .context("failed to request weixin qr")?
+        .error_for_status()
+        .context("weixin qr returned error status")?
+        .json::<Value>()
+        .await
+        .context("failed to decode weixin qr response")?;
+    let qrcode_value = response
+        .get("qrcode")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let qr_url = response
+        .get("qrcode_img_content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if qrcode_value.is_empty() || qr_url.is_empty() {
+        bail!("weixin qr response missing qrcode or qrcode_img_content")
+    }
+    Ok(WeixinQrPayload {
+        qrcode_value,
+        qr_url,
+        base_url: "https://ilinkai.weixin.qq.com".to_string(),
+    })
+}
+
+async fn run_weixin_login_poll(
+    qrcode_value: String,
+    mut current_base_url: String,
+) -> Result<WeixinLoginPollResult> {
+    let client = reqwest::Client::new();
+    for _ in 0..120 {
+        let url = format!(
+            "{}/ilink/bot/get_qrcode_status?qrcode={}",
+            current_base_url.trim_end_matches('/'),
+            qrcode_value
+        );
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .context("failed to poll weixin qr status")?
+            .error_for_status()
+            .context("weixin qr status returned error status")?
+            .json::<Value>()
+            .await
+            .context("failed to decode weixin qr status")?;
+        match response
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("wait")
+        {
+            "confirmed" => {
+                let account_id = response
+                    .get("ilink_bot_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let token = response
+                    .get("bot_token")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let base_url = response
+                    .get("baseurl")
+                    .and_then(Value::as_str)
+                    .unwrap_or("https://ilinkai.weixin.qq.com")
+                    .to_string();
+                if account_id.is_empty() || token.is_empty() {
+                    bail!("weixin confirmed qr payload missing account_id or token")
+                }
+                return Ok(WeixinLoginPollResult::Confirmed(WeixinCredentials {
+                    account_id,
+                    token,
+                    base_url,
+                }));
+            }
+            "expired" => return Ok(WeixinLoginPollResult::Expired),
+            "scaned_but_redirect" => {
+                if let Some(host) = response.get("redirect_host").and_then(Value::as_str)
+                    && !host.trim().is_empty()
+                {
+                    current_base_url = format!("https://{}", host.trim());
+                }
+            }
+            _ => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    Ok(WeixinLoginPollResult::Pending)
 }
 
 fn ensure_supported_key(platform: &str, key: &str) -> Result<()> {
@@ -322,16 +548,24 @@ mod tests {
         let manager = PlatformManager::load(Some(temp.path().as_os_str()))
             .await
             .expect("load");
-        let updated = manager
-            .set_enabled("weixin", true, "127.0.0.1:47070")
+        manager
+            .set_config_value("weixin", "account_id", "acct_1", "127.0.0.1:47070")
             .await
-            .expect("enable");
-        assert!(updated.platform.enabled);
+            .expect("set account_id");
+        manager
+            .set_config_value("weixin", "token", "token_1", "127.0.0.1:47070")
+            .await
+            .expect("set token");
+        let updated = manager
+            .set_enabled("weixin", false, "127.0.0.1:47070")
+            .await
+            .expect("disable");
+        assert!(!updated.platform.enabled);
 
         let reloaded = PlatformManager::load(Some(temp.path().as_os_str()))
             .await
             .expect("reload");
         let status = reloaded.status("weixin").await.expect("status");
-        assert!(status.platform.enabled);
+        assert!(!status.platform.enabled);
     }
 }

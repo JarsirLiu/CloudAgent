@@ -5,11 +5,12 @@ use crate::ui::widgets::chat_composer::ChatComposer;
 use crate::ui::widgets::config_panel::ConfigPanel;
 use crate::ui::widgets::filter_picker::FilterPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
-use crate::ui::widgets::gateway_panel::GatewayPanel;
+use crate::ui::widgets::gateway_panel::{GatewayPanel, WeixinLoginSessionView};
 use crate::ui::widgets::permissions_picker::PermissionsPicker;
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
+use crate::ui::widgets::weixin_binding_view::{WeixinBindingView, WeixinBindingViewModel};
 use agent_core::ConversationSummary;
 use agent_core::InputItem;
 use agent_core::ServerRequestDecisionKind;
@@ -426,7 +427,23 @@ impl InputPane {
     ) {
         self.view_stack.clear();
         self.view_stack
-            .push(Box::new(GatewayPanel::edit(entry, config)));
+            .push(Box::new(GatewayPanel::edit(entry, config, None)));
+    }
+
+    pub fn set_gateway_edit_panel_with_weixin_login(
+        &mut self,
+        entry: PlatformControlEntry,
+        config: PlatformConfigResponse,
+        session: Option<WeixinLoginSessionView>,
+    ) {
+        self.view_stack.clear();
+        self.view_stack
+            .push(Box::new(GatewayPanel::edit(entry, config, session)));
+    }
+
+    pub fn set_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
+        self.view_stack.clear();
+        self.view_stack.push(Box::new(WeixinBindingView::new(model)));
     }
 
     pub fn dismiss_server_request(&mut self, request_id: &RequestId) {

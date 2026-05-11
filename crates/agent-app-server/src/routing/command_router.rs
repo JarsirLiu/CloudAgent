@@ -328,6 +328,12 @@ pub(crate) async fn handle_command(
         AppClientCommand::ClearPlatformConfigValue { .. } => {
             report_node_managed_only_command(event_tx, &state, "ClearPlatformConfigValue").await;
         }
+        AppClientCommand::StartWeixinLogin => {
+            report_node_managed_only_command(event_tx, &state, "StartWeixinLogin").await;
+        }
+        AppClientCommand::CheckWeixinLogin { .. } => {
+            report_node_managed_only_command(event_tx, &state, "CheckWeixinLogin").await;
+        }
         AppClientCommand::ArchiveConversation { conversation_id } => {
             session_service::archive_conversation(&runtime, event_tx, &state, conversation_id)
                 .await?;

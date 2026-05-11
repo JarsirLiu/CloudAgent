@@ -12,6 +12,7 @@ use agent_protocol::{
     ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest,
     NodeStatusResponse, NodeStopResponse, PlatformConfigResponse, PlatformControlListResponse,
     PlatformControlStatusResponse, PlatformControlUpdateResponse, RequestId,
+    WeixinLoginStartResponse, WeixinLoginStatusResponse,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
@@ -261,6 +262,12 @@ where
                 .clear_config_value(platform, key, runtime.listen_address())
                 .await?,
         )?,
+        AppClientCommand::StartWeixinLogin => {
+            serde_json::to_value(runtime.platforms().start_weixin_login().await?)?
+        }
+        AppClientCommand::CheckWeixinLogin { session_id } => {
+            serde_json::to_value(runtime.platforms().check_weixin_login(session_id).await?)?
+        }
         _ => {
             let value = runtime
                 .workers()
@@ -346,6 +353,11 @@ fn typed_request_from_command(
         AppClientCommand::ClearPlatformConfigValue { platform, key } => (
             "platform/config/clear",
             serde_json::json!({ "platform": platform, "key": key }),
+        ),
+        AppClientCommand::StartWeixinLogin => ("weixin/login/start", serde_json::Value::Null),
+        AppClientCommand::CheckWeixinLogin { session_id } => (
+            "weixin/login/check",
+            serde_json::json!({ "session_id": session_id }),
         ),
         _ => return None,
     };
@@ -585,6 +597,37 @@ async fn sync_typed_read_registry(
                 ),
             })
         }
+        AppClientCommand::StartWeixinLogin => {
+            let response: WeixinLoginStartResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: conversation_id.to_string(),
+                message: format!(
+                    "Weixin login started: session `{}` · scan {}\nThen run `/weixin-login-check {}` after confirming on phone.",
+                    response.session_id, response.qr_url, response.session_id
+                ),
+            })
+        }
+        AppClientCommand::CheckWeixinLogin { .. } => {
+            let response: WeixinLoginStatusResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::Info {
+                conversation_id: conversation_id.to_string(),
+                message: match response.status.as_str() {
+                    "confirmed" => format!(
+                        "Weixin login confirmed for `{}`.",
+                        response.account_id.as_deref().unwrap_or("unknown")
+                    ),
+                    "pending" => format!(
+                        "Weixin login `{}` is still waiting for scan confirmation.",
+                        response.session_id
+                    ),
+                    "expired" => "Weixin QR expired. Run `/weixin-login` again.".to_string(),
+                    _ => response
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "Weixin login session not found.".to_string()),
+                },
+            })
+        }
         AppClientCommand::RequestConversationStatus { .. } => {
             let response: ConversationStatusResponse = serde_json::from_value(value.clone())?;
             AppServerMessage::Notification(AppServerNotification::ConversationStatus {
@@ -646,6 +689,8 @@ fn command_name(command: &AppClientCommand) -> &'static str {
         AppClientCommand::SetPlatformEnabled { .. } => "set_platform_enabled",
         AppClientCommand::SetPlatformConfigValue { .. } => "set_platform_config_value",
         AppClientCommand::ClearPlatformConfigValue { .. } => "clear_platform_config_value",
+        AppClientCommand::StartWeixinLogin => "start_weixin_login",
+        AppClientCommand::CheckWeixinLogin { .. } => "check_weixin_login",
         AppClientCommand::ArchiveConversation { .. } => "archive_conversation",
         AppClientCommand::DeleteConversation { .. } => "delete_conversation",
         AppClientCommand::SubscribeConversation { .. } => "subscribe_conversation",
@@ -663,6 +708,8 @@ fn command_requires_worker(command: &AppClientCommand) -> bool {
             | AppClientCommand::SetPlatformEnabled { .. }
             | AppClientCommand::SetPlatformConfigValue { .. }
             | AppClientCommand::ClearPlatformConfigValue { .. }
+            | AppClientCommand::StartWeixinLogin
+            | AppClientCommand::CheckWeixinLogin { .. }
             | AppClientCommand::GetNodeStatus
             | AppClientCommand::StopNode
     )
@@ -724,6 +771,8 @@ pub(crate) async fn target_conversation_id(
         | AppClientCommand::SetPlatformEnabled { .. }
         | AppClientCommand::SetPlatformConfigValue { .. }
         | AppClientCommand::ClearPlatformConfigValue { .. }
+        | AppClientCommand::StartWeixinLogin
+        | AppClientCommand::CheckWeixinLogin { .. }
         | AppClientCommand::Exit => session.active_conversation_id().to_string(),
     }
 }
@@ -781,6 +830,7 @@ mod tests {
             infra_store::JsonConversationStore::new(root.join("conversations")),
             platforms,
             "127.0.0.1:47070",
+            root,
         )
     }
 

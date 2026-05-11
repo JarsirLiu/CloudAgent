@@ -1,5 +1,5 @@
 use super::config_store::PlatformConfigState;
-use agent_gateway::adapter::{feishu, wecom};
+use agent_gateway::adapter::{feishu, wecom, weixin};
 use agent_protocol::{PlatformConfigField, PlatformConfigResponse};
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -40,7 +40,7 @@ pub(crate) fn validate_platform_config(platform: &str, state: &PlatformConfigSta
     match platform {
         "feishu" => build_feishu_config(state)?.validate(),
         "wecom" => build_wecom_config(state)?.validate(),
-        "weixin" => Ok(()),
+        "weixin" => build_weixin_config(state)?.validate(),
         other => anyhow::bail!("unsupported platform `{other}`"),
     }
 }
@@ -73,6 +73,18 @@ pub(crate) fn build_wecom_config(state: &PlatformConfigState) -> Result<wecom::W
         group_policy: optional_policy_value(&values, "group_policy").unwrap_or_default(),
         allow_from: optional_list_value(&values, "allow_from"),
         group_allow_from: optional_list_value(&values, "group_allow_from"),
+    })
+}
+
+pub(crate) fn build_weixin_config(
+    state: &PlatformConfigState,
+) -> Result<weixin::WeixinAdapterConfig> {
+    let values = merged_values("weixin", state);
+    Ok(weixin::WeixinAdapterConfig {
+        account_id: required_value(&values, "account_id", "CLOUDAGENT_WEIXIN_ACCOUNT_ID")?,
+        token: required_value(&values, "token", "CLOUDAGENT_WEIXIN_TOKEN")?,
+        base_url: optional_value(&values, "base_url")
+            .unwrap_or_else(|| "https://ilinkai.weixin.qq.com".to_string()),
     })
 }
 
@@ -137,6 +149,23 @@ pub(crate) fn supported_specs_for(platform: &str) -> &'static [PlatformFieldSpec
             },
             PlatformFieldSpec {
                 key: "group_allow_from",
+                required: false,
+                secret: false,
+            },
+        ],
+        "weixin" => &[
+            PlatformFieldSpec {
+                key: "account_id",
+                required: true,
+                secret: false,
+            },
+            PlatformFieldSpec {
+                key: "token",
+                required: true,
+                secret: true,
+            },
+            PlatformFieldSpec {
+                key: "base_url",
                 required: false,
                 secret: false,
             },
@@ -229,6 +258,9 @@ fn env_name(platform: &str, key: &str) -> Option<&'static str> {
         ("wecom", "group_policy") => Some("CLOUDAGENT_WECOM_GROUP_POLICY"),
         ("wecom", "allow_from") => Some("CLOUDAGENT_WECOM_ALLOW_FROM"),
         ("wecom", "group_allow_from") => Some("CLOUDAGENT_WECOM_GROUP_ALLOW_FROM"),
+        ("weixin", "account_id") => Some("CLOUDAGENT_WEIXIN_ACCOUNT_ID"),
+        ("weixin", "token") => Some("CLOUDAGENT_WEIXIN_TOKEN"),
+        ("weixin", "base_url") => Some("CLOUDAGENT_WEIXIN_BASE_URL"),
         _ => None,
     }
 }
@@ -251,7 +283,7 @@ fn mask_secret(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlatformConfigState, build_feishu_config, build_wecom_config, parse_bool_value};
+    use super::{PlatformConfigState, build_feishu_config, build_wecom_config, build_weixin_config, parse_bool_value};
     use agent_gateway::adapter::wecom::WecomPolicy;
     use std::collections::BTreeMap;
 
@@ -338,5 +370,40 @@ mod tests {
         assert!(supported.contains(&"group_policy"));
         assert!(supported.contains(&"allow_from"));
         assert!(supported.contains(&"group_allow_from"));
+    }
+
+    #[test]
+    fn build_weixin_config_reads_required_fields() {
+        let mut platform_values = BTreeMap::new();
+        platform_values.insert("account_id".to_string(), "acct_1".to_string());
+        platform_values.insert("token".to_string(), "token_1".to_string());
+
+        let mut platforms = BTreeMap::new();
+        platforms.insert("weixin".to_string(), platform_values);
+
+        let state = PlatformConfigState {
+            version: 1,
+            platforms,
+        };
+
+        let config = build_weixin_config(&state).expect("config");
+        assert_eq!(config.account_id, "acct_1");
+        assert_eq!(config.token, "token_1");
+        assert_eq!(config.base_url, "https://ilinkai.weixin.qq.com");
+    }
+
+    #[test]
+    fn weixin_editable_specs_hide_manual_credentials() {
+        let keys = super::editable_specs_for("weixin")
+            .iter()
+            .map(|spec| spec.key)
+            .collect::<Vec<_>>();
+        assert!(keys.is_empty());
+
+        let supported = super::supported_specs_for("weixin")
+            .iter()
+            .map(|spec| spec.key)
+            .collect::<Vec<_>>();
+        assert!(supported.contains(&"base_url"));
     }
 }

@@ -13,6 +13,8 @@ pub(crate) enum SlashCommand {
     Permissions,
     Config,
     Gateway,
+    WeixinLogin,
+    WeixinLoginCheck,
     Clear,
     Exit,
 }
@@ -131,6 +133,22 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         description: "open platform gateway panel (status / enable / config)",
         argument_hint: None,
         supports_inline_args: false,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::WeixinLogin,
+        name: "weixin-login",
+        aliases: &[],
+        description: "start personal WeChat QR login and print a scan URL",
+        argument_hint: None,
+        supports_inline_args: false,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::WeixinLoginCheck,
+        name: "weixin-login-check",
+        aliases: &[],
+        description: "check a WeChat QR login session and save credentials on success",
+        argument_hint: Some("<session-id>"),
+        supports_inline_args: true,
     },
     SlashCommandSpec {
         command: SlashCommand::Clear,

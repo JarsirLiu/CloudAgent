@@ -4,6 +4,7 @@ use crate::node::platform::PlatformManager;
 use crate::node::worker_manager::WorkerManager;
 use agent_protocol::NodeStatusResponse;
 use infra_store::JsonConversationStore;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
@@ -16,6 +17,7 @@ pub(crate) struct NodeRuntime {
     conversation_store: Arc<JsonConversationStore>,
     platforms: PlatformManager,
     listen_address: String,
+    data_root_dir: PathBuf,
     shutdown: Arc<Notify>,
 }
 
@@ -25,6 +27,7 @@ impl NodeRuntime {
         conversation_store: JsonConversationStore,
         platforms: PlatformManager,
         listen_address: impl Into<String>,
+        data_root_dir: PathBuf,
     ) -> Self {
         Self {
             workers,
@@ -33,6 +36,7 @@ impl NodeRuntime {
             conversation_store: Arc::new(conversation_store),
             platforms,
             listen_address: listen_address.into(),
+            data_root_dir,
             shutdown: Arc::new(Notify::new()),
         }
     }
@@ -71,6 +75,8 @@ impl NodeRuntime {
             worker_running: self.workers.is_worker_running().await,
             platform_runtime_count: self.platforms.runtime_count().await,
             managed_platform_count: self.platforms.managed_platform_count(),
+            data_root_dir: self.data_root_dir.to_string_lossy().into_owned(),
+            conversation_store_dir: self.conversation_store.root().to_string_lossy().into_owned(),
             workers: self.workers.status_snapshot().await,
         }
     }

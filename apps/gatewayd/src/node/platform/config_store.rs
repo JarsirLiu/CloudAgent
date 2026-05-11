@@ -1,3 +1,4 @@
+use crate::node::data_root::resolve_data_root_dir;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -52,9 +53,7 @@ pub(crate) async fn persist_config_state(
 }
 
 pub(crate) fn platform_config_dir(data_root_dir: Option<&std::ffi::OsStr>) -> PathBuf {
-    let root = data_root_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("data"));
+    let root = resolve_data_root_dir(data_root_dir);
     match (
         root.file_name().and_then(|name| name.to_str()),
         root.parent()

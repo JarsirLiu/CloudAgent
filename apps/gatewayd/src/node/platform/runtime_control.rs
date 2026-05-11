@@ -1,9 +1,9 @@
 use super::config_store::PlatformConfigState;
-use super::schema::{build_feishu_config, build_wecom_config};
+use super::schema::{build_feishu_config, build_wecom_config, build_weixin_config};
 use crate::node::device_settings::{conversation_store_dir, load_persisted_device_settings};
 use crate::node::source::platform_runtime_client_name;
 use agent_app_server_client::{AppServerClient, AppServerConnectInfo, RemoteClientConfig};
-use agent_gateway::adapter::{feishu, wecom};
+use agent_gateway::adapter::{feishu, wecom, weixin};
 use agent_protocol::TurnPolicy;
 use anyhow::Result;
 use std::time::Duration;
@@ -74,6 +74,28 @@ pub(super) async fn spawn_wecom_runtime(
             Ok(status) => info!("wecom runtime stopped: {status:?}"),
             Err(err) => {
                 error!("wecom runtime failed: {err:#}");
+                return Err(err);
+            }
+        }
+        Ok(())
+    });
+    Ok(SpawnedPlatformRuntime { runtime_task })
+}
+
+pub(super) async fn spawn_weixin_runtime(
+    node_address: &str,
+    state: &PlatformConfigState,
+    data_root_dir: Option<&std::ffi::OsStr>,
+) -> Result<SpawnedPlatformRuntime> {
+    let config = build_weixin_config(state)?;
+    let client_name = platform_runtime_client_name("weixin");
+    let client = connect_node_client(node_address, &client_name).await?;
+    let runtime = weixin::spawn_runtime(config, client, load_default_turn_policy(data_root_dir)?)?;
+    let runtime_task = tokio::spawn(async move {
+        match runtime.wait().await {
+            Ok(status) => info!("weixin runtime stopped: {status:?}"),
+            Err(err) => {
+                error!("weixin runtime failed: {err:#}");
                 return Err(err);
             }
         }

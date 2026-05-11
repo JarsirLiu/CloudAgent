@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     apply_color_cli_preference(&args);
     ensure_user_config_exists()?;
     let workspace_root = std::env::current_dir()?;
-    let config = if std::env::var("CLOUDAGENT_RELEASE_MODE").ok().as_deref() == Some("1") {
+    let config = if config::release_mode_enabled() {
         AgentConfig::load_user_only(workspace_root)?
     } else {
         AgentConfig::load(workspace_root)?
@@ -354,6 +354,7 @@ fn resolve_console_target(
                     address: address.clone(),
                     program,
                     args: launch_args,
+                    expected_data_root_dir: data_root_dir.to_path_buf(),
                 },
             ))
         }
@@ -404,7 +405,7 @@ fn default_node_launcher() -> (OsString, Vec<OsString>) {
 }
 
 fn should_launch_gatewayd_via_cargo() -> bool {
-    if std::env::var("CLOUDAGENT_RELEASE_MODE").ok().as_deref() == Some("1") {
+    if config::release_mode_enabled() {
         return false;
     }
 
@@ -594,7 +595,7 @@ async fn create_platform_management_client(
         OsString::from("--data-dir"),
         data_root_dir.as_os_str().to_os_string(),
     ]);
-    create_local_node_client(&address, &program, &node_args).await
+    create_local_node_client(&address, &program, &node_args, data_root_dir).await
 }
 
 async fn print_node_status(client: &AppServerClient) -> Result<()> {
@@ -612,6 +613,15 @@ async fn print_node_status(client: &AppServerClient) -> Result<()> {
         "platform_runtimes: {}/{}",
         response.platform_runtime_count, response.managed_platform_count
     );
+    if !response.data_root_dir.is_empty() {
+        println!("data_root_dir: {}", response.data_root_dir);
+    }
+    if !response.conversation_store_dir.is_empty() {
+        println!(
+            "conversation_store_dir: {}",
+            response.conversation_store_dir
+        );
+    }
     if !response.workers.is_empty() {
         println!("worker_scopes:");
         for worker in response.workers {
@@ -758,8 +768,13 @@ mod tests {
                 address,
                 program,
                 args,
+                expected_data_root_dir,
             } => {
                 assert_eq!(address, expected_address);
+                assert_eq!(
+                    expected_data_root_dir,
+                    PathBuf::from("D:\\learn\\gifti\\cloudagent\\data")
+                );
                 let program_display = program.to_string_lossy();
                 assert!(
                     program_display.contains("gatewayd") || program_display == "cargo",

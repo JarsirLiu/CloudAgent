@@ -1,4 +1,5 @@
 use crate::node::command_router::handle_command_message;
+use crate::node::data_root::resolve_data_root_dir;
 use crate::node::device_settings::conversation_store_dir;
 use crate::node::message_sync::write_node_event;
 use crate::node::platform::PlatformManager;
@@ -29,19 +30,30 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
         .unwrap_or_else(default_worker_bin);
     let data_root_dir =
         arg_value(args, "--data-dir").or_else(|| std::env::var_os("CLOUDAGENT_DATA_ROOT_DIR"));
+    let resolved_data_root_dir = resolve_data_root_dir(data_root_dir.as_deref());
 
     let listener = TcpListener::bind(&listen_address)
         .await
         .with_context(|| format!("failed to bind gatewayd remote host on {listen_address}"))?;
     tracing::info!("gatewayd remote app-server host listening on {listen_address}");
-    let platforms = PlatformManager::load(data_root_dir.as_deref()).await?;
-    let conversation_store =
-        infra_store::JsonConversationStore::new(conversation_store_dir(data_root_dir.as_deref()));
+    tracing::info!(
+        data_root_dir = %resolved_data_root_dir.display(),
+        conversation_store_dir = %conversation_store_dir(Some(resolved_data_root_dir.as_os_str())).display(),
+        "gatewayd data root resolved"
+    );
+    let platforms = PlatformManager::load(Some(resolved_data_root_dir.as_os_str())).await?;
+    let conversation_store = infra_store::JsonConversationStore::new(conversation_store_dir(Some(
+        resolved_data_root_dir.as_os_str(),
+    )));
     let runtime = NodeRuntime::new(
-        crate::node::worker_manager::WorkerManager::new(worker_program, data_root_dir),
+        crate::node::worker_manager::WorkerManager::new(
+            worker_program,
+            Some(resolved_data_root_dir.clone().into_os_string()),
+        ),
         conversation_store,
         platforms,
         listen_address.clone(),
+        resolved_data_root_dir,
     );
     let platform_runtime = runtime.clone();
     let platform_listen_address = listen_address.clone();
@@ -354,6 +366,7 @@ mod tests {
             infra_store::JsonConversationStore::new(root.join("conversations")),
             platforms,
             "127.0.0.1:47070",
+            root,
         )
     }
 

@@ -3,10 +3,12 @@ use crate::state::NoticeLevel;
 use crate::state::bottom_pane_runtime::BottomPaneRuntimeState;
 use crate::state::selectors::status_text_from_mode;
 use crate::terminal::Frame;
+use crate::ui::widgets::gateway_panel::WeixinLoginSessionView;
 use crate::ui::widgets::input_pane::{
     InputPane, InputPaneAction, InputPaneRenderResult, ServerRequestInlineState,
 };
 use crate::ui::widgets::session_picker::SessionPickerMode;
+use crate::ui::widgets::weixin_binding_view::WeixinBindingViewModel;
 use agent_core::InputItem;
 use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
@@ -233,6 +235,20 @@ impl BottomPaneController {
         config: PlatformConfigResponse,
     ) {
         self.input_pane.set_gateway_edit_panel(entry, config);
+    }
+
+    pub(crate) fn set_gateway_edit_panel_with_weixin_login(
+        &mut self,
+        entry: PlatformControlEntry,
+        config: PlatformConfigResponse,
+        session: Option<WeixinLoginSessionView>,
+    ) {
+        self.input_pane
+            .set_gateway_edit_panel_with_weixin_login(entry, config, session);
+    }
+
+    pub(crate) fn set_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
+        self.input_pane.set_weixin_binding_view(model);
     }
 
     pub(crate) fn dismiss_server_request(&mut self, request_id: &RequestId) {
