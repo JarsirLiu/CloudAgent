@@ -26,12 +26,19 @@ impl FeishuOutboundRenderer {
     pub fn render(&mut self, event: GatewayEvent) -> Vec<OutboundMessage> {
         match event {
             GatewayEvent::TurnStarted { .. } => Vec::new(),
-            GatewayEvent::ItemStarted { target, item, .. } => self.render_item_started(target, item),
+            GatewayEvent::ItemStarted { target, item, .. } => {
+                self.render_item_started(target, item)
+            }
             GatewayEvent::ItemDelta {
-                target, kind, delta, ..
+                target,
+                kind,
+                delta,
+                ..
             } => self.render_item_delta(target, kind, delta),
             GatewayEvent::ReasoningSummaryPartAdded { .. } => Vec::new(),
-            GatewayEvent::ItemCompleted { target, item, .. } => self.render_item_completed(target, item),
+            GatewayEvent::ItemCompleted { target, item, .. } => {
+                self.render_item_completed(target, item)
+            }
             GatewayEvent::ServerRequestRequested { .. }
             | GatewayEvent::ServerRequestResolved { .. }
             | GatewayEvent::TokenUsageUpdated { .. }
@@ -53,7 +60,11 @@ impl FeishuOutboundRenderer {
         }
     }
 
-    fn render_item_started(&mut self, target: OutboundTarget, item: TranscriptItem) -> Vec<OutboundMessage> {
+    fn render_item_started(
+        &mut self,
+        target: OutboundTarget,
+        item: TranscriptItem,
+    ) -> Vec<OutboundMessage> {
         match item {
             TranscriptItem::Reasoning { .. } => {
                 self.enter_phase(target, FeishuPhase::Reasoning, "正在思考中...")

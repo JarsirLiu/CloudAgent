@@ -33,11 +33,9 @@ impl BottomPaneView for WeixinBindingView {
             return BottomPaneViewAction::None;
         }
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                BottomPaneViewAction::Composer(ComposerIntent::GatewaySelect(
-                    self.model.platform.clone(),
-                ))
-            }
+            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Composer(
+                ComposerIntent::GatewaySelect(self.model.platform.clone()),
+            ),
             _ => BottomPaneViewAction::None,
         }
     }
@@ -59,10 +57,7 @@ impl BottomPaneView for WeixinBindingView {
                 Span::styled("  Status: ", dim),
                 Span::styled(self.model.status.clone(), body),
             ]),
-            Line::from(Span::styled(
-                "  Esc returns to the gateway page.",
-                dim,
-            )),
+            Line::from(Span::styled("  Esc returns to the gateway page.", dim)),
         ]
     }
 

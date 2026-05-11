@@ -241,7 +241,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
         } => EventFlow::Continue(vec![GatewayEvent::ContextCompactionStarted {
             target: target.clone(),
             turn_id: turn_id.clone(),
-            continuation: continuation.clone(),
+            continuation: *continuation,
             estimated_tokens: *estimated_tokens,
         }]),
         AppServerNotification::ContextCompacted {
@@ -256,7 +256,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
         } => EventFlow::Continue(vec![GatewayEvent::ContextCompacted {
             target: target.clone(),
             turn_id: turn_id.clone(),
-            continuation: continuation.clone(),
+            continuation: *continuation,
             pre_context_tokens_estimate: *pre_context_tokens_estimate,
             post_context_tokens_estimate: *post_context_tokens_estimate,
             pre_message_count: *pre_message_count,

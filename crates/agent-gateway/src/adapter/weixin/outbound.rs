@@ -30,12 +30,19 @@ impl WeixinOutboundRenderer {
     pub fn render(&mut self, event: GatewayEvent) -> Vec<WeixinOutboundMessage> {
         match event {
             GatewayEvent::TurnStarted { .. } => Vec::new(),
-            GatewayEvent::ItemStarted { target, item, .. } => self.render_item_started(target, item),
+            GatewayEvent::ItemStarted { target, item, .. } => {
+                self.render_item_started(target, item)
+            }
             GatewayEvent::ItemDelta {
-                target, kind, delta, ..
+                target,
+                kind,
+                delta,
+                ..
             } => self.render_item_delta(target, kind, delta),
             GatewayEvent::ReasoningSummaryPartAdded { .. } => Vec::new(),
-            GatewayEvent::ItemCompleted { target, item, .. } => self.render_item_completed(target, item),
+            GatewayEvent::ItemCompleted { target, item, .. } => {
+                self.render_item_completed(target, item)
+            }
             GatewayEvent::ServerRequestRequested { .. }
             | GatewayEvent::ServerRequestResolved { .. }
             | GatewayEvent::TokenUsageUpdated { .. }
@@ -66,7 +73,11 @@ impl WeixinOutboundRenderer {
         }
     }
 
-    fn render_item_started(&mut self, target: OutboundTarget, item: TranscriptItem) -> Vec<WeixinOutboundMessage> {
+    fn render_item_started(
+        &mut self,
+        target: OutboundTarget,
+        item: TranscriptItem,
+    ) -> Vec<WeixinOutboundMessage> {
         match item {
             TranscriptItem::Reasoning { .. } => self.enter_reasoning(target.chat_id),
             TranscriptItem::CommandExecution { .. }

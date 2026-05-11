@@ -2,7 +2,9 @@ use super::config_store::{
     PlatformConfigState, load_config_state, persist_config_state, platform_config_dir,
 };
 use super::control_store::{load_control_state, persist_control_state};
-use super::runtime_control::{RunningPlatformRuntime, spawn_feishu_runtime, spawn_wecom_runtime, spawn_weixin_runtime};
+use super::runtime_control::{
+    RunningPlatformRuntime, spawn_feishu_runtime, spawn_wecom_runtime, spawn_weixin_runtime,
+};
 use super::schema::{config_response, supported_specs_for, validate_platform_config};
 use super::state::{PlatformControlState, default_entry, ensure_supported_platform, now_ms};
 use agent_protocol::{
@@ -200,10 +202,11 @@ impl PlatformManager {
             });
         };
         if !session.task.is_finished() {
-            self.inner.lock().await.weixin_login_sessions.insert(
-                session_id.to_string(),
-                session,
-            );
+            self.inner
+                .lock()
+                .await
+                .weixin_login_sessions
+                .insert(session_id.to_string(), session);
             return Ok(WeixinLoginStatusResponse {
                 session_id: session_id.to_string(),
                 status: "pending".to_string(),
@@ -216,7 +219,11 @@ impl PlatformManager {
             WeixinLoginPollResult::Confirmed(credentials) => {
                 {
                     let mut state = self.inner.lock().await;
-                    let entry = state.config.platforms.entry("weixin".to_string()).or_default();
+                    let entry = state
+                        .config
+                        .platforms
+                        .entry("weixin".to_string())
+                        .or_default();
                     entry.insert("account_id".to_string(), credentials.account_id.clone());
                     entry.insert("token".to_string(), credentials.token.clone());
                     entry.insert("base_url".to_string(), credentials.base_url.clone());
@@ -417,14 +424,15 @@ enum WeixinLoginPollResult {
 }
 
 async fn request_weixin_qr() -> Result<WeixinQrPayload> {
-    let response = reqwest::get("https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3")
-        .await
-        .context("failed to request weixin qr")?
-        .error_for_status()
-        .context("weixin qr returned error status")?
-        .json::<Value>()
-        .await
-        .context("failed to decode weixin qr response")?;
+    let response =
+        reqwest::get("https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3")
+            .await
+            .context("failed to request weixin qr")?
+            .error_for_status()
+            .context("weixin qr returned error status")?
+            .json::<Value>()
+            .await
+            .context("failed to decode weixin qr response")?;
     let qrcode_value = response
         .get("qrcode")
         .and_then(Value::as_str)

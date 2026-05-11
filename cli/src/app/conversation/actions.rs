@@ -64,10 +64,14 @@ async fn reload_gateway_panel(
         }
     };
     if platform == "weixin" {
-        app.bottom_pane
-            .set_gateway_edit_panel_with_weixin_login(status.platform, config, weixin_login);
+        app.bottom_pane.set_gateway_edit_panel_with_weixin_login(
+            status.platform,
+            config,
+            weixin_login,
+        );
     } else {
-        app.bottom_pane.set_gateway_edit_panel(status.platform, config);
+        app.bottom_pane
+            .set_gateway_edit_panel(status.platform, config);
     }
     Ok(false)
 }
@@ -279,12 +283,13 @@ pub(crate) async fn handle_tui_input(
                 status: "waiting for scan".to_string(),
                 next_poll_at: std::time::Instant::now() + std::time::Duration::from_secs(2),
             });
-            app.bottom_pane.set_weixin_binding_view(WeixinBindingViewModel {
-                platform,
-                session_id: response.session_id,
-                qr_url: response.qr_url,
-                status: "waiting for scan".to_string(),
-            });
+            app.bottom_pane
+                .set_weixin_binding_view(WeixinBindingViewModel {
+                    platform,
+                    session_id: response.session_id,
+                    qr_url: response.qr_url,
+                    status: "waiting for scan".to_string(),
+                });
             return Ok(false);
         }
         ParsedInput::LocalGatewayWeixinLoginCheck {
@@ -336,7 +341,8 @@ pub(crate) async fn handle_tui_input(
                             return Ok(false);
                         }
                     };
-                    app.bottom_pane.set_gateway_edit_panel(status.platform, config);
+                    app.bottom_pane
+                        .set_gateway_edit_panel(status.platform, config);
                     return Ok(false);
                 }
                 "pending" => {
@@ -345,15 +351,15 @@ pub(crate) async fn handle_tui_input(
                         session_id: session_id.clone(),
                         qr_url: qr_url.clone(),
                         status: "waiting for confirmation".to_string(),
-                        next_poll_at: std::time::Instant::now()
-                            + std::time::Duration::from_secs(2),
+                        next_poll_at: std::time::Instant::now() + std::time::Duration::from_secs(2),
                     });
-                    app.bottom_pane.set_weixin_binding_view(WeixinBindingViewModel {
-                        platform,
-                        session_id,
-                        qr_url,
-                        status: "waiting for confirmation".to_string(),
-                    });
+                    app.bottom_pane
+                        .set_weixin_binding_view(WeixinBindingViewModel {
+                            platform,
+                            session_id,
+                            qr_url,
+                            status: "waiting for confirmation".to_string(),
+                        });
                     return Ok(false);
                 }
                 "expired" => {
@@ -421,33 +427,19 @@ pub(crate) async fn handle_tui_input(
             } else {
                 "disabled"
             };
-            if platform == "weixin" {
-                let config = match client.request_platform_config_typed(&platform).await {
-                    Ok(config) => config,
-                    Err(err) => {
-                        show_local_notice(
-                            app,
-                            NoticeLevel::Error,
-                            platform_request_notice("reload platform config", &err),
-                        );
-                        return Ok(false);
-                    }
-                };
-                app.bottom_pane.set_gateway_edit_panel(status.platform, config);
-            } else {
-                let config = match client.request_platform_config_typed(&platform).await {
-                    Ok(config) => config,
-                    Err(err) => {
-                        show_local_notice(
-                            app,
-                            NoticeLevel::Error,
-                            platform_request_notice("reload platform config", &err),
-                        );
-                        return Ok(false);
-                    }
-                };
-                app.bottom_pane.set_gateway_edit_panel(status.platform, config);
-            }
+            let config = match client.request_platform_config_typed(&platform).await {
+                Ok(config) => config,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        platform_request_notice("reload platform config", &err),
+                    );
+                    return Ok(false);
+                }
+            };
+            app.bottom_pane
+                .set_gateway_edit_panel(status.platform, config);
             show_local_notice(
                 app,
                 NoticeLevel::Info,

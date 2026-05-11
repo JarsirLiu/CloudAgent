@@ -1,8 +1,8 @@
 use super::compaction::{CompactionContinuation, CompactionMode, maybe_compact_history};
 use super::loop_guard::LoopGuard;
 use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
-use crate::model::ReasoningDelta;
 use crate::context::{ContextFragment, ContextInjectionStrategy, MemoryBudgetSource};
+use crate::model::ReasoningDelta;
 use crate::{
     ContextBudgetLogEntry, ContextFacade, ContextManager, FilterPolicy, ModelStreamObserver,
     ModelUsage, RolloutItem, append_context_budget_log, emit_assistant_message_item, emit_event,
@@ -378,14 +378,18 @@ pub async fn execute_regular_turn<H: TurnHost>(
             fn on_reasoning_delta(&mut self, delta: ReasoningDelta) {
                 let (kind, segment_index, delta): (TurnItemDeltaKind, Option<usize>, String) =
                     match delta {
-                    ReasoningDelta::SummaryText {
-                        summary_index,
-                        delta,
-                    } => (TurnItemDeltaKind::ReasoningSummary, Some(summary_index), delta),
-                    ReasoningDelta::Text {
-                        content_index,
-                        delta,
-                    } => (TurnItemDeltaKind::ReasoningText, Some(content_index), delta),
+                        ReasoningDelta::SummaryText {
+                            summary_index,
+                            delta,
+                        } => (
+                            TurnItemDeltaKind::ReasoningSummary,
+                            Some(summary_index),
+                            delta,
+                        ),
+                        ReasoningDelta::Text {
+                            content_index,
+                            delta,
+                        } => (TurnItemDeltaKind::ReasoningText, Some(content_index), delta),
                     };
                 if delta.is_empty() {
                     return;

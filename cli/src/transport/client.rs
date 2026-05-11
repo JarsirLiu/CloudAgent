@@ -87,7 +87,10 @@ async fn verify_local_node_data_root(
 
 fn normalize_path_for_compare(path: &Path) -> String {
     let normalized = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    normalized.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+    normalized
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase()
 }
 
 fn existing_node_looks_unhealthy(error: &anyhow::Error) -> bool {

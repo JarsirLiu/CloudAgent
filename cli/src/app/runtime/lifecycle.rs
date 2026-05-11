@@ -1,17 +1,14 @@
 use crate::app::TuiApp;
 use crate::app::conversation::actions::handle_tui_input;
 use crate::app::runtime::display::{should_animate_live_status, should_animate_welcome};
-use agent_app_server_client::AppServerClient;
 use crate::state::reducer::UiInputEvent;
+use agent_app_server_client::AppServerClient;
 
 pub(crate) fn pause_welcome_animation_for_input(app: &mut TuiApp) {
     app.welcome_animation_pause_ticks = 8;
 }
 
-pub(crate) async fn handle_animation_tick(
-    app: &mut TuiApp,
-    client: &AppServerClient,
-) -> bool {
+pub(crate) async fn handle_animation_tick(app: &mut TuiApp, client: &AppServerClient) -> bool {
     if let Some(binding) = app.run_state.weixin_binding.clone()
         && std::time::Instant::now() >= binding.next_poll_at
     {

@@ -446,9 +446,7 @@ fn intent_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
         SlashCommand::Config => ComposerIntent::Config,
         SlashCommand::Gateway => ComposerIntent::Gateway,
         SlashCommand::WeixinLogin => ComposerIntent::WeixinLogin,
-        SlashCommand::WeixinLoginCheck => {
-            ComposerIntent::WeixinLoginCheck(args.trim().to_string())
-        }
+        SlashCommand::WeixinLoginCheck => ComposerIntent::WeixinLoginCheck(args.trim().to_string()),
         SlashCommand::Exit => ComposerIntent::Exit,
     }
 }

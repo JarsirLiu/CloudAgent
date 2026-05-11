@@ -96,7 +96,7 @@ impl WecomAdapter {
             }
         });
         stream
-            .send(Message::Text(subscribe_frame.to_string().into()))
+            .send(Message::Text(subscribe_frame.to_string()))
             .await
             .context("failed to send wecom subscribe frame")?;
 
@@ -110,8 +110,8 @@ impl WecomAdapter {
             let Message::Text(text) = message else {
                 continue;
             };
-            let payload: Value = serde_json::from_str(&text)
-                .context("failed to decode wecom subscribe response")?;
+            let payload: Value =
+                serde_json::from_str(&text).context("failed to decode wecom subscribe response")?;
             let req_id = payload
                 .get("headers")
                 .and_then(|headers| headers.get("req_id"))
@@ -149,7 +149,7 @@ impl WecomAdapter {
                     break;
                 };
                 if writer
-                    .send(Message::Text(payload.to_string().into()))
+                    .send(Message::Text(payload.to_string()))
                     .await
                     .is_err()
                 {
@@ -235,11 +235,18 @@ impl WecomAdapter {
             };
             sleep(delay).await;
             let batch = adapter.pending_text_batches.lock().await.remove(&task_key);
-            adapter.pending_text_batch_tasks.lock().await.remove(&task_key);
+            adapter
+                .pending_text_batch_tasks
+                .lock()
+                .await
+                .remove(&task_key);
             let Some(batch) = batch else {
                 return;
             };
-            if let Err(error) = adapter.dispatch_message(batch.message, handler_for_task).await {
+            if let Err(error) = adapter
+                .dispatch_message(batch.message, handler_for_task)
+                .await
+            {
                 warn!(?error, session_key = %task_key, "wecom.websocket.flush_batch_failed");
             }
         });
@@ -362,10 +369,7 @@ impl WecomAdapter {
         Ok(())
     }
 
-    async fn send_markdown(
-        &self,
-        message: WecomOutboundMessage,
-    ) -> Result<()> {
+    async fn send_markdown(&self, message: WecomOutboundMessage) -> Result<()> {
         let reply_req_id = {
             let reply_req_ids = self.reply_req_ids.lock().await;
             message
@@ -412,9 +416,12 @@ impl WecomAdapter {
             .map(str::to_string)
             .context("missing req_id in outbound payload")?;
         let (ack_tx, ack_rx) = oneshot::channel();
-        self.pending_acks.lock().await.insert(req_id.clone(), ack_tx);
+        self.pending_acks
+            .lock()
+            .await
+            .insert(req_id.clone(), ack_tx);
         writer
-            .send(Message::Text(payload.to_string().into()))
+            .send(Message::Text(payload.to_string()))
             .await
             .context("failed to send wecom outbound message")?;
         drop(guard);
@@ -455,11 +462,15 @@ impl WecomAdapter {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("image/jpeg")
             .to_string();
-        let bytes = response.bytes().await.context("failed to read image bytes")?;
+        let bytes = response
+            .bytes()
+            .await
+            .context("failed to read image bytes")?;
         let ext = guess_image_extension(&content_type, url);
         let file_name = format!("cloudagent-wecom-{}-{}{}", new_req_id("img"), index, ext);
         let path = std::env::temp_dir().join(file_name);
-        fs::write(&path, &bytes).with_context(|| format!("failed to write image cache {:?}", path))?;
+        fs::write(&path, &bytes)
+            .with_context(|| format!("failed to write image cache {:?}", path))?;
         Ok(path.display().to_string())
     }
 }
@@ -486,7 +497,11 @@ impl PlatformAdapter for WecomAdapter {
                 Err(error) => {
                     let delay = RECONNECT_BACKOFF[backoff_index.min(RECONNECT_BACKOFF.len() - 1)];
                     backoff_index = backoff_index.saturating_add(1);
-                    warn!(?error, delay_secs = delay.as_secs(), "wecom.websocket.connect_failed");
+                    warn!(
+                        ?error,
+                        delay_secs = delay.as_secs(),
+                        "wecom.websocket.connect_failed"
+                    );
                     sleep(delay).await;
                     continue;
                 }
@@ -651,11 +666,11 @@ fn guess_image_extension(content_type: &str, url: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::super::inbound::{WecomChatKind, WecomInboundEnvelope};
     use super::{matches_entry, strip_group_leading_mention};
     use crate::adapter::wecom::config::{WecomAdapterConfig, WecomPolicy};
     use crate::adapter::wecom::runtime::build_turn_content_for_tests;
     use crate::message::ReplyContext;
-    use super::super::inbound::{WecomChatKind, WecomInboundEnvelope};
     use agent_core::{AttachmentRef, InputItem};
 
     #[test]

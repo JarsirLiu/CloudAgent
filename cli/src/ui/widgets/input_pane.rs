@@ -443,7 +443,8 @@ impl InputPane {
 
     pub fn set_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
         self.view_stack.clear();
-        self.view_stack.push(Box::new(WeixinBindingView::new(model)));
+        self.view_stack
+            .push(Box::new(WeixinBindingView::new(model)));
     }
 
     pub fn dismiss_server_request(&mut self, request_id: &RequestId) {

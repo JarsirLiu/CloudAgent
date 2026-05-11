@@ -50,13 +50,14 @@ fn permission_profile_for_mode(mode: &str) -> PermissionProfile {
 #[cfg(test)]
 mod tests {
     use super::{PersistedDeviceSettings, conversation_store_dir, load_persisted_device_settings};
+    use crate::node::data_root::resolve_data_root_dir;
     use agent_core::PermissionProfile;
 
     #[test]
     fn conversation_store_dir_defaults_under_data_root() {
         assert_eq!(
             conversation_store_dir(None),
-            std::path::PathBuf::from("data").join("conversations")
+            resolve_data_root_dir(None).join("conversations")
         );
     }
 

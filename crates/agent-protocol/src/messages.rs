@@ -618,6 +618,7 @@ impl AppServerRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AppServerMessage {
     Notification(AppServerNotification),

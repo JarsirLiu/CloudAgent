@@ -156,11 +156,7 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             AppServerNotification::TurnSnapshot { turn, .. } => {
                 actions.push(ServerAction::UpsertTurnSnapshot(turn.clone()));
             }
-            AppServerNotification::ItemStarted {
-                turn_id,
-                item,
-                ..
-            } => {
+            AppServerNotification::ItemStarted { turn_id, item, .. } => {
                 let item_id = item.id().to_string();
                 actions.push(ServerAction::StartActiveTurnItem {
                     turn_id: turn_id.clone(),

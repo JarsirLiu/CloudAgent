@@ -283,7 +283,10 @@ fn mask_secret(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlatformConfigState, build_feishu_config, build_wecom_config, build_weixin_config, parse_bool_value};
+    use super::{
+        PlatformConfigState, build_feishu_config, build_wecom_config, build_weixin_config,
+        parse_bool_value,
+    };
     use agent_gateway::adapter::wecom::WecomPolicy;
     use std::collections::BTreeMap;
 
@@ -347,7 +350,10 @@ mod tests {
         let config = build_wecom_config(&state).expect("config");
         assert_eq!(config.dm_policy, WecomPolicy::Allowlist);
         assert_eq!(config.group_policy, WecomPolicy::Disabled);
-        assert_eq!(config.allow_from, vec!["user1".to_string(), "user2".to_string()]);
+        assert_eq!(
+            config.allow_from,
+            vec!["user1".to_string(), "user2".to_string()]
+        );
         assert_eq!(
             config.group_allow_from,
             vec!["chat1".to_string(), "chat2".to_string()]

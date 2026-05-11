@@ -76,7 +76,11 @@ impl NodeRuntime {
             platform_runtime_count: self.platforms.runtime_count().await,
             managed_platform_count: self.platforms.managed_platform_count(),
             data_root_dir: self.data_root_dir.to_string_lossy().into_owned(),
-            conversation_store_dir: self.conversation_store.root().to_string_lossy().into_owned(),
+            conversation_store_dir: self
+                .conversation_store
+                .root()
+                .to_string_lossy()
+                .into_owned(),
             workers: self.workers.status_snapshot().await,
         }
     }

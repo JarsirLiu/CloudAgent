@@ -7,7 +7,10 @@ use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
 use agent_app_server_client::{AppServerClient, AppServerEvent, AppServerRequestHandle};
 use agent_core::{AttachmentRef, ImageDetail, InputItem, ServerRequestDecision, text_input_items};
-use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, TurnPolicy, UserTurnInput};
+use agent_protocol::{
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, TurnPolicy,
+    UserTurnInput,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -132,7 +135,10 @@ impl MessageHandler for NodeBackedHandler {
                     is_reply_chain: false,
                     reply_context: message.reply_context.clone(),
                 },
-                message: format!("审批已处理: {}", render_request_resolution_label(&pending.request)),
+                message: format!(
+                    "审批已处理: {}",
+                    render_request_resolution_label(&pending.request)
+                ),
             })
             .await?;
         Ok(true)
@@ -174,7 +180,8 @@ impl MessageHandler for NodeBackedHandler {
                         .send_event(GatewayEvent::Info {
                             target: target.clone(),
                             message: if self.approvals.has_pending(&session_key).await {
-                                "Agent 正在等待你在企微里回复 /approve、/always、/deny 或 /cancel。".to_string()
+                                "Agent 正在等待你在企微里回复 /approve、/always、/deny 或 /cancel。"
+                                    .to_string()
                             } else {
                                 "消息已提交给 Agent，但后续事件返回超时。".to_string()
                             },
@@ -188,15 +195,17 @@ impl MessageHandler for NodeBackedHandler {
             }
             let event_turn_id = event_turn_id(&event);
             if let Some(bound_turn_id) = active_turn_id.as_deref() {
-                if let Some(event_turn_id) = event_turn_id && event_turn_id != bound_turn_id {
+                if let Some(event_turn_id) = event_turn_id
+                    && event_turn_id != bound_turn_id
+                {
                     continue;
                 }
             } else if let Some(event_turn_id) = event_turn_id {
                 if matches!(
                     &event,
-                    AppServerEvent::Message(
-                        AppServerMessage::Notification(AppServerNotification::TurnStarted { .. })
-                    )
+                    AppServerEvent::Message(AppServerMessage::Notification(
+                        AppServerNotification::TurnStarted { .. }
+                    ))
                 ) {
                     active_turn_id = Some(event_turn_id.to_string());
                 } else {
@@ -284,8 +293,12 @@ fn notification_turn_id(notification: &AppServerNotification) -> Option<&str> {
 fn request_turn_id(request: &AppServerRequest) -> Option<&str> {
     match request {
         AppServerRequest::ServerRequest { request, .. } => match request {
-            agent_core::ServerRequest::CommandApproval { request } => Some(request.turn_id.as_str()),
-            agent_core::ServerRequest::FileChangeApproval { request } => Some(request.turn_id.as_str()),
+            agent_core::ServerRequest::CommandApproval { request } => {
+                Some(request.turn_id.as_str())
+            }
+            agent_core::ServerRequest::FileChangeApproval { request } => {
+                Some(request.turn_id.as_str())
+            }
         },
     }
 }

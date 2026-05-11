@@ -142,8 +142,7 @@ impl WeixinAdapter {
                 self.context_tokens.lock().await.remove(chat_id);
                 warn!(
                     chat_id,
-                    client_id,
-                    "weixin.sendmessage.retry_without_context_token"
+                    client_id, "weixin.sendmessage.retry_without_context_token"
                 );
                 continue;
             }
@@ -171,7 +170,11 @@ impl WeixinAdapter {
             .timeout(Duration::from_secs(CONFIG_TIMEOUT_SECS))
             .build()
             .context("failed to build weixin config client")?;
-        let url = format!("{}/{}", self.config.base_url.trim_end_matches('/'), "ilink/bot/getconfig");
+        let url = format!(
+            "{}/{}",
+            self.config.base_url.trim_end_matches('/'),
+            "ilink/bot/getconfig"
+        );
         let response = client
             .post(url)
             .bearer_auth(self.config.token.trim())
@@ -268,15 +271,11 @@ impl WeixinAdapter {
     }
 
     async fn handle_update(&self, message: Value, handler: Arc<dyn MessageHandler>) -> Result<()> {
-        let Some(envelope) = WeixinInboundEnvelope::from_message(&message, &self.config.account_id) else {
+        let Some(envelope) = WeixinInboundEnvelope::from_message(&message, &self.config.account_id)
+        else {
             return Ok(());
         };
-        if self
-            .seen_messages
-            .lock()
-            .await
-            .is_duplicate(&envelope)
-        {
+        if self.seen_messages.lock().await.is_duplicate(&envelope) {
             return Ok(());
         }
         if let Some(context_token) = envelope.context_token.clone() {
@@ -527,10 +526,7 @@ fn is_fence_line(line: &str) -> bool {
 }
 
 fn is_table_rule_line(line: &str) -> bool {
-    !line.is_empty()
-        && line
-            .chars()
-            .all(|ch| matches!(ch, ':' | '-' | '|' | ' '))
+    !line.is_empty() && line.chars().all(|ch| matches!(ch, ':' | '-' | '|' | ' '))
 }
 
 fn split_hard(block: &str, max_length: usize, out: &mut Vec<String>) {
@@ -550,11 +546,10 @@ fn split_hard(block: &str, max_length: usize, out: &mut Vec<String>) {
 mod tests {
     use super::{
         SeenMessages, format_message_for_weixin, is_stale_session_ret, random_wechat_uin,
-        split_text_for_weixin_delivery,
-        with_base_info,
+        split_text_for_weixin_delivery, with_base_info,
     };
-    use serde_json::json;
     use crate::adapter::weixin::inbound::WeixinInboundEnvelope;
+    use serde_json::json;
 
     #[test]
     fn split_text_keeps_short_message_whole() {
@@ -623,9 +618,11 @@ mod tests {
     fn random_wechat_uin_is_base64_text() {
         let value = random_wechat_uin();
         assert!(!value.is_empty());
-        assert!(value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
+        assert!(
+            value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '='))
+        );
     }
 
     fn envelope(
@@ -688,7 +685,10 @@ impl PlatformAdapter for WeixinAdapter {
                 }
                 Err(error) => {
                     consecutive_failures += 1;
-                    warn!(?error, consecutive_failures, "weixin.long_poll.request_failed");
+                    warn!(
+                        ?error,
+                        consecutive_failures, "weixin.long_poll.request_failed"
+                    );
                     sleep(if consecutive_failures >= 3 {
                         BACKOFF_DELAY
                     } else {
@@ -721,21 +721,23 @@ impl PlatformAdapter for WeixinAdapter {
 
 fn typing_chat_id(event: &GatewayEvent) -> Option<String> {
     match event {
-        GatewayEvent::ItemStarted { target, item, .. } => match item {
-            agent_core::TranscriptItem::Reasoning { .. }
-            | agent_core::TranscriptItem::CommandExecution { .. }
-            | agent_core::TranscriptItem::FileChange { .. }
-            | agent_core::TranscriptItem::ToolResult { .. } => Some(target.chat_id.clone()),
-            _ => None,
-        },
-        GatewayEvent::ItemDelta { target, kind, .. } => match kind {
-            crate::gateway_event::GatewayItemDeltaKind::AgentMessage
-            | crate::gateway_event::GatewayItemDeltaKind::ReasoningSummary
-            | crate::gateway_event::GatewayItemDeltaKind::ReasoningText => {
-                Some(target.chat_id.clone())
-            }
-            _ => None,
-        },
+        GatewayEvent::ItemStarted {
+            target,
+            item:
+                agent_core::TranscriptItem::Reasoning { .. }
+                | agent_core::TranscriptItem::CommandExecution { .. }
+                | agent_core::TranscriptItem::FileChange { .. }
+                | agent_core::TranscriptItem::ToolResult { .. },
+            ..
+        } => Some(target.chat_id.clone()),
+        GatewayEvent::ItemDelta {
+            target,
+            kind:
+                crate::gateway_event::GatewayItemDeltaKind::AgentMessage
+                | crate::gateway_event::GatewayItemDeltaKind::ReasoningSummary
+                | crate::gateway_event::GatewayItemDeltaKind::ReasoningText,
+            ..
+        } => Some(target.chat_id.clone()),
         GatewayEvent::ReasoningSummaryPartAdded { target, .. } => Some(target.chat_id.clone()),
         _ => None,
     }

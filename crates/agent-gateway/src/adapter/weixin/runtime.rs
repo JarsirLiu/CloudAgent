@@ -7,7 +7,9 @@ use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
 use agent_app_server_client::{AppServerClient, AppServerEvent};
 use agent_core::text_input_items;
-use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification, TurnPolicy, UserTurnInput};
+use agent_protocol::{
+    AppClientCommand, AppServerMessage, AppServerNotification, TurnPolicy, UserTurnInput,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -107,7 +109,9 @@ impl MessageHandler for NodeBackedHandler {
             }
             let event_turn_id = event_turn_id(&event);
             if let Some(bound_turn_id) = active_turn_id.as_deref() {
-                if let Some(event_turn_id) = event_turn_id && event_turn_id != bound_turn_id {
+                if let Some(event_turn_id) = event_turn_id
+                    && event_turn_id != bound_turn_id
+                {
                     debug!(
                         session_key = %session_key,
                         bound_turn_id,
@@ -120,9 +124,9 @@ impl MessageHandler for NodeBackedHandler {
             } else if let Some(event_turn_id) = event_turn_id {
                 if matches!(
                     &event,
-                    AppServerEvent::Message(
-                        AppServerMessage::Notification(AppServerNotification::TurnStarted { .. })
-                    )
+                    AppServerEvent::Message(AppServerMessage::Notification(
+                        AppServerNotification::TurnStarted { .. }
+                    ))
                 ) {
                     active_turn_id = Some(event_turn_id.to_string());
                     info!(
@@ -203,7 +207,8 @@ fn notification_turn_id(notification: &AppServerNotification) -> Option<&str> {
 
 fn event_name(event: &AppServerEvent) -> &'static str {
     match event {
-        AppServerEvent::Message(AppServerMessage::Notification(notification)) => match notification {
+        AppServerEvent::Message(AppServerMessage::Notification(notification)) => match notification
+        {
             AppServerNotification::TurnStarted { .. } => "turn_started",
             AppServerNotification::ItemStarted { .. } => "item_started",
             AppServerNotification::AgentMessageDelta { .. } => "agent_message_delta",

@@ -212,7 +212,11 @@ impl BottomPaneView for GatewayPanel {
                 KeyCode::Enter => {
                     let toggle_index = fields.len();
                     let save_index = fields.len() + 1;
-                    let back_index = if platform == "weixin" { fields.len() + 1 } else { fields.len() + 2 };
+                    let back_index = if platform == "weixin" {
+                        fields.len() + 1
+                    } else {
+                        fields.len() + 2
+                    };
                     if *selected == toggle_index {
                         if platform == "weixin" && !*enabled && !*configured {
                             if let Some(session) = weixin_login.clone() {
@@ -326,7 +330,10 @@ impl BottomPaneView for GatewayPanel {
                         "  Type or paste values, Tab/Up/Down switch fields, Esc returns to list"
                     }),
                     Line::from(if platform == "weixin" {
-                        format!("  Status: {}", if *enabled { "enabled" } else { "disabled" })
+                        format!(
+                            "  Status: {}",
+                            if *enabled { "enabled" } else { "disabled" }
+                        )
                     } else {
                         format!(
                             "  Status: {} · {}",
@@ -378,7 +385,11 @@ impl BottomPaneView for GatewayPanel {
                 let toggle_index = fields.len();
                 let save_index = fields.len() + 1;
                 let show_weixin_login = platform == "weixin" && !*enabled && !*configured;
-                let back_index = if platform == "weixin" { fields.len() + 1 } else { fields.len() + 2 };
+                let back_index = if platform == "weixin" {
+                    fields.len() + 1
+                } else {
+                    fields.len() + 2
+                };
                 lines.push(Line::from("  "));
                 lines.push(Line::from(Span::styled(
                     if *selected == toggle_index {
@@ -426,15 +437,10 @@ impl BottomPaneView for GatewayPanel {
                         normal_style
                     },
                 )));
-                if show_weixin_login {
-                    if let Some(session) = weixin_login {
-                        lines.push(Line::from(format!(
-                            "  QR session: {}",
-                            session.session_id
-                        )));
-                        lines.push(Line::from("  Scan this URL with WeChat:"));
-                        lines.push(Line::from(format!("  {}", session.qr_url)));
-                    }
+                if show_weixin_login && let Some(session) = weixin_login {
+                    lines.push(Line::from(format!("  QR session: {}", session.session_id)));
+                    lines.push(Line::from("  Scan this URL with WeChat:"));
+                    lines.push(Line::from(format!("  {}", session.qr_url)));
                 }
                 if platform != "weixin" {
                     lines.push(Line::from(Span::styled(

@@ -19,9 +19,13 @@ impl WeixinInboundEnvelope {
         let message_id = extract_string(message, &["message_id"]);
         let room_id = extract_string(message, &["room_id", "chat_room_id"]);
         let to_user_id = extract_string(message, &["to_user_id"]).unwrap_or_default();
-        let (chat_type, chat_id) = if let Some(room_id) = room_id.filter(|value| !value.is_empty()) {
+        let (chat_type, chat_id) = if let Some(room_id) = room_id.filter(|value| !value.is_empty())
+        {
             ("group".to_string(), room_id)
-        } else if !to_user_id.is_empty() && !account_id.trim().is_empty() && to_user_id != account_id {
+        } else if !to_user_id.is_empty()
+            && !account_id.trim().is_empty()
+            && to_user_id != account_id
+        {
             ("group".to_string(), to_user_id)
         } else {
             ("dm".to_string(), sender_user_id.clone())
@@ -105,7 +109,8 @@ mod tests {
                 { "type": 1, "text_item": { "text": "hello" } }
             ]
         });
-        let envelope = WeixinInboundEnvelope::from_message(&payload, "bot-account").expect("envelope");
+        let envelope =
+            WeixinInboundEnvelope::from_message(&payload, "bot-account").expect("envelope");
         assert_eq!(envelope.chat_type, "dm");
         assert_eq!(envelope.chat_id, "wxid_user1");
         assert_eq!(envelope.message_id.as_deref(), Some("m1"));
@@ -120,7 +125,8 @@ mod tests {
                 { "type": 1, "text_item": { "text": "hello" } }
             ]
         });
-        let envelope = WeixinInboundEnvelope::from_message(&payload, "bot-account").expect("envelope");
+        let envelope =
+            WeixinInboundEnvelope::from_message(&payload, "bot-account").expect("envelope");
         assert!(envelope.message_id.is_none());
     }
 }
