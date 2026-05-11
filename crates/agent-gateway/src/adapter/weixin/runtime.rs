@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, timeout};
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 pub struct PlatformRuntime {
     task: JoinHandle<Result<()>>,
@@ -63,6 +63,12 @@ impl MessageHandler for NodeBackedHandler {
             is_reply_chain: false,
             reply_context: None,
         };
+        info!(
+            session_key = %session_key,
+            chat_id = %target.chat_id,
+            text_preview = %preview(&message.text, 120),
+            "weixin.runtime.inbound.accepted"
+        );
 
         self.adapter
             .send_outbound(GatewayOutbound::Progress(GatewayProgressUpdate {
@@ -100,11 +106,24 @@ impl MessageHandler for NodeBackedHandler {
                 }
             };
             if event_conversation_id(&event) != Some(session_key.as_str()) {
+                debug!(
+                    session_key = %session_key,
+                    event = %event_name(&event),
+                    event_conversation_id = ?event_conversation_id(&event),
+                    "weixin.runtime.event.ignored_different_conversation"
+                );
                 continue;
             }
             let event_turn_id = event_turn_id(&event);
             if let Some(bound_turn_id) = active_turn_id.as_deref() {
                 if let Some(event_turn_id) = event_turn_id && event_turn_id != bound_turn_id {
+                    debug!(
+                        session_key = %session_key,
+                        bound_turn_id,
+                        event_turn_id,
+                        event = %event_name(&event),
+                        "weixin.runtime.event.ignored_different_turn"
+                    );
                     continue;
                 }
             } else if let Some(event_turn_id) = event_turn_id {
@@ -115,17 +134,31 @@ impl MessageHandler for NodeBackedHandler {
                     )
                 ) {
                     active_turn_id = Some(event_turn_id.to_string());
+                    info!(
+                        session_key = %session_key,
+                        turn_id = %event_turn_id,
+                        "weixin.runtime.turn.bound"
+                    );
                 } else {
+                    debug!(
+                        session_key = %session_key,
+                        event = %event_name(&event),
+                        event_turn_id,
+                        "weixin.runtime.event.ignored_before_turn_started"
+                    );
                     continue;
                 }
             }
+            let event_name = event_name(&event);
             match map_app_server_event(&target, event) {
                 EventFlow::Continue(outbounds) => {
+                    log_outbounds(&session_key, event_name, &outbounds);
                     for outbound in outbounds {
                         self.adapter.send_outbound(outbound).await?;
                     }
                 }
                 EventFlow::Completed(outbounds) => {
+                    log_outbounds(&session_key, event_name, &outbounds);
                     for outbound in outbounds {
                         self.adapter.send_outbound(outbound).await?;
                     }
@@ -175,4 +208,110 @@ fn notification_turn_id(notification: &AppServerNotification) -> Option<&str> {
         | AppServerNotification::TurnCancelled { turn_id, .. } => Some(turn_id.as_str()),
         _ => None,
     }
+}
+
+fn event_name(event: &AppServerEvent) -> &'static str {
+    match event {
+        AppServerEvent::Message(AppServerMessage::Notification(notification)) => match notification {
+            AppServerNotification::TurnStarted { .. } => "turn_started",
+            AppServerNotification::ItemStarted { .. } => "item_started",
+            AppServerNotification::AgentMessageDelta { .. } => "agent_message_delta",
+            AppServerNotification::PlanDelta { .. } => "plan_delta",
+            AppServerNotification::ReasoningSummaryTextDelta { .. } => "reasoning_summary_delta",
+            AppServerNotification::ReasoningTextDelta { .. } => "reasoning_text_delta",
+            AppServerNotification::CommandExecutionOutputDelta { .. } => "command_output_delta",
+            AppServerNotification::ToolOutputDelta { .. } => "tool_output_delta",
+            AppServerNotification::FileChangeOutputDelta { .. } => "file_change_output_delta",
+            AppServerNotification::ItemCompleted { item, .. } => match item {
+                agent_core::TranscriptItem::AgentMessage { .. } => "agent_message_completed",
+                agent_core::TranscriptItem::Reasoning { .. } => "reasoning_completed",
+                agent_core::TranscriptItem::CommandExecution { .. } => "command_completed",
+                agent_core::TranscriptItem::FileChange { .. } => "file_change_completed",
+                agent_core::TranscriptItem::ToolResult { .. } => "tool_result_completed",
+                _ => "item_completed_other",
+            },
+            AppServerNotification::TurnCompleted { .. } => "turn_completed",
+            AppServerNotification::TurnFailed { .. } => "turn_failed",
+            AppServerNotification::TurnCancelled { .. } => "turn_cancelled",
+            AppServerNotification::Info { .. } => "info",
+            AppServerNotification::Error { .. } => "error",
+            _ => "notification_other",
+        },
+        AppServerEvent::Message(AppServerMessage::Request(_)) => "server_request",
+        AppServerEvent::Lagged { .. } => "lagged",
+        AppServerEvent::Disconnected { .. } => "disconnected",
+    }
+}
+
+fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayOutbound]) {
+    if outbounds.is_empty() {
+        debug!(
+            session_key = %session_key,
+            event = event_name,
+            "weixin.runtime.outbound.empty"
+        );
+        return;
+    }
+
+    for outbound in outbounds {
+        match outbound {
+            GatewayOutbound::TextDelta { delta, .. } => debug!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "text_delta",
+                chars = delta.chars().count(),
+                preview = %preview(delta, 120),
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayOutbound::FlushText { .. } => info!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "flush_text",
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayOutbound::FinalText { text, .. } => info!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "final_text",
+                chars = text.chars().count(),
+                preview = %preview(text, 120),
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayOutbound::Progress(progress) => debug!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "progress",
+                progress_kind = ?progress.kind,
+                chars = progress.summary.chars().count(),
+                preview = %preview(&progress.summary, 120),
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayOutbound::Info { message, .. } => info!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "info",
+                preview = %preview(message, 120),
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayOutbound::Error { message, .. } => warn!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "error",
+                preview = %preview(message, 120),
+                "weixin.runtime.outbound.generated"
+            ),
+        }
+    }
+}
+
+fn preview(text: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= max_chars {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out.replace('\n', "\\n")
 }

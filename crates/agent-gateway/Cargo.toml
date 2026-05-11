@@ -10,10 +10,12 @@ async-trait.workspace = true
 agent-app-server-client = { path = "../agent-app-server-client" }
 agent-core = { path = "../agent-core" }
 agent-protocol = { path = "../agent-protocol" }
+base64 = "0.22"
 cli = { path = "../../cli" }
 config = { path = "../config" }
 feishu-sdk = { version = "0.1.2", features = ["websocket"] }
 futures-util = "0.3"
+rand = "0.8"
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,3 +24,4 @@ tokio.workspace = true
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 tracing.workspace = true
 toml.workspace = true
+uuid = { version = "1", features = ["v4"] }

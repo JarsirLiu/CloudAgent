@@ -8,7 +8,7 @@ pub struct WeixinInboundEnvelope {
     pub chat_id: String,
     pub chat_type: String,
     pub sender_user_id: String,
-    pub message_id: String,
+    pub message_id: Option<String>,
     pub text: String,
     pub context_token: Option<String>,
 }
@@ -16,8 +16,7 @@ pub struct WeixinInboundEnvelope {
 impl WeixinInboundEnvelope {
     pub fn from_message(message: &Value, account_id: &str) -> Option<Self> {
         let sender_user_id = extract_string(message, &["from_user_id"])?;
-        let message_id = extract_string(message, &["message_id"])
-            .unwrap_or_else(|| format!("msg-{}", sender_user_id));
+        let message_id = extract_string(message, &["message_id"]);
         let room_id = extract_string(message, &["room_id", "chat_room_id"]);
         let to_user_id = extract_string(message, &["to_user_id"]).unwrap_or_default();
         let (chat_type, chat_id) = if let Some(room_id) = room_id.filter(|value| !value.is_empty()) {
@@ -47,7 +46,7 @@ impl WeixinInboundEnvelope {
             sender_open_id: self.sender_user_id.clone(),
             sender_user_id: Some(self.sender_user_id),
             sender_union_id: None,
-            message_id: self.message_id,
+            message_id: self.message_id.unwrap_or_default(),
             thread_id: None,
             text: self.text,
             image_paths: Vec::new(),
@@ -109,6 +108,19 @@ mod tests {
         let envelope = WeixinInboundEnvelope::from_message(&payload, "bot-account").expect("envelope");
         assert_eq!(envelope.chat_type, "dm");
         assert_eq!(envelope.chat_id, "wxid_user1");
+        assert_eq!(envelope.message_id.as_deref(), Some("m1"));
         assert_eq!(envelope.text, "hello");
+    }
+
+    #[test]
+    fn leaves_message_id_empty_when_missing() {
+        let payload = json!({
+            "from_user_id": "wxid_user1",
+            "item_list": [
+                { "type": 1, "text_item": { "text": "hello" } }
+            ]
+        });
+        let envelope = WeixinInboundEnvelope::from_message(&payload, "bot-account").expect("envelope");
+        assert!(envelope.message_id.is_none());
     }
 }

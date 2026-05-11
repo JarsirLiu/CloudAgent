@@ -11,6 +11,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 const API_TIMEOUT_SECS: u64 = 45;
 const INBOUND_DEDUP_LIMIT: usize = 1024;
@@ -19,8 +20,10 @@ const BACKOFF_DELAY: Duration = Duration::from_secs(15);
 const MAX_MESSAGE_LENGTH: usize = 2000;
 const WEIXIN_COPY_LINE_WIDTH: usize = 72;
 const CONFIG_TIMEOUT_SECS: u64 = 10;
+const CHANNEL_VERSION: &str = "2.2.0";
 const TYPING_START: i64 = 1;
 const TYPING_STOP: i64 = 2;
+const SESSION_EXPIRED_ERRCODE: i64 = -14;
 const RATE_LIMIT_ERRCODE: i64 = -2;
 
 #[derive(Clone)]
@@ -65,6 +68,14 @@ impl WeixinAdapter {
         }
         let formatted = format_message_for_weixin(&message.content);
         let chunks = split_text_for_weixin_delivery(&formatted, MAX_MESSAGE_LENGTH);
+        info!(
+            chat_id = %message.chat_id,
+            original_chars = message.content.chars().count(),
+            formatted_chars = formatted.chars().count(),
+            chunk_count = chunks.len(),
+            preview = %preview(&formatted, 120),
+            "weixin.send_text.prepared"
+        );
         for chunk in chunks {
             self.send_text_chunk(&message.chat_id, chunk).await?;
         }
@@ -72,9 +83,19 @@ impl WeixinAdapter {
     }
 
     async fn send_text_chunk(&self, chat_id: &str, content: String) -> Result<()> {
+        let mut context_token = self.context_tokens.lock().await.get(chat_id).cloned();
+        let mut retried_without_token = false;
         for attempt in 0..=2 {
-            let client_id = format!("cloudagent-weixin-{}", uuid());
-            let context_token = self.context_tokens.lock().await.get(chat_id).cloned();
+            let client_id = format!("cloudagent-weixin-{}", Uuid::new_v4().simple());
+            info!(
+                chat_id,
+                client_id,
+                attempt,
+                chars = content.chars().count(),
+                has_context_token = context_token.is_some(),
+                preview = %preview(&content, 120),
+                "weixin.sendmessage.attempt"
+            );
             let mut payload = json!({
                 "msg": {
                     "from_user_id": "",
@@ -90,16 +111,41 @@ impl WeixinAdapter {
                     ]
                 }
             });
-            if let Some(context_token) = context_token
+            if let Some(context_token) = context_token.as_ref()
                 && let Some(msg) = payload.get_mut("msg").and_then(Value::as_object_mut)
             {
-                msg.insert("context_token".to_string(), Value::String(context_token));
+                msg.insert(
+                    "context_token".to_string(),
+                    Value::String(context_token.clone()),
+                );
             }
             let response = self.post("ilink/bot/sendmessage", payload).await?;
             let ret = response.get("ret").and_then(Value::as_i64).unwrap_or(0);
             let errcode = response.get("errcode").and_then(Value::as_i64).unwrap_or(0);
+            info!(
+                chat_id,
+                client_id,
+                ret,
+                errcode,
+                response = %response,
+                "weixin.sendmessage.response"
+            );
             if ret == 0 && errcode == 0 {
                 return Ok(());
+            }
+            if is_stale_session_ret(ret, errcode, response.get("errmsg").and_then(Value::as_str))
+                && !retried_without_token
+                && context_token.is_some()
+            {
+                retried_without_token = true;
+                context_token = None;
+                self.context_tokens.lock().await.remove(chat_id);
+                warn!(
+                    chat_id,
+                    client_id,
+                    "weixin.sendmessage.retry_without_context_token"
+                );
+                continue;
             }
             if (ret == RATE_LIMIT_ERRCODE || errcode == RATE_LIMIT_ERRCODE) && attempt < 2 {
                 sleep(Duration::from_secs(3 * (attempt + 1))).await;
@@ -200,14 +246,16 @@ impl WeixinAdapter {
             self.config.base_url.trim_end_matches('/'),
             endpoint.trim_start_matches('/')
         );
+        let body = with_base_info(payload);
         let response = self
             .http
             .post(url)
             .bearer_auth(self.config.token.trim())
             .header("AuthorizationType", "ilink_bot_token")
+            .header("X-WECHAT-UIN", random_wechat_uin())
             .header("iLink-App-Id", "bot")
             .header("iLink-App-ClientVersion", "131584")
-            .json(&payload)
+            .json(&body)
             .send()
             .await
             .context("weixin request failed")?
@@ -227,7 +275,7 @@ impl WeixinAdapter {
             .seen_messages
             .lock()
             .await
-            .insert(&envelope.message_id)
+            .is_duplicate(&envelope)
         {
             return Ok(());
         }
@@ -289,6 +337,41 @@ fn split_text_for_weixin_delivery(content: &str, max_length: usize) -> Vec<Strin
         chunks.push(current);
     }
     chunks
+}
+
+fn with_base_info(payload: Value) -> Value {
+    match payload {
+        Value::Object(mut map) => {
+            map.insert(
+                "base_info".to_string(),
+                json!({
+                    "channel_version": CHANNEL_VERSION,
+                }),
+            );
+            Value::Object(map)
+        }
+        other => other,
+    }
+}
+
+fn random_wechat_uin() -> String {
+    use base64::Engine as _;
+    use rand::RngCore as _;
+
+    let mut bytes = [0u8; 4];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let value = u32::from_be_bytes(bytes);
+    base64::engine::general_purpose::STANDARD.encode(value.to_string())
+}
+
+fn is_stale_session_ret(ret: i64, errcode: i64, errmsg: Option<&str>) -> bool {
+    if ret == SESSION_EXPIRED_ERRCODE || errcode == SESSION_EXPIRED_ERRCODE {
+        return true;
+    }
+    if ret != RATE_LIMIT_ERRCODE && errcode != RATE_LIMIT_ERRCODE {
+        return false;
+    }
+    matches!(errmsg, Some(message) if message.trim().eq_ignore_ascii_case("unknown error"))
 }
 
 fn format_message_for_weixin(content: &str) -> String {
@@ -465,7 +548,13 @@ fn split_hard(block: &str, max_length: usize, out: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_message_for_weixin, split_text_for_weixin_delivery};
+    use super::{
+        SeenMessages, format_message_for_weixin, is_stale_session_ret, random_wechat_uin,
+        split_text_for_weixin_delivery,
+        with_base_info,
+    };
+    use serde_json::json;
+    use crate::adapter::weixin::inbound::WeixinInboundEnvelope;
 
     #[test]
     fn split_text_keeps_short_message_whole() {
@@ -486,6 +575,73 @@ mod tests {
     fn format_message_collapses_extra_blank_lines() {
         let formatted = format_message_for_weixin("a\n\n\nb");
         assert_eq!(formatted, "a\n\nb");
+    }
+
+    #[test]
+    fn dedup_uses_message_id_when_present() {
+        let mut seen = SeenMessages::default();
+        let first = envelope("chat-a", "user-a", Some("m1"), "hello");
+        let second = envelope("chat-a", "user-a", Some("m1"), "different");
+
+        assert!(!seen.is_duplicate(&first));
+        assert!(seen.is_duplicate(&second));
+    }
+
+    #[test]
+    fn dedup_allows_distinct_texts_without_message_id() {
+        let mut seen = SeenMessages::default();
+        let first = envelope("chat-a", "user-a", None, "hello");
+        let duplicate = envelope("chat-a", "user-a", None, "hello");
+        let distinct = envelope("chat-a", "user-a", None, "hello again");
+
+        assert!(!seen.is_duplicate(&first));
+        assert!(seen.is_duplicate(&duplicate));
+        assert!(!seen.is_duplicate(&distinct));
+    }
+
+    #[test]
+    fn stale_session_detects_expired_code() {
+        assert!(is_stale_session_ret(-14, 0, None));
+        assert!(is_stale_session_ret(0, -14, None));
+    }
+
+    #[test]
+    fn stale_session_detects_unknown_error_rate_limit_shape() {
+        assert!(is_stale_session_ret(-2, 0, Some("unknown error")));
+        assert!(is_stale_session_ret(0, -2, Some("Unknown Error")));
+        assert!(!is_stale_session_ret(-2, 0, Some("rate limited")));
+    }
+
+    #[test]
+    fn wraps_payload_with_base_info() {
+        let payload = with_base_info(json!({ "msg": { "hello": "world" } }));
+        assert_eq!(payload["msg"]["hello"], "world");
+        assert_eq!(payload["base_info"]["channel_version"], "2.2.0");
+    }
+
+    #[test]
+    fn random_wechat_uin_is_base64_text() {
+        let value = random_wechat_uin();
+        assert!(!value.is_empty());
+        assert!(value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
+    }
+
+    fn envelope(
+        chat_id: &str,
+        sender_user_id: &str,
+        message_id: Option<&str>,
+        text: &str,
+    ) -> WeixinInboundEnvelope {
+        WeixinInboundEnvelope {
+            chat_id: chat_id.to_string(),
+            chat_type: "dm".to_string(),
+            sender_user_id: sender_user_id.to_string(),
+            message_id: message_id.map(str::to_string),
+            text: text.to_string(),
+            context_token: None,
+        }
     }
 }
 
@@ -576,15 +732,29 @@ struct SeenMessages {
 }
 
 impl SeenMessages {
-    fn insert(&mut self, message_id: &str) -> bool {
-        if message_id.trim().is_empty() {
-            return false;
-        }
-        if self.seen.contains(message_id) {
+    fn is_duplicate(&mut self, envelope: &WeixinInboundEnvelope) -> bool {
+        if let Some(message_id) = envelope.message_id.as_deref()
+            && self.insert_key(format!("message:{message_id}"))
+        {
             return true;
         }
-        self.seen.insert(message_id.to_string());
-        self.order.push_back(message_id.to_string());
+        let content_key = format!(
+            "content:{}:{}",
+            envelope.sender_user_id,
+            envelope.text.trim()
+        );
+        self.insert_key(content_key)
+    }
+
+    fn insert_key(&mut self, key: String) -> bool {
+        if key.trim().is_empty() {
+            return false;
+        }
+        if self.seen.contains(&key) {
+            return true;
+        }
+        self.seen.insert(key.clone());
+        self.order.push_back(key);
         while self.order.len() > INBOUND_DEDUP_LIMIT {
             if let Some(oldest) = self.order.pop_front() {
                 self.seen.remove(&oldest);
@@ -594,8 +764,14 @@ impl SeenMessages {
     }
 }
 
-fn uuid() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(1);
-    COUNTER.fetch_add(1, Ordering::Relaxed).to_string()
+fn preview(text: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= max_chars {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out.replace('\n', "\\n")
 }

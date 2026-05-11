@@ -132,11 +132,9 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
         AppServerNotification::ItemCompleted { item, .. } => {
             completed_item_to_outbound(target, item)
         }
-        AppServerNotification::CommandExecutionOutputDelta { delta, .. }
-        | AppServerNotification::ToolOutputDelta { delta, .. }
-        | AppServerNotification::FileChangeOutputDelta { delta, .. } => {
-            progress_outbound(target, GatewayProgressKind::Tool, delta, true, false)
-        }
+        AppServerNotification::CommandExecutionOutputDelta { .. }
+        | AppServerNotification::ToolOutputDelta { .. }
+        | AppServerNotification::FileChangeOutputDelta { .. } => EventFlow::Continue(Vec::new()),
         AppServerNotification::Info {
             conversation_id,
             message,
@@ -179,14 +177,7 @@ fn completed_item_to_outbound(target: &OutboundTarget, item: &TranscriptItem) ->
                 streaming: false,
             })])
         }
-        TranscriptItem::FileChange { path, .. } => {
-            EventFlow::Continue(vec![GatewayOutbound::Progress(GatewayProgressUpdate {
-                target: target.clone(),
-                kind: GatewayProgressKind::Tool,
-                summary: humanize_file_change_path(path),
-                streaming: false,
-            })])
-        }
+        TranscriptItem::FileChange { .. } => EventFlow::Continue(Vec::new()),
         TranscriptItem::ToolResult { .. } | TranscriptItem::CommandExecution { .. } => {
             EventFlow::Continue(Vec::new())
         }
@@ -288,14 +279,6 @@ fn humanize_command_stage(command: &str) -> String {
         return "正在查看项目文件...".to_string();
     }
     "正在处理项目内容...".to_string()
-}
-
-fn humanize_file_change_path(path: &str) -> String {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return "正在修改项目文件...".to_string();
-    }
-    format!("正在修改文件: {trimmed}")
 }
 
 fn format_reasoning_summary(title: &str, text: &str) -> String {
