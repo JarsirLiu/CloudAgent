@@ -979,6 +979,7 @@ dependencies = [
  "agent-gateway",
  "agent-protocol",
  "anyhow",
+ "rusqlite",
  "rustls",
  "serde",
  "serde_json",

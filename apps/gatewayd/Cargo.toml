@@ -12,6 +12,7 @@ agent-gateway = { path = "../../crates/agent-gateway" }
 agent-protocol = { path = "../../crates/agent-protocol" }
 serde.workspace = true
 serde_json.workspace = true
+rusqlite.workspace = true
 tempfile = "3"
 tokio.workspace = true
 tracing.workspace = true

@@ -55,8 +55,13 @@ pub(crate) fn platform_config_dir(data_root_dir: Option<&std::ffi::OsStr>) -> Pa
     let root = data_root_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("data"));
-    match root.file_name().and_then(|name| name.to_str()) {
-        Some("data") => root
+    match (
+        root.file_name().and_then(|name| name.to_str()),
+        root.parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str()),
+    ) {
+        (Some("data"), Some(".cloudagent")) => root
             .parent()
             .map(|parent| parent.join("platform"))
             .unwrap_or_else(|| root.join("platform")),
@@ -73,4 +78,28 @@ fn default_config_state() -> PlatformConfigState {
 
 fn platform_config_file(dir: &Path, platform: &str) -> PathBuf {
     dir.join(format!("{platform}.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::platform_config_dir;
+    use std::path::PathBuf;
+
+    #[test]
+    fn dev_mode_uses_data_platform_directory() {
+        let root = PathBuf::from(r"D:\repo\cloudagent\data");
+        assert_eq!(
+            platform_config_dir(Some(root.as_os_str())),
+            PathBuf::from(r"D:\repo\cloudagent\data\platform")
+        );
+    }
+
+    #[test]
+    fn release_mode_uses_user_platform_directory() {
+        let root = PathBuf::from(r"C:\Users\felix\.cloudagent\data");
+        assert_eq!(
+            platform_config_dir(Some(root.as_os_str())),
+            PathBuf::from(r"C:\Users\felix\.cloudagent\platform")
+        );
+    }
 }

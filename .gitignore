@@ -8,6 +8,10 @@ data/logs/*
 data/sessions/*
 data/conversations/*
 data/ui-settings.json
+data/platform/*.json
+data/platforms/*.db
+data/platforms/*.sqlite*
+data/platforms/control.json
 !data/**/.gitkeep
 cli/data/state/*
 cli/data/cache/*
@@ -33,3 +37,4 @@ Thumbs.db
 configs/config.toml
 *.runtime.json
 platform/*.seen-events.json
+platform/*.json

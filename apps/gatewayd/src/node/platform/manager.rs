@@ -1,12 +1,10 @@
 use super::config_store::{
     PlatformConfigState, load_config_state, persist_config_state, platform_config_dir,
 };
+use super::control_store::{load_control_state, persist_control_state};
 use super::runtime_control::{RunningPlatformRuntime, spawn_feishu_runtime, spawn_wecom_runtime};
 use super::schema::{config_response, specs_for, validate_platform_config};
-use super::state::{
-    PlatformControlState, default_entry, default_state, ensure_supported_platform, normalize_state,
-    now_ms, platform_control_path,
-};
+use super::state::{PlatformControlState, default_entry, ensure_supported_platform, now_ms};
 use agent_protocol::{
     PlatformConfigResponse, PlatformControlListResponse, PlatformControlStatusResponse,
     PlatformControlUpdateResponse,
@@ -20,20 +18,14 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub(crate) struct PlatformManager {
     inner: Arc<Mutex<PlatformManagerState>>,
-    control_path: PathBuf,
+    data_root_dir: Option<std::ffi::OsString>,
     config_dir: PathBuf,
 }
 
 impl PlatformManager {
     pub(crate) async fn load(data_root_dir: Option<&std::ffi::OsStr>) -> Result<Self> {
-        let control_path = platform_control_path(data_root_dir);
         let config_dir = platform_config_dir(data_root_dir);
-        let persisted = if control_path.exists() {
-            let text = tokio::fs::read_to_string(&control_path).await?;
-            normalize_state(serde_json::from_str(&text)?)
-        } else {
-            default_state()
-        };
+        let persisted = load_control_state(data_root_dir).await?;
         let config = load_config_state(&config_dir, super::state::supported_platforms()).await?;
         Ok(Self {
             inner: Arc::new(Mutex::new(PlatformManagerState {
@@ -41,7 +33,7 @@ impl PlatformManager {
                 config,
                 runtimes: BTreeMap::new(),
             })),
-            control_path,
+            data_root_dir: data_root_dir.map(|path| path.to_os_string()),
             config_dir,
         })
     }
@@ -241,12 +233,8 @@ impl PlatformManager {
     }
 
     async fn persist(&self) -> Result<()> {
-        if let Some(parent) = self.control_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
         let state = self.inner.lock().await.persisted.clone();
-        tokio::fs::write(&self.control_path, serde_json::to_vec_pretty(&state)?).await?;
-        Ok(())
+        persist_control_state(self.data_root_dir.as_deref(), &state).await
     }
 
     async fn persist_config(&self) -> Result<()> {

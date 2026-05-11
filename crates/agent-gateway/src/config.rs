@@ -204,8 +204,14 @@ fn resolve_platform_config_file(file_name: &str) -> Result<PathBuf> {
     let workspace_root = env::current_dir().context("failed to determine current directory")?;
     let agent_config = AgentConfig::load(workspace_root)?;
     let data_root = agent_config.runtime.data_root_dir;
-    let platform_dir = match data_root.file_name().and_then(|name| name.to_str()) {
-        Some("data") => data_root
+    let platform_dir = match (
+        data_root.file_name().and_then(|name| name.to_str()),
+        data_root
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str()),
+    ) {
+        (Some("data"), Some(".cloudagent")) => data_root
             .parent()
             .map(|parent| parent.join("platform"))
             .unwrap_or_else(|| data_root.join("platform")),
