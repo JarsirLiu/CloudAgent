@@ -171,6 +171,82 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             call_id: call_id.clone(),
             item: item.clone(),
         }]),
+        AppServerNotification::ServerRequestRequested {
+            turn_id, request, ..
+        } => EventFlow::Continue(vec![GatewayEvent::ServerRequestRequested {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            request: request.clone(),
+        }]),
+        AppServerNotification::ServerRequestResolved {
+            turn_id,
+            request_id,
+            request,
+            decision,
+            ..
+        } => EventFlow::Continue(vec![GatewayEvent::ServerRequestResolved {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            request_id: request_id.clone(),
+            request: request.clone(),
+            decision: decision.clone(),
+        }]),
+        AppServerNotification::TokenUsageUpdated {
+            turn_id,
+            last_usage,
+            total_usage,
+            model_context_window,
+            ..
+        } => EventFlow::Continue(vec![GatewayEvent::TokenUsageUpdated {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            last_usage: last_usage.clone(),
+            total_usage: total_usage.clone(),
+            model_context_window: *model_context_window,
+        }]),
+        AppServerNotification::ModelRetrying {
+            turn_id,
+            stage,
+            attempt,
+            next_delay_ms,
+            ..
+        } => EventFlow::Continue(vec![GatewayEvent::ModelRetrying {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            stage: stage.clone(),
+            attempt: *attempt,
+            next_delay_ms: *next_delay_ms,
+        }]),
+        AppServerNotification::ContextCompactionStarted {
+            turn_id,
+            continuation,
+            estimated_tokens,
+            ..
+        } => EventFlow::Continue(vec![GatewayEvent::ContextCompactionStarted {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            continuation: continuation.clone(),
+            estimated_tokens: *estimated_tokens,
+        }]),
+        AppServerNotification::ContextCompacted {
+            turn_id,
+            continuation,
+            pre_context_tokens_estimate,
+            post_context_tokens_estimate,
+            pre_message_count,
+            post_message_count,
+            preserved_tail_count,
+            ..
+        } => EventFlow::Continue(vec![GatewayEvent::ContextCompacted {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            continuation: continuation.clone(),
+            pre_context_tokens_estimate: *pre_context_tokens_estimate,
+            post_context_tokens_estimate: *post_context_tokens_estimate,
+            pre_message_count: *pre_message_count,
+            post_message_count: *post_message_count,
+            preserved_tail_count: *preserved_tail_count,
+        }]),
         AppServerNotification::TurnCompleted {
             conversation_id,
             turn_id,

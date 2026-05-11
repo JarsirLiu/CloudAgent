@@ -1,5 +1,9 @@
 use crate::message::ReplyContext;
-use agent_core::{TranscriptItem, TurnItemKind};
+use agent_core::{
+    CompactionContinuation, ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision,
+    TranscriptItem, TurnItemKind,
+};
+use agent_protocol::RequestId;
 
 #[derive(Debug, Clone)]
 pub struct OutboundTarget {
@@ -48,6 +52,48 @@ pub enum GatewayEvent {
         turn_id: String,
         call_id: Option<String>,
         item: TranscriptItem,
+    },
+    ServerRequestRequested {
+        target: OutboundTarget,
+        turn_id: String,
+        request: ServerRequest,
+    },
+    ServerRequestResolved {
+        target: OutboundTarget,
+        turn_id: String,
+        request_id: RequestId,
+        request: ServerRequest,
+        decision: ServerRequestDecision,
+    },
+    TokenUsageUpdated {
+        target: OutboundTarget,
+        turn_id: String,
+        last_usage: ModelUsage,
+        total_usage: ModelUsage,
+        model_context_window: Option<u64>,
+    },
+    ModelRetrying {
+        target: OutboundTarget,
+        turn_id: String,
+        stage: ModelRetryStage,
+        attempt: u64,
+        next_delay_ms: u64,
+    },
+    ContextCompactionStarted {
+        target: OutboundTarget,
+        turn_id: String,
+        continuation: CompactionContinuation,
+        estimated_tokens: u64,
+    },
+    ContextCompacted {
+        target: OutboundTarget,
+        turn_id: String,
+        continuation: CompactionContinuation,
+        pre_context_tokens_estimate: u64,
+        post_context_tokens_estimate: u64,
+        pre_message_count: usize,
+        post_message_count: usize,
+        preserved_tail_count: usize,
     },
     TurnCompleted {
         target: OutboundTarget,

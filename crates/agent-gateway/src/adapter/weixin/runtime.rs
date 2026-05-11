@@ -267,6 +267,77 @@ fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayEvent]
                 item = ?item,
                 "weixin.runtime.outbound.generated"
             ),
+            GatewayEvent::ServerRequestRequested { request, .. } => debug!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "server_request_requested",
+                request = ?request,
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::ServerRequestResolved {
+                request_id,
+                decision,
+                ..
+            } => debug!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "server_request_resolved",
+                request_id = ?request_id,
+                decision = ?decision,
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::TokenUsageUpdated {
+                total_usage,
+                model_context_window,
+                ..
+            } => debug!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "token_usage_updated",
+                total_usage = ?total_usage,
+                model_context_window = ?model_context_window,
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::ModelRetrying {
+                stage,
+                attempt,
+                next_delay_ms,
+                ..
+            } => info!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "model_retrying",
+                stage = ?stage,
+                attempt,
+                next_delay_ms,
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::ContextCompactionStarted {
+                continuation,
+                estimated_tokens,
+                ..
+            } => info!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "context_compaction_started",
+                continuation = ?continuation,
+                estimated_tokens,
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::ContextCompacted {
+                continuation,
+                pre_context_tokens_estimate,
+                post_context_tokens_estimate,
+                ..
+            } => info!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "context_compacted",
+                continuation = ?continuation,
+                pre_context_tokens_estimate,
+                post_context_tokens_estimate,
+                "weixin.runtime.outbound.generated"
+            ),
             GatewayEvent::ItemStarted { kind, title, .. } => debug!(
                 session_key = %session_key,
                 event = event_name,
