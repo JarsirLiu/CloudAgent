@@ -67,7 +67,10 @@ fn existing_node_looks_unhealthy(error: &anyhow::Error) -> bool {
         || message.contains("timed out initializing local node")
 }
 
-fn local_node_launch_timeout(program: &std::ffi::OsString, args: &[std::ffi::OsString]) -> Duration {
+fn local_node_launch_timeout(
+    program: &std::ffi::OsString,
+    args: &[std::ffi::OsString],
+) -> Duration {
     if launches_gatewayd_via_cargo(program, args) {
         Duration::from_secs(60)
     } else {
@@ -87,10 +90,7 @@ fn launches_gatewayd_via_cargo(program: &std::ffi::OsString, args: &[std::ffi::O
         .any(|arg| arg == "gatewayd")
 }
 
-fn spawn_local_node_process(
-    program: &OsString,
-    args: &[OsString],
-) -> Result<std::process::Child> {
+fn spawn_local_node_process(program: &OsString, args: &[OsString]) -> Result<std::process::Child> {
     if launches_gatewayd_via_cargo(program, args) {
         return spawn_workspace_built_local_node(program, args);
     }

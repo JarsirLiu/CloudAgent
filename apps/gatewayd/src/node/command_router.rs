@@ -14,6 +14,7 @@ use agent_protocol::{
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
+use tracing::info;
 
 pub(crate) async fn handle_command_message<W>(
     rpc: JsonRpcMessage,
@@ -74,6 +75,16 @@ where
     }
 
     let target_conversation = target_conversation_id(session, runtime, &envelope.command).await;
+    if !matches!(
+        envelope.command,
+        AppClientCommand::SubscribeConversation { .. }
+    ) {
+        info!(
+            command = %command_name(&envelope.command),
+            target_conversation = %target_conversation,
+            "gatewayd.command.received"
+        );
+    }
     if command_requires_worker(&envelope.command) {
         ensure_session_subscription(runtime, session, &target_conversation).await?;
     }
@@ -424,7 +435,11 @@ async fn sync_typed_read_registry(
                 message: format!(
                     "node listening on {} · worker {} · platform runtimes {}/{}",
                     response.listen_address,
-                    if response.worker_running { "running" } else { "idle" },
+                    if response.worker_running {
+                        "running"
+                    } else {
+                        "idle"
+                    },
                     response.platform_runtime_count,
                     response.managed_platform_count
                 ),
@@ -513,6 +528,40 @@ async fn ensure_session_subscription(
     *session.active_subscription_mut() =
         Some(runtime.workers().subscribe(target_conversation).await?);
     Ok(())
+}
+
+fn command_name(command: &AppClientCommand) -> &'static str {
+    match command {
+        AppClientCommand::SubmitTurn(_) => "submit_turn",
+        AppClientCommand::ResolveServerRequest { .. } => "resolve_server_request",
+        AppClientCommand::InterruptTurn { .. } => "interrupt_turn",
+        AppClientCommand::CompactConversation { .. } => "compact_conversation",
+        AppClientCommand::ResetConversation { .. } => "reset_conversation",
+        AppClientCommand::RequestConversationStatus { .. } => "request_conversation_status",
+        AppClientCommand::RequestConversationHistory { .. } => "request_conversation_history",
+        AppClientCommand::RequestConversationHistoryPage { .. } => {
+            "request_conversation_history_page"
+        }
+        AppClientCommand::ListConversations => "list_conversations",
+        AppClientCommand::ListOnlineNodes => "list_online_nodes",
+        AppClientCommand::ListPlatforms => "list_platforms",
+        AppClientCommand::GetNodeStatus => "get_node_status",
+        AppClientCommand::StopNode => "stop_node",
+        AppClientCommand::SetConversationTitle { .. } => "set_conversation_title",
+        AppClientCommand::CreateConversation { .. } => "create_conversation",
+        AppClientCommand::SwitchConversation { .. } => "switch_conversation",
+        AppClientCommand::SelectTargetNode { .. } => "select_target_node",
+        AppClientCommand::GetPlatformStatus { .. } => "get_platform_status",
+        AppClientCommand::GetPlatformConfig { .. } => "get_platform_config",
+        AppClientCommand::SetPlatformEnabled { .. } => "set_platform_enabled",
+        AppClientCommand::SetPlatformConfigValue { .. } => "set_platform_config_value",
+        AppClientCommand::ClearPlatformConfigValue { .. } => "clear_platform_config_value",
+        AppClientCommand::ArchiveConversation { .. } => "archive_conversation",
+        AppClientCommand::DeleteConversation { .. } => "delete_conversation",
+        AppClientCommand::SubscribeConversation { .. } => "subscribe_conversation",
+        AppClientCommand::UnsubscribeConversation { .. } => "unsubscribe_conversation",
+        AppClientCommand::Exit => "exit",
+    }
 }
 
 fn command_requires_worker(command: &AppClientCommand) -> bool {

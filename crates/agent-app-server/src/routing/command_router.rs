@@ -208,6 +208,10 @@ pub(crate) async fn handle_command(
 ) -> Result<()> {
     match command {
         AppClientCommand::SubmitTurn(input) => {
+            {
+                let mut guard = state.lock().await;
+                guard.subscribe(input.conversation_id.clone());
+            }
             turn_service::submit_turn(
                 runtime,
                 event_tx,

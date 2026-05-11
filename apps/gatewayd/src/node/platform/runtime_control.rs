@@ -36,8 +36,10 @@ pub(super) async fn spawn_feishu_runtime(
     state: &PlatformConfigState,
 ) -> Result<SpawnedPlatformRuntime> {
     let config = build_feishu_config(state)?;
-    let client = connect_node_client(node_address).await?;
-    let runtime = feishu::spawn_runtime(config, client, default_turn_policy())?;
+    let stream_client = connect_node_client(node_address).await?;
+    let control_client = connect_node_client(node_address).await?;
+    let runtime =
+        feishu::spawn_runtime(config, stream_client, control_client, default_turn_policy())?;
     let runtime_task = tokio::spawn(async move {
         match runtime.wait().await {
             Ok(status) => info!("feishu runtime stopped: {status:?}"),

@@ -7,6 +7,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
+use tracing::info;
 
 const IDLE_WORKER_TTL: Duration = Duration::from_secs(300);
 const ERR_TRANSPORT_CLOSED_PREFIX: &str = "ERR_TRANSPORT_CLOSED:";
@@ -126,6 +127,13 @@ impl WorkerManager {
         let mut state = self.state.lock().await;
         let handle = self.ensure_worker(&mut state).await?;
         handle.last_active_at = Instant::now();
+        if !matches!(&command, AppClientCommand::SubscribeConversation { .. }) {
+            info!(
+                conversation_id = %conversation_id,
+                command = %worker_command_name(&command),
+                "gatewayd.worker.command.send"
+            );
+        }
         handle
             .command_tx
             .send(command)
@@ -173,6 +181,7 @@ impl WorkerManager {
                                     });
                                 }
                                 Some(AppServerEvent::Lagged { skipped }) => {
+                                    info!(skipped, "gatewayd.worker.event.lagged");
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: "default".to_string(),
                                         message: format!("shared worker event channel lagged; skipped {skipped} events"),
@@ -180,6 +189,10 @@ impl WorkerManager {
                                     });
                                 }
                                 Some(AppServerEvent::Disconnected { message }) => {
+                                    info!(
+                                        message = %message,
+                                        "gatewayd.worker.event.disconnected"
+                                    );
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: "default".to_string(),
                                         message: normalize_worker_disconnect_message(&message),
@@ -188,6 +201,7 @@ impl WorkerManager {
                                     return Result::<()>::Ok(());
                                 }
                                 None => {
+                                    info!("gatewayd.worker.event.stream_closed");
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: "default".to_string(),
                                         message: format!(
@@ -239,6 +253,40 @@ impl WorkerManager {
             handle.worker.await??;
         }
         Ok(())
+    }
+}
+
+fn worker_command_name(command: &AppClientCommand) -> &'static str {
+    match command {
+        AppClientCommand::SubmitTurn(_) => "submit_turn",
+        AppClientCommand::ResolveServerRequest { .. } => "resolve_server_request",
+        AppClientCommand::InterruptTurn { .. } => "interrupt_turn",
+        AppClientCommand::CompactConversation { .. } => "compact_conversation",
+        AppClientCommand::ResetConversation { .. } => "reset_conversation",
+        AppClientCommand::RequestConversationStatus { .. } => "request_conversation_status",
+        AppClientCommand::RequestConversationHistory { .. } => "request_conversation_history",
+        AppClientCommand::RequestConversationHistoryPage { .. } => {
+            "request_conversation_history_page"
+        }
+        AppClientCommand::ListConversations => "list_conversations",
+        AppClientCommand::ListOnlineNodes => "list_online_nodes",
+        AppClientCommand::ListPlatforms => "list_platforms",
+        AppClientCommand::GetNodeStatus => "get_node_status",
+        AppClientCommand::StopNode => "stop_node",
+        AppClientCommand::SetConversationTitle { .. } => "set_conversation_title",
+        AppClientCommand::CreateConversation { .. } => "create_conversation",
+        AppClientCommand::SwitchConversation { .. } => "switch_conversation",
+        AppClientCommand::SelectTargetNode { .. } => "select_target_node",
+        AppClientCommand::GetPlatformStatus { .. } => "get_platform_status",
+        AppClientCommand::GetPlatformConfig { .. } => "get_platform_config",
+        AppClientCommand::SetPlatformEnabled { .. } => "set_platform_enabled",
+        AppClientCommand::SetPlatformConfigValue { .. } => "set_platform_config_value",
+        AppClientCommand::ClearPlatformConfigValue { .. } => "clear_platform_config_value",
+        AppClientCommand::ArchiveConversation { .. } => "archive_conversation",
+        AppClientCommand::DeleteConversation { .. } => "delete_conversation",
+        AppClientCommand::SubscribeConversation { .. } => "subscribe_conversation",
+        AppClientCommand::UnsubscribeConversation { .. } => "unsubscribe_conversation",
+        AppClientCommand::Exit => "exit",
     }
 }
 

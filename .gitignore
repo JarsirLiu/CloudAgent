@@ -32,3 +32,4 @@ Thumbs.db
 
 configs/config.toml
 *.runtime.json
+platform/*.seen-events.json

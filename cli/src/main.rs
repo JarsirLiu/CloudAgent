@@ -1,7 +1,7 @@
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
-    NodeStatusResponse, PlatformConfigResponse, PlatformControlEntry,
-    PlatformControlListResponse, PlatformControlStatusResponse,
+    NodeStatusResponse, PlatformConfigResponse, PlatformControlEntry, PlatformControlListResponse,
+    PlatformControlStatusResponse,
 };
 use anyhow::{Result, bail};
 use cli::agent_host::build_agent_host;
@@ -163,7 +163,11 @@ async fn maybe_handle_node_command(
             let response = client.stop_node_typed().await?;
             println!(
                 "node stop requested: {}",
-                if response.stopping { "accepted" } else { "ignored" }
+                if response.stopping {
+                    "accepted"
+                } else {
+                    "ignored"
+                }
             );
         }
         other => bail!("unknown node action `{other}`. supported actions: status, stop"),
@@ -335,8 +339,8 @@ fn resolve_console_target(
                 .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
                 .and_then(|value| value.into_string().ok())
                 .unwrap_or_else(default_node_addr);
-            let (program, mut launch_args) = if let Some(program) = arg_value(args, "--node-bin")
-                .or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
+            let (program, mut launch_args) = if let Some(program) =
+                arg_value(args, "--node-bin").or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
             {
                 (program, Vec::new())
             } else {
@@ -413,7 +417,8 @@ fn should_launch_gatewayd_via_cargo() -> bool {
         return false;
     }
 
-    cfg!(debug_assertions) && std::env::current_dir().is_ok_and(|dir| dir.join("Cargo.toml").exists())
+    cfg!(debug_assertions)
+        && std::env::current_dir().is_ok_and(|dir| dir.join("Cargo.toml").exists())
 }
 
 fn default_node_addr() -> String {
@@ -580,8 +585,8 @@ async fn create_platform_management_client(
         .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
         .and_then(|value| value.into_string().ok())
         .unwrap_or_else(default_node_addr);
-    let (program, mut node_args) = if let Some(program) = arg_value(args, "--node-bin")
-        .or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
+    let (program, mut node_args) = if let Some(program) =
+        arg_value(args, "--node-bin").or_else(|| std::env::var_os("CLOUDAGENT_NODE_BIN"))
     {
         (program, Vec::new())
     } else {
@@ -762,10 +767,7 @@ mod tests {
                         OsString::from("D:\\learn\\gifti\\cloudagent\\data"),
                     ]
                 };
-                assert_eq!(
-                    args,
-                    expected_args
-                );
+                assert_eq!(args, expected_args);
             }
             other => panic!(
                 "unexpected bootstrap: {}",

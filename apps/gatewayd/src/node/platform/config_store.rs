@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const PLATFORM_CONFIG_VERSION: u32 = 1;
 
@@ -12,7 +12,7 @@ pub(crate) struct PlatformConfigState {
 }
 
 pub(crate) async fn load_config_state(
-    dir: &PathBuf,
+    dir: &Path,
     platforms: &[&str],
 ) -> Result<PlatformConfigState> {
     let mut state = default_config_state();
@@ -31,7 +31,7 @@ pub(crate) async fn load_config_state(
 }
 
 pub(crate) async fn persist_config_state(
-    dir: &PathBuf,
+    dir: &Path,
     state: &PlatformConfigState,
     platforms: &[&str],
 ) -> Result<()> {
@@ -71,6 +71,6 @@ fn default_config_state() -> PlatformConfigState {
     }
 }
 
-fn platform_config_file(dir: &PathBuf, platform: &str) -> PathBuf {
+fn platform_config_file(dir: &Path, platform: &str) -> PathBuf {
     dir.join(format!("{platform}.json"))
 }

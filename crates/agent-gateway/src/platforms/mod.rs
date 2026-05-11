@@ -1,2 +1,1 @@
 pub mod feishu;
-pub mod wecom;

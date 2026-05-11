@@ -1,17 +1,19 @@
-pub mod direct;
-mod message;
-mod outbound;
-mod runtime;
-
 pub mod adapter;
+mod app_server_mapping;
+mod config;
+mod gateway_outbound;
+mod message;
+mod platform;
+mod platforms;
+mod runtime;
+mod session;
 
-pub use adapter::GatewayAdapter;
-pub use direct::{app_server_message_to_outbound, gateway_message_to_command};
-pub use message::GatewayMessage;
-pub use outbound::{
-    GatewayApprovalRequest, GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate,
+pub use config::{GatewayConfig, GatewayConfigFile, LlmConfig, load_gateway_config};
+pub use gateway_outbound::{
+    GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate, OutboundTarget,
 };
-pub use runtime::default_poll_interval;
+pub use platform::{MessageHandler, PlatformAdapter};
+pub use runtime::run_gateway;
 
 pub fn crate_name() -> &'static str {
     "agent-gateway"

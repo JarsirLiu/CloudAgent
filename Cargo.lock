@@ -71,6 +71,8 @@ dependencies = [
  "agent-protocol",
  "anyhow",
  "async-trait",
+ "cli",
+ "config",
  "feishu-sdk",
  "futures-util",
  "reqwest 0.12.28",
@@ -79,6 +81,7 @@ dependencies = [
  "shared",
  "tokio",
  "tokio-tungstenite 0.24.0",
+ "toml",
  "tracing",
 ]
 

@@ -14,8 +14,8 @@ use agent_core::{ServerRequestDecision, ServerRequestDecisionKind};
 use agent_protocol::{AppClientCommand, UserTurnInput};
 use anyhow::Result;
 use config::AgentConfig;
-use std::fs;
 use std::fmt::Display;
+use std::fs;
 
 fn show_local_notice(app: &mut TuiApp, level: NoticeLevel, message: impl Into<String>) {
     app.bottom_pane.show_transient_notice(level, message.into());
@@ -167,12 +167,16 @@ pub(crate) async fn handle_tui_input(
         } => {
             for update in updates {
                 let result = match update.value {
-                    Some(value) => client
-                        .set_platform_config_value_typed(&platform, update.key, value)
-                        .await,
-                    None => client
-                        .clear_platform_config_value_typed(&platform, update.key)
-                        .await,
+                    Some(value) => {
+                        client
+                            .set_platform_config_value_typed(&platform, update.key, value)
+                            .await
+                    }
+                    None => {
+                        client
+                            .clear_platform_config_value_typed(&platform, update.key)
+                            .await
+                    }
                 };
                 if let Err(err) = result {
                     show_local_notice(

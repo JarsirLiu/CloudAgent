@@ -1,16 +1,13 @@
-mod node;
-
 use anyhow::Result;
-use std::ffi::OsString;
+
+mod node;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    tracing_subscriber::fmt::init();
-
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    match args.first().and_then(|arg| arg.to_str()) {
-        Some("serve") => node::run_resident_node(&args[1..]).await,
-        _ => node::run_resident_node(&args).await,
-    }
+    tracing_subscriber::fmt()
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
+        .init();
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    node::run_resident_node(&args).await
 }

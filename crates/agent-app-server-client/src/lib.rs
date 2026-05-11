@@ -9,8 +9,7 @@ use agent_protocol::{
     JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
     NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
-    RequestId, SelectTargetNodeResponse, UserTurnInput,
-    classify_notification,
+    RequestId, SelectTargetNodeResponse, UserTurnInput, classify_notification,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;

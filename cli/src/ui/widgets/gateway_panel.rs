@@ -224,7 +224,9 @@ impl BottomPaneView for GatewayPanel {
                 let mut lines = vec![
                     Line::from("  Gateway Panel"),
                     Line::from("  Enter to edit a platform, Esc to close"),
-                    Line::from("  List shows connection state only; edit a platform to view or change config"),
+                    Line::from(
+                        "  List shows connection state only; edit a platform to view or change config",
+                    ),
                 ];
                 for (index, entry) in entries.iter().enumerate() {
                     let marker = if index == *selected { ">" } else { " " };
