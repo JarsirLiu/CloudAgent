@@ -81,10 +81,16 @@ impl ModelRetryDecision {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReasoningDelta {
+    SummaryText { summary_index: usize, delta: String },
+    Text { content_index: usize, delta: String },
+}
+
 pub trait ModelStreamObserver: Send {
     fn on_text_delta(&mut self, delta: String);
 
-    fn on_reasoning_delta(&mut self, _delta: String) {}
+    fn on_reasoning_delta(&mut self, _delta: ReasoningDelta) {}
 
     fn on_retry(&mut self, _stage: ModelRetryStage, _attempt: u64, _delay: Duration) {}
 }
@@ -116,7 +122,10 @@ pub trait ChatModel: Send + Sync {
     ) -> Result<ModelResponse> {
         let response = self.complete(request).await?;
         if let Some(reasoning) = response.reasoning.clone() {
-            observer.on_reasoning_delta(reasoning);
+            observer.on_reasoning_delta(ReasoningDelta::Text {
+                content_index: 0,
+                delta: reasoning,
+            });
         }
         if let Some(content) = response.content.clone() {
             observer.on_text_delta(content);

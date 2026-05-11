@@ -782,6 +782,7 @@ mod tests {
                 item_id: "assistant:turn-1:0".to_string(),
                 call_id: None,
                 kind: TurnItemDeltaKind::Text,
+                segment_index: None,
                 delta: "partial".to_string(),
             }),
         ] {
@@ -819,6 +820,7 @@ mod tests {
                 item_id: "assistant:turn-1:0".to_string(),
                 call_id: None,
                 kind: TurnItemDeltaKind::Text,
+                segment_index: None,
                 delta: "partial".to_string(),
             }),
             RolloutItem::from(EventMsg::ItemCompleted {
@@ -1393,6 +1395,7 @@ mod tests {
                 item_id: "assistant:1".to_string(),
                 call_id: None,
                 kind: TurnItemDeltaKind::Text,
+                segment_index: None,
                 delta: "final".to_string(),
             }),
             RolloutItem::from(EventMsg::ItemStarted {
@@ -1407,6 +1410,7 @@ mod tests {
                 item_id: "reasoning:1".to_string(),
                 call_id: None,
                 kind: TurnItemDeltaKind::ReasoningSummary,
+                segment_index: None,
                 delta: "thinking".to_string(),
             }),
             RolloutItem::from(EventMsg::TurnCompleted {
@@ -1451,6 +1455,7 @@ mod tests {
                 item_id: "tool:1".to_string(),
                 call_id: Some("call-1".to_string()),
                 kind: TurnItemDeltaKind::CommandExecutionOutput,
+                segment_index: None,
                 delta: "D:\\work".to_string(),
             }),
             RolloutItem::from(EventMsg::ItemStarted {
@@ -1465,6 +1470,7 @@ mod tests {
                 item_id: "reasoning:1".to_string(),
                 call_id: None,
                 kind: TurnItemDeltaKind::ReasoningSummary,
+                segment_index: None,
                 delta: "thinking".to_string(),
             }),
             RolloutItem::from(EventMsg::TurnCompleted {
@@ -1503,6 +1509,7 @@ mod tests {
                 item_id: "reasoning:1".to_string(),
                 call_id: None,
                 kind: TurnItemDeltaKind::ReasoningSummary,
+                segment_index: None,
                 delta: "thinking 1".to_string(),
             }),
             RolloutItem::from(EventMsg::ItemStarted {
@@ -1543,3 +1550,4 @@ mod tests {
         ));
     }
 }
+

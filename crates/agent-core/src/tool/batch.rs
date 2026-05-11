@@ -276,6 +276,7 @@ impl<'a> ToolBatchRunner<'a> {
                             item_id: ready.tool_item_id.clone(),
                             call_id: Some(ready.call.id.clone()),
                             kind: ready.spec.delta_kind.clone(),
+                            segment_index: None,
                             delta: rendered,
                         },
                     );
@@ -367,6 +368,7 @@ impl<'a> ToolBatchRunner<'a> {
                     item_id: tool_item_id.to_string(),
                     call_id: Some(call.id.clone()),
                     kind: delta_kind,
+                    segment_index: None,
                     delta: result.content.clone(),
                 },
             );
@@ -445,6 +447,7 @@ impl<'a> ToolBatchRunner<'a> {
                 item_id: tool_item_id.to_string(),
                 call_id: Some(call.id.clone()),
                 kind: spec.delta_kind.clone(),
+                segment_index: None,
                 delta: content,
             },
         );
@@ -532,6 +535,7 @@ impl<'a> ToolBatchRunner<'a> {
                 item_id: tool_item_id.to_string(),
                 call_id: Some(call.id.clone()),
                 kind: TurnItemDeltaKind::ToolOutput,
+                segment_index: None,
                 delta: message,
             },
         );

@@ -1,7 +1,8 @@
 use super::wire::ChatCompletionStreamChunk;
 use crate::error::ProviderStreamError;
 use crate::event::{
-    ProviderCompletion, ProviderMetadata, ProviderStreamEvent, ProviderToolCallDelta,
+    ProviderCompletion, ProviderMetadata, ProviderReasoningDelta, ProviderStreamEvent,
+    ProviderToolCallDelta,
 };
 use agent_core::ModelUsage;
 use tokio::sync::mpsc;
@@ -60,7 +61,12 @@ pub(super) fn parse_stream_frame(data: &str) -> Result<ParsedStreamFrame, Provid
         if let Some(delta) = choice.delta.reasoning_content
             && !delta.is_empty()
         {
-            events.push(ProviderStreamEvent::ReasoningTextDelta(delta));
+            events.push(ProviderStreamEvent::ReasoningDelta(
+                ProviderReasoningDelta::Text {
+                    content_index: 0,
+                    delta,
+                },
+            ));
         }
         if let Some(delta) = choice.delta.content
             && !delta.is_empty()
@@ -136,7 +142,10 @@ mod tests {
 
         assert!(frame.events.iter().any(|event| matches!(
             event,
-            ProviderStreamEvent::ReasoningTextDelta(delta) if delta == "让我分析一下"
+            ProviderStreamEvent::ReasoningDelta(ProviderReasoningDelta::Text {
+                content_index: 0,
+                delta
+            }) if delta == "让我分析一下"
         )));
     }
 }

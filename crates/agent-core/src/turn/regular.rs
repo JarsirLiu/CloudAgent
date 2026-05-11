@@ -1,6 +1,7 @@
 use super::compaction::{CompactionContinuation, CompactionMode, maybe_compact_history};
 use super::loop_guard::LoopGuard;
 use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
+use crate::model::ReasoningDelta;
 use crate::context::{ContextFragment, ContextInjectionStrategy, MemoryBudgetSource};
 use crate::{
     ContextBudgetLogEntry, ContextFacade, ContextManager, FilterPolicy, ModelStreamObserver,
@@ -368,12 +369,24 @@ pub async fn execute_regular_turn<H: TurnHost>(
                         item_id: item_id.clone(),
                         call_id: None,
                         kind: TurnItemDeltaKind::Text,
+                        segment_index: None,
                         delta,
                     },
                 );
             }
 
-            fn on_reasoning_delta(&mut self, delta: String) {
+            fn on_reasoning_delta(&mut self, delta: ReasoningDelta) {
+                let (kind, segment_index, delta): (TurnItemDeltaKind, Option<usize>, String) =
+                    match delta {
+                    ReasoningDelta::SummaryText {
+                        summary_index,
+                        delta,
+                    } => (TurnItemDeltaKind::ReasoningSummary, Some(summary_index), delta),
+                    ReasoningDelta::Text {
+                        content_index,
+                        delta,
+                    } => (TurnItemDeltaKind::ReasoningText, Some(content_index), delta),
+                    };
                 if delta.is_empty() {
                     return;
                 }
@@ -401,7 +414,8 @@ pub async fn execute_regular_turn<H: TurnHost>(
                         turn_id: self.turn_id.to_string(),
                         item_id: item_id.clone(),
                         call_id: None,
-                        kind: TurnItemDeltaKind::ReasoningText,
+                        kind,
+                        segment_index,
                         delta,
                     },
                 );
@@ -1078,7 +1092,10 @@ mod tests {
         ) -> Result<ModelResponse> {
             let response = self.responses.lock().expect("responses lock").remove(0);
             if let Some(reasoning) = response.reasoning.clone() {
-                observer.on_reasoning_delta(reasoning);
+                observer.on_reasoning_delta(crate::model::ReasoningDelta::Text {
+                    content_index: 0,
+                    delta: reasoning,
+                });
             }
             if let Some(content) = response.content.clone() {
                 observer.on_text_delta(content);

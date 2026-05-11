@@ -38,6 +38,7 @@ pub fn emit_assistant_message_item(
             item_id: assistant_item_id.clone(),
             call_id: None,
             kind: TurnItemDeltaKind::Text,
+            segment_index: None,
             delta: content.to_string(),
         },
     );

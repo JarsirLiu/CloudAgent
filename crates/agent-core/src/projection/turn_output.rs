@@ -110,6 +110,7 @@ mod tests {
                 item_id: "tool-1".to_string(),
                 call_id: Some("call-1".to_string()),
                 kind: TurnItemDeltaKind::CommandExecutionOutput,
+                segment_index: None,
                 delta: "streamed stdout".to_string(),
             },
             EventMsg::ItemCompleted {
@@ -182,3 +183,4 @@ mod tests {
         assert!(!tool_events[0].is_error);
     }
 }
+

@@ -186,6 +186,7 @@ pub enum EventMsg {
         item_id: String,
         call_id: Option<String>,
         kind: TurnItemDeltaKind,
+        segment_index: Option<usize>,
         delta: String,
     },
     ItemCompleted {

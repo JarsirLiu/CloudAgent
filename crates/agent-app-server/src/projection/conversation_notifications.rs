@@ -199,6 +199,7 @@ impl ConversationNotificationProjector {
                 call_id,
                 kind,
                 delta,
+                ..
             } => match kind {
                 TurnItemDeltaKind::Text
                 | TurnItemDeltaKind::ReasoningSummary
@@ -1135,6 +1136,7 @@ mod tests {
             item_id: "tool:write".to_string(),
             call_id: Some("call-write".to_string()),
             kind: TurnItemDeltaKind::FileChangeOutput,
+            segment_index: None,
             delta: "wrote note.txt".to_string(),
         });
 
@@ -1169,6 +1171,7 @@ mod tests {
             item_id: "tool:shell".to_string(),
             call_id: Some("call-shell".to_string()),
             kind: TurnItemDeltaKind::CommandExecutionOutput,
+            segment_index: None,
             delta: "D:\\work".to_string(),
         });
 
@@ -1203,6 +1206,7 @@ mod tests {
             item_id: "tool:custom".to_string(),
             call_id: Some("call-custom".to_string()),
             kind: TurnItemDeltaKind::ToolOutput,
+            segment_index: None,
             delta: "custom output".to_string(),
         });
 
@@ -1342,6 +1346,7 @@ mod tests {
             item_id: "assistant:1".to_string(),
             call_id: None,
             kind: TurnItemDeltaKind::Text,
+            segment_index: None,
             delta: "hello".to_string(),
         });
 
@@ -1376,6 +1381,7 @@ mod tests {
             item_id: "reasoning:1".to_string(),
             call_id: None,
             kind: TurnItemDeltaKind::ReasoningText,
+            segment_index: None,
             delta: "step".to_string(),
         });
 
@@ -1411,6 +1417,7 @@ mod tests {
             item_id: "reasoning:1".to_string(),
             call_id: None,
             kind: TurnItemDeltaKind::ReasoningSummary,
+            segment_index: None,
             delta: "summary".to_string(),
         });
 
@@ -1519,6 +1526,7 @@ mod tests {
             item_id: "tool:shell".to_string(),
             call_id: Some("call-other".to_string()),
             kind: TurnItemDeltaKind::CommandExecutionOutput,
+            segment_index: None,
             delta: "D:\\work".to_string(),
         });
 
@@ -1589,6 +1597,7 @@ mod tests {
             item_id: "tool:other".to_string(),
             call_id: Some("call-shell".to_string()),
             kind: TurnItemDeltaKind::CommandExecutionOutput,
+            segment_index: None,
             delta: "should fail".to_string(),
         });
 
@@ -1615,6 +1624,7 @@ mod tests {
             item_id: "tool:shell".to_string(),
             call_id: Some("call-shell".to_string()),
             kind: TurnItemDeltaKind::CommandExecutionOutput,
+            segment_index: None,
             delta: "D:\\other".to_string(),
         });
 
@@ -1722,6 +1732,7 @@ mod tests {
             item_id: "reasoning:1".to_string(),
             call_id: None,
             kind: TurnItemDeltaKind::ReasoningSummary,
+            segment_index: None,
             delta: "first".to_string(),
         });
         projector.project_turn_event(&EventMsg::ItemStarted {
@@ -1736,6 +1747,7 @@ mod tests {
             item_id: "tool:1".to_string(),
             call_id: Some("call-1".to_string()),
             kind: TurnItemDeltaKind::CommandExecutionOutput,
+            segment_index: None,
             delta: "D:\\work".to_string(),
         });
         projector.project_turn_event(&EventMsg::ItemStarted {
@@ -1750,6 +1762,7 @@ mod tests {
             item_id: "assistant:1".to_string(),
             call_id: None,
             kind: TurnItemDeltaKind::Text,
+            segment_index: None,
             delta: "answer".to_string(),
         });
         projector.project_turn_event(&EventMsg::ItemStarted {
@@ -1764,6 +1777,7 @@ mod tests {
             item_id: "reasoning:2".to_string(),
             call_id: None,
             kind: TurnItemDeltaKind::ReasoningSummary,
+            segment_index: None,
             delta: "second".to_string(),
         });
 
@@ -1788,3 +1802,4 @@ mod tests {
         );
     }
 }
+

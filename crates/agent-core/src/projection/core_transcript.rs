@@ -61,6 +61,7 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
             turn_id,
             item_id,
             kind,
+            segment_index,
             delta,
             ..
         } => match kind {
@@ -73,14 +74,14 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
                 Some(CoreTranscriptEvent::ReasoningSummaryTextDelta {
                     turn_id: turn_id.clone(),
                     item_id: item_id.clone(),
-                    summary_index: 0,
+                    summary_index: segment_index.unwrap_or(0),
                     delta: delta.clone(),
                 })
             }
             TurnItemDeltaKind::ReasoningText => Some(CoreTranscriptEvent::ReasoningTextDelta {
                 turn_id: turn_id.clone(),
                 item_id: item_id.clone(),
-                content_index: 0,
+                content_index: segment_index.unwrap_or(0),
                 delta: delta.clone(),
             }),
             TurnItemDeltaKind::CommandExecutionOutput

@@ -5,10 +5,11 @@ use super::wire::{
 };
 use crate::config::ProviderRuntimeConfig;
 use crate::error::{ProviderRequestError, ProviderStreamError};
-use crate::event::{ProviderCompletion, ProviderStreamEvent};
+use crate::event::{ProviderCompletion, ProviderReasoningDelta, ProviderStreamEvent};
 use crate::request::ProviderRequest;
 use agent_core::model::{
     ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelStreamObserver, ModelUsage,
+    ReasoningDelta,
 };
 use agent_core::tool::{ToolCall, ToolIdentity, ToolSpec};
 use anyhow::{Result, anyhow};
@@ -332,12 +333,32 @@ impl ChatModel for OpenAiCompatibleModel {
                         content.push_str(&delta);
                     }
                 }
-                ProviderStreamEvent::ReasoningTextDelta(delta) => {
-                    if !delta.is_empty() {
-                        observer.on_reasoning_delta(delta.clone());
-                        reasoning.push_str(&delta);
+                ProviderStreamEvent::ReasoningDelta(delta) => match delta {
+                    ProviderReasoningDelta::SummaryText {
+                        summary_index,
+                        delta,
+                    } => {
+                        if !delta.is_empty() {
+                            observer.on_reasoning_delta(ReasoningDelta::SummaryText {
+                                summary_index,
+                                delta: delta.clone(),
+                            });
+                            reasoning.push_str(&delta);
+                        }
                     }
-                }
+                    ProviderReasoningDelta::Text {
+                        content_index,
+                        delta,
+                    } => {
+                        if !delta.is_empty() {
+                            observer.on_reasoning_delta(ReasoningDelta::Text {
+                                content_index,
+                                delta: delta.clone(),
+                            });
+                            reasoning.push_str(&delta);
+                        }
+                    }
+                },
                 ProviderStreamEvent::ToolCallDelta(delta) => {
                     let acc = tool_calls_acc.entry(delta.index).or_default();
                     if let Some(id) = delta.id {
@@ -433,8 +454,12 @@ mod tests {
             self.text.push_str(&delta);
         }
 
-        fn on_reasoning_delta(&mut self, delta: String) {
-            self.reasoning_text.push_str(&delta);
+        fn on_reasoning_delta(&mut self, delta: ReasoningDelta) {
+            match delta {
+                ReasoningDelta::SummaryText { delta, .. } | ReasoningDelta::Text { delta, .. } => {
+                    self.reasoning_text.push_str(&delta);
+                }
+            }
         }
     }
 
