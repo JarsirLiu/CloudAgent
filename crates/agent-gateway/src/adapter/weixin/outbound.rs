@@ -1,5 +1,5 @@
 use crate::gateway_event::{GatewayEvent, GatewayItemDeltaKind, OutboundTarget};
-use agent_core::{TranscriptItem, TurnItemKind};
+use agent_core::TranscriptItem;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -30,12 +30,7 @@ impl WeixinOutboundRenderer {
     pub fn render(&mut self, event: GatewayEvent) -> Vec<WeixinOutboundMessage> {
         match event {
             GatewayEvent::TurnStarted { .. } => Vec::new(),
-            GatewayEvent::ItemStarted {
-                target,
-                kind,
-                title,
-                ..
-            } => self.render_item_started(target, kind, title),
+            GatewayEvent::ItemStarted { target, item, .. } => self.render_item_started(target, item),
             GatewayEvent::ItemDelta {
                 target, kind, delta, ..
             } => self.render_item_delta(target, kind, delta),
@@ -70,21 +65,15 @@ impl WeixinOutboundRenderer {
         }
     }
 
-    fn render_item_started(
-        &mut self,
-        target: OutboundTarget,
-        kind: TurnItemKind,
-        _title: Option<String>,
-    ) -> Vec<WeixinOutboundMessage> {
-        match kind {
-            TurnItemKind::Reasoning => self.enter_reasoning(target.chat_id),
-            TurnItemKind::CommandExecution
-            | TurnItemKind::FileChange
-            | TurnItemKind::ToolCall
-            | TurnItemKind::ToolResult => self.enter_tool(target.chat_id),
-            TurnItemKind::AssistantMessage | TurnItemKind::UserMessage | TurnItemKind::SystemNote => {
-                Vec::new()
-            }
+    fn render_item_started(&mut self, target: OutboundTarget, item: TranscriptItem) -> Vec<WeixinOutboundMessage> {
+        match item {
+            TranscriptItem::Reasoning { .. } => self.enter_reasoning(target.chat_id),
+            TranscriptItem::CommandExecution { .. }
+            | TranscriptItem::FileChange { .. }
+            | TranscriptItem::ToolResult { .. } => self.enter_tool(target.chat_id),
+            TranscriptItem::AgentMessage { .. }
+            | TranscriptItem::UserMessage { .. }
+            | TranscriptItem::SystemMessage { .. } => Vec::new(),
         }
     }
 

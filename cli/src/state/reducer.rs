@@ -158,16 +158,15 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             AppServerNotification::ItemStarted {
                 turn_id,
-                item_id,
-                kind,
-                title,
+                item,
                 ..
             } => {
+                let item_id = item.id().to_string();
                 actions.push(ServerAction::StartActiveTurnItem {
                     turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    kind: kind.clone(),
-                    title: title.clone(),
+                    item_id,
+                    kind: turn_item_kind(item),
+                    title: turn_item_title(item),
                 });
             }
             AppServerNotification::AgentMessageDelta {
@@ -390,6 +389,29 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     }
 
     ServerMessageReduce { actions }
+}
+
+fn turn_item_kind(item: &TranscriptItem) -> TurnItemKind {
+    match item {
+        TranscriptItem::SystemMessage { .. } => TurnItemKind::SystemNote,
+        TranscriptItem::UserMessage { .. } => TurnItemKind::UserMessage,
+        TranscriptItem::AgentMessage { .. } => TurnItemKind::AssistantMessage,
+        TranscriptItem::CommandExecution { .. } => TurnItemKind::CommandExecution,
+        TranscriptItem::FileChange { .. } => TurnItemKind::FileChange,
+        TranscriptItem::ToolResult { .. } => TurnItemKind::ToolResult,
+        TranscriptItem::Reasoning { .. } => TurnItemKind::Reasoning,
+    }
+}
+
+fn turn_item_title(item: &TranscriptItem) -> Option<String> {
+    match item {
+        TranscriptItem::SystemMessage { .. } | TranscriptItem::UserMessage { .. } => None,
+        TranscriptItem::AgentMessage { .. } => Some("assistant_message".to_string()),
+        TranscriptItem::CommandExecution { command, .. } => Some(command.clone()),
+        TranscriptItem::FileChange { path, .. } => Some(path.clone()),
+        TranscriptItem::ToolResult { tool_name, .. } => Some(tool_name.clone()),
+        TranscriptItem::Reasoning { title, .. } => Some(title.clone()),
+    }
 }
 
 fn summarize_args_preview(arguments_preview: &str) -> String {

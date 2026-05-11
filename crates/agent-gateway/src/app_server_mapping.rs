@@ -53,18 +53,14 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
         }
         AppServerNotification::ItemStarted {
             turn_id,
-            item_id,
             call_id,
-            kind,
-            title,
+            item,
             ..
         } => EventFlow::Continue(vec![GatewayEvent::ItemStarted {
             target: target.clone(),
             turn_id: turn_id.clone(),
-            item_id: item_id.clone(),
             call_id: call_id.clone(),
-            kind: kind.clone(),
-            title: title.clone(),
+            item: item.clone(),
         }]),
         AppServerNotification::AgentMessageDelta {
             turn_id,

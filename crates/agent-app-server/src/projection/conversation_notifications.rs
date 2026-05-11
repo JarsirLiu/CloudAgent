@@ -179,13 +179,16 @@ impl ConversationNotificationProjector {
                     title.clone(),
                     rollout_index,
                 );
+                let started_item = self
+                    .items_by_item_id
+                    .get(item_id)
+                    .and_then(projected_item_to_transcript_item)
+                    .unwrap_or_else(|| fallback_started_item(item_id, kind, title.as_deref()));
                 vec![AppServerNotification::ItemStarted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
                     call_id: call_id.clone(),
-                    kind: kind.clone(),
-                    title: title.clone(),
+                    item: started_item,
                 }]
             }
             EventMsg::ItemDelta {
@@ -986,6 +989,27 @@ fn projected_item_to_transcript_item(item: &ProjectedItemState) -> Option<Transc
             id: item.item_id.clone(),
             text: item.text_buffer.clone(),
         }),
+    }
+}
+
+fn fallback_started_item(
+    item_id: &str,
+    kind: &TurnItemKind,
+    title: Option<&str>,
+) -> TranscriptItem {
+    match projected_item_to_transcript_item(&ProjectedItemState::new(
+        String::new(),
+        item_id.to_string(),
+        None,
+        kind.clone(),
+        title.map(str::to_string),
+        0,
+    )) {
+        Some(item) => item,
+        None => TranscriptItem::SystemMessage {
+            id: item_id.to_string(),
+            text: String::new(),
+        },
     }
 }
 

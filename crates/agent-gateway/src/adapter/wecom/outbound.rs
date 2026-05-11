@@ -1,6 +1,6 @@
 use crate::gateway_event::{GatewayEvent, GatewayItemDeltaKind, OutboundTarget};
 use crate::message::ReplyContext;
-use agent_core::{TranscriptItem, TurnItemKind};
+use agent_core::TranscriptItem;
 use std::collections::HashMap;
 
 const MARKDOWN_LIMIT: usize = 3800;
@@ -34,12 +34,7 @@ impl WecomOutboundRenderer {
     pub fn render(&mut self, event: GatewayEvent) -> Vec<WecomOutboundMessage> {
         match event {
             GatewayEvent::TurnStarted { .. } => Vec::new(),
-            GatewayEvent::ItemStarted {
-                target,
-                kind,
-                title,
-                ..
-            } => self.render_item_started(target, kind, title),
+            GatewayEvent::ItemStarted { target, item, .. } => self.render_item_started(target, item),
             GatewayEvent::ItemDelta {
                 target, kind, delta, ..
             } => self.render_item_delta(target, kind, delta),
@@ -65,23 +60,19 @@ impl WecomOutboundRenderer {
         }
     }
 
-    fn render_item_started(
-        &mut self,
-        target: OutboundTarget,
-        kind: TurnItemKind,
-        _title: Option<String>,
-    ) -> Vec<WecomOutboundMessage> {
-        match kind {
-            TurnItemKind::Reasoning => self.enter_phase(target, WecomPhase::Reasoning, "正在思考中..."),
-            TurnItemKind::CommandExecution
-            | TurnItemKind::FileChange
-            | TurnItemKind::ToolCall
-            | TurnItemKind::ToolResult => {
+    fn render_item_started(&mut self, target: OutboundTarget, item: TranscriptItem) -> Vec<WecomOutboundMessage> {
+        match item {
+            TranscriptItem::Reasoning { .. } => {
+                self.enter_phase(target, WecomPhase::Reasoning, "正在思考中...")
+            }
+            TranscriptItem::CommandExecution { .. }
+            | TranscriptItem::FileChange { .. }
+            | TranscriptItem::ToolResult { .. } => {
                 self.enter_phase(target, WecomPhase::Tool, "正在调用工具处理中...")
             }
-            TurnItemKind::AssistantMessage | TurnItemKind::UserMessage | TurnItemKind::SystemNote => {
-                Vec::new()
-            }
+            TranscriptItem::AgentMessage { .. }
+            | TranscriptItem::UserMessage { .. }
+            | TranscriptItem::SystemMessage { .. } => Vec::new(),
         }
     }
 
@@ -228,7 +219,7 @@ fn split_markdown_chunks(text: &str) -> Vec<String> {
 mod tests {
     use super::WecomOutboundRenderer;
     use crate::gateway_event::{GatewayEvent, GatewayItemDeltaKind, OutboundTarget};
-    use agent_core::{TranscriptItem, TurnItemKind};
+    use agent_core::TranscriptItem;
 
     fn target() -> OutboundTarget {
         OutboundTarget {
@@ -246,10 +237,12 @@ mod tests {
         let first = renderer.render(GatewayEvent::ItemStarted {
             target: target(),
             turn_id: "turn1".to_string(),
-            item_id: "item1".to_string(),
             call_id: None,
-            kind: TurnItemKind::Reasoning,
-            title: None,
+            item: TranscriptItem::Reasoning {
+                id: "item1".to_string(),
+                title: "reasoning".to_string(),
+                text: String::new(),
+            },
         });
         let second = renderer.render(GatewayEvent::ItemDelta {
             target: target(),

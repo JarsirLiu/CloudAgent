@@ -3,7 +3,6 @@ use crate::{RequestId, UserTurnInput};
 use agent_core::{
     CompactionContinuation, ConversationSnapshot, ConversationSummary, ConversationTurn,
     ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision, TranscriptItem, TurnId,
-    TurnItemKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -321,10 +320,8 @@ pub enum AppServerNotification {
     ItemStarted {
         conversation_id: String,
         turn_id: TurnId,
-        item_id: String,
         call_id: Option<String>,
-        kind: TurnItemKind,
-        title: Option<String>,
+        item: TranscriptItem,
     },
     AgentMessageDelta {
         conversation_id: String,

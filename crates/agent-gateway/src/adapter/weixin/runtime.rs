@@ -338,11 +338,10 @@ fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayEvent]
                 post_context_tokens_estimate,
                 "weixin.runtime.outbound.generated"
             ),
-            GatewayEvent::ItemStarted { kind, title, .. } => debug!(
+            GatewayEvent::ItemStarted { item, .. } => debug!(
                 session_key = %session_key,
                 event = event_name,
-                kind = ?kind,
-                title = ?title,
+                kind = ?item,
                 "weixin.runtime.outbound.generated"
             ),
             GatewayEvent::TurnStarted { turn_id, .. } => debug!(

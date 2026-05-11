@@ -1,7 +1,7 @@
 use crate::message::ReplyContext;
 use agent_core::{
     CompactionContinuation, ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision,
-    TranscriptItem, TurnItemKind,
+    TranscriptItem,
 };
 use agent_protocol::RequestId;
 
@@ -34,10 +34,8 @@ pub enum GatewayEvent {
     ItemStarted {
         target: OutboundTarget,
         turn_id: String,
-        item_id: String,
         call_id: Option<String>,
-        kind: TurnItemKind,
-        title: Option<String>,
+        item: TranscriptItem,
     },
     ItemDelta {
         target: OutboundTarget,

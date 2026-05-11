@@ -721,12 +721,11 @@ impl PlatformAdapter for WeixinAdapter {
 
 fn typing_chat_id(event: &GatewayEvent) -> Option<String> {
     match event {
-        GatewayEvent::ItemStarted { target, kind, .. } => match kind {
-            agent_core::TurnItemKind::Reasoning
-            | agent_core::TurnItemKind::CommandExecution
-            | agent_core::TurnItemKind::FileChange
-            | agent_core::TurnItemKind::ToolCall
-            | agent_core::TurnItemKind::ToolResult => Some(target.chat_id.clone()),
+        GatewayEvent::ItemStarted { target, item, .. } => match item {
+            agent_core::TranscriptItem::Reasoning { .. }
+            | agent_core::TranscriptItem::CommandExecution { .. }
+            | agent_core::TranscriptItem::FileChange { .. }
+            | agent_core::TranscriptItem::ToolResult { .. } => Some(target.chat_id.clone()),
             _ => None,
         },
         GatewayEvent::ItemDelta { target, kind, .. } => match kind {

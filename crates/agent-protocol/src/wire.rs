@@ -600,7 +600,7 @@ mod tests {
     use super::*;
     use agent_core::{
         ApprovalPolicy, CommandApprovalRequest, InputItem, ModelUsage, PermissionProfile,
-        ServerRequestDecision, TranscriptItem, TurnItemKind,
+        ServerRequestDecision, TranscriptItem,
     };
 
     #[test]
@@ -774,10 +774,14 @@ mod tests {
             message: AppServerMessage::Notification(AppServerNotification::ItemStarted {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
-                item_id: "tool:custom".to_string(),
                 call_id: Some("call-1".to_string()),
-                kind: TurnItemKind::ToolCall,
-                title: Some("read_file".to_string()),
+                item: TranscriptItem::ToolResult {
+                    id: "tool:custom".to_string(),
+                    tool_name: "read_file".to_string(),
+                    content: String::new(),
+                    summary: String::new(),
+                    structured: None,
+                },
             }),
             event_seq: None,
         };
@@ -792,16 +796,16 @@ mod tests {
                 .expect("reparse");
         match reparsed.message {
             AppServerMessage::Notification(AppServerNotification::ItemStarted {
-                item_id,
                 call_id,
-                kind,
-                title,
+                item,
                 ..
             }) => {
-                assert_eq!(item_id, "tool:custom");
                 assert_eq!(call_id.as_deref(), Some("call-1"));
-                assert_eq!(kind, TurnItemKind::ToolCall);
-                assert_eq!(title.as_deref(), Some("read_file"));
+                assert!(matches!(
+                    item,
+                    TranscriptItem::ToolResult { ref id, ref tool_name, .. }
+                        if id == "tool:custom" && tool_name == "read_file"
+                ));
             }
             other => panic!("unexpected notification: {other:?}"),
         }
@@ -855,10 +859,11 @@ mod tests {
             message: AppServerMessage::Notification(AppServerNotification::ItemStarted {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
-                item_id: "assistant:1".to_string(),
                 call_id: None,
-                kind: TurnItemKind::AssistantMessage,
-                title: Some("assistant_message".to_string()),
+                item: TranscriptItem::AgentMessage {
+                    id: "assistant:1".to_string(),
+                    text: String::new(),
+                },
             }),
             event_seq: None,
         };
@@ -873,11 +878,14 @@ mod tests {
         match reparsed.message {
             AppServerMessage::Notification(AppServerNotification::ItemStarted {
                 call_id,
-                item_id,
+                item,
                 ..
             }) => {
                 assert!(call_id.is_none());
-                assert_eq!(item_id, "assistant:1");
+                assert!(matches!(
+                    item,
+                    TranscriptItem::AgentMessage { ref id, .. } if id == "assistant:1"
+                ));
             }
             other => panic!("unexpected notification: {other:?}"),
         }

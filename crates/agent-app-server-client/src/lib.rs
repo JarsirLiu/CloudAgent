@@ -699,7 +699,7 @@ pub(crate) async fn forward_event(
 mod tests {
     use super::*;
     use agent_core::{
-        CommandApprovalRequest, CommandExecutionStatus, ServerRequest, TranscriptItem, TurnItemKind,
+        CommandApprovalRequest, CommandExecutionStatus, ServerRequest, TranscriptItem,
     };
     use agent_protocol::{AppServerNotification, RequestId};
 
@@ -740,10 +740,20 @@ mod tests {
             AppServerNotification::ItemStarted {
                 conversation_id: "default".to_string(),
                 turn_id: "turn-1".to_string(),
-                item_id: "tool:1".to_string(),
                 call_id: Some("call-1".to_string()),
-                kind: TurnItemKind::CommandExecution,
-                title: Some("pwd".to_string()),
+                item: TranscriptItem::CommandExecution {
+                    id: "tool:1".to_string(),
+                    tool_name: "exec_command".to_string(),
+                    command: "pwd".to_string(),
+                    current_directory: String::new(),
+                    status: agent_core::CommandExecutionStatus::InProgress,
+                    exit_code: None,
+                    stdout: Some(String::new()),
+                    stderr: None,
+                    aggregated_output: None,
+                    duration_ms: None,
+                    summary: String::new(),
+                },
             },
         ))
     }
