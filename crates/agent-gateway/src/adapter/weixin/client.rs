@@ -736,6 +736,7 @@ fn typing_chat_id(event: &GatewayEvent) -> Option<String> {
             }
             _ => None,
         },
+        GatewayEvent::ReasoningSummaryPartAdded { target, .. } => Some(target.chat_id.clone()),
         _ => None,
     }
 }

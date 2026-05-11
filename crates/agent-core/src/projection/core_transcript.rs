@@ -36,14 +36,21 @@ pub enum CoreTranscriptEvent {
         item_id: String,
         delta: String,
     },
+    ReasoningSummaryPartAdded {
+        turn_id: TurnId,
+        item_id: String,
+        summary_index: usize,
+    },
     ReasoningSummaryTextDelta {
         turn_id: TurnId,
         item_id: String,
+        summary_index: usize,
         delta: String,
     },
     ReasoningTextDelta {
         turn_id: TurnId,
         item_id: String,
+        content_index: usize,
         delta: String,
     },
 }
@@ -66,12 +73,14 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
                 Some(CoreTranscriptEvent::ReasoningSummaryTextDelta {
                     turn_id: turn_id.clone(),
                     item_id: item_id.clone(),
+                    summary_index: 0,
                     delta: delta.clone(),
                 })
             }
             TurnItemDeltaKind::ReasoningText => Some(CoreTranscriptEvent::ReasoningTextDelta {
                 turn_id: turn_id.clone(),
                 item_id: item_id.clone(),
+                content_index: 0,
                 delta: delta.clone(),
             }),
             TurnItemDeltaKind::CommandExecutionOutput

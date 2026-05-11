@@ -38,6 +38,7 @@ impl WecomOutboundRenderer {
             GatewayEvent::ItemDelta {
                 target, kind, delta, ..
             } => self.render_item_delta(target, kind, delta),
+            GatewayEvent::ReasoningSummaryPartAdded { .. } => Vec::new(),
             GatewayEvent::ItemCompleted { target, item, .. } => self.render_item_completed(target, item),
             GatewayEvent::ServerRequestRequested { .. }
             | GatewayEvent::ServerRequestResolved { .. }
@@ -250,6 +251,7 @@ mod tests {
             item_id: "item1".to_string(),
             call_id: None,
             kind: GatewayItemDeltaKind::ReasoningText,
+            segment_index: Some(0),
             delta: "thinking".to_string(),
         });
         assert_eq!(first.len(), 1);

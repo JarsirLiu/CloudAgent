@@ -335,16 +335,24 @@ pub enum AppServerNotification {
         item_id: String,
         delta: String,
     },
+    ReasoningSummaryPartAdded {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        summary_index: usize,
+    },
     ReasoningSummaryTextDelta {
         conversation_id: String,
         turn_id: TurnId,
         item_id: String,
+        summary_index: usize,
         delta: String,
     },
     ReasoningTextDelta {
         conversation_id: String,
         turn_id: TurnId,
         item_id: String,
+        content_index: usize,
         delta: String,
     },
     CommandExecutionOutputDelta {
@@ -501,6 +509,9 @@ impl AppServerNotification {
             | Self::PlanDelta {
                 conversation_id, ..
             }
+            | Self::ReasoningSummaryPartAdded {
+                conversation_id, ..
+            }
             | Self::ReasoningSummaryTextDelta {
                 conversation_id, ..
             }
@@ -628,6 +639,7 @@ pub fn classify_notification(
     match notification {
         AppServerNotification::AgentMessageDelta { .. }
         | AppServerNotification::PlanDelta { .. }
+        | AppServerNotification::ReasoningSummaryPartAdded { .. }
         | AppServerNotification::ReasoningSummaryTextDelta { .. }
         | AppServerNotification::ReasoningTextDelta { .. }
         | AppServerNotification::ItemCompleted { .. }

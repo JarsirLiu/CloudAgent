@@ -43,7 +43,14 @@ pub enum GatewayEvent {
         item_id: String,
         call_id: Option<String>,
         kind: GatewayItemDeltaKind,
+        segment_index: Option<usize>,
         delta: String,
+    },
+    ReasoningSummaryPartAdded {
+        target: OutboundTarget,
+        turn_id: String,
+        item_id: String,
+        summary_index: usize,
     },
     ItemCompleted {
         target: OutboundTarget,

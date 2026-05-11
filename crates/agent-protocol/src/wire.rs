@@ -365,6 +365,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "item/plan/delta",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::ReasoningSummaryPartAdded { .. } => (
+            "item/reasoning/summaryPartAdded",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ReasoningSummaryTextDelta { .. } => (
             "item/reasoning/summaryTextDelta",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -615,12 +619,14 @@ mod tests {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "reasoning:1".to_string(),
+            summary_index: 0,
             delta: "summary".to_string(),
         };
         let reasoning_text = AppServerNotification::ReasoningTextDelta {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "reasoning:1".to_string(),
+            content_index: 0,
             delta: "detail".to_string(),
         };
         let plan_delta = AppServerNotification::PlanDelta {

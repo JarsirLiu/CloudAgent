@@ -73,6 +73,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             item_id: item_id.clone(),
             call_id: None,
             kind: GatewayItemDeltaKind::AgentMessage,
+            segment_index: None,
             delta: delta.clone(),
         }]),
         AppServerNotification::PlanDelta {
@@ -86,11 +87,24 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             item_id: item_id.clone(),
             call_id: None,
             kind: GatewayItemDeltaKind::Plan,
+            segment_index: None,
             delta: delta.clone(),
+        }]),
+        AppServerNotification::ReasoningSummaryPartAdded {
+            turn_id,
+            item_id,
+            summary_index,
+            ..
+        } => EventFlow::Continue(vec![GatewayEvent::ReasoningSummaryPartAdded {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+            summary_index: *summary_index,
         }]),
         AppServerNotification::ReasoningSummaryTextDelta {
             turn_id,
             item_id,
+            summary_index,
             delta,
             ..
         } => EventFlow::Continue(vec![GatewayEvent::ItemDelta {
@@ -99,11 +113,13 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             item_id: item_id.clone(),
             call_id: None,
             kind: GatewayItemDeltaKind::ReasoningSummary,
+            segment_index: Some(*summary_index),
             delta: delta.clone(),
         }]),
         AppServerNotification::ReasoningTextDelta {
             turn_id,
             item_id,
+            content_index,
             delta,
             ..
         } => EventFlow::Continue(vec![GatewayEvent::ItemDelta {
@@ -112,6 +128,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             item_id: item_id.clone(),
             call_id: None,
             kind: GatewayItemDeltaKind::ReasoningText,
+            segment_index: Some(*content_index),
             delta: delta.clone(),
         }]),
         AppServerNotification::CommandExecutionOutputDelta {
@@ -126,6 +143,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             item_id: item_id.clone(),
             call_id: call_id.clone(),
             kind: GatewayItemDeltaKind::CommandExecutionOutput,
+            segment_index: None,
             delta: delta.clone(),
         }]),
         AppServerNotification::ToolOutputDelta {
@@ -140,6 +158,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             item_id: item_id.clone(),
             call_id: call_id.clone(),
             kind: GatewayItemDeltaKind::ToolOutput,
+            segment_index: None,
             delta: delta.clone(),
         }]),
         AppServerNotification::FileChangeOutputDelta {
@@ -154,6 +173,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             item_id: item_id.clone(),
             call_id: call_id.clone(),
             kind: GatewayItemDeltaKind::FileChangeOutput,
+            segment_index: None,
             delta: delta.clone(),
         }]),
         AppServerNotification::ItemCompleted {

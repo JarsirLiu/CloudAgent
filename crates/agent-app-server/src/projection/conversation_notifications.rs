@@ -33,6 +33,7 @@ struct ProjectedItemState {
     text_buffer: String,
     reasoning_buffer: String,
     tool_output_buffer: String,
+    reasoning_summary_part_opened: bool,
     order_hint: u64,
 }
 
@@ -57,6 +58,7 @@ impl ProjectedItemState {
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: String::new(),
+            reasoning_summary_part_opened: false,
             order_hint,
         }
     }
@@ -348,6 +350,16 @@ impl ConversationNotificationProjector {
         rollout_index: usize,
     ) -> Vec<AppServerNotification> {
         match event {
+            CoreTranscriptEvent::ReasoningSummaryPartAdded {
+                turn_id,
+                item_id,
+                summary_index,
+            } => vec![AppServerNotification::ReasoningSummaryPartAdded {
+                conversation_id: self.conversation_id.clone(),
+                turn_id,
+                item_id,
+                summary_index,
+            }],
             CoreTranscriptEvent::TurnCompleted { turn_id } => {
                 if let Some(error) = self.active_items_not_closed_error(&turn_id) {
                     self.deferred_terminal_notifications.push(error);
@@ -433,8 +445,18 @@ impl ConversationNotificationProjector {
             CoreTranscriptEvent::ReasoningSummaryTextDelta {
                 turn_id,
                 item_id,
+                summary_index,
                 delta,
             } => {
+                let mut notifications = Vec::new();
+                if self.mark_reasoning_summary_part_opened(&item_id) {
+                    notifications.push(AppServerNotification::ReasoningSummaryPartAdded {
+                        conversation_id: self.conversation_id.clone(),
+                        turn_id: turn_id.clone(),
+                        item_id: item_id.clone(),
+                        summary_index,
+                    });
+                }
                 self.observe_item_delta(
                     &turn_id,
                     &item_id,
@@ -442,7 +464,7 @@ impl ConversationNotificationProjector {
                     &delta,
                     rollout_index,
                 );
-                self.project_core_delta(
+                notifications.extend(self.project_core_delta(
                     turn_id,
                     item_id,
                     delta,
@@ -451,14 +473,17 @@ impl ConversationNotificationProjector {
                             conversation_id,
                             turn_id,
                             item_id,
+                            summary_index,
                             delta,
                         }
                     },
-                )
+                ));
+                notifications
             }
             CoreTranscriptEvent::ReasoningTextDelta {
                 turn_id,
                 item_id,
+                content_index,
                 delta,
             } => {
                 self.observe_item_delta(
@@ -477,6 +502,7 @@ impl ConversationNotificationProjector {
                             conversation_id,
                             turn_id,
                             item_id,
+                            content_index,
                             delta,
                         }
                     },
@@ -496,6 +522,17 @@ impl ConversationNotificationProjector {
             return vec![error];
         }
         vec![build(self.conversation_id.clone(), turn_id, item_id, delta)]
+    }
+
+    fn mark_reasoning_summary_part_opened(&mut self, item_id: &str) -> bool {
+        let Some(item) = self.items_by_item_id.get_mut(item_id) else {
+            return false;
+        };
+        if item.reasoning_summary_part_opened {
+            return false;
+        }
+        item.reasoning_summary_part_opened = true;
+        true
     }
 
     fn validate_active_item(&self, turn_id: &str, item_id: &str) -> Option<AppServerNotification> {
@@ -703,6 +740,7 @@ impl ConversationNotificationProjector {
                 text_buffer: String::new(),
                 reasoning_buffer: String::new(),
                 tool_output_buffer: String::new(),
+                reasoning_summary_part_opened: false,
                 order_hint,
             },
         );
@@ -820,6 +858,7 @@ fn projected_item_from_transcript_item(
             text_buffer: text,
             reasoning_buffer: String::new(),
             tool_output_buffer: String::new(),
+            reasoning_summary_part_opened: false,
             order_hint: order_hint as u64,
         },
         TranscriptItem::UserMessage { id, content } => ProjectedItemState {
@@ -834,6 +873,7 @@ fn projected_item_from_transcript_item(
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: String::new(),
+            reasoning_summary_part_opened: false,
             order_hint: order_hint as u64,
         },
         TranscriptItem::AgentMessage { id, text } => ProjectedItemState {
@@ -848,6 +888,7 @@ fn projected_item_from_transcript_item(
             text_buffer: text,
             reasoning_buffer: String::new(),
             tool_output_buffer: String::new(),
+            reasoning_summary_part_opened: false,
             order_hint: order_hint as u64,
         },
         TranscriptItem::Reasoning { id, title, text } => ProjectedItemState {
@@ -862,6 +903,7 @@ fn projected_item_from_transcript_item(
             text_buffer: String::new(),
             reasoning_buffer: text,
             tool_output_buffer: String::new(),
+            reasoning_summary_part_opened: true,
             order_hint: order_hint as u64,
         },
         TranscriptItem::CommandExecution {
@@ -888,6 +930,7 @@ fn projected_item_from_transcript_item(
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: summary,
+            reasoning_summary_part_opened: false,
             order_hint: order_hint as u64,
         },
         TranscriptItem::FileChange {
@@ -909,6 +952,7 @@ fn projected_item_from_transcript_item(
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: summary,
+            reasoning_summary_part_opened: false,
             order_hint: order_hint as u64,
         },
         TranscriptItem::ToolResult {
@@ -933,6 +977,7 @@ fn projected_item_from_transcript_item(
             } else {
                 summary
             },
+            reasoning_summary_part_opened: false,
             order_hint: order_hint as u64,
         },
     }
@@ -1342,6 +1387,7 @@ mod tests {
                 turn_id,
                 item_id,
                 delta,
+                ..
             } if conversation_id == "default"
                 && turn_id == "turn-1"
                 && item_id == "reasoning:1"
@@ -1368,17 +1414,32 @@ mod tests {
             delta: "summary".to_string(),
         });
 
-        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications.len(), 2);
         assert!(matches!(
             &notifications[0],
+            AppServerNotification::ReasoningSummaryPartAdded {
+                conversation_id,
+                turn_id,
+                item_id,
+                summary_index,
+            } if conversation_id == "default"
+                && turn_id == "turn-1"
+                && item_id == "reasoning:1"
+                && *summary_index == 0
+        ));
+        assert!(matches!(
+            &notifications[1],
             AppServerNotification::ReasoningSummaryTextDelta {
                 conversation_id,
                 turn_id,
                 item_id,
+                summary_index,
                 delta,
+                ..
             } if conversation_id == "default"
                 && turn_id == "turn-1"
                 && item_id == "reasoning:1"
+                && *summary_index == 0
                 && delta == "summary"
         ));
     }

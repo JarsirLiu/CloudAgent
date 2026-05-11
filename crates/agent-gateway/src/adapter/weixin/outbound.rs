@@ -34,6 +34,7 @@ impl WeixinOutboundRenderer {
             GatewayEvent::ItemDelta {
                 target, kind, delta, ..
             } => self.render_item_delta(target, kind, delta),
+            GatewayEvent::ReasoningSummaryPartAdded { .. } => Vec::new(),
             GatewayEvent::ItemCompleted { target, item, .. } => self.render_item_completed(target, item),
             GatewayEvent::ServerRequestRequested { .. }
             | GatewayEvent::ServerRequestResolved { .. }

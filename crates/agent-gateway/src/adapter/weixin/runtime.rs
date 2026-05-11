@@ -254,6 +254,18 @@ fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayEvent]
                 preview = %preview(delta, 120),
                 "weixin.runtime.outbound.generated"
             ),
+            GatewayEvent::ReasoningSummaryPartAdded {
+                item_id,
+                summary_index,
+                ..
+            } => debug!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "reasoning_summary_part_added",
+                item_id,
+                summary_index,
+                "weixin.runtime.outbound.generated"
+            ),
             GatewayEvent::TurnCompleted { .. } => info!(
                 session_key = %session_key,
                 event = event_name,

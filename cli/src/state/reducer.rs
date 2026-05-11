@@ -186,8 +186,14 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 item_id,
                 delta,
                 ..
+            } => {
+                actions.push(ServerAction::AppendActiveReasoningDelta {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                });
             }
-            | AppServerNotification::ReasoningTextDelta {
+            AppServerNotification::ReasoningTextDelta {
                 turn_id,
                 item_id,
                 delta,
@@ -199,6 +205,7 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     delta: delta.clone(),
                 });
             }
+            AppServerNotification::ReasoningSummaryPartAdded { .. } => {}
             AppServerNotification::CommandExecutionOutputDelta {
                 turn_id,
                 item_id,
