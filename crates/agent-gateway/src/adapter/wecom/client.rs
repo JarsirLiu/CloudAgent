@@ -1,7 +1,7 @@
 use super::config::{WecomAdapterConfig, WecomPolicy};
 use super::inbound::WecomInboundEnvelope;
 use super::outbound::{WecomOutboundMessage, WecomOutboundRenderer};
-use crate::gateway_outbound::GatewayOutbound;
+use crate::gateway_event::GatewayEvent;
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
@@ -527,10 +527,10 @@ impl PlatformAdapter for WecomAdapter {
         }
     }
 
-    async fn send_outbound(&self, outbound: GatewayOutbound) -> Result<()> {
+    async fn send_event(&self, event: GatewayEvent) -> Result<()> {
         let messages = {
             let mut renderer = self.renderer.lock().await;
-            renderer.render(outbound)
+            renderer.render(event)
         };
         for message in messages {
             self.send_markdown(message).await?;

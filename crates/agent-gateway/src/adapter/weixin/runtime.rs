@@ -1,7 +1,7 @@
 use super::client::WeixinAdapter;
 use super::config::WeixinAdapterConfig;
 use crate::app_server_mapping::{EventFlow, map_app_server_event};
-use crate::gateway_outbound::{GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate, OutboundTarget};
+use crate::gateway_event::{GatewayEvent, OutboundTarget};
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
@@ -70,15 +70,6 @@ impl MessageHandler for NodeBackedHandler {
             "weixin.runtime.inbound.accepted"
         );
 
-        self.adapter
-            .send_outbound(GatewayOutbound::Progress(GatewayProgressUpdate {
-                target: target.clone(),
-                kind: GatewayProgressKind::Reasoning,
-                summary: "模型开始处理当前消息".to_string(),
-                streaming: true,
-            }))
-            .await?;
-
         let mut stream_client = self.stream_client.lock().await;
         stream_client.send_command(AppClientCommand::SubscribeConversation {
             conversation_id: session_key.clone(),
@@ -97,7 +88,7 @@ impl MessageHandler for NodeBackedHandler {
                 Ok(None) => break,
                 Err(_) => {
                     self.adapter
-                        .send_outbound(GatewayOutbound::Info {
+                        .send_event(GatewayEvent::Info {
                             target: target.clone(),
                             message: "消息已提交给 Agent，但后续事件返回超时。".to_string(),
                         })
@@ -153,14 +144,14 @@ impl MessageHandler for NodeBackedHandler {
             match map_app_server_event(&target, event) {
                 EventFlow::Continue(outbounds) => {
                     log_outbounds(&session_key, event_name, &outbounds);
-                    for outbound in outbounds {
-                        self.adapter.send_outbound(outbound).await?;
+                    for event in outbounds {
+                        self.adapter.send_event(event).await?;
                     }
                 }
                 EventFlow::Completed(outbounds) => {
                     log_outbounds(&session_key, event_name, &outbounds);
-                    for outbound in outbounds {
-                        self.adapter.send_outbound(outbound).await?;
+                    for event in outbounds {
+                        self.adapter.send_event(event).await?;
                     }
                     break;
                 }
@@ -243,7 +234,7 @@ fn event_name(event: &AppServerEvent) -> &'static str {
     }
 }
 
-fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayOutbound]) {
+fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayEvent]) {
     if outbounds.is_empty() {
         debug!(
             session_key = %session_key,
@@ -255,45 +246,63 @@ fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayOutbou
 
     for outbound in outbounds {
         match outbound {
-            GatewayOutbound::TextDelta { delta, .. } => debug!(
+            GatewayEvent::ItemDelta { kind, delta, .. } => debug!(
                 session_key = %session_key,
                 event = event_name,
-                kind = "text_delta",
+                kind = ?kind,
                 chars = delta.chars().count(),
                 preview = %preview(delta, 120),
                 "weixin.runtime.outbound.generated"
             ),
-            GatewayOutbound::FlushText { .. } => info!(
+            GatewayEvent::TurnCompleted { .. } => info!(
                 session_key = %session_key,
                 event = event_name,
-                kind = "flush_text",
+                kind = "turn_completed",
                 "weixin.runtime.outbound.generated"
             ),
-            GatewayOutbound::FinalText { text, .. } => info!(
+            GatewayEvent::ItemCompleted { item, .. } => info!(
                 session_key = %session_key,
                 event = event_name,
-                kind = "final_text",
-                chars = text.chars().count(),
-                preview = %preview(text, 120),
+                kind = "item_completed",
+                item = ?item,
                 "weixin.runtime.outbound.generated"
             ),
-            GatewayOutbound::Progress(progress) => debug!(
+            GatewayEvent::ItemStarted { kind, title, .. } => debug!(
                 session_key = %session_key,
                 event = event_name,
-                kind = "progress",
-                progress_kind = ?progress.kind,
-                chars = progress.summary.chars().count(),
-                preview = %preview(&progress.summary, 120),
+                kind = ?kind,
+                title = ?title,
                 "weixin.runtime.outbound.generated"
             ),
-            GatewayOutbound::Info { message, .. } => info!(
+            GatewayEvent::TurnStarted { turn_id, .. } => debug!(
+                session_key = %session_key,
+                event = event_name,
+                turn_id,
+                kind = "turn_started",
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::TurnFailed { error, .. } => warn!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "turn_failed",
+                preview = %preview(error, 120),
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::TurnCancelled { reason, .. } => info!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "turn_cancelled",
+                preview = %preview(reason, 120),
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::Info { message, .. } => info!(
                 session_key = %session_key,
                 event = event_name,
                 kind = "info",
                 preview = %preview(message, 120),
                 "weixin.runtime.outbound.generated"
             ),
-            GatewayOutbound::Error { message, .. } => warn!(
+            GatewayEvent::Error { message, .. } => warn!(
                 session_key = %session_key,
                 event = event_name,
                 kind = "error",

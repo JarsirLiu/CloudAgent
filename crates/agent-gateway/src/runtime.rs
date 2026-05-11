@@ -1,8 +1,6 @@
 use crate::app_server_mapping::{EventFlow, map_app_server_event};
 use crate::config::GatewayConfig;
-use crate::gateway_outbound::{
-    GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate, OutboundTarget,
-};
+use crate::gateway_event::{GatewayEvent, OutboundTarget};
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::platforms::feishu::{FeishuAdapter, FeishuAdapterOptions};
@@ -67,15 +65,6 @@ impl MessageHandler for GatewayRuntime {
             session_key = %session_key,
             "gateway.runtime.turn.start"
         );
-        self.adapter
-            .send_outbound(GatewayOutbound::Progress(GatewayProgressUpdate {
-                target: target.clone(),
-                kind: GatewayProgressKind::Reasoning,
-                summary: "模型开始处理当前私聊消息".to_string(),
-                streaming: true,
-            }))
-            .await?;
-        info!(session_key = %session_key, "gateway.runtime.reasoning.notice_dispatched");
         let mut client = AppServerClient::in_process(InProcessClientConfig {
             runtime: self.agent_host.clone(),
             conversation_id: session_key.clone(),
@@ -93,7 +82,7 @@ impl MessageHandler for GatewayRuntime {
         }) {
             error!(?error, session_key = %session_key, "gateway.runtime.turn.submit_failed");
             self.adapter
-                .send_outbound(GatewayOutbound::Error {
+                .send_event(GatewayEvent::Error {
                     target,
                     message: "消息已收到，但提交到 Agent 运行时失败。".to_string(),
                 })
@@ -105,13 +94,13 @@ impl MessageHandler for GatewayRuntime {
             info!(session_key = %session_key, event = %event_name(&event), "gateway.runtime.event.received");
             match map_app_server_event(&target, event) {
                 EventFlow::Continue(outbounds) => {
-                    for outbound in outbounds {
-                        self.adapter.send_outbound(outbound).await?;
+                    for event in outbounds {
+                        self.adapter.send_event(event).await?;
                     }
                 }
                 EventFlow::Completed(outbounds) => {
-                    for outbound in outbounds {
-                        self.adapter.send_outbound(outbound).await?;
+                    for event in outbounds {
+                        self.adapter.send_event(event).await?;
                     }
                     break;
                 }

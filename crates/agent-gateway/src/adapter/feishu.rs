@@ -1,8 +1,6 @@
 use crate::app_server_mapping::{EventFlow, map_app_server_event};
 use crate::config::{FeishuConfig, GatewayConfig, LlmConfig};
-use crate::gateway_outbound::{
-    GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate, OutboundTarget,
-};
+use crate::gateway_event::{GatewayEvent, OutboundTarget};
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::platforms::feishu::{FeishuAdapter, FeishuAdapterOptions};
@@ -279,7 +277,7 @@ impl MessageHandler for NodeBackedHandler {
         );
 
         self.adapter
-            .send_outbound(GatewayOutbound::Info {
+            .send_event(GatewayEvent::Info {
                 target: OutboundTarget {
                     conversation_id: session_key,
                     chat_id: message.chat_id.clone(),
@@ -311,15 +309,6 @@ impl MessageHandler for NodeBackedHandler {
             message_id = %message.message_id,
             "gateway.platform_runtime.inbound.accepted"
         );
-
-        self.adapter
-            .send_outbound(GatewayOutbound::Progress(GatewayProgressUpdate {
-                target: target.clone(),
-                kind: GatewayProgressKind::Reasoning,
-                summary: "模型开始处理当前消息".to_string(),
-                streaming: true,
-            }))
-            .await?;
 
         let mut stream_client = self.stream_client.lock().await;
         stream_client.send_command(agent_protocol::AppClientCommand::SubscribeConversation {
@@ -359,14 +348,14 @@ impl MessageHandler for NodeBackedHandler {
                     );
                     if self.approvals.has_pending(&session_key).await {
                         self.adapter
-                            .send_outbound(GatewayOutbound::Info {
+                            .send_event(GatewayEvent::Info {
                                 target: target.clone(),
                                 message: "Agent 正在等待飞书审批卡片上的操作。".to_string(),
                             })
                             .await?;
                     } else {
                         self.adapter
-                            .send_outbound(GatewayOutbound::Info {
+                            .send_event(GatewayEvent::Info {
                                 target: target.clone(),
                                 message: "消息已提交给 Agent，但后续事件返回超时。".to_string(),
                             })
@@ -450,7 +439,7 @@ impl MessageHandler for NodeBackedHandler {
                                     "gateway.platform_runtime.server_request.card_failed"
                                 );
                                 self.adapter
-                                    .send_outbound(GatewayOutbound::Error {
+                                    .send_event(GatewayEvent::Error {
                                         target: target.clone(),
                                         message: "审批卡片发送失败，当前会话无法继续审批。请检查飞书卡片回调配置。".to_string(),
                                     })
@@ -460,7 +449,7 @@ impl MessageHandler for NodeBackedHandler {
                     }
                 } else {
                     self.adapter
-                        .send_outbound(GatewayOutbound::Info {
+                        .send_event(GatewayEvent::Info {
                             target: target.clone(),
                             message: "当前飞书平台未启用审批卡片，无法在 IM 内继续这次审批。"
                                 .to_string(),
@@ -471,13 +460,13 @@ impl MessageHandler for NodeBackedHandler {
             }
             match map_app_server_event(&target, event) {
                 EventFlow::Continue(outbounds) => {
-                    for outbound in outbounds {
-                        self.adapter.send_outbound(outbound).await?;
+                    for event in outbounds {
+                        self.adapter.send_event(event).await?;
                     }
                 }
                 EventFlow::Completed(outbounds) => {
-                    for outbound in outbounds {
-                        self.adapter.send_outbound(outbound).await?;
+                    for event in outbounds {
+                        self.adapter.send_event(event).await?;
                     }
                     break;
                 }

@@ -1,5 +1,5 @@
 use crate::config::GatewayConfig;
-use crate::gateway_outbound::GatewayOutbound;
+use crate::gateway_event::GatewayEvent;
 use crate::message::OutboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use anyhow::{Context, Result};
@@ -335,10 +335,10 @@ impl PlatformAdapter for FeishuAdapter {
             .context("feishu websocket stream stopped")
     }
 
-    async fn send_outbound(&self, outbound: GatewayOutbound) -> Result<()> {
+    async fn send_event(&self, event: GatewayEvent) -> Result<()> {
         let rendered: Vec<OutboundMessage> = {
             let mut renderer = self.renderer.lock().await;
-            renderer.render(outbound)
+            renderer.render(event)
         };
         if rendered.is_empty() {
             return Ok(());

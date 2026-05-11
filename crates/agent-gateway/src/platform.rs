@@ -1,4 +1,4 @@
-use crate::gateway_outbound::GatewayOutbound;
+use crate::gateway_event::GatewayEvent;
 use crate::message::InboundMessage;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -16,5 +16,5 @@ pub trait MessageHandler: Send + Sync {
 pub trait PlatformAdapter: Send + Sync {
     fn platform_name(&self) -> &'static str;
     async fn run(self: Arc<Self>, handler: Arc<dyn MessageHandler>) -> Result<()>;
-    async fn send_outbound(&self, outbound: GatewayOutbound) -> Result<()>;
+    async fn send_event(&self, event: GatewayEvent) -> Result<()>;
 }

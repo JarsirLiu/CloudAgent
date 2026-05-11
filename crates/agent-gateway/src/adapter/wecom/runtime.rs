@@ -1,7 +1,7 @@
 use super::client::WecomAdapter;
 use super::config::WecomAdapterConfig;
 use crate::app_server_mapping::{EventFlow, map_app_server_event};
-use crate::gateway_outbound::{GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate, OutboundTarget};
+use crate::gateway_event::{GatewayEvent, OutboundTarget};
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
@@ -124,7 +124,7 @@ impl MessageHandler for NodeBackedHandler {
         };
 
         self.adapter
-            .send_outbound(GatewayOutbound::Info {
+            .send_event(GatewayEvent::Info {
                 target: OutboundTarget {
                     conversation_id: session_key,
                     chat_id: message.chat_id.clone(),
@@ -147,15 +147,6 @@ impl MessageHandler for NodeBackedHandler {
             is_reply_chain: false,
             reply_context: message.reply_context.clone(),
         };
-
-        self.adapter
-            .send_outbound(GatewayOutbound::Progress(GatewayProgressUpdate {
-                target: target.clone(),
-                kind: GatewayProgressKind::Reasoning,
-                summary: "模型开始处理当前消息".to_string(),
-                streaming: true,
-            }))
-            .await?;
 
         let mut stream_client = self.stream_client.lock().await;
         stream_client.send_command(AppClientCommand::SubscribeConversation {
@@ -180,7 +171,7 @@ impl MessageHandler for NodeBackedHandler {
                 Ok(None) => break,
                 Err(_) => {
                     self.adapter
-                        .send_outbound(GatewayOutbound::Info {
+                        .send_event(GatewayEvent::Info {
                             target: target.clone(),
                             message: if self.approvals.has_pending(&session_key).await {
                                 "Agent 正在等待你在企微里回复 /approve、/always、/deny 或 /cancel。".to_string()
@@ -215,7 +206,7 @@ impl MessageHandler for NodeBackedHandler {
             if let Some(request) = event_request(&event) {
                 self.approvals.register_pending(&session_key, request).await;
                 self.adapter
-                    .send_outbound(GatewayOutbound::Info {
+                    .send_event(GatewayEvent::Info {
                         target: target.clone(),
                         message: format!(
                             "{}\n回复 /approve、/always、/deny 或 /cancel 继续。",
@@ -227,13 +218,13 @@ impl MessageHandler for NodeBackedHandler {
             }
             match map_app_server_event(&target, event) {
                 EventFlow::Continue(outbounds) => {
-                    for outbound in outbounds {
-                        self.adapter.send_outbound(outbound).await?;
+                    for event in outbounds {
+                        self.adapter.send_event(event).await?;
                     }
                 }
                 EventFlow::Completed(outbounds) => {
-                    for outbound in outbounds {
-                        self.adapter.send_outbound(outbound).await?;
+                    for event in outbounds {
+                        self.adapter.send_event(event).await?;
                     }
                     break;
                 }

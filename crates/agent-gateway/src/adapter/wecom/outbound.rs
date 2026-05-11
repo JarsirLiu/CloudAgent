@@ -1,10 +1,9 @@
-use crate::gateway_outbound::{GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate};
+use crate::gateway_event::{GatewayEvent, GatewayItemDeltaKind, OutboundTarget};
 use crate::message::ReplyContext;
+use agent_core::{TranscriptItem, TurnItemKind};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 const MARKDOWN_LIMIT: usize = 3800;
-const TOOL_NOTICE_COLLAPSE_WINDOW: Duration = Duration::from_secs(4);
 
 #[derive(Debug, Clone)]
 pub struct WecomOutboundMessage {
@@ -21,84 +20,148 @@ pub struct WecomOutboundRenderer {
 #[derive(Default)]
 struct WecomConversationState {
     text_buffer: String,
-    tool_notice_count: usize,
-    reasoning_announced: bool,
-    last_tool_notice: Option<String>,
-    last_tool_notice_at: Option<Instant>,
-    collapsed_multi_tool_notice: bool,
+    last_phase: Option<WecomPhase>,
     final_text_sent: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WecomPhase {
+    Reasoning,
+    Tool,
+}
+
 impl WecomOutboundRenderer {
-    pub fn render(&mut self, outbound: GatewayOutbound) -> Vec<WecomOutboundMessage> {
-        match outbound {
-            GatewayOutbound::TextDelta { target, delta } => {
-                let state = self
-                    .conversations
-                    .entry(target.conversation_id.clone())
-                    .or_default();
-                if state.final_text_sent && state.text_buffer.is_empty() {
-                    state.final_text_sent = false;
-                }
-                append_text_delta(&mut state.text_buffer, &delta);
-                Vec::new()
+    pub fn render(&mut self, event: GatewayEvent) -> Vec<WecomOutboundMessage> {
+        match event {
+            GatewayEvent::TurnStarted { .. } => Vec::new(),
+            GatewayEvent::ItemStarted {
+                target,
+                kind,
+                title,
+                ..
+            } => self.render_item_started(target, kind, title),
+            GatewayEvent::ItemDelta {
+                target, kind, delta, ..
+            } => self.render_item_delta(target, kind, delta),
+            GatewayEvent::ItemCompleted { target, item, .. } => self.render_item_completed(target, item),
+            GatewayEvent::TurnCompleted { target, .. } => self.flush_buffer(target),
+            GatewayEvent::TurnFailed { target, error, .. } => {
+                self.conversations.remove(&target.conversation_id);
+                self.single_message(target, error)
             }
-            GatewayOutbound::FlushText { target } => self.flush_buffer_as_final(target),
-            GatewayOutbound::FinalText { target, text } => {
-                let state = self
-                    .conversations
-                    .entry(target.conversation_id.clone())
-                    .or_default();
-                state.text_buffer.clear();
-                state.tool_notice_count = 0;
-                state.reasoning_announced = false;
-                state.last_tool_notice = None;
-                state.last_tool_notice_at = None;
-                state.collapsed_multi_tool_notice = false;
-                state.final_text_sent = true;
-                split_markdown_chunks(&text)
-                    .into_iter()
-                    .map(|content| WecomOutboundMessage {
-                        chat_id: target.chat_id.clone(),
-                        content,
-                        reply_context: target.reply_context.clone(),
-                    })
-                    .collect()
+            GatewayEvent::TurnCancelled { target, reason, .. } => {
+                self.conversations.remove(&target.conversation_id);
+                self.single_message(target, format!("本轮已取消: {reason}"))
             }
-            GatewayOutbound::Progress(progress) => self.render_progress(progress),
-            GatewayOutbound::Info { target, message }
-            | GatewayOutbound::Error { target, message } => split_markdown_chunks(&message)
-                .into_iter()
-                .map(|content| WecomOutboundMessage {
-                    chat_id: target.chat_id.clone(),
-                    content,
-                    reply_context: target.reply_context.clone(),
-                })
-                .collect(),
+            GatewayEvent::Info { target, message } | GatewayEvent::Error { target, message } => {
+                self.single_message(target, message)
+            }
         }
     }
 
-    fn flush_buffer_as_final(
+    fn render_item_started(
         &mut self,
-        target: crate::gateway_outbound::OutboundTarget,
+        target: OutboundTarget,
+        kind: TurnItemKind,
+        _title: Option<String>,
     ) -> Vec<WecomOutboundMessage> {
+        match kind {
+            TurnItemKind::Reasoning => self.enter_phase(target, WecomPhase::Reasoning, "正在思考中..."),
+            TurnItemKind::CommandExecution
+            | TurnItemKind::FileChange
+            | TurnItemKind::ToolCall
+            | TurnItemKind::ToolResult => {
+                self.enter_phase(target, WecomPhase::Tool, "正在调用工具处理中...")
+            }
+            TurnItemKind::AssistantMessage | TurnItemKind::UserMessage | TurnItemKind::SystemNote => {
+                Vec::new()
+            }
+        }
+    }
+
+    fn render_item_delta(
+        &mut self,
+        target: OutboundTarget,
+        kind: GatewayItemDeltaKind,
+        delta: String,
+    ) -> Vec<WecomOutboundMessage> {
+        match kind {
+            GatewayItemDeltaKind::AgentMessage => {
+                let state = self.state_mut(&target.conversation_id);
+                if state.final_text_sent && state.text_buffer.is_empty() {
+                    state.final_text_sent = false;
+                }
+                if !delta.trim().is_empty() {
+                    state.text_buffer.push_str(&delta);
+                }
+                Vec::new()
+            }
+            GatewayItemDeltaKind::ReasoningSummary | GatewayItemDeltaKind::ReasoningText => {
+                self.enter_phase(target, WecomPhase::Reasoning, "正在思考中...")
+            }
+            GatewayItemDeltaKind::Plan
+            | GatewayItemDeltaKind::CommandExecutionOutput
+            | GatewayItemDeltaKind::ToolOutput
+            | GatewayItemDeltaKind::FileChangeOutput => Vec::new(),
+        }
+    }
+
+    fn render_item_completed(
+        &mut self,
+        target: OutboundTarget,
+        item: TranscriptItem,
+    ) -> Vec<WecomOutboundMessage> {
+        match item {
+            TranscriptItem::AgentMessage { text, .. } => {
+                let state = self.state_mut(&target.conversation_id);
+                state.text_buffer.clear();
+                state.last_phase = None;
+                state.final_text_sent = true;
+                self.single_message(target, text)
+            }
+            TranscriptItem::Reasoning { .. }
+            | TranscriptItem::CommandExecution { .. }
+            | TranscriptItem::FileChange { .. }
+            | TranscriptItem::ToolResult { .. }
+            | TranscriptItem::SystemMessage { .. }
+            | TranscriptItem::UserMessage { .. } => Vec::new(),
+        }
+    }
+
+    fn enter_phase(
+        &mut self,
+        target: OutboundTarget,
+        phase: WecomPhase,
+        notice: &str,
+    ) -> Vec<WecomOutboundMessage> {
+        let state = self.state_mut(&target.conversation_id);
+        if state.last_phase == Some(phase) {
+            return Vec::new();
+        }
+        state.last_phase = Some(phase);
+        self.single_message(target, notice.to_string())
+    }
+
+    fn flush_buffer(&mut self, target: OutboundTarget) -> Vec<WecomOutboundMessage> {
         let Some(state) = self.conversations.get_mut(&target.conversation_id) else {
             return Vec::new();
         };
         if state.final_text_sent {
             state.final_text_sent = false;
+            state.last_phase = None;
             return Vec::new();
         }
         let text = state.text_buffer.trim().to_string();
         state.text_buffer.clear();
-        state.tool_notice_count = 0;
-        state.reasoning_announced = false;
-        state.last_tool_notice = None;
-        state.last_tool_notice_at = None;
-        state.collapsed_multi_tool_notice = false;
+        state.last_phase = None;
         if text.is_empty() {
-            return Vec::new();
+            Vec::new()
+        } else {
+            self.single_message(target, text)
         }
+    }
+
+    fn single_message(&self, target: OutboundTarget, text: String) -> Vec<WecomOutboundMessage> {
         split_markdown_chunks(&text)
             .into_iter()
             .map(|content| WecomOutboundMessage {
@@ -109,81 +172,11 @@ impl WecomOutboundRenderer {
             .collect()
     }
 
-    fn render_progress(&mut self, progress: GatewayProgressUpdate) -> Vec<WecomOutboundMessage> {
-        let state = self
-            .conversations
-            .entry(progress.target.conversation_id.clone())
-            .or_default();
-
-        match progress.kind {
-            GatewayProgressKind::Plan => Vec::new(),
-            GatewayProgressKind::Reasoning => {
-                if progress.streaming && !state.reasoning_announced {
-                    state.text_buffer.clear();
-                    state.final_text_sent = false;
-                    state.tool_notice_count = 0;
-                    state.last_tool_notice = None;
-                    state.last_tool_notice_at = None;
-                    state.collapsed_multi_tool_notice = false;
-                    state.reasoning_announced = true;
-                    return vec![WecomOutboundMessage {
-                        chat_id: progress.target.chat_id,
-                        content: "正在思考中...".to_string(),
-                        reply_context: progress.target.reply_context,
-                    }];
-                }
-                Vec::new()
-            }
-            GatewayProgressKind::Tool => {
-                let summary = progress.summary.trim();
-                if summary.is_empty() {
-                    return Vec::new();
-                }
-                if state
-                    .last_tool_notice
-                    .as_deref()
-                    .is_some_and(|last| last == summary)
-                {
-                    return Vec::new();
-                }
-                let now = Instant::now();
-                if state.tool_notice_count >= 1
-                    && state
-                        .last_tool_notice_at
-                        .is_some_and(|last| now.duration_since(last) <= TOOL_NOTICE_COLLAPSE_WINDOW)
-                    && !state.collapsed_multi_tool_notice
-                {
-                    state.tool_notice_count += 1;
-                    state.collapsed_multi_tool_notice = true;
-                    state.last_tool_notice = Some(summary.to_string());
-                    state.last_tool_notice_at = Some(now);
-                    return vec![WecomOutboundMessage {
-                        chat_id: progress.target.chat_id,
-                        content: "正在继续处理多个步骤...".to_string(),
-                        reply_context: progress.target.reply_context,
-                    }];
-                }
-                if state.tool_notice_count >= 3 {
-                    return Vec::new();
-                }
-                state.tool_notice_count += 1;
-                state.last_tool_notice = Some(summary.to_string());
-                state.last_tool_notice_at = Some(now);
-                vec![WecomOutboundMessage {
-                    chat_id: progress.target.chat_id,
-                    content: summary.to_string(),
-                    reply_context: progress.target.reply_context,
-                }]
-            }
-        }
+    fn state_mut(&mut self, conversation_id: &str) -> &mut WecomConversationState {
+        self.conversations
+            .entry(conversation_id.to_string())
+            .or_default()
     }
-}
-
-fn append_text_delta(buffer: &mut String, delta: &str) {
-    if delta.trim().is_empty() {
-        return;
-    }
-    buffer.push_str(delta);
 }
 
 fn split_markdown_chunks(text: &str) -> Vec<String> {
@@ -228,9 +221,8 @@ fn split_markdown_chunks(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::WecomOutboundRenderer;
-    use crate::gateway_outbound::{
-        GatewayOutbound, GatewayProgressKind, GatewayProgressUpdate, OutboundTarget,
-    };
+    use crate::gateway_event::{GatewayEvent, GatewayItemDeltaKind, OutboundTarget};
+    use agent_core::{TranscriptItem, TurnItemKind};
 
     fn target() -> OutboundTarget {
         OutboundTarget {
@@ -243,34 +235,42 @@ mod tests {
     }
 
     #[test]
-    fn flush_uses_accumulated_text() {
+    fn reasoning_notice_only_once_per_phase() {
         let mut renderer = WecomOutboundRenderer::default();
-        renderer.render(GatewayOutbound::TextDelta {
+        let first = renderer.render(GatewayEvent::ItemStarted {
             target: target(),
-            delta: "hello ".to_string(),
+            turn_id: "turn1".to_string(),
+            item_id: "item1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::Reasoning,
+            title: None,
         });
-        let messages = renderer.render(GatewayOutbound::FlushText { target: target() });
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].content, "hello");
-    }
-
-    #[test]
-    fn reasoning_stream_notice_only_once() {
-        let mut renderer = WecomOutboundRenderer::default();
-        let first = renderer.render(GatewayOutbound::Progress(GatewayProgressUpdate {
+        let second = renderer.render(GatewayEvent::ItemDelta {
             target: target(),
-            kind: GatewayProgressKind::Reasoning,
-            summary: "thinking".to_string(),
-            streaming: true,
-        }));
-        let second = renderer.render(GatewayOutbound::Progress(GatewayProgressUpdate {
-            target: target(),
-            kind: GatewayProgressKind::Reasoning,
-            summary: "thinking".to_string(),
-            streaming: true,
-        }));
+            turn_id: "turn1".to_string(),
+            item_id: "item1".to_string(),
+            call_id: None,
+            kind: GatewayItemDeltaKind::ReasoningText,
+            delta: "thinking".to_string(),
+        });
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].content, "正在思考中...");
         assert!(second.is_empty());
+    }
+
+    #[test]
+    fn completed_agent_message_emits_final_text() {
+        let mut renderer = WecomOutboundRenderer::default();
+        let messages = renderer.render(GatewayEvent::ItemCompleted {
+            target: target(),
+            turn_id: "turn1".to_string(),
+            call_id: None,
+            item: TranscriptItem::AgentMessage {
+                id: "msg1".to_string(),
+                text: "final".to_string(),
+            },
+        });
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "final");
     }
 }

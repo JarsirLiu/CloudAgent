@@ -1,7 +1,7 @@
 use super::config::WeixinAdapterConfig;
 use super::inbound::WeixinInboundEnvelope;
 use super::outbound::{WeixinOutboundMessage, WeixinOutboundRenderer};
-use crate::gateway_outbound::GatewayOutbound;
+use crate::gateway_event::GatewayEvent;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
@@ -700,19 +700,13 @@ impl PlatformAdapter for WeixinAdapter {
         }
     }
 
-    async fn send_outbound(&self, outbound: GatewayOutbound) -> Result<()> {
-        match &outbound {
-            GatewayOutbound::TextDelta { target, .. } | GatewayOutbound::Progress(crate::gateway_outbound::GatewayProgressUpdate { target, .. }) => {
-                self.start_typing_if_needed(&target.chat_id).await;
-            }
-            GatewayOutbound::FlushText { target: _ }
-            | GatewayOutbound::FinalText { target: _, .. }
-            | GatewayOutbound::Info { target: _, .. }
-            | GatewayOutbound::Error { target: _, .. } => {}
+    async fn send_event(&self, event: GatewayEvent) -> Result<()> {
+        if let Some(chat_id) = typing_chat_id(&event) {
+            self.start_typing_if_needed(&chat_id).await;
         }
         let messages = {
             let mut renderer = self.renderer.lock().await;
-            renderer.render(outbound)
+            renderer.render(event)
         };
         let final_chat_id = messages.last().map(|m| m.chat_id.clone());
         for message in messages {
@@ -722,6 +716,28 @@ impl PlatformAdapter for WeixinAdapter {
             self.stop_typing_if_needed(&chat_id).await;
         }
         Ok(())
+    }
+}
+
+fn typing_chat_id(event: &GatewayEvent) -> Option<String> {
+    match event {
+        GatewayEvent::ItemStarted { target, kind, .. } => match kind {
+            agent_core::TurnItemKind::Reasoning
+            | agent_core::TurnItemKind::CommandExecution
+            | agent_core::TurnItemKind::FileChange
+            | agent_core::TurnItemKind::ToolCall
+            | agent_core::TurnItemKind::ToolResult => Some(target.chat_id.clone()),
+            _ => None,
+        },
+        GatewayEvent::ItemDelta { target, kind, .. } => match kind {
+            crate::gateway_event::GatewayItemDeltaKind::AgentMessage
+            | crate::gateway_event::GatewayItemDeltaKind::ReasoningSummary
+            | crate::gateway_event::GatewayItemDeltaKind::ReasoningText => {
+                Some(target.chat_id.clone())
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
