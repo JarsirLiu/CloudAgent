@@ -16,7 +16,7 @@ pub(crate) fn config_response(
     platform: &str,
 ) -> PlatformConfigResponse {
     let values = state.platforms.get(platform);
-    let fields = specs_for(platform)
+    let fields = editable_specs_for(platform)
         .iter()
         .map(|spec| {
             let raw = values.and_then(|map| map.get(spec.key));
@@ -69,10 +69,14 @@ pub(crate) fn build_wecom_config(state: &PlatformConfigState) -> Result<wecom::W
     Ok(wecom::WecomAdapterConfig {
         bot_id: required_value(&values, "bot_id", "CLOUDAGENT_WECOM_BOT_ID")?,
         bot_secret: required_value(&values, "bot_secret", "CLOUDAGENT_WECOM_BOT_SECRET")?,
+        dm_policy: optional_policy_value(&values, "dm_policy").unwrap_or_default(),
+        group_policy: optional_policy_value(&values, "group_policy").unwrap_or_default(),
+        allow_from: optional_list_value(&values, "allow_from"),
+        group_allow_from: optional_list_value(&values, "group_allow_from"),
     })
 }
 
-pub(crate) fn specs_for(platform: &str) -> &'static [PlatformFieldSpec] {
+pub(crate) fn editable_specs_for(platform: &str) -> &'static [PlatformFieldSpec] {
     match platform {
         "feishu" => &[
             PlatformFieldSpec {
@@ -103,9 +107,47 @@ pub(crate) fn specs_for(platform: &str) -> &'static [PlatformFieldSpec] {
     }
 }
 
+pub(crate) fn supported_specs_for(platform: &str) -> &'static [PlatformFieldSpec] {
+    match platform {
+        "wecom" => &[
+            PlatformFieldSpec {
+                key: "bot_id",
+                required: true,
+                secret: false,
+            },
+            PlatformFieldSpec {
+                key: "bot_secret",
+                required: true,
+                secret: true,
+            },
+            PlatformFieldSpec {
+                key: "dm_policy",
+                required: false,
+                secret: false,
+            },
+            PlatformFieldSpec {
+                key: "group_policy",
+                required: false,
+                secret: false,
+            },
+            PlatformFieldSpec {
+                key: "allow_from",
+                required: false,
+                secret: false,
+            },
+            PlatformFieldSpec {
+                key: "group_allow_from",
+                required: false,
+                secret: false,
+            },
+        ],
+        _ => editable_specs_for(platform),
+    }
+}
+
 fn merged_values(platform: &str, state: &PlatformConfigState) -> BTreeMap<String, String> {
     let mut merged = state.platforms.get(platform).cloned().unwrap_or_default();
-    for spec in specs_for(platform) {
+    for spec in supported_specs_for(platform) {
         if merged.contains_key(spec.key) {
             continue;
         }
@@ -138,6 +180,29 @@ fn optional_bool_value(values: &BTreeMap<String, String>, key: &str) -> Option<b
     values.get(key).and_then(|value| parse_bool_value(value))
 }
 
+fn optional_list_value(values: &BTreeMap<String, String>, key: &str) -> Vec<String> {
+    values
+        .get(key)
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn optional_policy_value(
+    values: &BTreeMap<String, String>,
+    key: &str,
+) -> Option<wecom::WecomPolicy> {
+    values
+        .get(key)
+        .and_then(|value| wecom::WecomPolicy::parse(value))
+}
+
 fn parse_bool_value(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Some(true),
@@ -160,6 +225,10 @@ fn env_name(platform: &str, key: &str) -> Option<&'static str> {
         }
         ("wecom", "bot_id") => Some("CLOUDAGENT_WECOM_BOT_ID"),
         ("wecom", "bot_secret") => Some("CLOUDAGENT_WECOM_BOT_SECRET"),
+        ("wecom", "dm_policy") => Some("CLOUDAGENT_WECOM_DM_POLICY"),
+        ("wecom", "group_policy") => Some("CLOUDAGENT_WECOM_GROUP_POLICY"),
+        ("wecom", "allow_from") => Some("CLOUDAGENT_WECOM_ALLOW_FROM"),
+        ("wecom", "group_allow_from") => Some("CLOUDAGENT_WECOM_GROUP_ALLOW_FROM"),
         _ => None,
     }
 }
@@ -182,7 +251,8 @@ fn mask_secret(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlatformConfigState, build_feishu_config, parse_bool_value};
+    use super::{PlatformConfigState, build_feishu_config, build_wecom_config, parse_bool_value};
+    use agent_gateway::adapter::wecom::WecomPolicy;
     use std::collections::BTreeMap;
 
     #[test]
@@ -222,5 +292,51 @@ mod tests {
         assert!(!config.reply_to_trigger);
         assert!(!config.group_only_mentioned);
         assert!(!config.group_reply_without_mention);
+    }
+
+    #[test]
+    fn build_wecom_config_reads_policy_fields() {
+        let mut platform_values = BTreeMap::new();
+        platform_values.insert("bot_id".to_string(), "bot_xxx".to_string());
+        platform_values.insert("bot_secret".to_string(), "sec_xxx".to_string());
+        platform_values.insert("dm_policy".to_string(), "allowlist".to_string());
+        platform_values.insert("group_policy".to_string(), "disabled".to_string());
+        platform_values.insert("allow_from".to_string(), "user1,user2".to_string());
+        platform_values.insert("group_allow_from".to_string(), "chat1,chat2".to_string());
+
+        let mut platforms = BTreeMap::new();
+        platforms.insert("wecom".to_string(), platform_values);
+
+        let state = PlatformConfigState {
+            version: 1,
+            platforms,
+        };
+
+        let config = build_wecom_config(&state).expect("config");
+        assert_eq!(config.dm_policy, WecomPolicy::Allowlist);
+        assert_eq!(config.group_policy, WecomPolicy::Disabled);
+        assert_eq!(config.allow_from, vec!["user1".to_string(), "user2".to_string()]);
+        assert_eq!(
+            config.group_allow_from,
+            vec!["chat1".to_string(), "chat2".to_string()]
+        );
+    }
+
+    #[test]
+    fn wecom_editable_specs_only_show_required_fields() {
+        let keys = super::editable_specs_for("wecom")
+            .iter()
+            .map(|spec| spec.key)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["bot_id", "bot_secret"]);
+
+        let supported = super::supported_specs_for("wecom")
+            .iter()
+            .map(|spec| spec.key)
+            .collect::<Vec<_>>();
+        assert!(supported.contains(&"dm_policy"));
+        assert!(supported.contains(&"group_policy"));
+        assert!(supported.contains(&"allow_from"));
+        assert!(supported.contains(&"group_allow_from"));
     }
 }

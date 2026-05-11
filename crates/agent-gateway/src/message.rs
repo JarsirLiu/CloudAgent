@@ -10,6 +10,7 @@ pub struct InboundMessage {
     pub message_id: String,
     pub thread_id: Option<String>,
     pub text: String,
+    pub image_paths: Vec<String>,
     pub mentioned: bool,
     pub reply_context: Option<ReplyContext>,
 }

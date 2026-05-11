@@ -3,7 +3,7 @@ use super::config_store::{
 };
 use super::control_store::{load_control_state, persist_control_state};
 use super::runtime_control::{RunningPlatformRuntime, spawn_feishu_runtime, spawn_wecom_runtime};
-use super::schema::{config_response, specs_for, validate_platform_config};
+use super::schema::{config_response, supported_specs_for, validate_platform_config};
 use super::state::{PlatformControlState, default_entry, ensure_supported_platform, now_ms};
 use agent_protocol::{
     PlatformConfigResponse, PlatformControlListResponse, PlatformControlStatusResponse,
@@ -288,7 +288,10 @@ struct PlatformManagerState {
 }
 
 fn ensure_supported_key(platform: &str, key: &str) -> Result<()> {
-    if specs_for(platform).iter().any(|spec| spec.key == key) {
+    if supported_specs_for(platform)
+        .iter()
+        .any(|spec| spec.key == key)
+    {
         return Ok(());
     }
     bail!("unsupported config key `{key}` for platform `{platform}`")

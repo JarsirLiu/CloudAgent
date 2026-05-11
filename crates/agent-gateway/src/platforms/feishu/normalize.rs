@@ -44,6 +44,7 @@ pub fn normalize_inbound(
             .clone()
             .or_else(|| envelope.message.parent_id.clone()),
         text: normalized.text.trim().to_string(),
+        image_paths: Vec::new(),
         mentioned: normalized.mentioned,
         reply_context: build_reply_context(&envelope),
     })
