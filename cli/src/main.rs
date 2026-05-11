@@ -1,7 +1,7 @@
 use agent_app_server_client::AppServerClient;
 use agent_protocol::{
-    NodeStatusResponse, PlatformConfigResponse, PlatformControlEntry, PlatformControlListResponse,
-    PlatformControlStatusResponse,
+    NodeStatusResponse, NodeWorkerHealth, PlatformConfigResponse, PlatformControlEntry,
+    PlatformControlListResponse, PlatformControlStatusResponse,
 };
 use anyhow::{Result, bail};
 use cli::agent_host::build_agent_host;
@@ -10,7 +10,6 @@ use cli::terminal::apply_color_cli_preference;
 use cli::transport::client::create_local_node_client;
 use cli::{AppServerTarget, ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
-use infra_store::JsonConversationStore;
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
@@ -296,7 +295,7 @@ fn requested_console_target(
 
 async fn resolve_initial_conversation_id(
     args: &[OsString],
-    conversation_store_dir: &std::path::Path,
+    _conversation_store_dir: &std::path::Path,
 ) -> Result<String> {
     if let Some(conversation_id) =
         arg_value(args, "--conversation").and_then(|v| v.into_string().ok())
@@ -304,21 +303,7 @@ async fn resolve_initial_conversation_id(
         return Ok(conversation_id);
     }
 
-    let store = JsonConversationStore::new(conversation_store_dir.to_path_buf());
-    if let Some(conversation_id) = store.load_active_conversation().await?
-        && !conversation_id.trim().is_empty()
-        && !is_im_conversation_id(&conversation_id)
-    {
-        return Ok(conversation_id);
-    }
-
-    let generated = generate_draft_conversation_id()?;
-    store.mark_active_conversation(&generated).await?;
-    Ok(generated)
-}
-
-fn is_im_conversation_id(conversation_id: &str) -> bool {
-    conversation_id.starts_with("agent:main:")
+    generate_draft_conversation_id()
 }
 
 fn generate_draft_conversation_id() -> Result<String> {
@@ -627,6 +612,31 @@ async fn print_node_status(client: &AppServerClient) -> Result<()> {
         "platform_runtimes: {}/{}",
         response.platform_runtime_count, response.managed_platform_count
     );
+    if !response.workers.is_empty() {
+        println!("worker_scopes:");
+        for worker in response.workers {
+            match worker.health {
+                NodeWorkerHealth::Running => {
+                    println!(
+                        "  {}: running (idle_for_ms={})",
+                        worker.worker_scope_key,
+                        worker.idle_for_ms.unwrap_or(0)
+                    );
+                }
+                NodeWorkerHealth::Faulted => {
+                    println!(
+                        "  {}: faulted{}",
+                        worker.worker_scope_key,
+                        worker
+                            .detail
+                            .as_deref()
+                            .map(|detail| format!(" ({detail})"))
+                            .unwrap_or_default()
+                    );
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -697,22 +707,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn initial_conversation_id_uses_store_active_conversation() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let store = infra_store::JsonConversationStore::new(temp.path().to_path_buf());
-        store
-            .mark_active_conversation("conversation-1")
-            .await
-            .expect("mark active");
-
-        let conversation_id = super::resolve_initial_conversation_id(&[], temp.path())
-            .await
-            .expect("resolve initial conversation");
-
-        assert_eq!(conversation_id, "conversation-1");
-    }
-
-    #[tokio::test]
     async fn initial_conversation_id_creates_draft_when_store_is_empty() {
         let temp = tempfile::tempdir().expect("tempdir");
 
@@ -724,11 +718,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn initial_conversation_id_skips_im_active_conversation() {
+    async fn initial_conversation_id_ignores_store_active_conversation() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = infra_store::JsonConversationStore::new(temp.path().to_path_buf());
         store
-            .mark_active_conversation("agent:main:feishu:dm:oc_test")
+            .mark_active_conversation("conversation-1")
             .await
             .expect("mark active");
 
@@ -741,7 +735,7 @@ mod tests {
             .load_active_conversation()
             .await
             .expect("load active conversation");
-        assert_eq!(active.as_deref(), Some(conversation_id.as_str()));
+        assert_eq!(active.as_deref(), Some("conversation-1"));
     }
 
     #[test]

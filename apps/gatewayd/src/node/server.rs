@@ -1,8 +1,10 @@
 use crate::node::command_router::handle_command_message;
+use crate::node::device_settings::conversation_store_dir;
 use crate::node::message_sync::write_node_event;
 use crate::node::platform::PlatformManager;
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
+use crate::node::source::NodeSource;
 use crate::node::worker_manager::NodeEvent;
 use agent_protocol::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse,
@@ -10,9 +12,12 @@ use agent_protocol::{
 };
 use anyhow::{Context, Result};
 use std::ffi::OsString;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
+
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     let listen_address = arg_value(args, "--listen")
@@ -30,8 +35,11 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
         .with_context(|| format!("failed to bind gatewayd remote host on {listen_address}"))?;
     tracing::info!("gatewayd remote app-server host listening on {listen_address}");
     let platforms = PlatformManager::load(data_root_dir.as_deref()).await?;
+    let conversation_store =
+        infra_store::JsonConversationStore::new(conversation_store_dir(data_root_dir.as_deref()));
     let runtime = NodeRuntime::new(
         crate::node::worker_manager::WorkerManager::new(worker_program, data_root_dir),
+        conversation_store,
         platforms,
         listen_address.clone(),
     );
@@ -53,9 +61,17 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
                 let (stream, peer_addr) = accept?;
                 tracing::debug!("accepted remote app-server client from {peer_addr}");
                 let runtime = runtime.clone();
+                let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
                     let (reader, writer) = stream.into_split();
-                    if let Err(error) = run_connection(BufReader::new(reader), writer, runtime).await {
+                    if let Err(error) = run_connection(
+                        BufReader::new(reader),
+                        writer,
+                        runtime,
+                        format!("remote:{peer_addr}#{session_id}"),
+                    )
+                    .await
+                    {
                         tracing::warn!("gatewayd remote host connection failed: {error}");
                     }
                 });
@@ -71,13 +87,18 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     Ok(())
 }
 
-async fn run_connection<R, W>(reader: R, mut writer: W, runtime: NodeRuntime) -> Result<()>
+async fn run_connection<R, W>(
+    reader: R,
+    mut writer: W,
+    runtime: NodeRuntime,
+    worker_scope_key: String,
+) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     let mut input_lines = reader.lines();
-    let mut session = NodeSessionState::new("default");
+    let mut session = NodeSessionState::new("default", worker_scope_key);
 
     loop {
         if let Some(subscription) = session.active_subscription_mut().as_mut() {
@@ -218,8 +239,9 @@ where
             }
 
             let params = request.params.unwrap_or(serde_json::Value::Null);
-            let _: TransportInitializeParams = serde_json::from_value(params)
+            let initialize: TransportInitializeParams = serde_json::from_value(params)
                 .context("failed to decode remote app-server initialize params")?;
+            session.set_source(NodeSource::from_client_info(&initialize.client_info));
             session.mark_initialize_accepted();
             write_jsonrpc_message(
                 writer,
@@ -327,7 +349,12 @@ mod tests {
         let platforms = PlatformManager::load(Some(root.as_os_str()))
             .await
             .expect("platform manager");
-        NodeRuntime::new(test_worker_manager(), platforms, "127.0.0.1:47070")
+        NodeRuntime::new(
+            test_worker_manager(),
+            infra_store::JsonConversationStore::new(root.join("conversations")),
+            platforms,
+            "127.0.0.1:47070",
+        )
     }
 
     #[test]
@@ -357,7 +384,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_business_requests_before_initialize() {
         let runtime = test_runtime().await;
-        let mut session = NodeSessionState::new("default");
+        let mut session = NodeSessionState::new("default", "session-test-1");
         let (mut writer, reader) = duplex(4096);
         let request = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
             id: RequestId::Integer(1),
@@ -385,7 +412,7 @@ mod tests {
     #[tokio::test]
     async fn initialize_then_initialized_marks_session_ready() {
         let runtime = test_runtime().await;
-        let mut session = NodeSessionState::new("default");
+        let mut session = NodeSessionState::new("default", "session-test-2");
         let (mut writer, reader) = duplex(4096);
         let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
             id: RequestId::String("initialize".to_string()),
@@ -436,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn unsupported_request_after_initialize_returns_jsonrpc_error() {
         let runtime = test_runtime().await;
-        let mut session = NodeSessionState::new("default");
+        let mut session = NodeSessionState::new("default", "session-test-3");
         let (mut writer, reader) = duplex(4096);
 
         let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {

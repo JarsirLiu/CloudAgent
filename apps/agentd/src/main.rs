@@ -2,6 +2,7 @@ use agent_app_server::run_stdio_server;
 use agent_core::AgentHost;
 use anyhow::Result;
 use cli::agent_host::build_agent_host;
+use cli::app::cli_settings::load_cli_settings;
 use cli::{ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
 use std::path::PathBuf;
@@ -15,11 +16,15 @@ async fn main() -> Result<()> {
     let workspace_root = std::env::current_dir()?;
     let mut config = AgentConfig::load(workspace_root)?;
     apply_data_dir_override(&mut config, &args);
+    if let Ok(Some(settings)) = load_cli_settings(&config.runtime.conversation_store_dir) {
+        config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
+        config.cli.permission_mode = settings.permission_mode;
+    }
     let runtime = build_agent_host(config)?;
-    runtime.run_startup_retention_cleanup().await;
 
     match args.get(1).map(String::as_str) {
         Some("console") => {
+            runtime.run_startup_retention_cleanup().await;
             run_console_mode(runtime).await?;
             return Ok(());
         }

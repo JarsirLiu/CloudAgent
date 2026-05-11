@@ -10,6 +10,7 @@ agent-app-server-client = { path = "../../crates/agent-app-server-client" }
 agent-core = { path = "../../crates/agent-core" }
 agent-gateway = { path = "../../crates/agent-gateway" }
 agent-protocol = { path = "../../crates/agent-protocol" }
+infra-store = { path = "../../crates/infra-store" }
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true

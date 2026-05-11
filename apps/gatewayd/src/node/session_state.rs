@@ -1,3 +1,4 @@
+use crate::node::source::NodeSource;
 use crate::node::worker_manager::NodeEvent;
 use std::collections::HashSet;
 
@@ -12,6 +13,7 @@ enum TransportHandshakeState {
 }
 
 pub(crate) struct NodeSessionState {
+    source: NodeSource,
     active_conversation_id: String,
     subscribed_conversations: HashSet<String>,
     active_subscription: Option<broadcast::Receiver<NodeEvent>>,
@@ -19,16 +21,32 @@ pub(crate) struct NodeSessionState {
 }
 
 impl NodeSessionState {
-    pub(crate) fn new(active_conversation_id: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        active_conversation_id: impl Into<String>,
+        worker_scope_key: impl Into<String>,
+    ) -> Self {
         let active_conversation_id = active_conversation_id.into();
         let mut subscribed_conversations = HashSet::new();
         subscribed_conversations.insert(active_conversation_id.clone());
         Self {
+            source: NodeSource::placeholder(worker_scope_key),
             active_conversation_id,
             subscribed_conversations,
             active_subscription: None,
             handshake_state: TransportHandshakeState::AwaitingInitialize,
         }
+    }
+
+    pub(crate) fn set_source(&mut self, source: NodeSource) {
+        self.source = source;
+    }
+
+    pub(crate) fn worker_scope_key(&self) -> &str {
+        self.source.worker_scope_key()
+    }
+
+    pub(crate) fn source_domain_id(&self) -> &str {
+        self.source.domain_id()
     }
 
     pub(crate) fn active_conversation_id(&self) -> &str {
@@ -106,7 +124,7 @@ mod tests {
 
     #[test]
     fn unsubscribe_ack_is_forwarded_even_after_local_unsubscribe() {
-        let mut session = NodeSessionState::new("conversation-1");
+        let mut session = NodeSessionState::new("conversation-1", "session-1");
         session.unsubscribe_conversation("conversation-1");
 
         let event = NodeEvent::Message {

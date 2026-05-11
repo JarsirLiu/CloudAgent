@@ -1,7 +1,9 @@
+use crate::node::conversation_execution::ConversationExecutionRegistry;
 use crate::node::conversation_registry::ConversationRegistry;
 use crate::node::platform::PlatformManager;
 use crate::node::worker_manager::WorkerManager;
 use agent_protocol::NodeStatusResponse;
+use infra_store::JsonConversationStore;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
@@ -10,6 +12,8 @@ use tokio::sync::Notify;
 pub(crate) struct NodeRuntime {
     workers: WorkerManager,
     conversations: Arc<Mutex<ConversationRegistry>>,
+    executions: Arc<Mutex<ConversationExecutionRegistry>>,
+    conversation_store: Arc<JsonConversationStore>,
     platforms: PlatformManager,
     listen_address: String,
     shutdown: Arc<Notify>,
@@ -18,12 +22,15 @@ pub(crate) struct NodeRuntime {
 impl NodeRuntime {
     pub(crate) fn new(
         workers: WorkerManager,
+        conversation_store: JsonConversationStore,
         platforms: PlatformManager,
         listen_address: impl Into<String>,
     ) -> Self {
         Self {
             workers,
             conversations: Arc::new(Mutex::new(ConversationRegistry::default())),
+            executions: Arc::new(Mutex::new(ConversationExecutionRegistry::default())),
+            conversation_store: Arc::new(conversation_store),
             platforms,
             listen_address: listen_address.into(),
             shutdown: Arc::new(Notify::new()),
@@ -36,6 +43,18 @@ impl NodeRuntime {
 
     pub(crate) fn conversations(&self) -> &Arc<Mutex<ConversationRegistry>> {
         &self.conversations
+    }
+
+    pub(crate) fn executions(&self) -> &Arc<Mutex<ConversationExecutionRegistry>> {
+        &self.executions
+    }
+
+    pub(crate) fn conversation_store(&self) -> &Arc<JsonConversationStore> {
+        &self.conversation_store
+    }
+
+    pub(crate) async fn is_conversation_busy(&self, conversation_id: &str) -> bool {
+        self.executions().lock().await.is_busy(conversation_id)
     }
 
     pub(crate) fn platforms(&self) -> &PlatformManager {
@@ -52,6 +71,7 @@ impl NodeRuntime {
             worker_running: self.workers.is_worker_running().await,
             platform_runtime_count: self.platforms.runtime_count().await,
             managed_platform_count: self.platforms.managed_platform_count(),
+            workers: self.workers.status_snapshot().await,
         }
     }
 

@@ -305,7 +305,7 @@ impl MessageHandler for NodeBackedHandler {
             is_reply_chain: message.thread_id.is_some(),
             reply_context: message.reply_context.clone(),
         };
-        info!(
+        debug!(
             platform = %message.platform,
             session_key = %session_key,
             message_id = %message.message_id,
@@ -325,16 +325,12 @@ impl MessageHandler for NodeBackedHandler {
         stream_client.send_command(agent_protocol::AppClientCommand::SubscribeConversation {
             conversation_id: session_key.clone(),
         })?;
-        info!(
-            session_key = %session_key,
-            "gateway.platform_runtime.turn.submit.start"
-        );
         stream_client.submit_turn(UserTurnInput {
             conversation_id: session_key.clone(),
             content: text_input_items(message.text.clone()),
             turn_policy: self.turn_policy.clone(),
         })?;
-        info!(
+        debug!(
             session_key = %session_key,
             "gateway.platform_runtime.turn.submit.ok"
         );
@@ -350,7 +346,7 @@ impl MessageHandler for NodeBackedHandler {
             let event = match maybe_event {
                 Ok(Some(event)) => event,
                 Ok(None) => {
-                    info!(
+                    debug!(
                         session_key = %session_key,
                         "gateway.platform_runtime.event.stream_closed"
                     );
@@ -408,7 +404,7 @@ impl MessageHandler for NodeBackedHandler {
                     )
                 ) {
                     active_turn_id = Some(event_turn_id.to_string());
-                    info!(
+                    debug!(
                         session_key = %session_key,
                         turn_id = %event_turn_id,
                         "gateway.platform_runtime.turn.bound"

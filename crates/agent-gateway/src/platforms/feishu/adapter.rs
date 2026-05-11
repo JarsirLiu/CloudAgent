@@ -18,8 +18,10 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use super::admission::{AdmissionDecision, evaluate_admission};
 use super::normalize::normalize_inbound;
@@ -29,6 +31,10 @@ use super::types::{FeishuBotIdentity, FeishuMessageEnvelope};
 
 const SEEN_EVENT_LIMIT: usize = 2048;
 const BOT_MESSAGE_TRACK_LIMIT: usize = 1024;
+const INBOUND_MESSAGE_DEDUP_TTL: Duration = Duration::from_secs(60);
+const OLD_MESSAGE_GRACE_MS: u64 = 2_000;
+
+static PROCESS_START_TIME_MS: OnceLock<u64> = OnceLock::new();
 
 type CardActionCallback =
     dyn Fn(CardAction) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync;
@@ -46,6 +52,7 @@ pub struct FeishuAdapter {
     options: FeishuAdapterOptions,
     seen_events: Arc<Mutex<SeenEvents>>,
     seen_events_path: PathBuf,
+    recent_messages: Arc<Mutex<RecentInboundMessages>>,
     bot_messages: Arc<Mutex<TrackedBotMessages>>,
     bot_identity: Arc<Mutex<FeishuBotIdentity>>,
     renderer: Arc<Mutex<FeishuOutboundRenderer>>,
@@ -77,6 +84,7 @@ impl FeishuAdapter {
             options,
             seen_events: Arc::new(Mutex::new(seen_events)),
             seen_events_path,
+            recent_messages: Arc::new(Mutex::new(RecentInboundMessages::default())),
             bot_messages: Arc::new(Mutex::new(TrackedBotMessages::default())),
             bot_identity: Arc::new(Mutex::new(FeishuBotIdentity::default())),
             renderer: Arc::new(Mutex::new(FeishuOutboundRenderer::default())),
@@ -146,6 +154,18 @@ impl FeishuAdapter {
             create_time = ?envelope.create_time,
             "feishu.inbound.event.parsed"
         );
+        if let Some(message_id) = envelope.message.message_id.as_deref()
+            && self.is_duplicate_message_id(message_id).await
+        {
+            info!(message_id = %message_id, "feishu.inbound.message.duplicate");
+            return Ok(());
+        }
+        if let Some(create_time) = envelope.create_time.as_deref()
+            && is_old_message_after_restart(create_time)
+        {
+            info!(create_time = %create_time, "feishu.inbound.message.old_after_restart");
+            return Ok(());
+        }
 
         let admission = evaluate_admission(
             &envelope,
@@ -217,6 +237,10 @@ impl FeishuAdapter {
             error!(?error, path = %self.seen_events_path.display(), "feishu.seen_events.persist_failed");
         }
         inserted
+    }
+
+    async fn is_duplicate_message_id(&self, message_id: &str) -> bool {
+        self.recent_messages.lock().await.insert(message_id)
     }
 
     pub async fn send_approval_card(
@@ -320,7 +344,7 @@ impl PlatformAdapter for FeishuAdapter {
             return Ok(());
         }
         for message in rendered {
-            info!(
+            debug!(
                 chat_id = %message.chat_id,
                 has_reply_context = message.reply_context.is_some(),
                 text_preview = %preview(&message.text, 120),
@@ -366,6 +390,12 @@ struct TrackedBotMessages {
     set: HashSet<String>,
 }
 
+#[derive(Default)]
+struct RecentInboundMessages {
+    order: VecDeque<(String, u64)>,
+    set: HashSet<String>,
+}
+
 impl TrackedBotMessages {
     fn insert(&mut self, message_id: String) {
         if self.set.contains(&message_id) {
@@ -382,6 +412,29 @@ impl TrackedBotMessages {
 
     fn contains(&self, message_id: &str) -> bool {
         self.set.contains(message_id)
+    }
+}
+
+impl RecentInboundMessages {
+    fn insert(&mut self, message_id: &str) -> bool {
+        if message_id.trim().is_empty() {
+            return false;
+        }
+        let now_ms = now_ms();
+        while let Some((oldest_id, seen_at_ms)) = self.order.front().cloned() {
+            if now_ms.saturating_sub(seen_at_ms) <= INBOUND_MESSAGE_DEDUP_TTL.as_millis() as u64 {
+                break;
+            }
+            self.order.pop_front();
+            self.set.remove(&oldest_id);
+        }
+        if self.set.contains(message_id) {
+            return true;
+        }
+        let message_id = message_id.to_string();
+        self.set.insert(message_id.clone());
+        self.order.push_back((message_id, now_ms));
+        false
     }
 }
 
@@ -444,6 +497,24 @@ fn persist_seen_events(path: &PathBuf, state: &SeenEvents) -> Result<()> {
     fs::write(path, serde_json::to_vec_pretty(&items)?)
         .with_context(|| format!("failed to write feishu seen-events {}", path.display()))?;
     Ok(())
+}
+
+fn process_start_time_ms() -> u64 {
+    *PROCESS_START_TIME_MS.get_or_init(now_ms)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn is_old_message_after_restart(create_time: &str) -> bool {
+    let Ok(create_time_ms) = create_time.trim().parse::<u64>() else {
+        return false;
+    };
+    create_time_ms + OLD_MESSAGE_GRACE_MS < process_start_time_ms()
 }
 
 fn default_headers() -> Result<HeaderMap> {
@@ -541,8 +612,9 @@ fn preview(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_bot_identity;
+    use super::{RecentInboundMessages, is_old_message_after_restart, now_ms, parse_bot_identity};
     use serde_json::json;
+    use std::time::Duration;
 
     #[test]
     fn parse_bot_identity_supports_bot_wrapper_shape() {
@@ -574,5 +646,25 @@ mod tests {
         let identity = parse_bot_identity(&payload);
         assert_eq!(identity.open_id, "ou_bot_456");
         assert_eq!(identity.name, "CloudAgent Beta");
+    }
+
+    #[test]
+    fn recent_inbound_messages_dedups_same_message_id() {
+        let mut dedup = RecentInboundMessages::default();
+        assert!(!dedup.insert("om_1"));
+        assert!(dedup.insert("om_1"));
+        assert!(!dedup.insert("om_2"));
+    }
+
+    #[test]
+    fn old_message_filter_rejects_messages_before_process_start() {
+        let old_ms = now_ms().saturating_sub(Duration::from_secs(10).as_millis() as u64);
+        assert!(is_old_message_after_restart(&old_ms.to_string()));
+    }
+
+    #[test]
+    fn old_message_filter_keeps_fresh_messages() {
+        let fresh_ms = now_ms();
+        assert!(!is_old_message_after_restart(&fresh_ms.to_string()));
     }
 }

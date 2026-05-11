@@ -129,7 +129,9 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
         | AppServerNotification::ReasoningTextDelta { delta, .. } => {
             progress_outbound(target, GatewayProgressKind::Reasoning, delta, true, false)
         }
-        AppServerNotification::ItemCompleted { item, .. } => completed_item_to_outbound(target, item),
+        AppServerNotification::ItemCompleted { item, .. } => {
+            completed_item_to_outbound(target, item)
+        }
         AppServerNotification::CommandExecutionOutputDelta { delta, .. }
         | AppServerNotification::ToolOutputDelta { delta, .. }
         | AppServerNotification::FileChangeOutputDelta { delta, .. } => {

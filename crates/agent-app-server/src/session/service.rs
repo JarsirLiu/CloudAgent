@@ -51,9 +51,6 @@ pub(crate) async fn request_conversation_history(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<()> {
-    let _ = runtime
-        .ensure_conversation_persisted(&conversation_id)
-        .await?;
     let active_listener = {
         let state = state.lock().await;
         state.active_listener(&conversation_id)
@@ -81,9 +78,6 @@ pub(crate) async fn read_conversation_history(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<ConversationHistoryResponse> {
-    let _ = runtime
-        .ensure_conversation_persisted(&conversation_id)
-        .await?;
     let active_listener = {
         let state = state.lock().await;
         state.active_listener(&conversation_id)
@@ -103,9 +97,6 @@ pub(crate) async fn request_conversation_status(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<()> {
-    let _ = runtime
-        .ensure_conversation_persisted(&conversation_id)
-        .await?;
     let snapshot = runtime.conversation_status(&conversation_id).await?;
     send_notification(
         event_tx,
@@ -124,9 +115,6 @@ pub(crate) async fn read_conversation_status(
     _state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<ConversationStatusResponse> {
-    let _ = runtime
-        .ensure_conversation_persisted(&conversation_id)
-        .await?;
     Ok(ConversationStatusResponse {
         snapshot: runtime.conversation_status(&conversation_id).await?,
     })
@@ -140,9 +128,6 @@ pub(crate) async fn request_conversation_history_page(
     before_turn_id: Option<String>,
     limit: usize,
 ) -> Result<()> {
-    let _ = runtime
-        .ensure_conversation_persisted(&conversation_id)
-        .await?;
     let (turns, has_more, next_before_turn_id) = runtime
         .build_turns_page_from_rollout(&conversation_id, before_turn_id.as_deref(), limit)
         .await?;
@@ -167,9 +152,6 @@ pub(crate) async fn read_conversation_history_page(
     before_turn_id: Option<String>,
     limit: usize,
 ) -> Result<ConversationHistoryPageResponse> {
-    let _ = runtime
-        .ensure_conversation_persisted(&conversation_id)
-        .await?;
     let (turns, has_more, next_before_turn_id) = runtime
         .build_turns_page_from_rollout(&conversation_id, before_turn_id.as_deref(), limit)
         .await?;

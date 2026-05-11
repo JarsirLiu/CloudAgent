@@ -2,7 +2,7 @@ use crate::gateway_outbound::{GatewayOutbound, GatewayProgressKind, GatewayProgr
 use crate::message::OutboundMessage;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tracing::info;
+use tracing::{debug, info};
 
 const TOOL_NOTICE_COLLAPSE_WINDOW: Duration = Duration::from_secs(4);
 
@@ -159,7 +159,7 @@ impl FeishuOutboundRenderer {
                         state.reasoning_announced = true;
                         state.last_progress_at = Some(Instant::now());
                         let notice = "正在思考中...";
-                        info!(
+                        debug!(
                             conversation_id = %progress.target.conversation_id,
                             kind = "reasoning",
                             decision = "emit_streaming_notice",

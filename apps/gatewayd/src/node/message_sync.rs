@@ -1,5 +1,6 @@
 use crate::node::runtime::NodeRuntime;
 use crate::node::worker_manager::NodeEvent;
+use agent_core::ConversationStatus;
 use agent_protocol::{
     AppServerMessage, AppServerMessageEnvelope, AppServerNotification, JsonRpcError,
     JsonRpcErrorPayload, JsonRpcMessage, JsonRpcResponse, RequestId,
@@ -42,6 +43,8 @@ pub(crate) async fn sync_registry_from_message(runtime: &NodeRuntime, message: &
         return;
     };
 
+    sync_execution_registry_from_notification(runtime, notification).await;
+
     let mut registry = runtime.conversations().lock().await;
     match notification {
         AppServerNotification::ConversationList { conversations, .. } => {
@@ -55,6 +58,39 @@ pub(crate) async fn sync_registry_from_message(runtime: &NodeRuntime, message: &
         }
         AppServerNotification::ConversationSwitched { conversation_id } => {
             registry.touch(conversation_id);
+        }
+        _ => {}
+    }
+}
+
+async fn sync_execution_registry_from_notification(
+    runtime: &NodeRuntime,
+    notification: &AppServerNotification,
+) {
+    let mut executions = runtime.executions().lock().await;
+    match notification {
+        AppServerNotification::FrontendStateChanged {
+            conversation_id,
+            mode,
+        } => {
+            executions.update_frontend_mode(conversation_id, *mode);
+        }
+        AppServerNotification::ConversationStatus {
+            conversation_id,
+            snapshot,
+        } => {
+            executions.update_conversation_status(conversation_id, &snapshot.conversation_status);
+        }
+        AppServerNotification::TurnCompleted {
+            conversation_id, ..
+        }
+        | AppServerNotification::TurnFailed {
+            conversation_id, ..
+        }
+        | AppServerNotification::TurnCancelled {
+            conversation_id, ..
+        } => {
+            executions.update_conversation_status(conversation_id, &ConversationStatus::Idle);
         }
         _ => {}
     }
@@ -120,8 +156,8 @@ mod tests {
     use crate::node::platform::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::worker_manager::WorkerManager;
-    use agent_core::conversation::ConversationSummary;
-    use agent_protocol::{AppServerMessage, AppServerNotification};
+    use agent_core::conversation::{ConversationSnapshot, ConversationStatus, ConversationSummary};
+    use agent_protocol::{AppServerMessage, AppServerNotification, FrontendMode};
     use std::ffi::OsString;
 
     #[test]
@@ -134,6 +170,7 @@ mod tests {
             ));
             let runtime = NodeRuntime::new(
                 WorkerManager::new(OsString::from("agentd.exe"), None),
+                infra_store::JsonConversationStore::new(root.join("conversations")),
                 PlatformManager::load(Some(root.as_os_str()))
                     .await
                     .expect("platform manager"),
@@ -160,6 +197,94 @@ mod tests {
             assert_eq!(summaries[0].conversation_id, "conversation-1");
             assert_eq!(summaries[0].title.as_deref(), Some("Alpha"));
             assert_eq!(summaries[0].message_count, 4);
+        });
+    }
+
+    #[test]
+    fn frontend_state_changes_update_conversation_busy_state() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let root = std::env::temp_dir().join(format!(
+                "cloudagent-gatewayd-platform-tests-{}",
+                std::process::id()
+            ));
+            let runtime = NodeRuntime::new(
+                WorkerManager::new(OsString::from("agentd.exe"), None),
+                infra_store::JsonConversationStore::new(root.join("conversations")),
+                PlatformManager::load(Some(root.as_os_str()))
+                    .await
+                    .expect("platform manager"),
+                "127.0.0.1:47070",
+            );
+
+            sync_registry_from_message(
+                &runtime,
+                &AppServerMessage::Notification(AppServerNotification::FrontendStateChanged {
+                    conversation_id: "conversation-1".to_string(),
+                    mode: FrontendMode::Running,
+                }),
+            )
+            .await;
+
+            assert!(runtime.is_conversation_busy("conversation-1").await);
+
+            sync_registry_from_message(
+                &runtime,
+                &AppServerMessage::Notification(AppServerNotification::FrontendStateChanged {
+                    conversation_id: "conversation-1".to_string(),
+                    mode: FrontendMode::Idle,
+                }),
+            )
+            .await;
+
+            assert!(!runtime.is_conversation_busy("conversation-1").await);
+        });
+    }
+
+    #[test]
+    fn conversation_status_notifications_update_busy_state() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let root = std::env::temp_dir().join(format!(
+                "cloudagent-gatewayd-platform-tests-{}",
+                std::process::id()
+            ));
+            let runtime = NodeRuntime::new(
+                WorkerManager::new(OsString::from("agentd.exe"), None),
+                infra_store::JsonConversationStore::new(root.join("conversations")),
+                PlatformManager::load(Some(root.as_os_str()))
+                    .await
+                    .expect("platform manager"),
+                "127.0.0.1:47070",
+            );
+
+            sync_registry_from_message(
+                &runtime,
+                &AppServerMessage::Notification(AppServerNotification::ConversationStatus {
+                    conversation_id: "conversation-1".to_string(),
+                    snapshot: ConversationSnapshot {
+                        conversation_id: "conversation-1".to_string(),
+                        conversation_status: ConversationStatus::Busy,
+                        active_turn: Some("turn-1".to_string()),
+                        turn_state: None,
+                        message_count: 1,
+                    },
+                }),
+            )
+            .await;
+
+            assert!(runtime.is_conversation_busy("conversation-1").await);
+
+            sync_registry_from_message(
+                &runtime,
+                &AppServerMessage::Notification(AppServerNotification::TurnCompleted {
+                    conversation_id: "conversation-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                }),
+            )
+            .await;
+
+            assert!(!runtime.is_conversation_busy("conversation-1").await);
         });
     }
 }

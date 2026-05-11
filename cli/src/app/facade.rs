@@ -3,8 +3,11 @@ use crate::app::runtime::r#loop as runtime_loop;
 use crate::state::reducer::ServerAction;
 use crate::transport::client::create_client;
 use agent_app_server_client::AppServerClient;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::io::{self, IsTerminal as _};
+use tokio::time::{Duration, timeout};
+
+const STARTUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn run_console(config: ConsoleConfig) -> Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
@@ -34,16 +37,30 @@ async fn load_initial_history(
     app: &mut TuiApp,
     conversation_id: &str,
 ) -> Result<()> {
-    let response = client
-        .request_conversation_history_typed(conversation_id)
-        .await?;
+    let response = timeout(
+        STARTUP_REQUEST_TIMEOUT,
+        client.request_conversation_history_typed(conversation_id),
+    )
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "timed out loading conversation history for `{conversation_id}`; the local node could not get a healthy worker response. restart `gatewayd` and retry"
+        )
+    })??;
     crate::app::conversation::actions::execute_server_action(
         app,
         ServerAction::ReplaceHistory(response.turns),
     );
-    let status = client
-        .request_conversation_status_typed(conversation_id)
-        .await?;
+    let status = timeout(
+        STARTUP_REQUEST_TIMEOUT,
+        client.request_conversation_status_typed(conversation_id),
+    )
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "timed out loading conversation status for `{conversation_id}`; the local node could not get a healthy worker response. restart `gatewayd` and retry"
+        )
+    })??;
     let mode = match status.snapshot.conversation_status {
         agent_core::ConversationStatus::Busy => agent_protocol::FrontendMode::Running,
         agent_core::ConversationStatus::Idle => agent_protocol::FrontendMode::Idle,

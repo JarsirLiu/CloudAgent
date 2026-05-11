@@ -86,11 +86,31 @@ pub struct SelectTargetNodeResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NodeWorkerHealth {
+    Running,
+    Faulted,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NodeWorkerStatus {
+    pub worker_scope_key: String,
+    pub health: NodeWorkerHealth,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_for_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failure_at_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeStatusResponse {
     pub listen_address: String,
     pub worker_running: bool,
     pub platform_runtime_count: usize,
     pub managed_platform_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workers: Vec<NodeWorkerStatus>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

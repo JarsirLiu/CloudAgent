@@ -286,6 +286,13 @@ impl JsonConversationStore {
             &self.root.to_string_lossy(),
         )?
         .into_iter()
+        .filter(|row| {
+            !should_hide_ephemeral_draft_row(
+                &row.conversation_id,
+                row.message_count,
+                row.title.as_deref(),
+            )
+        })
         .map(|row| StoredConversationSummary {
             conversation_id: row.conversation_id,
             title: row.title,
@@ -351,6 +358,22 @@ impl JsonConversationStore {
     }
 
     fn rollout_path(&self, conversation_id: &str) -> PathBuf {
+        let canonical = self.canonical_rollout_path(conversation_id);
+        let legacy = self.legacy_rollout_path(conversation_id);
+        if canonical != legacy && legacy.exists() && !canonical.exists() {
+            let _ = std::fs::rename(&legacy, &canonical);
+        }
+        canonical
+    }
+
+    fn canonical_rollout_path(&self, conversation_id: &str) -> PathBuf {
+        self.root.join(format!(
+            "{}.rollout.jsonl",
+            canonicalize_conversation_file_stem(conversation_id)
+        ))
+    }
+
+    fn legacy_rollout_path(&self, conversation_id: &str) -> PathBuf {
         self.root.join(format!(
             "{}.rollout.jsonl",
             sanitize_conversation_id(conversation_id)
@@ -522,20 +545,48 @@ fn sanitize_conversation_id(value: &str) -> String {
         .collect()
 }
 
+fn canonicalize_conversation_file_stem(value: &str) -> String {
+    if let Some(chat_id) = value.strip_prefix("agent:main:feishu:dm:") {
+        return format!("feishu_dm_{}", sanitize_conversation_id(chat_id));
+    }
+    if let Some(chat_id) = value.strip_prefix("agent:main:feishu:group:") {
+        return format!("feishu_group_{}", sanitize_conversation_id(chat_id));
+    }
+    sanitize_conversation_id(value)
+}
+
+fn should_hide_ephemeral_draft_row(
+    conversation_id: &str,
+    message_count: usize,
+    title: Option<&str>,
+) -> bool {
+    conversation_id.starts_with("draft-")
+        && message_count == 0
+        && title.is_none_or(|value| value.trim().is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use agent_core::ApprovalGrantKey;
     use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[tokio::test]
-    async fn concurrent_event_appends_leave_valid_json() {
+    static TEST_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_temp_path(prefix: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock drift")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("cloudagent-storage-test-{unique}"));
+        let counter = TEST_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("{prefix}-{unique}-{counter}"))
+    }
+
+    #[tokio::test]
+    async fn concurrent_event_appends_leave_valid_json() {
+        let root = unique_temp_path("cloudagent-storage-test");
         let store = JsonConversationStore::new(&root);
         let conversation_id = "concurrent-events";
 
@@ -574,13 +625,38 @@ mod tests {
         let _ = fs::remove_dir_all(root).await;
     }
 
+    #[test]
+    fn canonicalize_conversation_file_stem_shortens_feishu_private_sessions() {
+        assert_eq!(
+            canonicalize_conversation_file_stem("agent:main:feishu:dm:oc_123"),
+            "feishu_dm_oc_123"
+        );
+    }
+
+    #[tokio::test]
+    async fn rollout_path_migrates_legacy_feishu_file_name() {
+        let root = unique_temp_path("cloudagent-storage-test");
+        fs::create_dir_all(&root).await.expect("create root");
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "agent:main:feishu:dm:oc_legacy";
+        let legacy = root.join("agent_main_feishu_dm_oc_legacy.rollout.jsonl");
+        fs::write(&legacy, "").await.expect("write legacy file");
+
+        let resolved = store.rollout_path(conversation_id);
+
+        assert_eq!(
+            resolved.file_name().and_then(|name| name.to_str()),
+            Some("feishu_dm_oc_legacy.rollout.jsonl")
+        );
+        assert!(resolved.exists());
+        assert!(!legacy.exists());
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
     #[tokio::test]
     async fn pruning_removes_oldest_archived_conversations_first() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("cloudagent-storage-prune-{unique}"));
+        let root = unique_temp_path("cloudagent-storage-prune");
         let store = JsonConversationStore::new(&root);
         store.ensure_root_dir().await.expect("create root");
 
@@ -620,11 +696,7 @@ mod tests {
 
     #[tokio::test]
     async fn approval_grants_persist_across_store_restart() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("cloudagent-approval-grants-{unique}"));
+        let root = unique_temp_path("cloudagent-approval-grants");
         let store = JsonConversationStore::new(&root);
         let conversation_id = "approval-session";
         let key = ApprovalGrantKey::new(
@@ -659,11 +731,7 @@ mod tests {
 
     #[tokio::test]
     async fn marking_active_conversation_does_not_create_empty_session() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("cloudagent-draft-session-{unique}"));
+        let root = unique_temp_path("cloudagent-draft-session");
         let store = JsonConversationStore::new(&root);
         let conversation_id = "draft-only";
         store.ensure_root_dir().await.expect("create root");
@@ -700,11 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_conversation_promotes_existing_draft_to_visible_session() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("cloudagent-draft-promote-{unique}"));
+        let root = unique_temp_path("cloudagent-draft-promote");
         let store = JsonConversationStore::new(&root);
         let conversation_id = "draft-promote";
         store.ensure_root_dir().await.expect("create root");
@@ -717,6 +781,15 @@ mod tests {
             .create_conversation(conversation_id)
             .await
             .expect("create conversation");
+        store
+            .append_rollout_items(
+                conversation_id,
+                &[RolloutItem::from(ResponseItem::User {
+                    content: agent_core::text_input_items("hello"),
+                })],
+            )
+            .await
+            .expect("append first message");
 
         assert!(
             store
@@ -730,6 +803,119 @@ mod tests {
             .expect("list conversations");
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].conversation_id, conversation_id);
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn empty_persisted_draft_rows_are_hidden_from_session_list() {
+        let root = unique_temp_path("cloudagent-hidden-draft");
+        let store = JsonConversationStore::new(&root);
+        store.ensure_root_dir().await.expect("create root");
+
+        session_index::upsert_session(
+            &session_index::db_path(&root),
+            &root.to_string_lossy(),
+            "draft-legacy-empty",
+            0,
+            now_ms(),
+            false,
+            None,
+        )
+        .expect("upsert draft row");
+
+        let summaries = store
+            .list_conversations()
+            .await
+            .expect("list conversations");
+        assert!(summaries.is_empty());
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn archived_conversation_with_fallback_draft_keeps_session_list_clean() {
+        let root = unique_temp_path("cloudagent-archive-fallback");
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "session-archive-me";
+        let fallback_draft_id = "draft-fallback";
+        store.ensure_root_dir().await.expect("create root");
+
+        store
+            .create_conversation(conversation_id)
+            .await
+            .expect("create conversation");
+        store
+            .archive_conversation(conversation_id)
+            .await
+            .expect("archive conversation");
+        store
+            .mark_active_conversation(fallback_draft_id)
+            .await
+            .expect("mark fallback draft active");
+
+        assert_eq!(
+            store
+                .load_active_conversation()
+                .await
+                .expect("load active conversation"),
+            Some(fallback_draft_id.to_string())
+        );
+        assert!(
+            store
+                .list_conversations()
+                .await
+                .expect("list conversations")
+                .is_empty(),
+            "archived conversations and empty fallback drafts should stay out of /session"
+        );
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn deleted_conversation_with_fallback_draft_keeps_session_list_clean() {
+        let root = unique_temp_path("cloudagent-delete-fallback");
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "session-delete-me";
+        let fallback_draft_id = "draft-fallback";
+        store.ensure_root_dir().await.expect("create root");
+
+        store
+            .create_conversation(conversation_id)
+            .await
+            .expect("create conversation");
+        store
+            .delete_conversation(conversation_id)
+            .await
+            .expect("delete conversation");
+        store
+            .mark_active_conversation(fallback_draft_id)
+            .await
+            .expect("mark fallback draft active");
+
+        assert!(
+            !store
+                .has_conversation(conversation_id)
+                .await
+                .expect("conversation deleted"),
+            "deleted conversations should be removed from the formal session store"
+        );
+        assert_eq!(
+            store
+                .load_active_conversation()
+                .await
+                .expect("load active conversation"),
+            Some(fallback_draft_id.to_string())
+        );
+        assert!(
+            store
+                .list_conversations()
+                .await
+                .expect("list conversations")
+                .is_empty(),
+            "deleted conversations and empty fallback drafts should stay out of /session"
+        );
 
         let _ = fs::remove_dir_all(root).await;
     }

@@ -185,7 +185,8 @@ impl PlatformManager {
     async fn apply_feishu(&self, enabled: bool, node_address: &str) -> Result<()> {
         if enabled {
             let config = self.inner.lock().await.config.clone();
-            let runtime = spawn_feishu_runtime(node_address, &config).await?;
+            let runtime =
+                spawn_feishu_runtime(node_address, &config, self.data_root_dir.as_deref()).await?;
             self.ensure_runtime_started("feishu", runtime).await;
         } else {
             self.stop_runtime("feishu").await;
@@ -196,7 +197,8 @@ impl PlatformManager {
     async fn apply_wecom(&self, enabled: bool, node_address: &str) -> Result<()> {
         if enabled {
             let config = self.inner.lock().await.config.clone();
-            let runtime = spawn_wecom_runtime(node_address, &config).await?;
+            let runtime =
+                spawn_wecom_runtime(node_address, &config, self.data_root_dir.as_deref()).await?;
             self.ensure_runtime_started("wecom", runtime).await;
         } else {
             self.stop_runtime("wecom").await;

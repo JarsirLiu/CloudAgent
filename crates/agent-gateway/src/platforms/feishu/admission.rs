@@ -181,13 +181,7 @@ mod tests {
             }),
         }]);
 
-        let decision = evaluate_admission(
-            &env,
-            &FeishuBotIdentity::default(),
-            true,
-            false,
-            false,
-        );
+        let decision = evaluate_admission(&env, &FeishuBotIdentity::default(), true, false, false);
 
         assert_eq!(decision, AdmissionDecision::Admitted);
     }

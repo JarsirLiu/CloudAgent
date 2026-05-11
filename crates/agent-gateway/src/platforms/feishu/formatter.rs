@@ -86,10 +86,10 @@ fn prefers_text_mode(text: &str, is_group_context: bool) -> bool {
 
 fn prefers_group_text_mode(text: &str) -> bool {
     let line_count = text.lines().count();
-    let has_numbered_section = text.lines().any(|line| is_numbered_section_line(line));
-    let has_bulleted_summary = text.lines().any(|line| {
-        split_bulleted_summary_line(line.trim()).is_some()
-    });
+    let has_numbered_section = text.lines().any(is_numbered_section_line);
+    let has_bulleted_summary = text
+        .lines()
+        .any(|line| split_bulleted_summary_line(line.trim()).is_some());
     let heading_count = text
         .lines()
         .filter(|line| heading_prefix_len(line.trim_start()).is_some())
@@ -265,10 +265,7 @@ fn is_numbered_section_line(line: &str) -> bool {
         return false;
     }
 
-    let starts_with_numeric_prefix = trimmed
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_digit())
+    let starts_with_numeric_prefix = trimmed.chars().next().is_some_and(|ch| ch.is_ascii_digit())
         || trimmed.starts_with("1️⃣")
         || trimmed.starts_with("2️⃣")
         || trimmed.starts_with("3️⃣")
@@ -306,9 +303,7 @@ fn optimize_group_plain_text(text: &str) -> String {
         }
 
         previous_blank = false;
-        let normalized = if is_heading_like_line(trimmed) {
-            format!("【{}】", trim_heading_punctuation(trimmed))
-        } else if is_numbered_section_line(trimmed) {
+        let normalized = if is_heading_like_line(trimmed) || is_numbered_section_line(trimmed) {
             format!("【{}】", trim_heading_punctuation(trimmed))
         } else if let Some((label, value)) = split_bulleted_summary_line(trimmed) {
             format!("{label}\n  {value}")
@@ -803,10 +798,8 @@ mod tests {
 
     #[test]
     fn group_text_mode_turns_numbered_sections_into_compact_headings() {
-        let chunks = format_text_chunks(
-            "1️⃣ ff39d6a — WIP: unify gateway platform integration",
-            true,
-        );
+        let chunks =
+            format_text_chunks("1️⃣ ff39d6a — WIP: unify gateway platform integration", true);
         let rendered = chunks[0]
             .content
             .get("text")
