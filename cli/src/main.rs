@@ -307,10 +307,21 @@ async fn resolve_initial_conversation_id(
     let store = JsonConversationStore::new(conversation_store_dir.to_path_buf());
     if let Some(conversation_id) = store.load_active_conversation().await?
         && !conversation_id.trim().is_empty()
+        && !is_im_conversation_id(&conversation_id)
     {
         return Ok(conversation_id);
     }
 
+    let generated = generate_draft_conversation_id()?;
+    store.mark_active_conversation(&generated).await?;
+    Ok(generated)
+}
+
+fn is_im_conversation_id(conversation_id: &str) -> bool {
+    conversation_id.starts_with("agent:main:")
+}
+
+fn generate_draft_conversation_id() -> Result<String> {
     let generated = format!(
         "draft-{}",
         SystemTime::now()
@@ -318,7 +329,6 @@ async fn resolve_initial_conversation_id(
             .map_err(|err| anyhow::anyhow!("system clock before unix epoch: {err}"))?
             .as_millis()
     );
-    store.mark_active_conversation(&generated).await?;
     Ok(generated)
 }
 
@@ -711,6 +721,27 @@ mod tests {
             .expect("resolve initial conversation");
 
         assert!(conversation_id.starts_with("draft-"));
+    }
+
+    #[tokio::test]
+    async fn initial_conversation_id_skips_im_active_conversation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = infra_store::JsonConversationStore::new(temp.path().to_path_buf());
+        store
+            .mark_active_conversation("agent:main:feishu:dm:oc_test")
+            .await
+            .expect("mark active");
+
+        let conversation_id = super::resolve_initial_conversation_id(&[], temp.path())
+            .await
+            .expect("resolve initial conversation");
+
+        assert!(conversation_id.starts_with("draft-"));
+        let active = store
+            .load_active_conversation()
+            .await
+            .expect("load active conversation");
+        assert_eq!(active.as_deref(), Some(conversation_id.as_str()));
     }
 
     #[test]

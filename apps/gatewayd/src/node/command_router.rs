@@ -384,13 +384,6 @@ async fn read_conversation_list(
     runtime: &NodeRuntime,
     active_conversation_id: &str,
 ) -> Result<ConversationListResponse> {
-    let summaries: Vec<ConversationSummary> = runtime.conversations().lock().await.summaries();
-    if !summaries.is_empty() {
-        return Ok(ConversationListResponse {
-            conversations: summaries,
-        });
-    }
-
     let value = runtime
         .workers()
         .request_json(
@@ -401,10 +394,39 @@ async fn read_conversation_list(
                 params: None,
             },
         )
-        .await
-        .map_err(anyhow::Error::from)?;
-    let response: ConversationListResponse = serde_json::from_value(value)?;
-    Ok(response)
+        .await;
+
+    match value {
+        Ok(value) => {
+            let response: ConversationListResponse = serde_json::from_value(value)?;
+            if response.conversations.is_empty() {
+                let summaries: Vec<ConversationSummary> =
+                    runtime.conversations().lock().await.summaries();
+                if !summaries.is_empty() {
+                    return Ok(ConversationListResponse {
+                        conversations: summaries,
+                    });
+                }
+            }
+            runtime
+                .conversations()
+                .lock()
+                .await
+                .replace_from_summaries(&response.conversations);
+            Ok(response)
+        }
+        Err(error) => {
+            let summaries: Vec<ConversationSummary> =
+                runtime.conversations().lock().await.summaries();
+            if !summaries.is_empty() {
+                return Ok(ConversationListResponse {
+                    conversations: summaries,
+                });
+            }
+
+            Err(anyhow::Error::from(error))
+        }
+    }
 }
 
 async fn sync_typed_read_registry(
@@ -707,7 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn list_conversations_uses_node_shared_registry() {
+    fn list_conversations_falls_back_to_node_shared_registry() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
             let runtime = test_runtime().await;
