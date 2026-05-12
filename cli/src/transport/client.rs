@@ -199,12 +199,12 @@ fn spawn_workspace_built_local_node(
     Ok(command.spawn()?)
 }
 
-fn configure_detached_node_process(command: &mut Command) {
+fn configure_detached_node_process(_command: &mut Command) {
     #[cfg(windows)]
     {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        _command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
 }
 
