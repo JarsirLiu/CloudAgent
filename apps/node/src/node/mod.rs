@@ -9,6 +9,8 @@ mod runtime;
 mod server;
 mod session_state;
 mod source;
+#[cfg(test)]
+mod test_support;
 mod worker_manager;
 
 pub(crate) use server::run_resident_node;

@@ -155,28 +155,29 @@ mod tests {
     use super::sync_registry_from_message;
     use crate::node::platform::PlatformManager;
     use crate::node::runtime::NodeRuntime;
+    use crate::node::test_support::{test_worker_program, unique_temp_path};
     use crate::node::worker_manager::WorkerManager;
     use agent_core::conversation::{ConversationSnapshot, ConversationStatus, ConversationSummary};
     use agent_protocol::{AppServerMessage, AppServerNotification, FrontendMode};
-    use std::ffi::OsString;
+
+    async fn test_runtime() -> NodeRuntime {
+        let root = unique_temp_path("cloudagent-node-platform-tests");
+        NodeRuntime::new(
+            WorkerManager::new(test_worker_program(), None),
+            infra_store::JsonConversationStore::new(root.join("conversations")),
+            PlatformManager::load(Some(root.as_os_str()))
+                .await
+                .expect("platform manager"),
+            "127.0.0.1:47070",
+            root,
+        )
+    }
 
     #[test]
     fn worker_conversation_list_replaces_shared_registry_state() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let root = std::env::temp_dir().join(format!(
-                "cloudagent-node-platform-tests-{}",
-                std::process::id()
-            ));
-            let runtime = NodeRuntime::new(
-                WorkerManager::new(OsString::from("agentd.exe"), None),
-                infra_store::JsonConversationStore::new(root.join("conversations")),
-                PlatformManager::load(Some(root.as_os_str()))
-                    .await
-                    .expect("platform manager"),
-                "127.0.0.1:47070",
-                root.clone(),
-            );
+            let runtime = test_runtime().await;
             runtime.conversations().lock().await.touch("stale");
 
             sync_registry_from_message(
@@ -205,19 +206,7 @@ mod tests {
     fn frontend_state_changes_update_conversation_busy_state() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let root = std::env::temp_dir().join(format!(
-                "cloudagent-node-platform-tests-{}",
-                std::process::id()
-            ));
-            let runtime = NodeRuntime::new(
-                WorkerManager::new(OsString::from("agentd.exe"), None),
-                infra_store::JsonConversationStore::new(root.join("conversations")),
-                PlatformManager::load(Some(root.as_os_str()))
-                    .await
-                    .expect("platform manager"),
-                "127.0.0.1:47070",
-                root.clone(),
-            );
+            let runtime = test_runtime().await;
 
             sync_registry_from_message(
                 &runtime,
@@ -247,19 +236,7 @@ mod tests {
     fn conversation_status_notifications_update_busy_state() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let root = std::env::temp_dir().join(format!(
-                "cloudagent-node-platform-tests-{}",
-                std::process::id()
-            ));
-            let runtime = NodeRuntime::new(
-                WorkerManager::new(OsString::from("agentd.exe"), None),
-                infra_store::JsonConversationStore::new(root.join("conversations")),
-                PlatformManager::load(Some(root.as_os_str()))
-                    .await
-                    .expect("platform manager"),
-                "127.0.0.1:47070",
-                root.clone(),
-            );
+            let runtime = test_runtime().await;
 
             sync_registry_from_message(
                 &runtime,

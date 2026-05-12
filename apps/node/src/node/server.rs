@@ -417,6 +417,7 @@ mod tests {
     use crate::node::platform::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
+    use crate::node::test_support::{test_worker_program, unique_temp_path};
     use crate::node::worker_manager::WorkerManager;
     use agent_protocol::{
         JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId,
@@ -426,16 +427,12 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, BufReader, duplex};
 
     fn test_worker_manager() -> WorkerManager {
-        let root =
-            std::env::temp_dir().join(format!("cloudagent-node-tests-{}", std::process::id()));
-        WorkerManager::new(OsString::from("agentd.exe"), Some(root.into_os_string()))
+        let root = unique_temp_path("cloudagent-node-tests");
+        WorkerManager::new(test_worker_program(), Some(root.into_os_string()))
     }
 
     async fn test_runtime() -> NodeRuntime {
-        let root = std::env::temp_dir().join(format!(
-            "cloudagent-node-platform-tests-{}",
-            std::process::id()
-        ));
+        let root = unique_temp_path("cloudagent-node-platform-tests");
         let platforms = PlatformManager::load(Some(root.as_os_str()))
             .await
             .expect("platform manager");

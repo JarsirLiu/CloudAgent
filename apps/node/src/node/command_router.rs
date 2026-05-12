@@ -786,6 +786,7 @@ mod tests {
     use crate::node::platform::PlatformManager;
     use crate::node::runtime::NodeRuntime;
     use crate::node::session_state::NodeSessionState;
+    use crate::node::test_support::{test_worker_program, unique_temp_path};
     use crate::node::worker_manager::{NodeEvent, WorkerManager};
     use agent_core::{ApprovalPolicy, PermissionProfile};
     use agent_core::{EventMsg, InputItem};
@@ -795,29 +796,12 @@ mod tests {
         FrontendMode, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestId, TurnPolicy,
         UserTurnInput,
     };
-    use std::ffi::OsString;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::io::{AsyncBufReadExt, BufReader, duplex};
     use tokio::sync::broadcast;
 
-    static TEST_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_path(prefix: &str) -> std::path::PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        let counter = TEST_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "{prefix}-{}-{unique}-{counter}",
-            std::process::id()
-        ))
-    }
-
     fn test_worker_manager() -> WorkerManager {
         let root = unique_temp_path("cloudagent-node-tests");
-        WorkerManager::new(OsString::from("agentd.exe"), Some(root.into_os_string()))
+        WorkerManager::new(test_worker_program(), Some(root.into_os_string()))
     }
 
     async fn test_runtime() -> NodeRuntime {

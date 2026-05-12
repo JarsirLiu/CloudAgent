@@ -497,6 +497,7 @@ mod tests {
         normalize_worker_disconnect_message, record_worker_fault, should_evict_worker,
         worker_stdio_args,
     };
+    use crate::node::test_support::test_worker_program;
     use agent_protocol::NodeWorkerHealth;
     use anyhow::Result;
     use std::ffi::OsString;
@@ -537,7 +538,7 @@ mod tests {
 
     #[tokio::test]
     async fn prune_finished_worker_removes_completed_handle() -> Result<()> {
-        let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
+        let manager = WorkerManager::new(test_worker_program(), None);
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
         let worker = tokio::spawn(async { Result::<()>::Ok(()) });
@@ -564,7 +565,7 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_receives_broadcast_events_from_existing_shared_worker() -> Result<()> {
-        let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
+        let manager = WorkerManager::new(test_worker_program(), None);
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
         let worker = tokio::spawn(async {
@@ -611,7 +612,7 @@ mod tests {
 
     #[tokio::test]
     async fn prune_worker_evicts_idle_handle() -> Result<()> {
-        let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
+        let manager = WorkerManager::new(test_worker_program(), None);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let worker = tokio::spawn(async move {
             while rx.recv().await.is_some() {}
@@ -639,7 +640,7 @@ mod tests {
 
     #[tokio::test]
     async fn prune_worker_keeps_recent_handle() -> Result<()> {
-        let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
+        let manager = WorkerManager::new(test_worker_program(), None);
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
         let worker = tokio::spawn(async {
@@ -671,7 +672,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_snapshot_reports_running_and_faulted_scopes() -> Result<()> {
-        let manager = WorkerManager::new(OsString::from("agentd.exe"), None);
+        let manager = WorkerManager::new(test_worker_program(), None);
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
         let worker = tokio::spawn(async {
