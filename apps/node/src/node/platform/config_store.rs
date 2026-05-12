@@ -87,7 +87,10 @@ mod tests {
     #[test]
     fn dev_mode_uses_data_platform_directory() {
         let root = PathBuf::from(r"D:\repo\cloudagent\data");
-        assert_eq!(platform_config_dir(Some(root.as_os_str())), root.join("platform"));
+        assert_eq!(
+            platform_config_dir(Some(root.as_os_str())),
+            root.join("platform")
+        );
     }
 
     #[test]
