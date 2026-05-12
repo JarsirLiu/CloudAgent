@@ -2,7 +2,7 @@
 set -eu
 
 PREFIX="$HOME/.local/bin"
-BINARIES="cli agentd gatewayd cloudagent"
+BINARIES="cli agentd node cloudagent"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
@@ -29,11 +29,11 @@ mkdir -p "$PREFIX"
 CANDIDATES="\
 $ROOT_DIR/cli\
  $ROOT_DIR/agentd\
- $ROOT_DIR/gatewayd\
+ $ROOT_DIR/node\
  $ROOT_DIR/scripts/cloudagent\
  $ROOT_DIR/target/release/cli\
  $ROOT_DIR/target/release/agentd\
- $ROOT_DIR/target/release/gatewayd"
+ $ROOT_DIR/target/release/node"
 
 installed=0
 for bin in $CANDIDATES; do
@@ -46,8 +46,8 @@ for bin in $CANDIDATES; do
 done
 
 if [ "$installed" -ne 1 ]; then
-  echo "no binaries found. expected cli/agentd/gatewayd or scripts/cloudagent" >&2
-  echo "tip: build first with: cargo build --release -p cli -p agentd -p gatewayd" >&2
+  echo "no binaries found. expected cli/agentd/node/cloudagent binaries" >&2
+  echo "tip: build first with: cargo build --release -p cloudagent -p cli -p agentd -p node" >&2
   exit 1
 fi
 

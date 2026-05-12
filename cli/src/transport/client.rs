@@ -43,7 +43,7 @@ pub async fn create_local_node_client(
         Err(first_error) => {
             if existing_node_looks_unhealthy(&first_error) {
                 return Err(anyhow!(
-                    "failed to connect to local node at {address}: {first_error}; an existing local node is already listening but did not complete the transport handshake. stop the stale `gatewayd` process and retry"
+                    "failed to connect to local node at {address}: {first_error}; an existing local node is already listening but did not complete the transport handshake. stop the stale `node` process and retry"
                 ));
             }
             let mut child = spawn_local_node_process(program, args)?;
@@ -64,6 +64,14 @@ pub async fn create_local_node_client(
     }
 }
 
+pub async fn connect_existing_local_node_client(
+    address: &str,
+    expected_data_root_dir: &Path,
+) -> Result<AppServerClient> {
+    let client = connect_local_node_once(address).await?;
+    verify_local_node_data_root(client, address, expected_data_root_dir).await
+}
+
 async fn verify_local_node_data_root(
     client: AppServerClient,
     address: &str,
@@ -79,7 +87,7 @@ async fn verify_local_node_data_root(
         return Ok(client);
     }
     Err(anyhow!(
-        "local node at {address} is using a different data root (expected `{}`, got `{}`). stop the stale `gatewayd` and restart cloudagent so `/session` and IM conversations read the same store",
+        "local node at {address} is using a different data root (expected `{}`, got `{}`). stop the stale `node` and restart cloudagent so `/session` and IM conversations read the same store",
         expected_data_root_dir.display(),
         status.data_root_dir
     ))
@@ -104,14 +112,14 @@ fn local_node_launch_timeout(
     program: &std::ffi::OsString,
     args: &[std::ffi::OsString],
 ) -> Duration {
-    if launches_gatewayd_via_cargo(program, args) {
+    if launches_node_via_cargo(program, args) {
         Duration::from_secs(60)
     } else {
         Duration::from_secs(5)
     }
 }
 
-fn launches_gatewayd_via_cargo(program: &std::ffi::OsString, args: &[std::ffi::OsString]) -> bool {
+fn launches_node_via_cargo(program: &std::ffi::OsString, args: &[std::ffi::OsString]) -> bool {
     let program = program.to_string_lossy().to_ascii_lowercase();
     if !(program == "cargo" || program.ends_with("\\cargo.exe") || program.ends_with("/cargo")) {
         return false;
@@ -120,11 +128,11 @@ fn launches_gatewayd_via_cargo(program: &std::ffi::OsString, args: &[std::ffi::O
     args.iter()
         .map(|arg| arg.to_string_lossy().to_ascii_lowercase())
         .take(4)
-        .any(|arg| arg == "gatewayd")
+        .any(|arg| arg == "node")
 }
 
 fn spawn_local_node_process(program: &OsString, args: &[OsString]) -> Result<std::process::Child> {
-    if launches_gatewayd_via_cargo(program, args) {
+    if launches_node_via_cargo(program, args) {
         return spawn_workspace_built_local_node(program, args);
     }
 
@@ -152,7 +160,7 @@ fn spawn_workspace_built_local_node(
         .args([
             OsString::from("build"),
             OsString::from("-p"),
-            OsString::from("gatewayd"),
+            OsString::from("node"),
             OsString::from("-p"),
             OsString::from("agentd"),
             OsString::from("--target-dir"),
@@ -168,7 +176,7 @@ fn spawn_workspace_built_local_node(
         ));
     }
 
-    let gatewayd_bin = target_dir.join(debug_exe_name("gatewayd"));
+    let node_bin = target_dir.join(debug_exe_name("node"));
     let agentd_bin = target_dir.join(debug_exe_name("agentd"));
     let mut final_args = service_args;
     final_args.extend([
@@ -176,7 +184,7 @@ fn spawn_workspace_built_local_node(
         agentd_bin.clone().into_os_string(),
     ]);
 
-    Ok(std::process::Command::new(gatewayd_bin)
+    Ok(std::process::Command::new(node_bin)
         .args(final_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -353,16 +361,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "manual smoke test: requires fresh prebuilt gatewayd/agentd binaries"]
+    #[ignore = "manual smoke test: requires fresh prebuilt node/agentd binaries"]
     async fn local_node_remote_smoke_supports_startup_typed_reads() {
         let exe_dir = current_binary_dir();
-        let gatewayd = exe_dir.join(exe_name("gatewayd"));
+        let node = exe_dir.join(exe_name("node"));
         let agentd = exe_dir.join(exe_name("agentd"));
-        assert!(
-            gatewayd.exists(),
-            "missing gatewayd binary at {}",
-            gatewayd.display()
-        );
+        assert!(node.exists(), "missing node binary at {}", node.display());
         assert!(
             agentd.exists(),
             "missing agentd binary at {}",
@@ -373,7 +377,7 @@ mod tests {
         let addr = probe.local_addr().expect("probe local addr");
         drop(probe);
         let address = addr.to_string();
-        let mut child = std::process::Command::new(&gatewayd)
+        let mut child = std::process::Command::new(&node)
             .args([
                 OsString::from("serve"),
                 OsString::from("--listen"),
@@ -385,7 +389,7 @@ mod tests {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .expect("spawn gatewayd");
+            .expect("spawn node");
 
         let mut client = wait_for_service(
             || connect_local_node_once(&address),

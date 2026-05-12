@@ -76,7 +76,7 @@ pub fn mentions_bot(envelope: &FeishuMessageEnvelope, bot: &FeishuBotIdentity) -
 #[cfg(test)]
 mod tests {
     use super::{AdmissionDecision, evaluate_admission};
-    use crate::platforms::feishu::types::{
+    use crate::adapter::feishu::types::{
         FeishuBotIdentity, FeishuMention, FeishuMessage, FeishuMessageEnvelope, FeishuSender,
         FeishuUserId,
     };

@@ -1,205 +1,180 @@
 # Development Notes
 
-## Current Goal
+## Current Shape
 
-Build `cloudagent` as a modular Rust workspace for a local/server-side agent.
+CloudAgent now has four concrete runtime roles:
 
-This project is not a traditional monitoring platform. Server inspection, log analysis,
-service checks, remote notification, and scheduled wakeups are all treated as agent
-capabilities.
+- `cloudagent`: product entrypoint
+- `cli`: terminal surface
+- `node`: resident local host
+- `agentd`: worker process
 
-The product goal is:
-
-- run a persistent agent on a server or local machine
-- let the agent call tools to inspect and operate on the system
-- let the agent create scheduled work for its future self
-- wake the agent automatically when a scheduled task is due
-- support remote conversation from phone-facing channels later
-- keep the repository strongly modular, workspace-first, and suitable for long-term growth
-
-## Architecture Direction
-
-The repository follows a Rust workspace layout with a small number of clearly scoped crates.
-
-Top-level layout:
+The repository is a Rust workspace with these top-level areas:
 
 ```text
 apps/      executable entrypoints
+cli/       reusable terminal surface crate plus cli binary
 crates/    reusable Rust crates
-web/       future web admin or frontend work
-configs/   environment and app configuration
-docs/      architecture and design documents
-tests/     integration and workspace-level tests
-data/      local runtime data for development
+configs/   configuration examples
+docs/      current architecture docs
+packaging/ release packaging assets
+scripts/   install, upgrade, and validation helpers
+tests/     workspace-level tests
+web/       future web work
 ```
 
-## Core Design Idea
+## Runtime Boundary
 
-The center of the system is the agent itself.
+The intended runtime chain is:
 
-Important consequence:
+```text
+surface (cli / future web / IM)
+  -> remote app-server client
+  -> node
+  -> worker(agentd)
+  -> core
+```
 
-- monitoring is not the core architecture
-- scheduling is not the core architecture
-- messaging is not the core architecture
+Key rule:
 
-Instead:
+- surfaces do not talk to `agent-core` directly
+- `node` owns resident lifecycle, worker reuse, platform runtime management, and transport hosting
+- `agentd` owns execution of a worker session
 
-- the agent is the core
-- tools are capabilities the agent can use
-- scheduling is a system that can wake the agent later
-- gateway modules are how the agent talks to remote users
+## Executable Roles
+
+### `apps/cloudagent`
+
+Product-level command entrypoint.
+
+Owns:
+
+- `start/status/stop`
+- platform management commands
+- launching the CLI surface
+- release-facing command UX
+
+Should not own:
+
+- terminal rendering internals
+- worker protocol details
+
+### `cli`
+
+Terminal surface crate and `cli` binary.
+
+Owns:
+
+- console rendering
+- terminal interaction
+- local console bootstrap helpers
+
+Should not own:
+
+- product lifecycle command routing
+- packaging concerns
+
+### `apps/node`
+
+Resident local host.
+
+Owns:
+
+- remote app-server host
+- platform runtime lifecycle
+- conversation registry/state
+- worker spawning, reuse, and idle recycling
+
+### `apps/agentd`
+
+Worker-oriented binary.
+
+Owns:
+
+- stdio worker host
+- embedded development console mode only where explicitly needed
 
 ## Crate Boundaries
 
 ### `agent-core`
 
-Owns the core agent concepts and orchestration contracts.
+Owns core conversation, turn, context, tool execution, approval, and orchestration semantics.
 
-Typical responsibility:
+### `agent-app-server`
 
-- conversation model
-- messages and turns
-- task and plan model
-- context assembly
-- tool-call abstractions
-- core orchestration interfaces
+Owns app-server command routing, projection, session state, and server-request coordination.
 
-It should describe how the agent thinks and advances work, but avoid taking ownership
-of concrete infrastructure implementations.
+### `agent-app-server-client`
 
-### `agent-runtime`
+Owns shared in-process/remote client access to the app-server protocol.
 
-Owns the execution lifecycle of the agent.
-
-Typical responsibility:
-
-- running agent conversations
-- driving execution loops
-- handling cancellation and timeout
-- bridging scheduled wakeups into active execution
-
-### `agent-tools`
-
-Owns the tool system used by the agent.
-
-Typical responsibility:
-
-- tool definitions
-- tool registry
-- shell/file/http/system/service/log tools
-- schedule creation and notification tools
-
-### `agent-memory`
-
-Owns agent-facing memory abstractions and logic.
-
-Typical responsibility:
-
-- conversation memory
-- task memory
-- wakeup context snapshots
-- user and environment memory
+All surfaces should reuse this crate instead of inventing parallel client implementations.
 
 ### `agent-gateway`
 
-Owns remote interaction entrypoints and message routing abstractions.
+Owns IM adapter logic and gateway-facing abstractions.
 
-Typical responsibility:
+Current rule:
 
-- inbound/outbound remote messages
-- conversation routing
-- conversation mapping between remote clients and local agent execution
+- IM platform code lives under `crates/agent-gateway/src/adapter/`
+- platform adapters route back through `AppServerClient::Remote -> node`
 
 ### `agent-model-provider`
 
-Owns model provider protocol adapters.
+Owns provider-specific model execution adapters.
 
-Typical responsibility:
+### `agent-memory`
 
-- concrete `ChatModel` implementations
-- OpenAI-compatible / Responses API / Realtime protocol adapters
-- provider configuration mapping
-- translating model streaming events into core abstractions
+Owns memory-facing abstractions and supporting logic used by the agent runtime.
 
 ### `agent-scheduler`
 
-Owns delayed and recurring execution.
+Owns scheduling-related abstractions and future recurring execution support.
 
-Typical responsibility:
+### `agent-tools`
 
-- task scheduling
-- recurring plans
-- wakeup triggers
-- retry policy for scheduled jobs
-
-### `storage`
-
-Owns business persistence concerns.
-
-Typical responsibility:
-
-- repositories for schedules
-- repositories for execution records
-- repositories for memory/state artifacts
+Owns tool definitions, registry logic, and workspace/system tool implementations.
 
 ### `config`
 
-Owns application and workspace configuration.
+Owns workspace and runtime configuration loading.
 
 ### `infra-*`
 
-Own concrete infrastructure adapters.
+Own low-level infrastructure integrations only:
 
-Current split:
-
-- `infra-shell`
 - `infra-http`
+- `infra-shell`
 - `infra-ssh`
 - `infra-store`
 
-These crates should implement low-level integrations, not business orchestration.
-
 ### `shared`
 
-Owns cross-cutting lightweight shared types and utilities.
+Owns lightweight common helpers and shared types.
 
-## Current Repository Shape
+## Cleanliness Rules
 
-Current `crates/` layout:
+1. Keep product entry, surface logic, resident node logic, and worker logic separate.
+2. Do not let surfaces bypass `agent-app-server-client`.
+3. Do not let IM adapters define their own parallel node protocol.
+4. Keep platform-specific code inside `agent-gateway/src/adapter/<platform>/`.
+5. Prefer moving duplicated bootstrap/entry logic into shared library modules before adding new binaries.
+6. Treat docs as part of the architecture surface; delete stale migration docs instead of half-maintaining them.
 
-```text
-crates/
-├─ agent-core/
-├─ agent-model-provider/
-├─ agent-runtime/
-├─ agent-tools/
-├─ agent-memory/
-├─ agent-gateway/
-├─ agent-scheduler/
-├─ storage/
-├─ config/
-├─ infra-http/
-├─ infra-shell/
-├─ infra-ssh/
-├─ infra-store/
-└─ shared/
+## Local Validation
+
+Primary checks:
+
+```bash
+cargo fmt --all -- --check
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets --no-fail-fast
 ```
 
-## Design Rules
+Helpers:
 
-1. Keep the root clean.
-2. Prefer crate boundaries for major subsystems.
-3. Do not let infrastructure details leak into `agent-core`.
-4. Treat server inspection as tools, not as the whole product.
-5. Keep scheduling and remote channels as first-class but separate systems.
-6. Grow by adding clear interfaces before adding concrete implementations.
+- `scripts/ci-check.sh`
+- `scripts/ci-check.ps1`
 
-## Immediate Next Steps
-
-1. Define the minimal models and traits in `agent-core`.
-2. Define execution contracts between `agent-core` and `agent-runtime`.
-3. Define tool registry abstractions in `agent-tools`.
-4. Define memory repository abstractions between `agent-memory` and `storage`.
-5. Define scheduler wakeup payloads between `agent-scheduler` and `agent-runtime`.
-6. Define gateway message abstractions for future phone/web integration.
+Use the PowerShell script on Windows when `bash` or WSL environment access to `cargo` is unreliable.

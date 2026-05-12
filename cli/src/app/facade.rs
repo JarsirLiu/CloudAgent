@@ -44,7 +44,7 @@ async fn load_initial_history(
     .await
     .map_err(|_| {
         anyhow!(
-            "timed out loading conversation history for `{conversation_id}`; the local node could not get a healthy worker response. restart `gatewayd` and retry"
+            "timed out loading conversation history for `{conversation_id}`; the local node could not get a healthy worker response. restart `node` and retry"
         )
     })??;
     crate::app::conversation::actions::execute_server_action(
@@ -58,7 +58,7 @@ async fn load_initial_history(
     .await
     .map_err(|_| {
         anyhow!(
-            "timed out loading conversation status for `{conversation_id}`; the local node could not get a healthy worker response. restart `gatewayd` and retry"
+            "timed out loading conversation status for `{conversation_id}`; the local node could not get a healthy worker response. restart `node` and retry"
         )
     })??;
     let mode = match status.snapshot.conversation_status {

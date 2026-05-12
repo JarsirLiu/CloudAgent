@@ -117,6 +117,22 @@
                         <Component Id='binary1' Guid='*'>
                             <File
                                 Id='exe1'
+                                Name='cli.exe'
+                                DiskId='1'
+                                Source='$(var.CargoTargetBinDir)\cli.exe'
+                                KeyPath='yes'/>
+                        </Component>
+                        <Component Id='binary2' Guid='*'>
+                            <File
+                                Id='exe2'
+                                Name='node.exe'
+                                DiskId='1'
+                                Source='$(var.CargoTargetBinDir)\node.exe'
+                                KeyPath='yes'/>
+                        </Component>
+                        <Component Id='binary3' Guid='*'>
+                            <File
+                                Id='exe3'
                                 Name='agentd.exe'
                                 DiskId='1'
                                 Source='$(var.CargoTargetBinDir)\agentd.exe'
@@ -139,6 +155,8 @@
             <ComponentRef Id='License'/>
             <ComponentRef Id='binary0'/>
             <ComponentRef Id='binary1'/>
+            <ComponentRef Id='binary2'/>
+            <ComponentRef Id='binary3'/>
 
             <Feature
                 Id='Environment'

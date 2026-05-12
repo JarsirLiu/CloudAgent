@@ -35,7 +35,7 @@ case "$url" in
 esac
 
 found=0
-for b in cli agentd gatewayd; do
+for b in cli agentd node cloudagent; do
   candidate=$(find "$WORK" -type f -name "$b" | head -n 1 || true)
   if [ -n "$candidate" ]; then
     mkdir -p "$PREFIX"
@@ -52,7 +52,7 @@ if [ -n "$launcher" ]; then
 fi
 
 if [ "$found" -ne 1 ]; then
-  echo "upgrade failed: no cli/agentd/gatewayd binaries in release asset" >&2
+  echo "upgrade failed: no cli/agentd/node/cloudagent binaries in release asset" >&2
   exit 1
 fi
 

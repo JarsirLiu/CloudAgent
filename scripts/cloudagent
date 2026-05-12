@@ -3,28 +3,19 @@ set -eu
 
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-cmd="${1:-start}"
-if [ "$#" -gt 0 ]; then
-  shift
-fi
+cmd="${1:-cli}"
 
 case "$cmd" in
-  start)
-    CLOUDAGENT_RELEASE_MODE=1 exec "$SELF_DIR/cli" "$@"
+  help|--help|-h)
+    CLOUDAGENT_RELEASE_MODE=1 exec "$SELF_DIR/cloudagent" --help
     ;;
   version|--version|-v)
-    exec "$SELF_DIR/cli" --version
+    CLOUDAGENT_RELEASE_MODE=1 exec "$SELF_DIR/cloudagent" --version
     ;;
-  help|--help|-h)
-    cat <<'EOF'
-cloudagent commands:
-  cloudagent start [args...]     Start CLI (default)
-  cloudagent version             Show version
-EOF
+  start|status|stop|cli|platform|node)
+    CLOUDAGENT_RELEASE_MODE=1 exec "$SELF_DIR/cloudagent" "$@"
     ;;
   *)
-    echo "unknown command: $cmd" >&2
-    echo "run 'cloudagent help' for available commands" >&2
-    exit 1
+    CLOUDAGENT_RELEASE_MODE=1 exec "$SELF_DIR/cloudagent" "$@"
     ;;
 esac

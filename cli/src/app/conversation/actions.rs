@@ -29,7 +29,7 @@ fn platform_request_notice(action: &str, err: &impl Display) -> String {
     if detail.contains("unsupported request method: platform/") {
         return format!(
             "Platform management is unavailable on the connected node while trying to {action}. \
-Restart the local gatewayd with the latest build, then try /gateway again."
+Restart the local node with the latest build, then try /gateway again."
         );
     }
     format!("Failed to {action}: {detail}")

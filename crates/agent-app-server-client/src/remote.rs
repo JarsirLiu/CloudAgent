@@ -521,7 +521,7 @@ mod tests {
                 id,
                 result: serde_json::to_value(TransportInitializeResult {
                     server_info: agent_protocol::TransportServerInfo {
-                        name: "gatewayd".to_string(),
+                        name: "node".to_string(),
                         version: "0.0.0-test".to_string(),
                     },
                     protocol_version: "1".to_string(),
@@ -639,7 +639,7 @@ mod tests {
                 id,
                 result: serde_json::to_value(TransportInitializeResult {
                     server_info: agent_protocol::TransportServerInfo {
-                        name: "gatewayd".to_string(),
+                        name: "node".to_string(),
                         version: "0.0.0-test".to_string(),
                     },
                     protocol_version: "1".to_string(),
@@ -828,7 +828,7 @@ mod tests {
                     id,
                     result: serde_json::to_value(TransportInitializeResult {
                         server_info: agent_protocol::TransportServerInfo {
-                            name: "gatewayd".to_string(),
+                            name: "node".to_string(),
                             version: "0.0.0-test".to_string(),
                         },
                         protocol_version: "1".to_string(),
@@ -904,7 +904,7 @@ mod tests {
                     id,
                     result: serde_json::to_value(TransportInitializeResult {
                         server_info: agent_protocol::TransportServerInfo {
-                            name: "gatewayd".to_string(),
+                            name: "node".to_string(),
                             version: "0.0.0-test".to_string(),
                         },
                         protocol_version: "1".to_string(),

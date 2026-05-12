@@ -1,8 +1,9 @@
 [workspace]
 members = [
+    "apps/cloudagent",
     "cli",
     "apps/agentd",
-    "apps/gatewayd",
+    "apps/node",
     "crates/agent-app-server",
     "crates/agent-app-server-client",
     "crates/agent-core",

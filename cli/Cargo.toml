@@ -7,7 +7,7 @@ authors.workspace = true
 description.workspace = true
 
 [[bin]]
-name = "cloudagent"
+name = "cli"
 path = "src/main.rs"
 
 [dependencies]

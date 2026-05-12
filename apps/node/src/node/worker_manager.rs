@@ -183,7 +183,7 @@ impl WorkerManager {
                 worker_scope_key = %worker_scope_key,
                 conversation_id = %conversation_id,
                 command = %worker_command_name(&command),
-                "gatewayd.worker.command.send"
+                "node.worker.command.send"
             );
         }
         handle
@@ -267,7 +267,7 @@ impl WorkerManager {
                                     });
                                 }
                                 Some(AppServerEvent::Lagged { skipped }) => {
-                                    info!(skipped, "gatewayd.worker.event.lagged");
+                                    info!(skipped, "node.worker.event.lagged");
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: "default".to_string(),
                                         message: format!("scoped worker event channel lagged; skipped {skipped} events"),
@@ -277,7 +277,7 @@ impl WorkerManager {
                                 Some(AppServerEvent::Disconnected { message }) => {
                                     info!(
                                         message = %message,
-                                        "gatewayd.worker.event.disconnected"
+                                        "node.worker.event.disconnected"
                                     );
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: "default".to_string(),
@@ -295,7 +295,7 @@ impl WorkerManager {
                                     let detail = format!(
                                         "{ERR_TRANSPORT_CLOSED_PREFIX} scoped worker event stream ended unexpectedly"
                                     );
-                                    info!("gatewayd.worker.event.stream_closed");
+                                    info!("node.worker.event.stream_closed");
                                     let _ = events_tx_for_worker.send(NodeEvent::Diagnostic {
                                         conversation_id: "default".to_string(),
                                         message: detail.clone(),

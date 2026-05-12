@@ -85,7 +85,7 @@ where
             source_domain = %session.source_domain_id(),
             command = %command_name(&envelope.command),
             target_conversation = %target_conversation,
-            "gatewayd.command.received"
+            "node.command.received"
         );
     }
     if let Some(rejection) =
@@ -816,12 +816,12 @@ mod tests {
     }
 
     fn test_worker_manager() -> WorkerManager {
-        let root = unique_temp_path("cloudagent-gatewayd-tests");
+        let root = unique_temp_path("cloudagent-node-tests");
         WorkerManager::new(OsString::from("agentd.exe"), Some(root.into_os_string()))
     }
 
     async fn test_runtime() -> NodeRuntime {
-        let root = unique_temp_path("cloudagent-gatewayd-platform-tests");
+        let root = unique_temp_path("cloudagent-node-platform-tests");
         let platforms = PlatformManager::load(Some(root.as_os_str()))
             .await
             .expect("platform manager");

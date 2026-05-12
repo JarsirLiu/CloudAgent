@@ -4,7 +4,6 @@ mod config;
 mod gateway_event;
 mod message;
 mod platform;
-mod platforms;
 mod runtime;
 mod session;
 

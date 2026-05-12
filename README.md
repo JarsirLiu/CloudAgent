@@ -33,19 +33,21 @@ Feishu WebSocket
 
 ## 目录
 
-- [apps/gatewayd/src/main.rs](/D:/learn/gifti/cloudagent/apps/gatewayd/src/main.rs)
-  只有启动与配置加载
+- [apps/cloudagent/src/main.rs](/D:/learn/gifti/cloudagent/apps/cloudagent/src/main.rs)
+  产品入口，负责 `start/status/stop/cli`
+- [apps/node/src/main.rs](/D:/learn/gifti/cloudagent/apps/node/src/main.rs)
+  resident node 的启动与配置加载
 - [crates/agent-gateway/src/platform.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/platform.rs)
   平台适配器抽象
 - [crates/agent-gateway/src/runtime.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/runtime.rs)
   统一消息运行时
-- [crates/agent-gateway/src/platforms/feishu/adapter.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/platforms/feishu/adapter.rs)
+- [crates/agent-gateway/src/adapter/feishu/client.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/adapter/feishu/client.rs)
   飞书 websocket 适配器主入口
-- [crates/agent-gateway/src/platforms/feishu/admission.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/platforms/feishu/admission.rs)
+- [crates/agent-gateway/src/adapter/feishu/admission.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/adapter/feishu/admission.rs)
   飞书消息准入
-- [crates/agent-gateway/src/platforms/feishu/normalize.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/platforms/feishu/normalize.rs)
+- [crates/agent-gateway/src/adapter/feishu/normalize.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/adapter/feishu/normalize.rs)
   飞书事件归一化
-- [crates/agent-gateway/src/platforms/feishu/outbound.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/platforms/feishu/outbound.rs)
+- [crates/agent-gateway/src/adapter/feishu/outbound.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/adapter/feishu/outbound.rs)
   飞书回复与线程路由
 - [crates/agent-gateway/src/message.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/message.rs)
   标准化消息模型
@@ -89,13 +91,13 @@ Feishu WebSocket
 ## 启动
 
 ```bash
-cargo run -p gatewayd
+cargo run -p node
 ```
 
 或者显式指定配置文件：
 
 ```bash
-cargo run -p gatewayd -- D:/learn/gifti/cloudagent/configs/config.toml.example
+cargo run -p node -- D:/learn/gifti/cloudagent/configs/config.toml.example
 ```
 
 ## 飞书应用设置

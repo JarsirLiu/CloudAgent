@@ -11,8 +11,9 @@ use agent_protocol::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse,
     TransportInitializeParams, TransportInitializeResult, TransportServerInfo,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -25,22 +26,26 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
         .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
         .and_then(|value| value.into_string().ok())
         .unwrap_or_else(default_listen_address);
-    let worker_program = arg_value(args, "--worker-bin")
-        .or_else(|| std::env::var_os("CLOUDAGENT_WORKER_BIN"))
-        .unwrap_or_else(default_worker_bin);
+    let worker_program = resolve_worker_program(args)?;
     let data_root_dir =
         arg_value(args, "--data-dir").or_else(|| std::env::var_os("CLOUDAGENT_DATA_ROOT_DIR"));
     let resolved_data_root_dir = resolve_data_root_dir(data_root_dir.as_deref());
 
     let listener = TcpListener::bind(&listen_address)
         .await
-        .with_context(|| format!("failed to bind gatewayd remote host on {listen_address}"))?;
-    tracing::info!("gatewayd remote app-server host listening on {listen_address}");
+        .with_context(|| format!("failed to bind node remote host on {listen_address}"))?;
+    tracing::info!("node remote app-server host listening on {listen_address}");
     tracing::info!(
         data_root_dir = %resolved_data_root_dir.display(),
         conversation_store_dir = %conversation_store_dir(Some(resolved_data_root_dir.as_os_str())).display(),
-        "gatewayd data root resolved"
+        "node data root resolved"
     );
+    if should_emit_dev_launch_logs() {
+        tracing::info!(
+            worker_program = %PathBuf::from(&worker_program).display(),
+            "node development worker resolved"
+        );
+    }
     let platforms = PlatformManager::load(Some(resolved_data_root_dir.as_os_str())).await?;
     let conversation_store = infra_store::JsonConversationStore::new(conversation_store_dir(Some(
         resolved_data_root_dir.as_os_str(),
@@ -84,12 +89,12 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
                     )
                     .await
                     {
-                        tracing::warn!("gatewayd remote host connection failed: {error}");
+                        tracing::warn!("node remote host connection failed: {error}");
                     }
                 });
             }
             _ = runtime.wait_for_shutdown() => {
-                tracing::info!("gatewayd received node shutdown request");
+                tracing::info!("node received node shutdown request");
                 break;
             }
         }
@@ -261,7 +266,7 @@ where
                     id: request.id,
                     result: serde_json::to_value(TransportInitializeResult {
                         server_info: TransportServerInfo {
-                            name: "gatewayd".to_string(),
+                            name: "node".to_string(),
                             version: env!("CARGO_PKG_VERSION").to_string(),
                         },
                         protocol_version: "1".to_string(),
@@ -308,6 +313,79 @@ fn default_worker_bin() -> OsString {
         .unwrap_or_else(|| OsString::from(exe_name("agentd")))
 }
 
+fn resolve_worker_program(args: &[OsString]) -> Result<OsString> {
+    if let Some(worker_bin) =
+        arg_value(args, "--worker-bin").or_else(|| std::env::var_os("CLOUDAGENT_WORKER_BIN"))
+    {
+        if should_emit_dev_launch_logs() {
+            tracing::info!(
+                worker_program = %PathBuf::from(&worker_bin).display(),
+                "node development worker selected from explicit override"
+            );
+        }
+        return Ok(worker_bin);
+    }
+
+    if should_build_worker_via_cargo() {
+        return build_workspace_worker().map(|path| path.into_os_string());
+    }
+
+    Ok(default_worker_bin())
+}
+
+fn should_build_worker_via_cargo() -> bool {
+    !node_release_mode_enabled()
+        && cfg!(debug_assertions)
+        && std::env::current_dir().is_ok_and(|dir| dir.join("Cargo.toml").exists())
+}
+
+fn node_release_mode_enabled() -> bool {
+    std::env::var("CLOUDAGENT_RELEASE_MODE").ok().as_deref() == Some("1") || !cfg!(debug_assertions)
+}
+
+fn build_workspace_worker() -> Result<PathBuf> {
+    let target_dir = std::env::current_dir()
+        .map(|dir| dir.join("target").join(".cloudagent-local-node"))
+        .unwrap_or_else(|_| PathBuf::from("target").join(".cloudagent-local-node"));
+    if should_emit_dev_launch_logs() {
+        tracing::info!(
+            target_dir = %target_dir.display(),
+            "node development worker build requested"
+        );
+    }
+    let status = std::process::Command::new("cargo")
+        .args([
+            OsString::from("build"),
+            OsString::from("-p"),
+            OsString::from("agentd"),
+            OsString::from("--target-dir"),
+            target_dir.clone().into_os_string(),
+        ])
+        .status()
+        .context("failed to build worker toolchain via cargo")?;
+    if !status.success() {
+        return Err(anyhow!(
+            "failed to build worker toolchain via cargo (status: {status})"
+        ));
+    }
+    let worker_path = target_dir.join(debug_exe_name("agentd"));
+    if should_emit_dev_launch_logs() {
+        tracing::info!(
+            worker_program = %worker_path.display(),
+            "node development worker build completed"
+        );
+    }
+    Ok(worker_path)
+}
+
+fn should_emit_dev_launch_logs() -> bool {
+    !node_release_mode_enabled()
+}
+
+fn debug_exe_name(base: &str) -> PathBuf {
+    Path::new("debug").join(exe_name(base))
+}
+
 fn exe_name(base: &str) -> String {
     if cfg!(windows) {
         format!("{base}.exe")
@@ -349,13 +427,13 @@ mod tests {
 
     fn test_worker_manager() -> WorkerManager {
         let root =
-            std::env::temp_dir().join(format!("cloudagent-gatewayd-tests-{}", std::process::id()));
+            std::env::temp_dir().join(format!("cloudagent-node-tests-{}", std::process::id()));
         WorkerManager::new(OsString::from("agentd.exe"), Some(root.into_os_string()))
     }
 
     async fn test_runtime() -> NodeRuntime {
         let root = std::env::temp_dir().join(format!(
-            "cloudagent-gatewayd-platform-tests-{}",
+            "cloudagent-node-platform-tests-{}",
             std::process::id()
         ));
         let platforms = PlatformManager::load(Some(root.as_os_str()))

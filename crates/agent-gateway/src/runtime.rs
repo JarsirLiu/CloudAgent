@@ -1,9 +1,9 @@
+use crate::adapter::feishu::{FeishuAdapter, FeishuAdapterOptions};
 use crate::app_server_mapping::{EventFlow, map_app_server_event};
 use crate::config::GatewayConfig;
 use crate::gateway_event::{GatewayEvent, OutboundTarget};
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
-use crate::platforms::feishu::{FeishuAdapter, FeishuAdapterOptions};
 use crate::session::build_session_key;
 use agent_app_server_client::{AppServerClient, InProcessClientConfig};
 use agent_core::{AgentHost, ApprovalPolicy, PermissionProfile, text_input_items};

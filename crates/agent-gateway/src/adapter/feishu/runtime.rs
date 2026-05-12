@@ -3,7 +3,6 @@ use crate::config::{FeishuConfig, GatewayConfig, LlmConfig};
 use crate::gateway_event::{GatewayEvent, OutboundTarget};
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
-use crate::platforms::feishu::{FeishuAdapter, FeishuAdapterOptions};
 use crate::session::build_session_key;
 use agent_app_server_client::AppServerClient;
 use agent_core::{ServerRequestDecision, text_input_items};
@@ -20,31 +19,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{Duration, timeout};
 use tracing::{debug, info};
 
-#[derive(Debug, Clone, Default)]
-pub struct FeishuAdapterConfig {
-    pub app_id: String,
-    pub app_secret: String,
-    pub domain: String,
-    pub verification_token: Option<String>,
-    pub encrypt_key: Option<String>,
-    pub enable_cards: bool,
-    pub thread_isolation: bool,
-    pub reply_to_trigger: bool,
-    pub group_only_mentioned: bool,
-    pub group_reply_without_mention: bool,
-}
-
-impl FeishuAdapterConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.app_id.trim().is_empty() {
-            anyhow::bail!("missing app_id")
-        }
-        if self.app_secret.trim().is_empty() {
-            anyhow::bail!("missing app_secret")
-        }
-        Ok(())
-    }
-}
+use super::{FeishuAdapter, FeishuAdapterConfig, FeishuAdapterOptions};
 
 pub struct PlatformRuntime {
     task: JoinHandle<Result<()>>,

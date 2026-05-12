@@ -53,7 +53,7 @@ jobs:
 
       - name: Build binaries
         run: |
-          cargo build --release --target ${{ matrix.target }} -p cli -p agentd
+          cargo build --release --target ${{ matrix.target }} -p cloudagent -p cli -p node -p agentd
 
       - name: Prepare package (unix)
         if: runner.os != 'Windows'
@@ -64,6 +64,8 @@ jobs:
           PKG="cloudagent-${VERSION}-${{ matrix.target }}"
           mkdir -p "dist/${PKG}"
           cp "target/${{ matrix.target }}/release/cloudagent" "dist/${PKG}/cloudagent"
+          cp "target/${{ matrix.target }}/release/cli" "dist/${PKG}/cli"
+          cp "target/${{ matrix.target }}/release/node" "dist/${PKG}/node"
           cp "target/${{ matrix.target }}/release/agentd" "dist/${PKG}/agentd"
           cp README.md "dist/${PKG}/README.md"
           tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
@@ -77,6 +79,8 @@ jobs:
           PKGROOT="dist/linux-root"
           mkdir -p "${PKGROOT}"
           cp "target/${{ matrix.target }}/release/cloudagent" "${PKGROOT}/cloudagent"
+          cp "target/${{ matrix.target }}/release/cli" "${PKGROOT}/cli"
+          cp "target/${{ matrix.target }}/release/node" "${PKGROOT}/node"
           cp "target/${{ matrix.target }}/release/agentd" "${PKGROOT}/agentd"
           cp README.md "${PKGROOT}/README.md"
           export PATH="${PATH}:$(go env GOPATH)/bin"
@@ -96,8 +100,10 @@ jobs:
           INSTALL_ROOT="${PAYLOAD_ROOT}/usr/local/bin"
           mkdir -p "${INSTALL_ROOT}"
           cp "target/${{ matrix.target }}/release/cloudagent" "${INSTALL_ROOT}/cloudagent"
+          cp "target/${{ matrix.target }}/release/cli" "${INSTALL_ROOT}/cli"
+          cp "target/${{ matrix.target }}/release/node" "${INSTALL_ROOT}/node"
           cp "target/${{ matrix.target }}/release/agentd" "${INSTALL_ROOT}/agentd"
-          chmod 755 "${INSTALL_ROOT}/cloudagent" "${INSTALL_ROOT}/agentd"
+          chmod 755 "${INSTALL_ROOT}/cloudagent" "${INSTALL_ROOT}/cli" "${INSTALL_ROOT}/node" "${INSTALL_ROOT}/agentd"
           pkgbuild \
             --root "${PAYLOAD_ROOT}" \
             --identifier "com.liufelix.cloudagent.${{ matrix.mac_pkg_arch }}" \
@@ -113,6 +119,8 @@ jobs:
           $Pkg = "cloudagent-$Version-${{ matrix.target }}"
           New-Item -ItemType Directory -Path "dist/$Pkg" -Force | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/cloudagent.exe" "dist/$Pkg/cloudagent.exe"
+          Copy-Item "target/${{ matrix.target }}/release/cli.exe" "dist/$Pkg/cli.exe"
+          Copy-Item "target/${{ matrix.target }}/release/node.exe" "dist/$Pkg/node.exe"
           Copy-Item "target/${{ matrix.target }}/release/agentd.exe" "dist/$Pkg/agentd.exe"
           Copy-Item "README.md" "dist/$Pkg/README.md"
           Compress-Archive -Path "dist/$Pkg/*" -DestinationPath "dist/$Pkg.zip" -Force

@@ -2,7 +2,7 @@ param(
     [string]$Target = "x86_64-pc-windows-msvc",
     [string]$Version = "manual",
     [string]$Profile = "release",
-    [string]$Package = "cli",
+    [string]$Package = "cloudagent",
     [string]$Output
 )
 

@@ -16,6 +16,14 @@ contents:
     dst: /usr/local/bin/cloudagent
     file_info:
       mode: 0755
+  - src: dist/linux-root/cli
+    dst: /usr/local/bin/cli
+    file_info:
+      mode: 0755
+  - src: dist/linux-root/node
+    dst: /usr/local/bin/node
+    file_info:
+      mode: 0755
   - src: dist/linux-root/agentd
     dst: /usr/local/bin/agentd
     file_info:

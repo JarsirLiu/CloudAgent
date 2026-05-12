@@ -1,6 +1,6 @@
 use agent_protocol::TransportClientInfo;
 
-const PLATFORM_RUNTIME_CLIENT_PREFIX: &str = "gatewayd-platform-";
+const PLATFORM_RUNTIME_CLIENT_PREFIX: &str = "node-platform-";
 const PLATFORM_RUNTIME_FALLBACK_PREFIX: &str = "cloudagent-platform-";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -195,8 +195,8 @@ mod tests {
     #[test]
     fn sanitize_source_segment_collapses_noise() {
         assert_eq!(
-            sanitize_source_segment(" GatewayD.Platform/Feishu "),
-            "gatewayd-platform-feishu"
+            sanitize_source_segment(" Node.Platform/Feishu "),
+            "node-platform-feishu"
         );
         assert_eq!(sanitize_source_segment(""), "unknown");
     }

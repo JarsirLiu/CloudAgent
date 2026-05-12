@@ -165,7 +165,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
             let root = std::env::temp_dir().join(format!(
-                "cloudagent-gatewayd-platform-tests-{}",
+                "cloudagent-node-platform-tests-{}",
                 std::process::id()
             ));
             let runtime = NodeRuntime::new(
@@ -206,7 +206,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
             let root = std::env::temp_dir().join(format!(
-                "cloudagent-gatewayd-platform-tests-{}",
+                "cloudagent-node-platform-tests-{}",
                 std::process::id()
             ));
             let runtime = NodeRuntime::new(
@@ -248,7 +248,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
             let root = std::env::temp_dir().join(format!(
-                "cloudagent-gatewayd-platform-tests-{}",
+                "cloudagent-node-platform-tests-{}",
                 std::process::id()
             ));
             let runtime = NodeRuntime::new(
