@@ -30,22 +30,27 @@ Today, CloudAgent already supports remote access through Feishu and personal WeC
 ### Roadmap
 In progress:
 - [x] OpenAI-compatible model support
-- [x] Tooling system
 - [x] CLI interaction
 - [x] Image input
 - [x] Feishu remote access
 - [x] Personal WeChat remote access
-- [x] `node-worker` architecture
 - [x] Automatic context compaction
 
 Planned:
-- [ ] MCP
-- [ ] Skill
-- [ ] Long-term memory
 - [ ] Self-scheduling
 - [ ] Multi-end interconnect
-- [ ] Web console
 - [ ] Multilingual support
+
+### Permissions
+CloudAgent currently supports three session permission modes:
+
+| Mode | Description |
+|---|---|
+| `ReadOnly` | Read operations run directly; writes and other changes require approval |
+| `WorkspaceWrite` | Workspace writes run directly; actions outside the workspace or riskier operations require approval |
+| `FullAccess` | All actions run without approval prompts |
+
+Default mode: `WorkspaceWrite`
 
 ### Configure API Key
 CloudAgent reads config from default paths in this order:
@@ -123,22 +128,27 @@ CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连
 ### 开发进度（Roadmap）
 已开发：
 - [x] OpenAI 兼容模型
-- [x] 工具系统
 - [x] CLI 交互
 - [x] 图片输入
 - [x] 飞书远程接入
 - [x] 个人微信远程接入
-- [x] `node-worker` 架构
 - [x] 自动上下文压缩
 
 未开发：
-- [ ] MCP
-- [ ] Skill
-- [ ] 长期记忆
 - [ ] 自我调度
 - [ ] 多端互连
-- [ ] Web 端
 - [ ] 多语言支持
+
+### 权限
+CloudAgent 当前支持三种会话权限模式：
+
+| 模式 | 说明 |
+|---|---|
+| `ReadOnly` | 读操作可直接执行；写入和其他变更需要审批 |
+| `WorkspaceWrite` | 工作区内写操作可直接执行；超出工作区或风险更高的操作需要审批 |
+| `FullAccess` | 所有操作均可直接执行，不再弹出审批 |
+
+默认模式：`WorkspaceWrite`
 
 ### 配置 API Key
 CloudAgent 默认按以下顺序读取配置：

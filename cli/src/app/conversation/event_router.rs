@@ -62,7 +62,7 @@ mod tests {
             PathBuf::from("D:\\learn\\gifti\\cloudagent"),
             PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
             false,
-            "ReadOnly".to_string(),
+            "WorkspaceWrite".to_string(),
         )
     }
 

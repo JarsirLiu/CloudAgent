@@ -6,20 +6,20 @@ pub(crate) struct PermissionModeSpec {
     pub(crate) label: &'static str,
 }
 
-pub(crate) const DEFAULT_PERMISSION_MODE: &str = "ReadOnly";
+pub(crate) const DEFAULT_PERMISSION_MODE: &str = "WorkspaceWrite";
 
 pub(crate) const PERMISSION_MODE_SPECS: [PermissionModeSpec; 3] = [
     PermissionModeSpec {
         mode: "ReadOnly",
-        label: "read-only; read tools only; writes need approval",
+        label: "read operations only; writes and other changes need approval",
     },
     PermissionModeSpec {
         mode: "WorkspaceWrite",
-        label: "workspace-write only; other dirs need approval; risky commands need approval",
+        label: "workspace writes allowed; outside-workspace and risky actions need approval",
     },
     PermissionModeSpec {
         mode: "FullAccess",
-        label: "full-access; other dirs allowed; dangerous commands still need approval",
+        label: "full access; outside-workspace actions allowed; approvals are not requested",
     },
 ];
 

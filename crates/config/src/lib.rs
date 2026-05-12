@@ -261,7 +261,7 @@ impl AgentConfig {
             },
             cli: CliConfig {
                 pre_llm_filter_enabled: false,
-                permission_mode: "ReadOnly".to_string(),
+                permission_mode: "WorkspaceWrite".to_string(),
             },
             workspace_root,
         }

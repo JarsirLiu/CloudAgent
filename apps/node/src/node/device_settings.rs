@@ -13,7 +13,7 @@ pub(crate) struct PersistedDeviceSettings {
 impl PersistedDeviceSettings {
     pub(crate) fn default() -> Self {
         Self {
-            permission_mode: "ReadOnly".to_string(),
+            permission_mode: "WorkspaceWrite".to_string(),
         }
     }
 
@@ -43,7 +43,7 @@ fn permission_profile_for_mode(mode: &str) -> PermissionProfile {
         "readonly" | "safe" => PermissionProfile::ReadOnly,
         "workspacewrite" | "balanced" => PermissionProfile::WorkspaceWrite,
         "fullaccess" | "danger" => PermissionProfile::FullAccess,
-        _ => PermissionProfile::ReadOnly,
+        _ => PermissionProfile::WorkspaceWrite,
     }
 }
 
@@ -78,6 +78,6 @@ mod tests {
     fn missing_snapshot_uses_defaults() {
         let temp = tempfile::tempdir().expect("tempdir");
         let settings = load_persisted_device_settings(temp.path()).expect("load default settings");
-        assert_eq!(settings.permission_mode, "ReadOnly");
+        assert_eq!(settings.permission_mode, "WorkspaceWrite");
     }
 }

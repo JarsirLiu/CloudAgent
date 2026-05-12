@@ -54,7 +54,7 @@ impl RunState {
             live_animation_frame: 0,
             expand_tool_details: false,
             pre_llm_filter_enabled: false,
-            permission_mode: "ReadOnly".to_string(),
+            permission_mode: "WorkspaceWrite".to_string(),
             weixin_binding: None,
         }
     }
