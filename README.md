@@ -55,8 +55,14 @@ Planned:
 
 ### Release Usage Commands
 ```bash
-# start full CLI (default)
+# ensure local node is running
 cloudagent start
+
+# open CLI and configure model via /config on first launch
+cloudagent cli
+
+# check local node status
+cloudagent status
 
 # upgrade to latest release
 curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh
@@ -71,13 +77,20 @@ CloudAgent reads config from default paths in this order:
 - `<workspace>/.cloudagent/config.toml`
 - `<workspace>/configs/config.toml`
 
-Recommended (global default):
+Recommended:
 ```bash
-mkdir -p ~/.cloudagent
-cp configs/config.toml.example ~/.cloudagent/config.toml
-# edit ~/.cloudagent/config.toml and set llm.api_key
-# (only [llm] is required; other settings use defaults)
+# 1) start node
+cloudagent start
+
+# 2) open CLI
+cloudagent cli
+
+# 3) inside CLI, run:
+/config
 ```
+
+`/config` is the preferred setup path for `api_key`, `base_url`, and `model`.
+You can still edit `~/.cloudagent/config.toml` manually if needed.
 
 ### Local Development Startup
 ```bash
@@ -147,8 +160,14 @@ CloudAgent 不止于本地。
 
 ### 发行版使用命令
 ```bash
-# 启动完整 CLI（默认）
+# 确保本地 node 已启动
 cloudagent start
+
+# 打开 CLI；首次启动后用 /config 配置模型
+cloudagent cli
+
+# 查看本地 node 状态
+cloudagent status
 
 # 更新到最新发行版
 curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh
@@ -163,13 +182,20 @@ CloudAgent 默认按以下顺序读取配置：
 - `<workspace>/.cloudagent/config.toml`
 - `<workspace>/configs/config.toml`
 
-推荐方式（全局默认）：
+推荐方式：
 ```bash
-mkdir -p ~/.cloudagent
-cp configs/config.toml.example ~/.cloudagent/config.toml
-# 编辑 ~/.cloudagent/config.toml，设置 llm.api_key
-# （只需要 [llm]，其它配置使用默认值）
+# 1) 启动 node
+cloudagent start
+
+# 2) 打开 CLI
+cloudagent cli
+
+# 3) 在 CLI 中执行：
+/config
 ```
+
+`/config` 是配置 `api_key`、`base_url` 和 `model` 的首选方式。
+如果有需要，仍然可以手工编辑 `~/.cloudagent/config.toml`。
 
 ### 本地开发启动
 ```bash
