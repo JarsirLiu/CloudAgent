@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "agent-app-server"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-core",
  "agent-protocol",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "agent-app-server-client"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-app-server",
  "agent-core",
@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "agent-core"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "agent-gateway"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-app-server-client",
  "agent-core",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "agent-memory"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "agent-model-provider"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "agent-protocol"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-core",
  "anyhow",
@@ -127,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "agent-scheduler"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-core",
  "shared",
@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "agent-tools"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-core",
  "agent-protocol",
@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "agentd"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-app-server",
  "agent-core",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-app-server-client",
  "agent-core",
@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "cloudagent"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-app-server-client",
  "agent-core",
@@ -546,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "anyhow",
  "serde",
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "infra-http"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
@@ -1437,21 +1437,21 @@ dependencies = [
 
 [[package]]
 name = "infra-shell"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "shared",
 ]
 
 [[package]]
 name = "infra-ssh"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "shared",
 ]
 
 [[package]]
 name = "infra-store"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-core",
  "agent-protocol",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "node"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "agent-app-server-client",
  "agent-core",
@@ -2702,7 +2702,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "0.1.36"
+version = "0.1.37"
 dependencies = [
  "serde",
 ]
