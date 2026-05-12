@@ -73,6 +73,7 @@ cloudagent status
 cloudagent stop
 
 # upgrade CloudAgent to the latest release
+# if the local node is running, upgrade will stop it first and restart it after install
 cloudagent upgrade
 
 # uninstall CloudAgent but keep user data
@@ -212,6 +213,7 @@ cloudagent status
 cloudagent stop
 
 # 将 CloudAgent 更新到最新版本
+# 如果本地 node 正在运行，升级会先停止它，并在安装后自动重新启动
 cloudagent upgrade
 
 # 卸载 CloudAgent，但保留用户数据
