@@ -37,9 +37,10 @@ In progress:
 - [x] Automatic context compaction
 
 Planned:
-- [ ] Self-scheduling
-- [ ] Multi-end interconnect
-- [ ] Multilingual support
+- [ ] MCP
+- [ ] Skills
+- [ ] Long-term memory
+- [ ] Web access
 
 ### Install
 GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
@@ -175,9 +176,10 @@ CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连
 - [x] 自动上下文压缩
 
 未开发：
-- [ ] 自我调度
-- [ ] 多端互连
-- [ ] 多语言支持
+- [ ] MCP
+- [ ] Skill
+- [ ] 长期记忆
+- [ ] Web 访问
 
 ### 安装
 GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
