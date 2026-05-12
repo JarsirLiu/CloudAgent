@@ -37,6 +37,74 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+cleanup_path() {
+  path_line='export PATH="$HOME/.local/bin:$PATH"'
+  fish_line='fish_add_path "$HOME/.local/bin"'
+
+  rewrite_rc() {
+    rc="$1"
+    [ -f "$rc" ] || return 0
+    tmp="$rc.cloudagent-tmp"
+    awk -v path_line="$path_line" '
+      $0 == "# CloudAgent" {
+        if (getline next_line) {
+          if (next_line == path_line) {
+            changed = 1
+            next
+          }
+          print $0
+          print next_line
+          next
+        }
+      }
+      $0 == path_line {
+        changed = 1
+        next
+      }
+      { print }
+      END {
+        if (changed) {
+          exit 0
+        }
+      }
+    ' "$rc" > "$tmp" && mv "$tmp" "$rc"
+    rm -f "$tmp"
+  }
+
+  for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.zprofile"; do
+    rewrite_rc "$rc"
+  done
+
+  fish_config="$HOME/.config/fish/config.fish"
+  if [ -f "$fish_config" ]; then
+    tmp="$fish_config.cloudagent-tmp"
+    awk -v fish_line="$fish_line" '
+      $0 == "# CloudAgent" {
+        if (getline next_line) {
+          if (next_line == fish_line) {
+            changed = 1
+            next
+          }
+          print $0
+          print next_line
+          next
+        }
+      }
+      $0 == fish_line {
+        changed = 1
+        next
+      }
+      { print }
+      END {
+        if (changed) {
+          exit 0
+        }
+      }
+    ' "$fish_config" > "$tmp" && mv "$tmp" "$fish_config"
+    rm -f "$tmp"
+  fi
+}
+
 for name in cloudagent cli node agentd; do
   target="$BIN_DIR/$name"
   if [ -L "$target" ] || [ -f "$target" ]; then
@@ -56,3 +124,5 @@ if [ "$PURGE" -eq 1 ] && [ -d "$DATA_DIR" ]; then
 else
   echo "kept user data: $DATA_DIR"
 fi
+
+cleanup_path

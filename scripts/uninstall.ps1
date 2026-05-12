@@ -8,6 +8,23 @@ $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT 
 $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
 
+function Remove-UserPathEntry {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $userPath) {
+        return
+    }
+
+    $parts = $userPath.Split(';') | Where-Object { $_ }
+    $filtered = $parts | Where-Object { $_ -ne $BinDir }
+    if ($filtered.Count -eq $parts.Count) {
+        return
+    }
+
+    $newPath = ($filtered -join ';')
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    Write-Host "Removed $BinDir from user PATH"
+}
+
 foreach ($name in @("cloudagent.cmd")) {
     $path = Join-Path $BinDir $name
     if (Test-Path $path) {
@@ -27,3 +44,5 @@ if ($Purge -and (Test-Path $DataDir)) {
 } else {
     Write-Host "Kept user data: $DataDir"
 }
+
+Remove-UserPathEntry
