@@ -20,12 +20,23 @@ cloudagent upgrade
 
 `cloudagent cli` exits only the CLI surface. It does not stop the local node.
 
+Release assets are published on GitHub Releases:
+
+- [CloudAgent Releases](https://github.com/JarsirLiu/CloudAgent/releases)
+
 ## Linux / macOS
 
 Install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh
+```
+
+Download the installer script first, then run it:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh
+sh install.sh
 ```
 
 Upgrade:
@@ -58,6 +69,13 @@ Install:
 
 ```powershell
 irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 | iex
+```
+
+Download the installer script first, then run it:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 Upgrade:

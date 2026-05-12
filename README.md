@@ -47,8 +47,8 @@ CloudAgent currently supports three session permission modes:
 | Mode | Description |
 |---|---|
 | `ReadOnly` | Read operations run directly; writes and other changes require approval |
-| `WorkspaceWrite` | Workspace writes run directly; actions outside the workspace or riskier operations require approval |
-| `FullAccess` | All actions run without approval prompts |
+| `WorkspaceWrite` | Workspace writes run directly; outside-workspace actions, network commands, and dangerous commands require approval |
+| `FullAccess` | Workspace and outside-workspace actions usually run directly; dangerous commands still require approval |
 
 Default mode: `WorkspaceWrite`
 
@@ -145,8 +145,8 @@ CloudAgent 当前支持三种会话权限模式：
 | 模式 | 说明 |
 |---|---|
 | `ReadOnly` | 读操作可直接执行；写入和其他变更需要审批 |
-| `WorkspaceWrite` | 工作区内写操作可直接执行；超出工作区或风险更高的操作需要审批 |
-| `FullAccess` | 所有操作均可直接执行，不再弹出审批 |
+| `WorkspaceWrite` | 工作区内写操作可直接执行；工作区外操作、网络命令和危险命令需要审批 |
+| `FullAccess` | 工作区内外操作通常可直接执行；危险命令仍需要审批 |
 
 默认模式：`WorkspaceWrite`
 

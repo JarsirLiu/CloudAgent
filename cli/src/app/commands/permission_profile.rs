@@ -15,11 +15,11 @@ pub(crate) const PERMISSION_MODE_SPECS: [PermissionModeSpec; 3] = [
     },
     PermissionModeSpec {
         mode: "WorkspaceWrite",
-        label: "workspace writes allowed; outside-workspace and risky actions need approval",
+        label: "workspace writes allowed; outside-workspace, network, and risky actions need approval",
     },
     PermissionModeSpec {
         mode: "FullAccess",
-        label: "full access; outside-workspace actions allowed; approvals are not requested",
+        label: "full access; outside-workspace actions allowed; risky actions still need approval",
     },
 ];
 
