@@ -21,8 +21,6 @@ pub(crate) enum ComposerIntent {
     Permissions(String),
     Config,
     Gateway,
-    WeixinLogin,
-    WeixinLoginCheck(String),
     GatewaySelect(String),
     GatewayWeixinLoginStart {
         platform: String,

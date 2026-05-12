@@ -41,6 +41,21 @@ Planned:
 - [ ] Multi-end interconnect
 - [ ] Multilingual support
 
+### Install
+GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
+
+Linux / macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh
+```
+
+Windows:
+
+```bash
+irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 | iex
+```
+
 ### Permissions
 CloudAgent currently supports three session permission modes:
 
@@ -107,9 +122,7 @@ cargo run -p cli
 | `/delete [id]` | Hard delete a conversation. If `id` is omitted, you can choose from the session list |
 | `/filter` | Set the pre-LLM input filter |
 | `/permissions` | Set the session permission mode |
-| `/gateway` | Open the platform gateway panel |
-| `/weixin-login` | Start a personal WeChat QR login session |
-| `/weixin-login-check <session-id>` | Check a WeChat login session and save credentials on success |
+| `/gateway` | Configure and connect IM platforms |
 | `/clear` | Clear this conversation |
 | `/exit` | Exit CloudAgent |
 
@@ -138,6 +151,21 @@ CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连
 - [ ] 自我调度
 - [ ] 多端互连
 - [ ] 多语言支持
+
+### 安装
+GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
+
+Linux / macOS：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh
+```
+
+Windows：
+
+```bash
+irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 | iex
+```
 
 ### 权限
 CloudAgent 当前支持三种会话权限模式：
@@ -205,8 +233,6 @@ cargo run -p cli
 | `/delete [id]` | 永久删除会话；省略 `id` 时可在列表中选择 |
 | `/filter` | 设置 pre-LLM 输入过滤 |
 | `/permissions` | 设置会话权限模式 |
-| `/gateway` | 打开平台网关面板 |
-| `/weixin-login` | 启动个人微信二维码登录 |
-| `/weixin-login-check <session-id>` | 检查微信登录会话并在成功后保存凭据 |
+| `/gateway` | 配置并连接 IM 平台 |
 | `/clear` | 清空当前会话 |
 | `/exit` | 退出 CloudAgent |

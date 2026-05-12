@@ -33,8 +33,6 @@ pub(crate) enum UiInputEvent {
         model: String,
     },
     LocalGatewayOpen,
-    LocalWeixinLoginStart,
-    LocalWeixinLoginCheck(String),
     LocalGatewaySelect(String),
     LocalGatewayWeixinLoginStart(String),
     LocalGatewayWeixinLoginCheck {
