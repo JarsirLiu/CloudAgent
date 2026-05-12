@@ -5,21 +5,23 @@ use std::path::PathBuf;
 
 #[cfg(test)]
 pub(crate) fn test_worker_program() -> OsString {
-    let current_exe = std::env::current_exe().expect("current test executable");
-    let deps_dir = current_exe.parent().expect("test executable parent");
-    let target_dir = deps_dir.parent().expect("target profile directory");
+    let candidates = worker_program_candidates();
+    if let Some(path) = candidates.iter().find(|path| path.exists()) {
+        return path.clone().into_os_string();
+    }
 
-    let candidates = [
-        target_dir.join(exe_name("agentd")),
-        deps_dir.join(exe_name("agentd")),
-    ];
+    let status = std::process::Command::new("cargo")
+        .args(["build", "-p", "agentd"])
+        .status()
+        .expect("spawn cargo build -p agentd");
+    assert!(status.success(), "cargo build -p agentd failed: {status}");
 
     candidates
         .iter()
         .find(|path| path.exists())
         .unwrap_or_else(|| {
             panic!(
-                "failed to locate test worker binary; checked: {}",
+                "failed to locate test worker binary after build; checked: {}",
                 candidates
                     .iter()
                     .map(|path| path.display().to_string())
@@ -56,4 +58,15 @@ fn exe_name(base: &str) -> String {
     } else {
         base.to_string()
     }
+}
+
+#[cfg(test)]
+fn worker_program_candidates() -> [PathBuf; 2] {
+    let current_exe = std::env::current_exe().expect("current test executable");
+    let deps_dir = current_exe.parent().expect("test executable parent");
+    let target_dir = deps_dir.parent().expect("target profile directory");
+    [
+        target_dir.join(exe_name("agentd")),
+        deps_dir.join(exe_name("agentd")),
+    ]
 }

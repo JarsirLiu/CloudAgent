@@ -87,10 +87,7 @@ mod tests {
     #[test]
     fn dev_mode_uses_data_platform_directory() {
         let root = PathBuf::from(r"D:\repo\cloudagent\data");
-        assert_eq!(
-            platform_config_dir(Some(root.as_os_str())),
-            PathBuf::from(r"D:\repo\cloudagent\data\platform")
-        );
+        assert_eq!(platform_config_dir(Some(root.as_os_str())), root.join("platform"));
     }
 
     #[test]
@@ -98,7 +95,7 @@ mod tests {
         let root = PathBuf::from(r"C:\Users\felix\.cloudagent\data");
         assert_eq!(
             platform_config_dir(Some(root.as_os_str())),
-            PathBuf::from(r"C:\Users\felix\.cloudagent\platform")
+            root.parent().expect("release data parent").join("platform")
         );
     }
 }
