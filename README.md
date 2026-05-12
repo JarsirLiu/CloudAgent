@@ -1,127 +1,200 @@
-# CloudAgent
+<p align="center">
+  <img src="https://img.shields.io/badge/Status-Active-success" alt="status">
+  <img src="https://img.shields.io/badge/Language-Rust%20%7C%20TypeScript-blue" alt="language">
+  <img src="https://img.shields.io/badge/Architecture-Agent%20System-orange" alt="architecture">
+</p>
 
-CloudAgent 现在以干净的 IM 网关架构重建，目标不是把飞书写死，而是先做一套可以持续扩平台的 Hermes 风格骨架。
+<p align="center">
+  <a href="https://github.com/JarsirLiu/CloudAgent/stargazers"><img src="https://img.shields.io/github/stars/JarsirLiu/CloudAgent?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/JarsirLiu/CloudAgent/network/members"><img src="https://img.shields.io/github/forks/JarsirLiu/CloudAgent?style=social" alt="GitHub forks"></a>
+  <a href="https://github.com/JarsirLiu/CloudAgent/issues"><img src="https://img.shields.io/github/issues/JarsirLiu/CloudAgent" alt="GitHub issues"></a>
+  <a href="https://github.com/JarsirLiu/CloudAgent/blob/main/LICENSE"><img src="https://img.shields.io/github/license/JarsirLiu/CloudAgent" alt="License"></a>
+</p>
 
-当前落地的是第一版最小链路：
+<p align="center">
+  <a href="#english">English</a> •
+  <a href="#中文">中文</a>
+</p>
 
-- `PlatformAdapter`：平台协议层，只负责接入 IM
-- `GatewayRuntime`：统一消息编排层
-- `SessionKey`：跨平台统一会话映射
-- `OpenAiResponder`：模型调用层
+---
 
-飞书当前通过 `websocket` 常连模式接入，不依赖公网 webhook。
+<a id="english"></a>
 
-## 架构
+## CloudAgent
 
-```text
-Feishu WebSocket
-  -> FeishuAdapter
-  -> InboundMessage
-  -> GatewayRuntime
-  -> SessionKey
-  -> LLM Responder
-  -> OutboundMessage
-  -> FeishuAdapter
-```
+### Overview
+CloudAgent is an agent built for remote control.
 
-这套分层的关键约束是：
+In phase one, it solves a simple but real problem: without logging into servers directly, I can still complete the full remote workflow, including project deployment, server monitoring, incident reporting, and automated handling.
+CloudAgent embeds the token-compression strategy from [rtk](https://github.com/rtk-ai/rtk), activated via the `/filter` command, to significantly reduce token usage in long sessions while improving cache hit rates.
+It also provides robust context orchestration, tool execution, and approval mechanisms to keep local coding and automation tasks accurate and reliable.
 
-- 平台适配器不直接碰模型推理逻辑
-- 网关运行时不直接碰飞书 SDK
-- 会话键生成与平台协议解耦
-- 后续新增钉钉、企业微信、Telegram、Slack 时，只新增各自的 adapter
+Its target users are straightforward: people who are extremely lazy and want to command multiple agents from a phone.
+CloudAgent goes beyond local.
 
-## 目录
+### Roadmap
+In progress:
+- [x] OpenAI-compatible model support
+- [x] Tooling system
+- [x] CLI (under active development)
 
-- [apps/cloudagent/src/main.rs](/D:/learn/gifti/cloudagent/apps/cloudagent/src/main.rs)
-  产品入口，负责 `start/status/stop/cli`
-- [apps/node/src/main.rs](/D:/learn/gifti/cloudagent/apps/node/src/main.rs)
-  resident node 的启动与配置加载
-- [crates/agent-gateway/src/platform.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/platform.rs)
-  平台适配器抽象
-- [crates/agent-gateway/src/runtime.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/runtime.rs)
-  统一消息运行时
-- [crates/agent-gateway/src/adapter/feishu/client.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/adapter/feishu/client.rs)
-  飞书 websocket 适配器主入口
-- [crates/agent-gateway/src/adapter/feishu/admission.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/adapter/feishu/admission.rs)
-  飞书消息准入
-- [crates/agent-gateway/src/adapter/feishu/normalize.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/adapter/feishu/normalize.rs)
-  飞书事件归一化
-- [crates/agent-gateway/src/adapter/feishu/outbound.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/adapter/feishu/outbound.rs)
-  飞书回复与线程路由
-- [crates/agent-gateway/src/message.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/message.rs)
-  标准化消息模型
-- [crates/agent-gateway/src/session.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/session.rs)
-  会话键映射
-- [crates/agent-gateway/src/openai.rs](/D:/learn/gifti/cloudagent/crates/agent-gateway/src/openai.rs)
-  OpenAI 兼容模型调用
+Planned:
+- [ ] MCP
+- [ ] Skill
+- [ ] Long-term memory
+- [ ] Self-scheduling
+- [ ] Multi-end interconnect
+- [ ] Web console
+- [ ] Multilingual support
 
-## 配置
+### Quick Release Download
+- GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
+- One-line install (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh`
+- One-line upgrade (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh`
+- One-line uninstall (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh`
 
-示例配置见 [configs/config.toml.example](/D:/learn/gifti/cloudagent/configs/config.toml.example)。
-
-最少需要：
-
-- `feishu.app_id`
-- `feishu.app_secret`
-- `llm.api_key`
-
-可选：
-
-- `feishu.verification_token`
-- `feishu.encrypt_key`
-- `feishu.group_only_mentioned`
-- `llm.base_url`
-- `llm.model`
-
-配置读取顺序：
-
-1. `CLOUDAGENT_CONFIG` 指向的配置文件
-2. `~/.cloudagent/config.toml`
-3. `./.cloudagent/config.toml`
-4. `./configs/config.toml`
-5. 环境变量覆盖文件配置
-
-平台凭据文件路径和 CLI `/gateway` 保持一致：
-
-- 开发模式默认走工作区 `data_root_dir = <workspace>/data`，平台配置写到 `<workspace>/platform/<name>.json`
-- 如果 `data_root_dir` 改成 `<workspace>/.cloudagent-dev` 这类目录，则平台配置写到 `<workspace>/.cloudagent-dev/platform/<name>.json`
-- 发行模式默认走 `~/.cloudagent/data`，平台配置写到 `~/.cloudagent/platform/<name>.json`
-
-## 启动
-
+### Release Usage Commands
 ```bash
-cargo run -p node
+# start full CLI (default)
+cloudagent start
+
+# upgrade to latest release
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh
+
+# uninstall
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh
 ```
 
-或者显式指定配置文件：
+### Configure API Key
+CloudAgent reads config from default paths in this order:
+- `~/.cloudagent/config.toml`
+- `<workspace>/.cloudagent/config.toml`
+- `<workspace>/configs/config.toml`
 
+Recommended (global default):
 ```bash
-cargo run -p node -- D:/learn/gifti/cloudagent/configs/config.toml.example
+mkdir -p ~/.cloudagent
+cp configs/config.toml.example ~/.cloudagent/config.toml
+# edit ~/.cloudagent/config.toml and set llm.api_key
+# (only [llm] is required; other settings use defaults)
 ```
 
-## 飞书应用设置
+### Local Development Startup
+```bash
+# 1) Clone
+git clone https://github.com/JarsirLiu/CloudAgent.git
+cd CloudAgent
 
-建议使用以下模式：
-
-- 事件订阅：`WebSocket Client`
-- 订阅事件：`im.message.receive_v1`
-- 机器人权限：发送消息、接收消息
-
-如果群聊里不想被每条消息触发，保持：
-
-```toml
-[feishu]
-group_only_mentioned = true
+# 2) Start CLI (dev mode)
+cargo run -p cli
 ```
 
-## 下一步扩平台
+### CLI Quick Commands
+| Command | Description |
+|---|---|
+| `/config` | Configure OpenAI-compatible `api_key`, `base_url`, and `model` |
+| `/help` | Show local command help |
+| `/copy` | Copy the latest assistant reply |
+| `/interrupt` | Interrupt the running turn (shortcut: `Ctrl+C`) |
+| `/compact` | Compact older context into a summary |
+| `/session <id>` | List sessions or switch to a session |
+| `/new [session-id]` | Create and switch to a new session. Session ID is optional; press Enter after `/new` to open picker and use Up/Down to select |
+| `/title <text>` | Set current session title |
+| `/archive <id>` | Archive a conversation |
+| `/delete <id>` | Hard delete a conversation |
+| `/filter` | Configure pre-LLM input filter |
+| `/permissions` | Set session permission mode |
+| `/clear` | Clear this conversation |
+| `/exit` | Exit CloudAgent |
 
-后续新增一个 IM 平台时，原则上只需要：
+---
 
-1. 新建一个 `XxxAdapter` 并实现 `PlatformAdapter`
-2. 把平台原始事件转换成 `InboundMessage`
-3. 实现 `send_message`
-4. 在启动层注册该 adapter
+<a id="中文"></a>
 
-这样核心 runtime、session 和 llm 层都不用重写。
+## CloudAgent
+
+### 项目简介
+
+CloudAgent 是一款面向远程操控的 Agent。
+
+第一阶段，它要解决的是：我不用登录服务器，也能完成整套远程工作流，包括项目部署、服务器监控、突发事件上报与自动处理。
+CloudAgent 内置了 [rtk](https://github.com/rtk-ai/rtk) 的 token 压缩思路，通过 `/filter` 命令启动压缩，在长会话里显著降低 token 消耗，同时提升缓存命中率。
+同时，CloudAgent 提供了完整的上下文编排、工具执行与审批机制，保证本地编码和自动化任务执行得更稳、更准。
+
+它适合的人群很直接：懒到极致、希望拿着手机就能远程指挥多端 Agent 干活的人。
+CloudAgent 不止于本地。
+
+### 开发进度（Roadmap）
+已开发：
+- [x] OpenAI 兼容模型
+- [x] 工具系统
+- [x] CLI（开发中）
+
+未开发：
+- [ ] MCP
+- [ ] Skill
+- [ ] 长期记忆
+- [ ] 自我调度
+- [ ] 多端互连
+- [ ] Web 端
+- [ ] 多语言支持
+
+### Release 快速下载
+- GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
+- 一键安装（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh`
+- 一键升级（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh`
+- 一键卸载（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh`
+
+### 发行版使用命令
+```bash
+# 启动完整 CLI（默认）
+cloudagent start
+
+# 更新到最新发行版
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh
+
+# 卸载
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh
+```
+
+### 配置 API Key
+CloudAgent 默认按以下顺序读取配置：
+- `~/.cloudagent/config.toml`
+- `<workspace>/.cloudagent/config.toml`
+- `<workspace>/configs/config.toml`
+
+推荐方式（全局默认）：
+```bash
+mkdir -p ~/.cloudagent
+cp configs/config.toml.example ~/.cloudagent/config.toml
+# 编辑 ~/.cloudagent/config.toml，设置 llm.api_key
+# （只需要 [llm]，其它配置使用默认值）
+```
+
+### 本地开发启动
+```bash
+# 1) 克隆仓库
+git clone https://github.com/JarsirLiu/CloudAgent.git
+cd CloudAgent
+
+# 2) 启动 CLI（开发模式）
+cargo run -p cli
+```
+
+### CLI 快捷命令表
+| 命令 | 说明 |
+|---|---|
+| `/config` | 配置 OpenAI 兼容模型的 `api_key`、`base_url` 和 `model` |
+| `/help` | 显示本地命令帮助 |
+| `/copy` | 复制最新一条 assistant 回复 |
+| `/interrupt` | 中断当前运行中的 turn（快捷键：`Ctrl+C`） |
+| `/compact` | 将旧上下文压缩为摘要 |
+| `/session <id>` | 查看会话列表或切换到指定会话 |
+| `/new [session-id]` | 新建并切换到会话。`session-id` 可省略；输入 `/new` 回车后可进入选择器，并可用上下方向键选择 |
+| `/title <text>` | 设置当前会话标题 |
+| `/archive <id>` | 归档会话 |
+| `/delete <id>` | 永久删除会话 |
+| `/filter` | 设置 pre-LLM 输入过滤 |
+| `/permissions` | 设置会话权限模式 |
+| `/clear` | 清空当前会话 |
+| `/exit` | 退出 CloudAgent |
