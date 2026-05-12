@@ -1,14 +1,14 @@
 # Packaging Assets
 
-This directory is the single home for release-packaging resources.
+This directory stores release-only assets that are not part of the runtime code.
 
-- `linux/` or top-level Linux packaging manifests such as `nfpm.yaml`
-- `windows/wix/` for Windows MSI assets used by WiX / `cargo wix`
+Current release strategy:
 
-Keep installer templates, license sidecars, icons, and other distribution-only
-files here instead of scattering them under app or crate source directories.
+- Linux and macOS publish `.tar.gz` archives
+- Windows publishes `.zip` archives
+- Installer scripts under `scripts/` download those archives and install them
+- End-user install and upgrade commands are documented in `release-installation.md`
 
-Common entrypoints:
-
-- Linux packages: `nfpm pkg --config packaging/nfpm.yaml ...`
-- Windows MSI: `pwsh ./scripts/package-windows.ps1 -Target x86_64-pc-windows-msvc -Version 0.1.34`
+CloudAgent no longer ships platform installer packages such as MSI, PKG, DEB,
+or RPM. Release packaging is intentionally archive-first so installation stays
+scriptable and consistent across platforms.

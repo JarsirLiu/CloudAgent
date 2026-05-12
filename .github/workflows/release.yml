@@ -16,15 +16,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            linux_arch: amd64
+            asset_os: linux
+            asset_arch: x64
           - os: macos-latest
             target: x86_64-apple-darwin
-            mac_pkg_arch: x86_64
+            asset_os: macos
+            asset_arch: x64
           - os: macos-latest
             target: aarch64-apple-darwin
-            mac_pkg_arch: arm64
+            asset_os: macos
+            asset_arch: arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            asset_os: windows
+            asset_arch: x64
 
     runs-on: ${{ matrix.os }}
 
@@ -40,28 +45,17 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Setup Go
-        if: runner.os == 'Linux'
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-
-      - name: Install nFPM
-        if: runner.os == 'Linux'
-        shell: bash
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-
       - name: Build binaries
         run: |
           cargo build --release --target ${{ matrix.target }} -p cloudagent -p cli -p node -p agentd
 
-      - name: Prepare package (unix)
+      - name: Prepare archive (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME:-manual}"
-          PKG="cloudagent-${VERSION}-${{ matrix.target }}"
+          PKG="cloudagent-${VERSION}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}"
           mkdir -p "dist/${PKG}"
           cp "target/${{ matrix.target }}/release/cloudagent" "dist/${PKG}/cloudagent"
           cp "target/${{ matrix.target }}/release/cli" "dist/${PKG}/cli"
@@ -70,53 +64,12 @@ jobs:
           cp README.md "dist/${PKG}/README.md"
           tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
 
-      - name: Build Linux packages
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          PKGROOT="dist/linux-root"
-          mkdir -p "${PKGROOT}"
-          cp "target/${{ matrix.target }}/release/cloudagent" "${PKGROOT}/cloudagent"
-          cp "target/${{ matrix.target }}/release/cli" "${PKGROOT}/cli"
-          cp "target/${{ matrix.target }}/release/node" "${PKGROOT}/node"
-          cp "target/${{ matrix.target }}/release/agentd" "${PKGROOT}/agentd"
-          cp README.md "${PKGROOT}/README.md"
-          export PATH="${PATH}:$(go env GOPATH)/bin"
-          export NFPM_VERSION="${VERSION:-manual}"
-          export NFPM_ARCH="${{ matrix.linux_arch }}"
-          export NFPM_HOMEPAGE="https://github.com/${{ github.repository }}"
-          nfpm pkg --config packaging/nfpm.yaml --packager deb --target "dist/cloudagent-${NFPM_VERSION}-${{ matrix.target }}.deb"
-          nfpm pkg --config packaging/nfpm.yaml --packager rpm --target "dist/cloudagent-${NFPM_VERSION}-${{ matrix.target }}.rpm"
-
-      - name: Build macOS installer package
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          PAYLOAD_ROOT="dist/pkgroot"
-          INSTALL_ROOT="${PAYLOAD_ROOT}/usr/local/bin"
-          mkdir -p "${INSTALL_ROOT}"
-          cp "target/${{ matrix.target }}/release/cloudagent" "${INSTALL_ROOT}/cloudagent"
-          cp "target/${{ matrix.target }}/release/cli" "${INSTALL_ROOT}/cli"
-          cp "target/${{ matrix.target }}/release/node" "${INSTALL_ROOT}/node"
-          cp "target/${{ matrix.target }}/release/agentd" "${INSTALL_ROOT}/agentd"
-          chmod 755 "${INSTALL_ROOT}/cloudagent" "${INSTALL_ROOT}/cli" "${INSTALL_ROOT}/node" "${INSTALL_ROOT}/agentd"
-          pkgbuild \
-            --root "${PAYLOAD_ROOT}" \
-            --identifier "com.liufelix.cloudagent.${{ matrix.mac_pkg_arch }}" \
-            --version "${VERSION:-manual}" \
-            --install-location "/" \
-            "dist/cloudagent-${VERSION:-manual}-${{ matrix.target }}.pkg"
-
-      - name: Prepare package (windows)
+      - name: Prepare archive (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $Version = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "manual" }
-          $Pkg = "cloudagent-$Version-${{ matrix.target }}"
+          $Pkg = "cloudagent-$Version-${{ matrix.asset_os }}-${{ matrix.asset_arch }}"
           New-Item -ItemType Directory -Path "dist/$Pkg" -Force | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/cloudagent.exe" "dist/$Pkg/cloudagent.exe"
           Copy-Item "target/${{ matrix.target }}/release/cli.exe" "dist/$Pkg/cli.exe"
@@ -125,19 +78,6 @@ jobs:
           Copy-Item "README.md" "dist/$Pkg/README.md"
           Compress-Archive -Path "dist/$Pkg/*" -DestinationPath "dist/$Pkg.zip" -Force
 
-      - name: Install cargo-wix
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: cargo install cargo-wix --locked
-
-      - name: Build MSI installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          pwsh ./scripts/package-windows.ps1 `
-            -Target "${{ matrix.target }}" `
-            -Version "${env:GITHUB_REF_NAME}"
-
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -145,10 +85,6 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*.msi
-            dist/*.pkg
-            dist/*.deb
-            dist/*.rpm
 
   publish:
     needs: build
@@ -165,7 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          find dist -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.msi" -o -name "*.pkg" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} release/ \;
+          find dist -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
 
       - name: Generate checksums
         run: |

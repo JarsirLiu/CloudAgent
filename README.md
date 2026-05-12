@@ -23,20 +23,20 @@
 ## CloudAgent
 
 ### Overview
-CloudAgent is an agent built for remote control.
+CloudAgent is an agent designed for remote control, multi-device collaboration, and mobile-first operation. In the future, it will support logging in from any device, connecting to remote devices for continuous interaction, and creating scheduled or wake-up tasks that can be handled automatically. The long-term goal is for CloudAgent to become your "internet employee" — coordinating across devices for project development, deployment, monitoring, and more day-to-day remote workflows, all controllable from a single phone.
 
-In phase one, it solves a simple but real problem: without logging into servers directly, I can still complete the full remote workflow, including project deployment, server monitoring, incident reporting, and automated handling.
-CloudAgent embeds the token-compression strategy from [rtk](https://github.com/rtk-ai/rtk), activated via the `/filter` command, to significantly reduce token usage in long sessions while improving cache hit rates.
-It also provides robust context orchestration, tool execution, and approval mechanisms to keep local coding and automation tasks accurate and reliable.
-
-Its target users are straightforward: people who are extremely lazy and want to command multiple agents from a phone.
-CloudAgent goes beyond local.
+Today, CloudAgent already supports remote access through Feishu and personal WeChat. It uses a `node-worker` architecture with a lightweight resident process, on-demand worker startup, and idle recycling to reduce resource usage. The current version provides a CLI interface, supports any OpenAI-compatible model, accepts image input, and can be used directly for coding tasks. Its default context window is `200k`, and when usage approaches the threshold (`90%`), CloudAgent automatically compacts context to keep long conversations stable.
 
 ### Roadmap
 In progress:
 - [x] OpenAI-compatible model support
 - [x] Tooling system
-- [x] CLI (under active development)
+- [x] CLI interaction
+- [x] Image input
+- [x] Feishu remote access
+- [x] Personal WeChat remote access
+- [x] `node-worker` architecture
+- [x] Automatic context compaction
 
 Planned:
 - [ ] MCP
@@ -46,30 +46,6 @@ Planned:
 - [ ] Multi-end interconnect
 - [ ] Web console
 - [ ] Multilingual support
-
-### Quick Release Download
-- GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
-- One-line install (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh`
-- One-line upgrade (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh`
-- One-line uninstall (Linux/macOS): `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh`
-
-### Release Usage Commands
-```bash
-# ensure local node is running
-cloudagent start
-
-# open CLI and configure model via /config on first launch
-cloudagent cli
-
-# check local node status
-cloudagent status
-
-# upgrade to latest release
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh
-
-# uninstall
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh
-```
 
 ### Configure API Key
 CloudAgent reads config from default paths in this order:
@@ -90,7 +66,16 @@ cloudagent cli
 ```
 
 `/config` is the preferred setup path for `api_key`, `base_url`, and `model`.
-You can still edit `~/.cloudagent/config.toml` manually if needed.
+
+If you need to edit `~/.cloudagent/config.toml` manually, use a config like:
+
+```toml
+[llm]
+base_url = "https://api.openai.com/v1"
+api_key = "replace-with-your-api-key"
+model = "gpt-4.1-mini"
+temperature = 0.2
+```
 
 ### Local Development Startup
 ```bash
@@ -108,15 +93,18 @@ cargo run -p cli
 | `/config` | Configure OpenAI-compatible `api_key`, `base_url`, and `model` |
 | `/help` | Show local command help |
 | `/copy` | Copy the latest assistant reply |
-| `/interrupt` | Interrupt the running turn (shortcut: `Ctrl+C`) |
+| `/interrupt` | Interrupt the running turn |
 | `/compact` | Compact older context into a summary |
-| `/session <id>` | List sessions or switch to a session |
-| `/new [session-id]` | Create and switch to a new session. Session ID is optional; press Enter after `/new` to open picker and use Up/Down to select |
+| `/session [id]` | List sessions or switch to a session. If `id` is omitted, you can choose from the session list |
+| `/new [session-id]` | Create and switch to a new session. Session ID is optional |
 | `/title <text>` | Set current session title |
-| `/archive <id>` | Archive a conversation |
-| `/delete <id>` | Hard delete a conversation |
-| `/filter` | Configure pre-LLM input filter |
-| `/permissions` | Set session permission mode |
+| `/archive <id>` | Archive the specified conversation |
+| `/delete [id]` | Hard delete a conversation. If `id` is omitted, you can choose from the session list |
+| `/filter` | Set the pre-LLM input filter |
+| `/permissions` | Set the session permission mode |
+| `/gateway` | Open the platform gateway panel |
+| `/weixin-login` | Start a personal WeChat QR login session |
+| `/weixin-login-check <session-id>` | Check a WeChat login session and save credentials on success |
 | `/clear` | Clear this conversation |
 | `/exit` | Exit CloudAgent |
 
@@ -128,20 +116,20 @@ cargo run -p cli
 
 ### 项目简介
 
-CloudAgent 是一款面向远程操控的 Agent。
+CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连、远程协同和移动控制场景。未来，它将支持用户在任意设备登录后，与其他远端设备建立连接并持续交互；同时也将支持任务创建、定时唤醒与自动处理机制。最终，CloudAgent 将成为您的“互联网员工”，通过多端协同完成项目开发、部署、监控，以及更多日常远程操作与自动化工作，而这一切只需要一部手机即可完成。
 
-第一阶段，它要解决的是：我不用登录服务器，也能完成整套远程工作流，包括项目部署、服务器监控、突发事件上报与自动处理。
-CloudAgent 内置了 [rtk](https://github.com/rtk-ai/rtk) 的 token 压缩思路，通过 `/filter` 命令启动压缩，在长会话里显著降低 token 消耗，同时提升缓存命中率。
-同时，CloudAgent 提供了完整的上下文编排、工具执行与审批机制，保证本地编码和自动化任务执行得更稳、更准。
-
-它适合的人群很直接：懒到极致、希望拿着手机就能远程指挥多端 Agent 干活的人。
-CloudAgent 不止于本地。
+目前，CloudAgent 已支持飞书、个人微信远程接入，并采用 `node-worker` 架构：通过轻量常驻进程承载基础能力，在需要时按会话拉起 worker，空闲后自动回收，以尽可能节省系统资源。当前版本已提供 CLI 交互，支持任意 OpenAI 兼容模型接入与图片输入，可直接用于代码编写与日常任务处理。默认上下文窗口为 `200k`，当上下文使用接近阈值（`90%`）时，会自动执行压缩，以提升长对话场景下的稳定性。
 
 ### 开发进度（Roadmap）
 已开发：
 - [x] OpenAI 兼容模型
 - [x] 工具系统
-- [x] CLI（开发中）
+- [x] CLI 交互
+- [x] 图片输入
+- [x] 飞书远程接入
+- [x] 个人微信远程接入
+- [x] `node-worker` 架构
+- [x] 自动上下文压缩
 
 未开发：
 - [ ] MCP
@@ -151,30 +139,6 @@ CloudAgent 不止于本地。
 - [ ] 多端互连
 - [ ] Web 端
 - [ ] 多语言支持
-
-### Release 快速下载
-- GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
-- 一键安装（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh`
-- 一键升级（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh`
-- 一键卸载（Linux/macOS）: `curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh`
-
-### 发行版使用命令
-```bash
-# 确保本地 node 已启动
-cloudagent start
-
-# 打开 CLI；首次启动后用 /config 配置模型
-cloudagent cli
-
-# 查看本地 node 状态
-cloudagent status
-
-# 更新到最新发行版
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/upgrade.sh | sh
-
-# 卸载
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh
-```
 
 ### 配置 API Key
 CloudAgent 默认按以下顺序读取配置：
@@ -195,7 +159,16 @@ cloudagent cli
 ```
 
 `/config` 是配置 `api_key`、`base_url` 和 `model` 的首选方式。
-如果有需要，仍然可以手工编辑 `~/.cloudagent/config.toml`。
+
+如果需要手工编辑 `~/.cloudagent/config.toml`，可以使用下面这个最小示例：
+
+```toml
+[llm]
+base_url = "https://api.openai.com/v1"
+api_key = "replace-with-your-api-key"
+model = "gpt-4.1-mini"
+temperature = 0.2
+```
 
 ### 本地开发启动
 ```bash
@@ -213,14 +186,17 @@ cargo run -p cli
 | `/config` | 配置 OpenAI 兼容模型的 `api_key`、`base_url` 和 `model` |
 | `/help` | 显示本地命令帮助 |
 | `/copy` | 复制最新一条 assistant 回复 |
-| `/interrupt` | 中断当前运行中的 turn（快捷键：`Ctrl+C`） |
+| `/interrupt` | 中断当前运行中的 turn |
 | `/compact` | 将旧上下文压缩为摘要 |
-| `/session <id>` | 查看会话列表或切换到指定会话 |
-| `/new [session-id]` | 新建并切换到会话。`session-id` 可省略；输入 `/new` 回车后可进入选择器，并可用上下方向键选择 |
+| `/session [id]` | 查看会话列表或切换到指定会话；省略 `id` 时可在列表中选择 |
+| `/new [session-id]` | 新建并切换到会话，`session-id` 可省略 |
 | `/title <text>` | 设置当前会话标题 |
-| `/archive <id>` | 归档会话 |
-| `/delete <id>` | 永久删除会话 |
+| `/archive <id>` | 归档指定会话 |
+| `/delete [id]` | 永久删除会话；省略 `id` 时可在列表中选择 |
 | `/filter` | 设置 pre-LLM 输入过滤 |
 | `/permissions` | 设置会话权限模式 |
+| `/gateway` | 打开平台网关面板 |
+| `/weixin-login` | 启动个人微信二维码登录 |
+| `/weixin-login-check <session-id>` | 检查微信登录会话并在成功后保存凭据 |
 | `/clear` | 清空当前会话 |
 | `/exit` | 退出 CloudAgent |

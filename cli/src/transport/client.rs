@@ -6,9 +6,12 @@ use agent_protocol::NodeStatusResponse;
 use anyhow::{Result, anyhow};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::Instant;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 pub(crate) async fn create_client(
     config: &ConsoleConfig,
@@ -136,12 +139,14 @@ fn spawn_local_node_process(program: &OsString, args: &[OsString]) -> Result<std
         return spawn_workspace_built_local_node(program, args);
     }
 
-    Ok(std::process::Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?)
+        .stderr(Stdio::null());
+    configure_detached_node_process(&mut command);
+    Ok(command.spawn()?)
 }
 
 fn spawn_workspace_built_local_node(
@@ -184,12 +189,23 @@ fn spawn_workspace_built_local_node(
         agentd_bin.clone().into_os_string(),
     ]);
 
-    Ok(std::process::Command::new(node_bin)
+    let mut command = Command::new(node_bin);
+    command
         .args(final_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?)
+        .stderr(Stdio::null());
+    configure_detached_node_process(&mut command);
+    Ok(command.spawn()?)
+}
+
+fn configure_detached_node_process(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
 }
 
 fn parse_cargo_target_dir(args: &[OsString]) -> Option<PathBuf> {
