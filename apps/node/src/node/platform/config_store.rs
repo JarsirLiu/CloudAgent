@@ -95,7 +95,11 @@ mod tests {
 
     #[test]
     fn release_mode_uses_user_platform_directory() {
-        let root = PathBuf::from(r"C:\Users\felix\.cloudagent\data");
+        let root = if cfg!(windows) {
+            PathBuf::from(r"C:\Users\felix\.cloudagent\data")
+        } else {
+            PathBuf::from("/home/felix/.cloudagent/data")
+        };
         assert_eq!(
             platform_config_dir(Some(root.as_os_str())),
             root.parent().expect("release data parent").join("platform")
