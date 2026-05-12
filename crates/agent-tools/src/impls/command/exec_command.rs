@@ -515,7 +515,16 @@ fn build_command_process(command_text: &str, workdir: &std::path::Path) -> Comma
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command.kill_on_drop(true);
+    configure_captured_command_process(&mut command);
     command
+}
+
+fn configure_captured_command_process(_command: &mut Command) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        _command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -60,6 +60,7 @@ impl StdioAppServerClient {
         command.stdout(Stdio::piped());
         command.stderr(Stdio::null());
         command.kill_on_drop(true);
+        configure_background_stdio_child(&mut command);
 
         let mut child = command
             .spawn()
@@ -194,6 +195,14 @@ impl StdioAppServerRequestHandle {
 
         serde_json::from_value(value)
             .map_err(|source| TypedRequestError::Deserialize { method, source })
+    }
+}
+
+fn configure_background_stdio_child(_command: &mut Command) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        _command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 

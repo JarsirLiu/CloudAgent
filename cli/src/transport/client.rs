@@ -202,9 +202,11 @@ fn spawn_workspace_built_local_node(
 fn configure_detached_node_process(_command: &mut Command) {
     #[cfg(windows)]
     {
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        _command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        // Keep the local node in its own process group without surfacing a new
+        // console window to the user on Windows.
+        _command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     }
 }
 
