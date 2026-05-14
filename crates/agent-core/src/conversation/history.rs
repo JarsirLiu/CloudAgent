@@ -52,10 +52,12 @@ impl ConversationHistory {
     pub fn push_assistant_message(
         &mut self,
         content: Option<String>,
+        reasoning: Option<String>,
         tool_calls: Vec<ToolCall>,
     ) -> ResponseItem {
         let item = ResponseItem::Assistant {
             content,
+            reasoning,
             tool_calls,
         };
         self.messages.push(item.clone());
@@ -104,6 +106,8 @@ pub enum ResponseItem {
     },
     Assistant {
         content: Option<String>,
+        #[serde(default)]
+        reasoning: Option<String>,
         #[serde(default)]
         tool_calls: Vec<ToolCall>,
     },
@@ -184,7 +188,7 @@ mod tests {
         let user = history.push_user_message(vec![InputItem::Text {
             text: "hello".to_string(),
         }]);
-        history.push_assistant_message(Some("ok".to_string()), Vec::new());
+        history.push_assistant_message(Some("ok".to_string()), None, Vec::new());
 
         assert!(!history.rollback_last_user_message(&user));
         assert_eq!(history.turn_count, 1);
@@ -194,6 +198,7 @@ mod tests {
     fn ensure_tool_outputs_present_inserts_aborted_output_for_missing_call() {
         let mut items = vec![ResponseItem::Assistant {
             content: None,
+            reasoning: None,
             tool_calls: vec![ToolCall {
                 id: "call_1".to_string(),
                 name: "exec_command".to_string(),
@@ -230,6 +235,7 @@ mod tests {
         let mut items = vec![
             ResponseItem::Assistant {
                 content: None,
+                reasoning: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "exec_command".to_string(),

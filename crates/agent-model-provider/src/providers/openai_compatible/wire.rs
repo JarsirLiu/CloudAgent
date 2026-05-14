@@ -30,6 +30,8 @@ pub(super) struct ChatApiMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<ChatApiContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<ChatToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
@@ -43,6 +45,7 @@ impl ChatApiMessage {
             ProviderMessage::System { content } => Self {
                 role: "system".to_string(),
                 content: Some(ChatApiContent::Text(content.clone())),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
@@ -50,16 +53,19 @@ impl ChatApiMessage {
             ProviderMessage::User { content } => Self {
                 role: "user".to_string(),
                 content: Some(ChatApiContent::Parts(user_content_parts(content))),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
             },
             ProviderMessage::Assistant {
                 content,
+                reasoning,
                 tool_calls,
             } => Self {
                 role: "assistant".to_string(),
                 content: content.clone().map(ChatApiContent::Text),
+                reasoning_content: reasoning.clone(),
                 tool_calls: if tool_calls.is_empty() {
                     None
                 } else {
@@ -80,6 +86,7 @@ impl ChatApiMessage {
             } => Self {
                 role: "tool".to_string(),
                 content: Some(ChatApiContent::Text(tool_message_content(name, content))),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: Some(tool_call_id.clone()),
                 name: Some(name.clone()),
@@ -152,7 +159,7 @@ fn user_content_parts(items: &[InputItem]) -> Vec<ChatApiContentPart> {
                 text: format!("@{name} ({path})"),
             }),
             InputItem::Skill { name, path } => parts.push(ChatApiContentPart::Text {
-                text: format!("#{name} ({path})"),
+                text: format!("${name} ({path})"),
             }),
         }
     }
@@ -402,6 +409,25 @@ mod tests {
                 "content": [
                     { "type": "text", "text": "[image unavailable: plan]" }
                 ]
+            })
+        );
+    }
+
+    #[test]
+    fn assistant_messages_include_reasoning_content_when_present() {
+        let message = ChatApiMessage::from_message(&ProviderMessage::Assistant {
+            content: Some("answer".to_string()),
+            reasoning: Some("hidden chain".to_string()),
+            tool_calls: Vec::new(),
+        });
+
+        let value = serde_json::to_value(message).expect("serialize assistant message");
+        assert_eq!(
+            value,
+            json!({
+                "role": "assistant",
+                "content": "answer",
+                "reasoning_content": "hidden chain"
             })
         );
     }

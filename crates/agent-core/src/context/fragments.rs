@@ -82,6 +82,7 @@ mod tests {
             },
             ResponseItem::Assistant {
                 content: Some("assistant tail".to_string()),
+                reasoning: None,
                 tool_calls: Vec::new(),
             },
         ];

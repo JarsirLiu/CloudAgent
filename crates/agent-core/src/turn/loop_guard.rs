@@ -235,7 +235,7 @@ mod tests {
             current_call.id = format!("call-{index}");
             let mut current_result = tool_result.clone();
             current_result.tool_call_id = current_call.id.clone();
-            history.push_assistant_message(None, vec![current_call.clone()]);
+            history.push_assistant_message(None, None, vec![current_call.clone()]);
             history.push_tool_result(current_result);
             assert!(
                 guard
@@ -248,7 +248,7 @@ mod tests {
         final_call.id = "call-3".to_string();
         let mut final_result = tool_result;
         final_result.tool_call_id = final_call.id.clone();
-        history.push_assistant_message(None, vec![final_call.clone()]);
+        history.push_assistant_message(None, None, vec![final_call.clone()]);
         history.push_tool_result(final_result);
         assert_eq!(
             guard.record_roundtrip(&[final_call], &tool_specs, &history.messages),

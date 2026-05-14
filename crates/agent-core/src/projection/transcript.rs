@@ -539,10 +539,12 @@ pub fn conversation_history_from_rollout_items(
                 }
                 ResponseItem::Assistant {
                     content,
+                    reasoning,
                     tool_calls,
                 } => {
                     history.messages.push(ResponseItem::Assistant {
                         content: content.clone(),
+                        reasoning: reasoning.clone(),
                         tool_calls: tool_calls.clone(),
                     });
                 }
@@ -743,6 +745,7 @@ mod tests {
             }),
             RolloutItem::from(ResponseItem::Assistant {
                 content: Some("hello".to_string()),
+                reasoning: None,
                 tool_calls: Vec::new(),
             }),
             RolloutItem::from(EventMsg::TurnCompleted {
@@ -857,6 +860,7 @@ mod tests {
                 }),
                 RolloutItem::from(ResponseItem::Assistant {
                     content: Some("hello".to_string()),
+                    reasoning: Some("hidden chain".to_string()),
                     tool_calls: Vec::new(),
                 }),
             ],
@@ -871,11 +875,13 @@ mod tests {
                 ResponseItem::User { content: user },
                 ResponseItem::Assistant {
                     content: Some(assistant),
+                    reasoning: Some(reasoning),
                     ..
                 },
             ] if system == "system prompt"
                 && input_items_to_plain_text(user) == "hi"
                 && assistant == "hello"
+                && reasoning == "hidden chain"
         ));
     }
 
@@ -939,6 +945,7 @@ mod tests {
                         },
                         ResponseItem::Assistant {
                             content: Some("current".to_string()),
+                            reasoning: None,
                             tool_calls: Vec::new(),
                         },
                     ],
@@ -994,6 +1001,7 @@ mod tests {
                 },
                 RolloutItem::from(ResponseItem::Assistant {
                     content: Some("after compact assistant".to_string()),
+                    reasoning: None,
                     tool_calls: vec![crate::tool::ToolCall {
                         id: "call-1".to_string(),
                         name: "read_file".to_string(),
@@ -1019,6 +1027,7 @@ mod tests {
                 ResponseItem::Assistant {
                     content: Some(assistant),
                     tool_calls,
+                    ..
                 },
                 ResponseItem::Tool { tool_call_id, content, .. },
             ] if system == "system prompt"

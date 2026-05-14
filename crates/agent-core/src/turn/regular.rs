@@ -3,6 +3,7 @@ use super::loop_guard::LoopGuard;
 use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
 use crate::context::{ContextFragment, ContextInjectionStrategy, MemoryBudgetSource};
 use crate::model::ReasoningDelta;
+use crate::skill::{render_skill_catalog, render_skill_injection};
 use crate::{
     ContextBudgetLogEntry, ContextFacade, ContextManager, FilterPolicy, ModelStreamObserver,
     ModelUsage, RolloutItem, append_context_budget_log, emit_assistant_message_item, emit_event,
@@ -63,6 +64,17 @@ pub async fn execute_regular_turn<H: TurnHost>(
     let mut loop_guard = LoopGuard::new();
     let environment_context = host.environment_context();
     let raw_memory_fragment = host.raw_memory_fragment();
+    let skill_runtime = host.skills();
+    let skill_catalog = skill_runtime.load_catalog(&settings.workspace_root);
+    let skill_summary =
+        render_skill_catalog(&skill_catalog.skills_allowed_for_implicit_invocation());
+    // Skill bodies are turn-scoped. We only inject explicitly selected skill
+    // documents for the latest user message, and we re-evaluate on every turn.
+    let turn_explicit_skill_fragments = skill_runtime
+        .collect_turn_explicit_skill_documents(&context_manager.history().messages, &skill_catalog)
+        .into_iter()
+        .map(|document| render_skill_injection(&document))
+        .collect::<Vec<_>>();
     let mut turn_total_usage = ModelUsage::default();
     let context_facade = ContextFacade::new();
     let filter_policy = FilterPolicy {
@@ -113,11 +125,16 @@ pub async fn execute_regular_turn<H: TurnHost>(
             &tool_specs,
             &settings,
             raw_memory_fragment.clone(),
+            skill_summary.clone(),
+        );
+        let candidate_fragments = append_rendered_fragments(
+            budgeted_before_compaction.fragments.clone(),
+            &turn_explicit_skill_fragments,
         );
         let pre_compaction_injection_strategy = ContextInjectionStrategy::Standard;
         let mut candidate_request = context_manager
             .build_current_model_request_with_rendered_fragments(
-                &budgeted_before_compaction.fragments,
+                &candidate_fragments,
                 pre_compaction_injection_strategy,
                 tool_specs.clone(),
                 settings.llm_temperature,
@@ -206,10 +223,13 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &tool_specs,
                 &settings,
                 raw_memory_fragment.clone(),
+                skill_summary.clone(),
             )
         } else {
             budgeted_before_compaction
         };
+        let prepared_fragments =
+            append_rendered_fragments(budgeted.fragments.clone(), &turn_explicit_skill_fragments);
         let injection_strategy = compaction
             .as_ref()
             .map(|compacted| match compacted.continuation {
@@ -224,7 +244,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &context_manager,
                 &settings.workspace_root,
                 filter_policy,
-                budgeted.fragments.clone(),
+                prepared_fragments,
                 injection_strategy,
                 tool_specs.clone(),
                 settings.llm_temperature,
@@ -292,7 +312,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &mut assistant_item_seq,
             );
             let failed_item =
-                context_manager.record_assistant_message(Some(message.clone()), Vec::new());
+                context_manager.record_assistant_message(Some(message.clone()), None, Vec::new());
             host.persist_rollout_items(conversation_id, &[RolloutItem::from(failed_item)])
                 .await?;
             host.save_history(context_manager.history().clone()).await?;
@@ -550,7 +570,11 @@ pub async fn execute_regular_turn<H: TurnHost>(
         }
 
         let assistant_response_item =
-            context_manager.record_assistant_message(response.content.clone(), tool_calls.clone());
+            context_manager.record_assistant_message(
+                response.content.clone(),
+                response.reasoning.clone(),
+                tool_calls.clone(),
+            );
         host.persist_rollout_items(
             conversation_id,
             &[RolloutItem::from(assistant_response_item)],
@@ -629,7 +653,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &mut assistant_item_seq,
             );
             let failed_item =
-                context_manager.record_assistant_message(Some(message.clone()), Vec::new());
+                context_manager.record_assistant_message(Some(message.clone()), None, Vec::new());
             host.persist_rollout_items(conversation_id, &[RolloutItem::from(failed_item)])
                 .await?;
             host.save_history(context_manager.history().clone()).await?;
@@ -662,7 +686,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
         &mut assistant_item_seq,
     );
     let roundtrip_limit_item =
-        context_manager.record_assistant_message(Some(roundtrip_limit_message), Vec::new());
+        context_manager.record_assistant_message(Some(roundtrip_limit_message), None, Vec::new());
     host.persist_rollout_items(conversation_id, &[RolloutItem::from(roundtrip_limit_item)])
         .await?;
     host.save_history(context_manager.history().clone()).await?;
@@ -698,6 +722,7 @@ fn build_budgeted_fragments_for_current_history(
     tool_specs: &[crate::ToolSpec],
     settings: &crate::turn::RegularTurnSettings,
     raw_memory_fragment: Option<String>,
+    skill_summary: Option<String>,
 ) -> crate::context::BudgetedFragments {
     context_facade.build_memory_budgeted_fragments(
         &context_manager.history().messages,
@@ -710,7 +735,7 @@ fn build_budgeted_fragments_for_current_history(
         settings.context_compaction_request_overhead_tokens,
         MemoryBudgetSource {
             memory: raw_memory_fragment,
-            skills: None,
+            skills: skill_summary,
             mcp: None,
             enable_skills_bucket: settings.enable_skill_bucket,
             enable_mcp_bucket: settings.enable_mcp_bucket,
@@ -724,6 +749,14 @@ fn build_budgeted_fragments_for_current_history(
             safety_buffer_tokens: settings.context_budget_safety_buffer_tokens,
         },
     )
+}
+
+fn append_rendered_fragments(
+    mut fragments: Vec<crate::ResponseItem>,
+    extra_fragments: &[crate::ResponseItem],
+) -> Vec<crate::ResponseItem> {
+    fragments.extend(extra_fragments.iter().cloned());
+    fragments
 }
 
 fn compose_visible_tool_specs(
@@ -762,6 +795,7 @@ mod tests {
     use super::execute_regular_turn;
     use super::{collect_discoverable_tools, compose_visible_tool_specs};
     use crate::context::EnvironmentContext;
+    use crate::skill::SkillRuntime;
     use crate::tool::RegularTurnToolExposure;
     use crate::turn::compaction::{CompactionContinuation, CompactionMode, maybe_compact_history};
     use crate::turn::{
@@ -772,6 +806,7 @@ mod tests {
         ContextFacade, ContextManager, ConversationHistory, EventMsg, FilterPolicy, ModelRequest,
         ModelResponse, ModelStreamObserver, ModelUsage, RolloutItem, ToolCall, ToolExecutionPolicy,
         ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind, TurnOutcome,
+        TurnState,
     };
     use anyhow::Result;
     use async_trait::async_trait;
@@ -924,6 +959,7 @@ mod tests {
         _workspace: Arc<TestWorkspace>,
         settings: RegularTurnSettings,
         memory_fragment: Option<String>,
+        last_request: Mutex<Option<ModelRequest>>,
     }
 
     impl MockTurnHost {
@@ -957,12 +993,26 @@ mod tests {
                 },
                 _workspace: workspace,
                 memory_fragment: None,
+                last_request: Mutex::new(None),
             }
         }
 
         fn with_memory(mut self, memory_fragment: impl Into<String>) -> Self {
             self.memory_fragment = Some(memory_fragment.into());
             self
+        }
+
+        fn workspace_root(&self) -> &Path {
+            &self.settings.workspace_root
+        }
+
+        fn last_request_messages(&self) -> Vec<crate::ResponseItem> {
+            self.last_request
+                .lock()
+                .expect("last request lock")
+                .as_ref()
+                .map(|request| request.messages.clone())
+                .unwrap_or_default()
         }
     }
 
@@ -992,6 +1042,10 @@ mod tests {
 
         fn raw_memory_fragment(&self) -> Option<String> {
             self.memory_fragment.clone()
+        }
+
+        fn skills(&self) -> SkillRuntime {
+            SkillRuntime::new(true, Vec::new())
         }
 
         fn resolve_regular_turn_tool_exposure(
@@ -1091,9 +1145,10 @@ mod tests {
         async fn complete_model_request_streaming(
             &self,
             _cancellation_token: &CancellationToken,
-            _request: ModelRequest,
+            request: ModelRequest,
             observer: &mut dyn ModelStreamObserver,
         ) -> Result<ModelResponse> {
+            *self.last_request.lock().expect("last request lock") = Some(request);
             let response = self.responses.lock().expect("responses lock").remove(0);
             if let Some(reasoning) = response.reasoning.clone() {
                 observer.on_reasoning_delta(crate::model::ReasoningDelta::Text {
@@ -1241,6 +1296,7 @@ mod tests {
                     "historic assistant reply {index} {}",
                     "y".repeat(4_000)
                 )),
+                None,
                 Vec::new(),
             );
         }
@@ -1292,6 +1348,7 @@ mod tests {
                     "historic assistant reply {index} {}",
                     "y".repeat(4_000)
                 )),
+                None,
                 Vec::new(),
             );
         }
@@ -1321,6 +1378,163 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn explicit_skill_mentions_inject_skill_instructions_into_model_request() {
+        let host = MockTurnHost::new(vec![ModelResponse {
+            content: Some("done".to_string()),
+            reasoning: None,
+            tool_calls: Vec::new(),
+            model_name: Some("test-model".to_string()),
+            usage: None,
+        }]);
+        let skill_dir = host
+            .workspace_root()
+            .join(".cloudagent")
+            .join("skills")
+            .join("repo-reader");
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: repo-reader\ndescription: Read repository structure\npolicy:\n  allow_implicit_invocation: true\ndependencies:\n  tools: [rg, git]\n---\n\n# Repo Reader\nUse this skill for repository analysis.\n",
+        )
+        .expect("write skill file");
+
+        let mut history = ConversationHistory::new("default".to_string(), "system".to_string());
+        history.push_user_message(crate::text_input_items("please use $repo-reader"));
+        let mut delivered = Vec::new();
+        let outcome = execute_regular_turn(
+            &host,
+            "default",
+            "turn-1",
+            &(),
+            &(),
+            CancellationToken::new(),
+            history,
+            &mut |event| delivered.push(event.clone()),
+            &(|_req: ServerRequest| async move {
+                Ok(ServerRequestDecision::accept(Some("ok".to_string())))
+            }),
+        )
+        .await
+        .expect("turn outcome");
+
+        assert!(matches!(outcome.state, TurnState::Completed));
+        let rendered_messages = host
+            .last_request_messages()
+            .into_iter()
+            .filter_map(|message| match message {
+                crate::ResponseItem::User { content } => {
+                    Some(crate::input_items_to_plain_text(&content))
+                }
+                crate::ResponseItem::System { content } => Some(content),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered_messages.contains("<skill>\n<name>repo-reader</name>"));
+        assert!(rendered_messages.contains("<path>"));
+        assert!(rendered_messages.contains("Use this skill for repository analysis."));
+        assert!(delivered.iter().any(
+            |event| matches!(event, EventMsg::TurnCompleted { turn_id } if turn_id == "turn-1")
+        ));
+    }
+
+    #[tokio::test]
+    async fn skill_injection_does_not_carry_across_turns_without_remention() {
+        let host = MockTurnHost::new(vec![
+            ModelResponse {
+                content: Some("done".to_string()),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                model_name: Some("test-model".to_string()),
+                usage: None,
+            },
+            ModelResponse {
+                content: Some("done again".to_string()),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                model_name: Some("test-model".to_string()),
+                usage: None,
+            },
+        ]);
+        let skill_dir = host
+            .workspace_root()
+            .join(".cloudagent")
+            .join("skills")
+            .join("repo-reader");
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: repo-reader\ndescription: Read repository structure\npolicy:\n  allow_implicit_invocation: true\ndependencies:\n  tools: [rg]\n---\n\n# Repo Reader\nUse this skill for repository analysis.\n",
+        )
+        .expect("write skill file");
+
+        let mut history = ConversationHistory::new("default".to_string(), "system".to_string());
+        history.push_user_message(crate::text_input_items("please use $repo-reader"));
+        let mut delivered = Vec::new();
+        let first = execute_regular_turn(
+            &host,
+            "default",
+            "turn-1",
+            &(),
+            &(),
+            CancellationToken::new(),
+            history,
+            &mut |event| delivered.push(event.clone()),
+            &(|_req: ServerRequest| async move {
+                Ok(ServerRequestDecision::accept(Some("ok".to_string())))
+            }),
+        )
+        .await
+        .expect("first turn outcome");
+        assert!(matches!(first.state, TurnState::Completed));
+        let first_rendered = host
+            .last_request_messages()
+            .into_iter()
+            .filter_map(|message| match message {
+                crate::ResponseItem::User { content } => {
+                    Some(crate::input_items_to_plain_text(&content))
+                }
+                crate::ResponseItem::System { content } => Some(content),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(first_rendered.contains("<skill>\n<name>repo-reader</name>"));
+
+        let mut second_history = first.history.clone();
+        second_history.push_user_message(crate::text_input_items("continue with the summary"));
+        let second = execute_regular_turn(
+            &host,
+            "default",
+            "turn-2",
+            &(),
+            &(),
+            CancellationToken::new(),
+            second_history,
+            &mut |event| delivered.push(event.clone()),
+            &(|_req: ServerRequest| async move {
+                Ok(ServerRequestDecision::accept(Some("ok".to_string())))
+            }),
+        )
+        .await
+        .expect("second turn outcome");
+        assert!(matches!(second.state, TurnState::Completed));
+        let second_rendered = host
+            .last_request_messages()
+            .into_iter()
+            .filter_map(|message| match message {
+                crate::ResponseItem::User { content } => {
+                    Some(crate::input_items_to_plain_text(&content))
+                }
+                crate::ResponseItem::System { content } => Some(content),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!second_rendered.contains("<skill>\n<name>repo-reader</name>"));
+    }
+
     #[test]
     fn recomputing_budgeted_fragments_after_compaction_can_restore_memory_context() {
         let host = MockTurnHost::new(vec![]).with_memory("remember this important long-term fact");
@@ -1348,7 +1562,7 @@ mod tests {
             .push_user_message(crate::text_input_items("hello"));
         context_manager
             .history_mut()
-            .push_assistant_message(Some("A".repeat(24_000)), Vec::new());
+            .push_assistant_message(Some("A".repeat(24_000)), None, Vec::new());
         let before = build_budgeted_fragments_for_current_history(
             &ContextFacade::new(),
             &context_manager,
@@ -1357,6 +1571,7 @@ mod tests {
             &tool_specs,
             &settings,
             host.raw_memory_fragment(),
+            None,
         );
         assert!(!before.fragments.iter().any(|item| {
             matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(content).contains("<long_term_memory>"))
@@ -1373,6 +1588,7 @@ mod tests {
             &tool_specs,
             &settings,
             host.raw_memory_fragment(),
+            None,
         );
         assert!(after.fragments.iter().any(|item| {
             matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(content).contains("<long_term_memory>"))

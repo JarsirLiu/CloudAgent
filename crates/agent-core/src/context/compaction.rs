@@ -474,6 +474,7 @@ fn render_compaction_source(prefix: &[ResponseItem]) -> String {
             ResponseItem::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 if let Some(content) = content
                     && !content.trim().is_empty()
@@ -560,6 +561,7 @@ fn estimate_message_tokens(messages: &[ResponseItem]) -> usize {
             ResponseItem::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 let text_len = content.as_ref().map_or(0, String::len);
                 let tool_len: usize = tool_calls
@@ -733,7 +735,7 @@ fn render_input_item_for_compaction(item: &InputItem) -> String {
         InputItem::Mention { name, path } => {
             format!("[mention @{name} path={}]", single_line(path))
         }
-        InputItem::Skill { name, path } => format!("[skill #{name} path={}]", single_line(path)),
+        InputItem::Skill { name, path } => format!("[skill ${name} path={}]", single_line(path)),
     }
 }
 
@@ -784,6 +786,7 @@ mod tests {
             });
             messages.push(ResponseItem::Assistant {
                 content: Some(format!("assistant line {i} {}", "y".repeat(50))),
+                reasoning: None,
                 tool_calls: Vec::new(),
             });
         }
@@ -831,6 +834,7 @@ mod tests {
             });
             messages.push(ResponseItem::Assistant {
                 content: Some(format!("a{i} {}", "w".repeat(80))),
+                reasoning: None,
                 tool_calls: vec![ToolCall {
                     id: format!("call-{i}"),
                     name: "exec_command".to_string(),
@@ -968,6 +972,7 @@ mod tests {
             },
             ResponseItem::Assistant {
                 content: Some(format!("calling tool {}", "y".repeat(80))),
+                reasoning: None,
                 tool_calls: vec![ToolCall {
                     id: "call-1".to_string(),
                     name: "exec_command".to_string(),
@@ -997,6 +1002,7 @@ mod tests {
             },
             ResponseItem::Assistant {
                 content: Some(format!("done {}", "w".repeat(80))),
+                reasoning: None,
                 tool_calls: Vec::new(),
             },
             ResponseItem::User {
@@ -1019,6 +1025,7 @@ mod tests {
             });
             messages.push(ResponseItem::Assistant {
                 content: Some(format!("assistant-{i} {}", "y".repeat(20))),
+                reasoning: None,
                 tool_calls: Vec::new(),
             });
         }
@@ -1041,6 +1048,7 @@ mod tests {
             });
             messages.push(ResponseItem::Assistant {
                 content: Some(format!("assistant-{i} {}", "y".repeat(160))),
+                reasoning: None,
                 tool_calls: Vec::new(),
             });
         }

@@ -25,6 +25,7 @@ pub(crate) enum ProviderMessage {
     },
     Assistant {
         content: Option<String>,
+        reasoning: Option<String>,
         tool_calls: Vec<ToolCall>,
     },
     Tool {
@@ -43,6 +44,7 @@ impl ProviderRequest {
         for item in &request.messages {
             messages.push(ProviderMessage::from_response_item(item, supports_image_input).await?);
         }
+        downgrade_incomplete_reasoning_chain(&mut messages);
         Ok(Self {
             messages,
             tools: request.tools.clone(),
@@ -89,9 +91,11 @@ impl ProviderMessage {
             },
             ResponseItem::Assistant {
                 content,
+                reasoning,
                 tool_calls,
             } => Self::Assistant {
                 content: content.clone(),
+                reasoning: reasoning.clone(),
                 tool_calls: tool_calls.clone(),
             },
             ResponseItem::Tool {
@@ -131,6 +135,36 @@ fn infer_image_mime_type(path: &str) -> Result<&'static str> {
         "gif" => Ok("image/gif"),
         "bmp" => Ok("image/bmp"),
         _ => Err(anyhow!("unsupported image extension `.{ext}` for `{path}`")),
+    }
+}
+
+fn downgrade_incomplete_reasoning_chain(messages: &mut [ProviderMessage]) {
+    let assistant_reasoning_states = messages.iter().filter_map(|message| match message {
+        ProviderMessage::Assistant { reasoning, .. } => Some(reasoning.as_deref()),
+        _ => None,
+    });
+
+    let mut saw_reasoning = false;
+    let mut saw_missing_reasoning = false;
+    for reasoning in assistant_reasoning_states {
+        if reasoning.is_some_and(|value| !value.trim().is_empty()) {
+            saw_reasoning = true;
+        } else {
+            saw_missing_reasoning = true;
+        }
+        if saw_reasoning && saw_missing_reasoning {
+            break;
+        }
+    }
+
+    if !(saw_reasoning && saw_missing_reasoning) {
+        return;
+    }
+
+    for message in messages {
+        if let ProviderMessage::Assistant { reasoning, .. } = message {
+            *reasoning = None;
+        }
     }
 }
 
@@ -271,5 +305,62 @@ mod tests {
             }
             other => panic!("expected user message, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn provider_request_downgrades_to_non_thinking_when_reasoning_chain_is_incomplete() {
+        let request = ModelRequest {
+            messages: vec![
+                ResponseItem::Assistant {
+                    content: Some("first".to_string()),
+                    reasoning: Some("first reasoning".to_string()),
+                    tool_calls: Vec::new(),
+                },
+                ResponseItem::Assistant {
+                    content: Some("second".to_string()),
+                    reasoning: None,
+                    tool_calls: Vec::new(),
+                },
+            ],
+            tools: Vec::new(),
+            temperature: 0.0,
+        };
+
+        let provider_request = ProviderRequest::from_model_request(&request, true)
+            .await
+            .expect("provider request");
+
+        assert!(matches!(
+            &provider_request.messages[..],
+            [
+                ProviderMessage::Assistant { reasoning: None, .. },
+                ProviderMessage::Assistant { reasoning: None, .. }
+            ]
+        ));
+    }
+
+    #[tokio::test]
+    async fn provider_request_keeps_reasoning_when_chain_is_complete() {
+        let request = ModelRequest {
+            messages: vec![ResponseItem::Assistant {
+                content: Some("first".to_string()),
+                reasoning: Some("first reasoning".to_string()),
+                tool_calls: Vec::new(),
+            }],
+            tools: Vec::new(),
+            temperature: 0.0,
+        };
+
+        let provider_request = ProviderRequest::from_model_request(&request, true)
+            .await
+            .expect("provider request");
+
+        assert!(matches!(
+            &provider_request.messages[..],
+            [ProviderMessage::Assistant {
+                reasoning: Some(reasoning),
+                ..
+            }] if reasoning == "first reasoning"
+        ));
     }
 }

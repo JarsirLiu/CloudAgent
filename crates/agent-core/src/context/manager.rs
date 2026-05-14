@@ -74,9 +74,11 @@ impl ContextManager {
     pub fn record_assistant_message(
         &mut self,
         content: Option<String>,
+        reasoning: Option<String>,
         tool_calls: Vec<ToolCall>,
     ) -> ResponseItem {
-        self.history.push_assistant_message(content, tool_calls)
+        self.history
+            .push_assistant_message(content, reasoning, tool_calls)
     }
 
     pub fn record_tool_result(&mut self, result: ToolResult) -> ResponseItem {
@@ -245,6 +247,7 @@ mod tests {
                 },
                 ResponseItem::Assistant {
                     content: Some("latest assistant".to_string()),
+                    reasoning: None,
                     tool_calls: Vec::new(),
                 },
             ],
