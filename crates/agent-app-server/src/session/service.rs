@@ -5,7 +5,7 @@ use agent_core::{AgentHost, ConversationStatus, InputItem, input_items_preview_t
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
     ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
-    FrontendMode,
+    FrontendMode, SkillsListResponse,
 };
 use anyhow::Result;
 use std::sync::Arc;
@@ -43,6 +43,33 @@ pub(crate) async fn read_conversation_list(
     Ok(ConversationListResponse {
         conversations: runtime.list_conversations().await?,
     })
+}
+
+pub(crate) async fn read_skills_list(
+    runtime: &Arc<AgentHost>,
+    _state: &Arc<Mutex<ServerState>>,
+) -> Result<SkillsListResponse> {
+    Ok(SkillsListResponse {
+        skills: runtime.list_skills(),
+    })
+}
+
+pub(crate) async fn notify_skills_changed(
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+) {
+    let conversation_id = {
+        let guard = state.lock().await;
+        guard
+            .notification_anchor_conversation_id("default")
+            .to_string()
+    };
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::SkillsChanged { conversation_id },
+    )
+    .await;
 }
 
 pub(crate) async fn request_conversation_history(

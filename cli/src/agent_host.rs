@@ -1,3 +1,4 @@
+use agent_core::SkillRuntime;
 use agent_core::approval::ApprovalGrantStoreBackend;
 use agent_core::context::AgentContext;
 use agent_core::host::{AgentHost, AgentHostParts, AgentMetadata};
@@ -84,6 +85,10 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         approval_grants,
         rollout_recorder,
         memory,
+        skills: SkillRuntime::new(
+            config.runtime.skills_enabled,
+            config.runtime.skill_roots.clone(),
+        ),
     })))
 }
 

@@ -23,17 +23,13 @@ pub(crate) fn completion_popup_lines(
     for (offset, suggestion) in suggestions.iter().enumerate() {
         let index = window_start + offset;
         let selected = index == completion.selected_index();
-        let label = if suggestion.command.is_some() {
-            format!("/{}", suggestion.name)
-        } else {
-            suggestion.name.to_string()
-        };
+        let label = suggestion.label.clone();
         let name = format!("{:<width$}", label, width = COMMAND_COLUMN_WIDTH);
         let marker = if selected { "> " } else { "  " };
         let row_indent = content_indent.saturating_sub(marker.len());
         let description_width =
             width.saturating_sub(row_indent + marker.len() + COMMAND_COLUMN_WIDTH + 3);
-        let description = truncate_to_width(suggestion.description, description_width);
+        let description = truncate_to_width(&suggestion.description, description_width);
         let row_width = row_indent + marker.len() + COMMAND_COLUMN_WIDTH + 2 + description_width;
         let row_text_width = row_indent
             + marker.len()

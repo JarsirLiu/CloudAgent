@@ -72,7 +72,7 @@ fn render_user_content(content: &[InputItem]) -> String {
             }
             InputItem::File { .. } => media_lines.push("[Attachment]".to_string()),
             InputItem::Mention { name, path } => text_lines.push(format!("@{name} ({path})")),
-            InputItem::Skill { name, path } => text_lines.push(format!("#{name} ({path})")),
+            InputItem::Skill { name, path } => text_lines.push(format!("${name} ({path})")),
         }
     }
 

@@ -9,8 +9,8 @@ use agent_protocol::{
     JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
     NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
-    RequestId, SelectTargetNodeResponse, UserTurnInput, WeixinLoginStartResponse,
-    WeixinLoginStatusResponse, classify_notification,
+    RequestId, SelectTargetNodeResponse, SkillsListResponse, UserTurnInput,
+    WeixinLoginStartResponse, WeixinLoginStatusResponse, classify_notification,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;
@@ -136,6 +136,10 @@ impl AppServerClient {
         self.request_handle()
             .request_conversation_list_typed()
             .await
+    }
+
+    pub async fn request_skills_list_typed(&self) -> Result<SkillsListResponse, TypedRequestError> {
+        self.request_handle().request_skills_list_typed().await
     }
 
     pub async fn request_conversation_status_typed(
@@ -373,6 +377,15 @@ impl AppServerRequestHandle {
         self.request_typed(JsonRpcRequest {
             id: next_request_id(),
             method: "conversation/list".to_string(),
+            params: None,
+        })
+        .await
+    }
+
+    pub async fn request_skills_list_typed(&self) -> Result<SkillsListResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "skills/list".to_string(),
             params: None,
         })
         .await

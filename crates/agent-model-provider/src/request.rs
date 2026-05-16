@@ -333,8 +333,14 @@ mod tests {
         assert!(matches!(
             &provider_request.messages[..],
             [
-                ProviderMessage::Assistant { reasoning: None, .. },
-                ProviderMessage::Assistant { reasoning: None, .. }
+                ProviderMessage::Assistant {
+                    reasoning: None,
+                    ..
+                },
+                ProviderMessage::Assistant {
+                    reasoning: None,
+                    ..
+                }
             ]
         ));
     }

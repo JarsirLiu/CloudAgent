@@ -387,6 +387,13 @@ mod tests {
     };
     use ratatui::style::Color;
     use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().expect("env lock")
+    }
 
     #[test]
     fn ansi256_adapts_rgb_to_indexed_color() {
@@ -447,24 +454,52 @@ mod tests {
 
     #[test]
     fn explicit_depth_override_disables_truecolor_without_touching_capabilities_shape() {
+        let _lock = env_lock();
+        let previous_depth = std::env::var_os("CLOUDAGENT_COLOR_DEPTH");
         unsafe {
             std::env::set_var("CLOUDAGENT_COLOR_DEPTH", "256");
         }
         let capabilities = TerminalCapabilities::detect();
         unsafe {
-            std::env::remove_var("CLOUDAGENT_COLOR_DEPTH");
+            match previous_depth {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_DEPTH", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_DEPTH"),
+            }
         }
         assert_eq!(capabilities.color_depth, ColorDepth::Ansi256);
     }
 
     #[test]
     fn apple_terminal_disables_synchronized_update_and_truecolor() {
+        let _lock = env_lock();
+        let previous_term_program = std::env::var_os("TERM_PROGRAM");
+        let previous_no_color = std::env::var_os("NO_COLOR");
+        let previous_depth = std::env::var_os("CLOUDAGENT_COLOR_DEPTH");
+        let previous_mode = std::env::var_os("CLOUDAGENT_COLOR_MODE");
         unsafe {
             std::env::set_var("TERM_PROGRAM", "Apple_Terminal");
+            std::env::remove_var("NO_COLOR");
+            std::env::remove_var("CLOUDAGENT_COLOR_DEPTH");
+            std::env::remove_var("CLOUDAGENT_COLOR_MODE");
         }
         let capabilities = TerminalCapabilities::detect();
         unsafe {
-            std::env::remove_var("TERM_PROGRAM");
+            match previous_term_program {
+                Some(value) => std::env::set_var("TERM_PROGRAM", value),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+            match previous_no_color {
+                Some(value) => std::env::set_var("NO_COLOR", value),
+                None => std::env::remove_var("NO_COLOR"),
+            }
+            match previous_depth {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_DEPTH", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_DEPTH"),
+            }
+            match previous_mode {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_MODE", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_MODE"),
+            }
         }
         assert_eq!(capabilities.color_depth, ColorDepth::Ansi256);
         assert!(!capabilities.supports_synchronized_update);

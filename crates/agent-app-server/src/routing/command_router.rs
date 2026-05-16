@@ -275,6 +275,9 @@ pub(crate) async fn handle_command(
         AppClientCommand::ListConversations => {
             session_service::list_conversations(&runtime, event_tx, &state).await?;
         }
+        AppClientCommand::ListSkills => {
+            session_service::report_hub_mode_only_command(event_tx, &state, "ListSkills").await;
+        }
         AppClientCommand::ListOnlineNodes => {
             session_service::report_hub_mode_only_command(event_tx, &state, "ListOnlineNodes")
                 .await;

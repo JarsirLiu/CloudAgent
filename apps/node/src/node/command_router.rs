@@ -391,6 +391,7 @@ fn hub_mode_only_error_response(
     command: &AppClientCommand,
 ) -> Option<HubModeOnlyResponse> {
     let unsupported = match command {
+        AppClientCommand::ListSkills => "ListSkills",
         AppClientCommand::ListOnlineNodes => "ListOnlineNodes",
         AppClientCommand::SelectTargetNode { .. } => "SelectTargetNode",
         _ => return None,
@@ -676,6 +677,7 @@ fn command_name(command: &AppClientCommand) -> &'static str {
             "request_conversation_history_page"
         }
         AppClientCommand::ListConversations => "list_conversations",
+        AppClientCommand::ListSkills => "list_skills",
         AppClientCommand::ListOnlineNodes => "list_online_nodes",
         AppClientCommand::ListPlatforms => "list_platforms",
         AppClientCommand::GetNodeStatus => "get_node_status",
@@ -761,6 +763,7 @@ pub(crate) async fn target_conversation_id(
             conversation_id.clone()
         }
         AppClientCommand::ListConversations
+        | AppClientCommand::ListSkills
         | AppClientCommand::ListOnlineNodes
         | AppClientCommand::ListPlatforms
         | AppClientCommand::GetNodeStatus

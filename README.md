@@ -38,7 +38,7 @@ In progress:
 
 Planned:
 - [ ] MCP
-- [ ] Skills
+- [x] Skills (workspace/user local skill packages, initial Codex-style support)
 - [ ] Long-term memory
 - [ ] Web access
 
@@ -102,6 +102,25 @@ CloudAgent reads config from default paths in this order:
 - `<workspace>/.cloudagent/config.toml`
 - `<workspace>/configs/config.toml`
 
+CloudAgent skills are discovered from:
+- `<workspace>/.cloudagent/skills/`
+- `~/.cloudagent/skills/`
+
+Skill packages use a `SKILL.md` entry file with YAML frontmatter. The metadata shape is:
+
+```md
+---
+name: repo-reader
+description: Use this skill when the user needs repository structure analysis.
+policy:
+  allow_implicit_invocation: true
+dependencies:
+  tools: [rg, git]
+---
+```
+
+`policy.allow_implicit_invocation` defaults to enabled when omitted. Set it to `false` for explicit-only skills.
+
 Recommended:
 ```bash
 # 1) start node
@@ -140,6 +159,8 @@ cargo run -p cli
 | Command | Description |
 |---|---|
 | `/config` | Configure OpenAI-compatible `api_key`, `base_url`, and `model` |
+| `/skill <name>` | Insert a discovered skill into the composer |
+| `/skills` | List discovered skills |
 | `/help` | Show local command help |
 | `/copy` | Copy the latest assistant reply |
 | `/interrupt` | Interrupt the running turn |
@@ -178,7 +199,7 @@ CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连
 
 未开发：
 - [ ] MCP
-- [ ] Skill
+- [x] Skill（已支持 workspace / user 本地 skill 包，当前为首版 Codex 风格能力）
 - [ ] 长期记忆
 - [ ] Web 访问
 
@@ -242,6 +263,25 @@ CloudAgent 默认按以下顺序读取配置：
 - `<workspace>/.cloudagent/config.toml`
 - `<workspace>/configs/config.toml`
 
+CloudAgent skill 默认从以下目录发现：
+- `<workspace>/.cloudagent/skills/`
+- `~/.cloudagent/skills/`
+
+Skill 包使用 `SKILL.md` 作为入口文件，并在文件顶部使用 YAML frontmatter。元数据结构如下：
+
+```md
+---
+name: repo-reader
+description: 当用户需要分析仓库结构时使用这个 skill。
+policy:
+  allow_implicit_invocation: true
+dependencies:
+  tools: [rg, git]
+---
+```
+
+如果省略 `policy.allow_implicit_invocation`，默认会允许隐式调用；只有显式触发的 skill 才建议把它设为 `false`。
+
 推荐方式：
 ```bash
 # 1) 启动 node
@@ -280,6 +320,8 @@ cargo run -p cli
 | 命令 | 说明 |
 |---|---|
 | `/config` | 配置 OpenAI 兼容模型的 `api_key`、`base_url` 和 `model` |
+| `/skill <name>` | 将已发现的 skill 插入输入框 |
+| `/skills` | 列出当前发现到的 skill |
 | `/help` | 显示本地命令帮助 |
 | `/copy` | 复制最新一条 assistant 回复 |
 | `/interrupt` | 中断当前运行中的 turn |

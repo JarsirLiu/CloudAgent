@@ -44,6 +44,8 @@ pub struct RuntimeConfig {
     pub max_tool_roundtrips: Option<usize>,
     pub data_root_dir: PathBuf,
     pub conversation_store_dir: PathBuf,
+    pub skills_enabled: bool,
+    pub skill_roots: Vec<PathBuf>,
     pub model_context_window: u64,
     pub context_compaction_trigger_ratio: f32,
     pub context_compaction_target_tokens: usize,
@@ -116,6 +118,8 @@ struct PartialRuntimeConfig {
     data_root_dir: Option<PathBuf>,
     #[serde(alias = "session_store_dir")]
     conversation_store_dir: Option<PathBuf>,
+    skills_enabled: Option<bool>,
+    skill_roots: Option<Vec<PathBuf>>,
     model_context_window: Option<u64>,
     context_compaction_trigger_ratio: Option<f32>,
     context_compaction_target_tokens: Option<usize>,
@@ -225,6 +229,8 @@ impl AgentConfig {
                 max_tool_roundtrips: None,
                 data_root_dir: data_root_dir.clone(),
                 conversation_store_dir: data_root_dir.join("conversations"),
+                skills_enabled: true,
+                skill_roots: Vec::new(),
                 model_context_window: 200_000,
                 context_compaction_trigger_ratio: 0.90,
                 context_compaction_target_tokens: 36_000,
@@ -310,6 +316,15 @@ impl AgentConfig {
             if let Some(value) = runtime.conversation_store_dir {
                 conversation_store_overridden = true;
                 self.runtime.conversation_store_dir = absolutize_path(&self.workspace_root, value);
+            }
+            if let Some(value) = runtime.skills_enabled {
+                self.runtime.skills_enabled = value;
+            }
+            if let Some(values) = runtime.skill_roots {
+                self.runtime.skill_roots = values
+                    .into_iter()
+                    .map(|value| absolutize_path(&self.workspace_root, value))
+                    .collect();
             }
             if let Some(value) = runtime.model_context_window {
                 self.runtime.model_context_window = value.max(2_048);

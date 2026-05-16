@@ -30,6 +30,8 @@ pub struct RunState {
     pub pre_llm_filter_enabled: bool,
     pub permission_mode: String,
     pub weixin_binding: Option<WeixinBindingState>,
+    pub pending_skills_refresh: bool,
+    pub next_skills_refresh_at: Option<Instant>,
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +58,8 @@ impl RunState {
             pre_llm_filter_enabled: false,
             permission_mode: "WorkspaceWrite".to_string(),
             weixin_binding: None,
+            pending_skills_refresh: false,
+            next_skills_refresh_at: None,
         }
     }
 }

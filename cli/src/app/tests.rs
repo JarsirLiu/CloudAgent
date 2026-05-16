@@ -1147,7 +1147,7 @@ fn failed_turn_restores_non_image_input_semantics_as_editable_text() {
 
     assert!(rendered.contains("[Attachment: spec.pdf (application/pdf)]"));
     assert!(rendered.contains("@workspace (D:\\learn\\gifti\\cloudagent)"));
-    assert!(rendered.contains("#browser-use (plugin://browser-use)"));
+    assert!(rendered.contains("$browser-use"));
 }
 
 #[test]

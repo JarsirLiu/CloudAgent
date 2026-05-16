@@ -167,6 +167,7 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
             limit: optional_value_field(params, "limit")?.unwrap_or(30),
         }),
         "conversation/list" => Ok(AppClientCommand::ListConversations),
+        "skills/list" => Ok(AppClientCommand::ListSkills),
         "hub/node/list" => Ok(AppClientCommand::ListOnlineNodes),
         "platform/list" => Ok(AppClientCommand::ListPlatforms),
         "node/status" => Ok(AppClientCommand::GetNodeStatus),
@@ -272,6 +273,7 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             }),
         ),
         AppClientCommand::ListConversations => ("conversation/list", Value::Null),
+        AppClientCommand::ListSkills => ("skills/list", Value::Null),
         AppClientCommand::ListOnlineNodes => ("hub/node/list", Value::Null),
         AppClientCommand::ListPlatforms => ("platform/list", Value::Null),
         AppClientCommand::GetNodeStatus => ("node/status", Value::Null),
@@ -449,6 +451,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "conversation/list",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::SkillsChanged { .. } => (
+            "skills/changed",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::OnlineNodeList { .. } => (
             "hub/node/list",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -531,6 +537,7 @@ fn parse_server_notification(
         | "conversation/turnSnapshot"
         | "conversation/historyPage"
         | "conversation/list"
+        | "skills/changed"
         | "hub/node/list"
         | "conversation/switched"
         | "conversation/subscriptionChanged"

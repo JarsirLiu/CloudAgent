@@ -124,8 +124,10 @@ pub async fn execute_regular_turn<H: TurnHost>(
             &environment_context,
             &tool_specs,
             &settings,
-            raw_memory_fragment.clone(),
-            skill_summary.clone(),
+            BudgetedFragmentInputs {
+                raw_memory_fragment: raw_memory_fragment.clone(),
+                skill_summary: skill_summary.clone(),
+            },
         );
         let candidate_fragments = append_rendered_fragments(
             budgeted_before_compaction.fragments.clone(),
@@ -222,8 +224,10 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &environment_context,
                 &tool_specs,
                 &settings,
-                raw_memory_fragment.clone(),
-                skill_summary.clone(),
+                BudgetedFragmentInputs {
+                    raw_memory_fragment: raw_memory_fragment.clone(),
+                    skill_summary: skill_summary.clone(),
+                },
             )
         } else {
             budgeted_before_compaction
@@ -569,12 +573,11 @@ pub async fn execute_regular_turn<H: TurnHost>(
             );
         }
 
-        let assistant_response_item =
-            context_manager.record_assistant_message(
-                response.content.clone(),
-                response.reasoning.clone(),
-                tool_calls.clone(),
-            );
+        let assistant_response_item = context_manager.record_assistant_message(
+            response.content.clone(),
+            response.reasoning.clone(),
+            tool_calls.clone(),
+        );
         host.persist_rollout_items(
             conversation_id,
             &[RolloutItem::from(assistant_response_item)],
@@ -714,6 +717,11 @@ fn compaction_continuation(roundtrip_count: usize) -> CompactionContinuation {
     }
 }
 
+struct BudgetedFragmentInputs {
+    raw_memory_fragment: Option<String>,
+    skill_summary: Option<String>,
+}
+
 fn build_budgeted_fragments_for_current_history(
     context_facade: &ContextFacade,
     context_manager: &ContextManager,
@@ -721,8 +729,7 @@ fn build_budgeted_fragments_for_current_history(
     environment_context: &crate::context::EnvironmentContext,
     tool_specs: &[crate::ToolSpec],
     settings: &crate::turn::RegularTurnSettings,
-    raw_memory_fragment: Option<String>,
-    skill_summary: Option<String>,
+    inputs: BudgetedFragmentInputs,
 ) -> crate::context::BudgetedFragments {
     context_facade.build_memory_budgeted_fragments(
         &context_manager.history().messages,
@@ -734,8 +741,8 @@ fn build_budgeted_fragments_for_current_history(
         settings.context_compaction_trigger_ratio,
         settings.context_compaction_request_overhead_tokens,
         MemoryBudgetSource {
-            memory: raw_memory_fragment,
-            skills: skill_summary,
+            memory: inputs.raw_memory_fragment,
+            skills: inputs.skill_summary,
             mcp: None,
             enable_skills_bucket: settings.enable_skill_bucket,
             enable_mcp_bucket: settings.enable_mcp_bucket,
@@ -793,7 +800,7 @@ mod tests {
     use super::build_budgeted_fragments_for_current_history;
     use super::compaction_continuation;
     use super::execute_regular_turn;
-    use super::{collect_discoverable_tools, compose_visible_tool_specs};
+    use super::{BudgetedFragmentInputs, collect_discoverable_tools, compose_visible_tool_specs};
     use crate::context::EnvironmentContext;
     use crate::skill::SkillRuntime;
     use crate::tool::RegularTurnToolExposure;
@@ -1560,9 +1567,11 @@ mod tests {
         context_manager
             .history_mut()
             .push_user_message(crate::text_input_items("hello"));
-        context_manager
-            .history_mut()
-            .push_assistant_message(Some("A".repeat(24_000)), None, Vec::new());
+        context_manager.history_mut().push_assistant_message(
+            Some("A".repeat(24_000)),
+            None,
+            Vec::new(),
+        );
         let before = build_budgeted_fragments_for_current_history(
             &ContextFacade::new(),
             &context_manager,
@@ -1570,8 +1579,10 @@ mod tests {
             &environment,
             &tool_specs,
             &settings,
-            host.raw_memory_fragment(),
-            None,
+            BudgetedFragmentInputs {
+                raw_memory_fragment: host.raw_memory_fragment(),
+                skill_summary: None,
+            },
         );
         assert!(!before.fragments.iter().any(|item| {
             matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(content).contains("<long_term_memory>"))
@@ -1587,8 +1598,10 @@ mod tests {
             &environment,
             &tool_specs,
             &settings,
-            host.raw_memory_fragment(),
-            None,
+            BudgetedFragmentInputs {
+                raw_memory_fragment: host.raw_memory_fragment(),
+                skill_summary: None,
+            },
         );
         assert!(after.fragments.iter().any(|item| {
             matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(content).contains("<long_term_memory>"))

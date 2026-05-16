@@ -103,6 +103,13 @@ async fn handle_stdio_request(
                 result: serde_json::to_value(result)?,
             })
         }
+        "skills/list" => {
+            let result = session::service::read_skills_list(runtime, state).await?;
+            JsonRpcMessage::Response(JsonRpcResponse {
+                id: request_id,
+                result: serde_json::to_value(result)?,
+            })
+        }
         "conversation/status" => {
             let conversation_id = required_string_param(&request, "conversation_id")?;
             let result =

@@ -183,6 +183,7 @@ fn estimate_history_tokens(messages: &[agent_core::ResponseItem]) -> usize {
             agent_core::ResponseItem::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 let text_len = content.as_ref().map_or(0, |text| text.chars().count());
                 let tool_len: usize = tool_calls

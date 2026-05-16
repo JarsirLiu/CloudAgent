@@ -2,7 +2,8 @@ use crate::types::{FrontendMode, NotificationDelivery, NotificationStream};
 use crate::{RequestId, UserTurnInput};
 use agent_core::{
     CompactionContinuation, ConversationSnapshot, ConversationSummary, ConversationTurn,
-    ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision, TranscriptItem, TurnId,
+    ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision, SkillMetadata,
+    TranscriptItem, TurnId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +53,11 @@ pub struct OnlineNodeSummary {
 pub struct ConversationListResponse {
     // Typed read surface for conversation index bootstrap / explicit refresh.
     pub conversations: Vec<ConversationSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SkillsListResponse {
+    pub skills: Vec<SkillMetadata>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -208,6 +214,7 @@ pub enum AppClientCommand {
         limit: usize,
     },
     ListConversations,
+    ListSkills,
     ListOnlineNodes,
     ListPlatforms,
     GetNodeStatus,
@@ -288,6 +295,7 @@ impl AppClientCommand {
             | Self::SubscribeConversation { conversation_id }
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
             Self::ListConversations
+            | Self::ListSkills
             | Self::ListOnlineNodes
             | Self::ListPlatforms
             | Self::GetNodeStatus
@@ -467,6 +475,9 @@ pub enum AppServerNotification {
         conversation_id: String,
         conversations: Vec<ConversationSummary>,
     },
+    SkillsChanged {
+        conversation_id: String,
+    },
     OnlineNodeList {
         conversation_id: String,
         nodes: Vec<OnlineNodeSummary>,
@@ -572,6 +583,9 @@ impl AppServerNotification {
             | Self::ConversationList {
                 conversation_id, ..
             }
+            | Self::SkillsChanged {
+                conversation_id, ..
+            }
             | Self::OnlineNodeList {
                 conversation_id, ..
             }
@@ -663,6 +677,7 @@ pub fn classify_notification(
         | AppServerNotification::ConversationHistory { .. }
         | AppServerNotification::ConversationHistoryPage { .. }
         | AppServerNotification::ConversationList { .. }
+        | AppServerNotification::SkillsChanged { .. }
         | AppServerNotification::OnlineNodeList { .. }
         | AppServerNotification::ConversationSwitched { .. }
         | AppServerNotification::ConversationSubscriptionChanged { .. }

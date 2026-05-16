@@ -75,7 +75,7 @@ impl InputItem {
                 .map(|name| format!("[file: {name}]"))
                 .unwrap_or_else(|| "[file]".to_string()),
             Self::Mention { name, .. } => format!("@{name}"),
-            Self::Skill { name, .. } => format!("#{name}"),
+            Self::Skill { name, .. } => format!("${name}"),
         }
     }
 }

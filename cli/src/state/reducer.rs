@@ -32,6 +32,8 @@ pub(crate) enum UiInputEvent {
         base_url: String,
         model: String,
     },
+    LocalSkillInsert(String),
+    LocalSkillsOpen,
     LocalGatewayOpen,
     LocalGatewaySelect(String),
     LocalGatewayWeixinLoginStart(String),
@@ -65,6 +67,7 @@ pub(crate) struct ServerMessageReduce {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ServerAction {
     SetConversationList(Vec<ConversationSummary>),
+    InvalidateSkillsCatalog,
     SetFrontendMode(FrontendMode),
     SwitchConversation(String),
     ClearCurrentTurnUsage,
@@ -233,6 +236,9 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             AppServerNotification::ConversationList { conversations, .. } => {
                 actions.push(ServerAction::SetConversationList(conversations.clone()));
+            }
+            AppServerNotification::SkillsChanged { .. } => {
+                actions.push(ServerAction::InvalidateSkillsCatalog);
             }
             AppServerNotification::ConversationSwitched { conversation_id } => {
                 actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
@@ -598,6 +604,21 @@ mod tests {
             reduced.actions.first(),
             Some(ServerAction::SwitchConversation(conversation_id))
                 if conversation_id == "draft-1"
+        ));
+    }
+
+    #[test]
+    fn skills_changed_invalidates_local_skill_catalog() {
+        let message = AppServerMessage::Notification(AppServerNotification::SkillsChanged {
+            conversation_id: "default".to_string(),
+        });
+
+        let reduced = apply_server_message(&message);
+
+        assert_eq!(reduced.actions.len(), 1);
+        assert!(matches!(
+            reduced.actions.first(),
+            Some(ServerAction::InvalidateSkillsCatalog)
         ));
     }
 

@@ -4,6 +4,7 @@ mod copy_path;
 mod create_directory;
 mod edit_file;
 mod remove_path;
+mod skill_scaffold;
 mod watch;
 
 pub(crate) use copy_path::CopyPathLocalTool;
@@ -14,5 +15,7 @@ pub(crate) use edit_file::EditFileLocalTool;
 pub use edit_file::EditFileTool;
 pub(crate) use remove_path::RemovePathLocalTool;
 pub use remove_path::RemovePathTool;
+pub(crate) use skill_scaffold::{CreateSkillScaffoldLocalTool, ValidateSkillLocalTool};
+pub use skill_scaffold::{CreateSkillScaffoldTool, ValidateSkillTool};
 pub(crate) use watch::{UnwatchLocalTool, WatchLocalTool, WatchManager};
 pub use watch::{UnwatchTool, WatchTool};

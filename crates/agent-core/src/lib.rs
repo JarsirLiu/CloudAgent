@@ -6,6 +6,7 @@ pub mod model;
 pub mod observability;
 pub mod projection;
 pub mod rollout;
+pub mod skill;
 pub mod state;
 pub mod tool;
 pub mod turn;
@@ -46,6 +47,12 @@ pub use projection::{
     transcript_items_from_response_items, transcript_items_from_rollout_items,
 };
 pub use rollout::RolloutItem;
+pub use skill::{
+    SkillCatalog, SkillDependencies, SkillDocument, SkillInvocationMode, SkillMetadata,
+    SkillRuntime, SkillScaffoldOutcome, SkillScaffoldSpec, SkillScope, SkillValidationReport,
+    create_skill_scaffold, render_skill_catalog, render_skill_injection, render_skill_template,
+    validate_skill_dir,
+};
 pub use state::{ActiveTurnHandle, AgentState};
 pub use tool::{
     ApprovalGrantKey, ApprovalRequirement, CommandExecutionStatus, DirectoryEntry, McpCallResult,

@@ -3,8 +3,9 @@ use crate::impls::discovery::{ToolSearchLocalTool, ToolSearchTool};
 use crate::impls::file_read_state::FileReadStateStore;
 use crate::impls::fs::{
     CopyPathLocalTool, CopyPathTool, CreateDirectoryLocalTool, CreateDirectoryTool,
-    EditFileLocalTool, EditFileTool, RemovePathLocalTool, RemovePathTool, UnwatchLocalTool,
-    UnwatchTool, WatchLocalTool, WatchManager, WatchTool,
+    CreateSkillScaffoldLocalTool, CreateSkillScaffoldTool, EditFileLocalTool, EditFileTool,
+    RemovePathLocalTool, RemovePathTool, UnwatchLocalTool, UnwatchTool, ValidateSkillLocalTool,
+    ValidateSkillTool, WatchLocalTool, WatchManager, WatchTool,
 };
 use crate::impls::repo::{
     ReadFileLocalTool, ReadFileTool, SearchWorkspaceLocalTool, SearchWorkspaceTool,
@@ -35,8 +36,10 @@ fn build_main_chain_descriptors(max_read_chars: usize) -> Vec<ToolDescriptor> {
 fn build_platform_fs_descriptors() -> Vec<ToolDescriptor> {
     vec![
         CreateDirectoryTool::descriptor(),
+        CreateSkillScaffoldTool::descriptor(),
         CopyPathTool::descriptor(),
         RemovePathTool::descriptor(),
+        ValidateSkillTool::descriptor(),
         WatchTool::descriptor(),
         UnwatchTool::descriptor(),
     ]
@@ -71,8 +74,10 @@ fn register_main_chain_tools(
 
 fn register_platform_fs_tools(tools: &mut LocalToolMap, watch_manager: WatchManager) {
     register(tools, CreateDirectoryLocalTool);
+    register(tools, CreateSkillScaffoldLocalTool);
     register(tools, CopyPathLocalTool);
     register(tools, RemovePathLocalTool);
+    register(tools, ValidateSkillLocalTool);
     register(
         tools,
         WatchLocalTool {

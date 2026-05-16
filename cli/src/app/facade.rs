@@ -28,6 +28,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         config.initial_permission_mode.clone(),
     );
     load_initial_history(&client, &mut app, &conversation_id).await?;
+    load_initial_skills(&client, &mut app).await?;
     runtime_loop::run_tui_event_loop(&mut app, &mut client).await?;
     client.shutdown().await
 }
@@ -69,5 +70,13 @@ async fn load_initial_history(
         app,
         ServerAction::SetFrontendMode(mode),
     );
+    Ok(())
+}
+
+async fn load_initial_skills(client: &AppServerClient, app: &mut TuiApp) -> Result<()> {
+    let response = timeout(STARTUP_REQUEST_TIMEOUT, client.request_skills_list_typed())
+        .await
+        .map_err(|_| anyhow!("timed out loading initial skills list"))??;
+    app.bottom_pane.set_available_skills(response.skills);
     Ok(())
 }

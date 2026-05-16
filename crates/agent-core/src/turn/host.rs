@@ -3,6 +3,7 @@ use crate::context::{ContextManager, EnvironmentContext};
 use crate::conversation::ConversationHistory;
 use crate::model::{ModelRequest, ModelResponse, ModelStreamObserver};
 use crate::rollout::RolloutItem;
+use crate::skill::SkillRuntime;
 use crate::state::ActiveTurnHandle;
 use crate::tool::{RegularTurnToolExposure, ToolCall, ToolSpec};
 use crate::turn::{EventMsg, ServerRequest, ServerRequestDecision};
@@ -77,6 +78,7 @@ pub trait TurnHost: Send + Sync {
     fn regular_turn_settings(&self) -> RegularTurnSettings;
     fn environment_context(&self) -> EnvironmentContext;
     fn raw_memory_fragment(&self) -> Option<String>;
+    fn skills(&self) -> SkillRuntime;
     fn resolve_regular_turn_tool_exposure(
         &self,
         permission_profile: &Self::PermissionProfile,

@@ -1,4 +1,5 @@
 use crate::routing::command_router::{ServerState, handle_command};
+use crate::session::skills_watch::spawn_skill_watch;
 use crate::session::state as session_state;
 use agent_core::AgentHost;
 use agent_protocol::{AppClientCommand, AppServerMessage, AppServerNotification};
@@ -74,6 +75,7 @@ pub fn start_in_process(
     )));
 
     let state_for_task = state.clone();
+    spawn_skill_watch(runtime.clone(), event_tx.clone(), state.clone());
     tokio::spawn(async move {
         session_state::hydrate_active_conversation(&runtime, &state_for_task).await;
         while let Some(message) = command_rx.recv().await {

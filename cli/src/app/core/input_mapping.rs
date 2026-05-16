@@ -114,6 +114,10 @@ impl TuiApp {
                 base_url: String::new(),
                 model: String::new(),
             }),
+            InputPaneAction::Composer(ComposerIntent::Skill(name)) => {
+                Some(ParsedInput::LocalSkillInsert(name))
+            }
+            InputPaneAction::Composer(ComposerIntent::Skills) => Some(ParsedInput::LocalSkillsOpen),
             InputPaneAction::Composer(ComposerIntent::Gateway) => {
                 Some(ParsedInput::LocalGatewayOpen)
             }

@@ -162,6 +162,111 @@ pub(crate) async fn handle_tui_input(
             );
             return Ok(false);
         }
+        ParsedInput::LocalSkillInsert(name) => {
+            let response = match client.request_skills_list_typed().await {
+                Ok(response) => response,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        format!("Failed to load skills: {err}"),
+                    );
+                    return Ok(false);
+                }
+            };
+            app.bottom_pane
+                .set_available_skills(response.skills.clone());
+            let matches = response
+                .skills
+                .into_iter()
+                .filter(|skill| skill.name.eq_ignore_ascii_case(&name))
+                .collect::<Vec<_>>();
+            match matches.as_slice() {
+                [] => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Warn,
+                        format!(
+                            "Skill '{name}' was not found. Use /skills to inspect available skills."
+                        ),
+                    );
+                }
+                [skill] => {
+                    if !app
+                        .bottom_pane
+                        .attach_skill(skill.name.clone(), skill.path.display().to_string())
+                    {
+                        show_local_notice(
+                            app,
+                            NoticeLevel::Warn,
+                            "Close the active picker before inserting a skill.".to_string(),
+                        );
+                    } else {
+                        show_local_notice(
+                            app,
+                            NoticeLevel::Info,
+                            format!(
+                                "Inserted skill '{}'. Add your task text and submit when ready.",
+                                skill.name
+                            ),
+                        );
+                    }
+                }
+                _ => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Warn,
+                        format!(
+                            "Skill name '{name}' is ambiguous. Use /skills and pick a more specific name."
+                        ),
+                    );
+                }
+            }
+            return Ok(false);
+        }
+        ParsedInput::LocalSkillsOpen => {
+            let response = match client.request_skills_list_typed().await {
+                Ok(response) => response,
+                Err(err) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Error,
+                        format!("Failed to load skills: {err}"),
+                    );
+                    return Ok(false);
+                }
+            };
+            app.bottom_pane
+                .set_available_skills(response.skills.clone());
+            let text = if response.skills.is_empty() {
+                "No skills discovered.\n\nChecked default locations:\n- <workspace>/.cloudagent/skills/\n- ~/.cloudagent/skills/".to_string()
+            } else {
+                let mut lines = Vec::new();
+                lines.push("Discovered skills:".to_string());
+                for skill in response.skills {
+                    let mode = match skill.invocation_mode {
+                        agent_core::SkillInvocationMode::Implicit => "implicit",
+                        agent_core::SkillInvocationMode::Explicit => "explicit",
+                    };
+                    let deps = if skill.dependencies.tools.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" deps: {}", skill.dependencies.tools.join(", "))
+                    };
+                    lines.push(format!(
+                        "- `{}` [{}]{}: {} ({})",
+                        skill.name,
+                        mode,
+                        deps,
+                        skill.description,
+                        skill.path.display()
+                    ));
+                }
+                lines.join("\n")
+            };
+            app.push_live_cell(HistoryCell::agent("skills", text, HistoryFormat::Markdown));
+            return Ok(false);
+        }
         ParsedInput::LocalGatewayOpen => {
             let response = match client.request_platform_list_typed().await {
                 Ok(response) => response,
@@ -548,6 +653,10 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     match action {
         ServerAction::SetConversationList(conversations) => {
             app.handle_conversation_list(conversations);
+        }
+        ServerAction::InvalidateSkillsCatalog => {
+            app.run_state.pending_skills_refresh = true;
+            app.run_state.next_skills_refresh_at = None;
         }
         ServerAction::SetFrontendMode(mode) => {
             app.sync_frontend_mode(mode);

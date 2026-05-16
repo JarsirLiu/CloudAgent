@@ -3,7 +3,7 @@ mod agent;
 use crate::{
     AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy, ChatModel,
     ConversationHistory, ConversationSummary, ExecutionPolicy, PermissionProfile,
-    RegularTurnSettings, RolloutItem, ToolBackend,
+    RegularTurnSettings, RolloutItem, SkillRuntime, ToolBackend,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -36,6 +36,7 @@ pub struct AgentHostParts {
     pub approval_grants: Arc<dyn ApprovalGrantStoreBackend>,
     pub rollout_recorder: Arc<dyn RolloutRecorderBackend>,
     pub memory: Arc<dyn MemoryBackend>,
+    pub skills: SkillRuntime,
 }
 
 pub trait AgentHostExt {
@@ -52,6 +53,7 @@ pub trait AgentHostExt {
     fn approval_grants(&self) -> &Arc<dyn ApprovalGrantStoreBackend>;
     fn rollout_recorder(&self) -> &Arc<dyn RolloutRecorderBackend>;
     fn memory(&self) -> &Arc<dyn MemoryBackend>;
+    fn skills(&self) -> &SkillRuntime;
 
     fn llm_model_name(&self) -> &str {
         &self.metadata().llm_model_name

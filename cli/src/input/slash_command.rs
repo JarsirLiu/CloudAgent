@@ -12,7 +12,9 @@ pub(crate) enum SlashCommand {
     Filter,
     Permissions,
     Config,
+    Skill,
     Gateway,
+    Skills,
     Clear,
     Exit,
 }
@@ -125,12 +127,28 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         supports_inline_args: false,
     },
     SlashCommandSpec {
+        command: SlashCommand::Skill,
+        name: "skill",
+        aliases: &[],
+        description: "insert a discovered skill into the composer as a structured skill item",
+        argument_hint: Some("<name>"),
+        supports_inline_args: true,
+    },
+    SlashCommandSpec {
         command: SlashCommand::Gateway,
         name: "gateway",
         aliases: &[],
         description: "configure and connect IM platforms",
         argument_hint: None,
         supports_inline_args: true,
+    },
+    SlashCommandSpec {
+        command: SlashCommand::Skills,
+        name: "skills",
+        aliases: &[],
+        description: "list discovered skills",
+        argument_hint: None,
+        supports_inline_args: false,
     },
     SlashCommandSpec {
         command: SlashCommand::Clear,

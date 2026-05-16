@@ -14,6 +14,7 @@ use crate::ui::widgets::weixin_binding_view::{WeixinBindingView, WeixinBindingVi
 use agent_core::ConversationSummary;
 use agent_core::InputItem;
 use agent_core::ServerRequestDecisionKind;
+use agent_core::SkillMetadata;
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
@@ -147,6 +148,27 @@ impl InputPane {
         } else {
             false
         }
+    }
+
+    pub(crate) fn attach_skill(&mut self, name: String, path: String) -> bool {
+        if self.view_stack.is_empty() {
+            self.composer.attach_skill(name, path);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn set_available_skills(&mut self, skills: Vec<SkillMetadata>) {
+        let skills = skills
+            .into_iter()
+            .map(|skill| crate::input::completion::SkillCompletion {
+                name: skill.name,
+                description: skill.description,
+                path: skill.path.display().to_string(),
+            })
+            .collect();
+        self.composer.set_available_skills(skills);
     }
 
     pub(crate) fn handle_tick(&mut self) -> bool {

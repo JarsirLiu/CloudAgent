@@ -1,4 +1,4 @@
-use crate::input::completion::CompletionState;
+use crate::input::completion::{CompletionSelection, CompletionState, SkillCompletion};
 use crate::input::intent::ComposerIntent;
 use crate::input::slash_command::{SlashCommand, find_slash_command};
 use crate::text_width::display_width;
@@ -42,6 +42,8 @@ pub struct ChatComposer {
     last_history_text: Option<String>,
     local_images: Vec<LocalAttachedImage>,
     remote_images: Vec<RemoteAttachedImage>,
+    attached_skills: Vec<AttachedSkill>,
+    available_skills: Vec<SkillCompletion>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +58,13 @@ struct RemoteAttachedImage {
     url: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AttachedSkill {
+    placeholder: String,
+    name: String,
+    path: String,
+}
+
 impl ChatComposer {
     pub fn new() -> Self {
         Self {
@@ -68,6 +77,8 @@ impl ChatComposer {
             last_history_text: None,
             local_images: Vec::new(),
             remote_images: Vec::new(),
+            attached_skills: Vec::new(),
+            available_skills: Vec::new(),
         }
     }
 
@@ -156,8 +167,8 @@ impl ChatComposer {
                     return Some(ComposerIntent::None);
                 }
                 KeyCode::Enter => {
-                    if let Some(selected) = self.completion.selected() {
-                        if let Some(command) = selected.command {
+                    if let Some(selected) = self.completion.selected().cloned() {
+                        if let CompletionSelection::Command(command) = selected.selection {
                             self.textarea.clear();
                             self.completion.clear();
                             return Some(action_for_command(command, ""));
@@ -437,6 +448,7 @@ impl ChatComposer {
         self.last_history_text = None;
         self.local_images.clear();
         self.remote_images.clear();
+        self.attached_skills.clear();
     }
 
     pub fn restore_submission(&mut self, content: &[InputItem]) {
@@ -471,9 +483,7 @@ impl ChatComposer {
                 InputItem::Mention { name, path } => {
                     self.append_display_text(&format!("@{name} ({path})"))
                 }
-                InputItem::Skill { name, path } => {
-                    self.append_display_text(&format!("#{name} ({path})"))
-                }
+                InputItem::Skill { name, path } => self.attach_skill(name.clone(), path.clone()),
             }
         }
 
@@ -516,6 +526,32 @@ impl ChatComposer {
             placeholder,
             url: url.into(),
         });
+        self.sync_completion();
+    }
+
+    pub(crate) fn attach_skill(&mut self, name: String, path: String) {
+        let placeholder = format!("${name}");
+        if !self.textarea.is_empty()
+            && self
+                .textarea
+                .text()
+                .chars()
+                .last()
+                .is_some_and(|ch| !ch.is_whitespace() && ch != ']')
+        {
+            self.apply_textarea_edit(|textarea| textarea.insert_str(" "));
+        }
+        self.apply_textarea_edit(|textarea| textarea.insert_element(&placeholder));
+        self.attached_skills.push(AttachedSkill {
+            placeholder,
+            name,
+            path,
+        });
+        self.sync_completion();
+    }
+
+    pub(crate) fn set_available_skills(&mut self, skills: Vec<SkillCompletion>) {
+        self.available_skills = skills;
         self.sync_completion();
     }
 
@@ -586,7 +622,9 @@ impl ChatComposer {
         self.completion.clear();
         self.history_cursor = None;
         self.last_history_text = None;
-        let content = build_submission_content(&text, &local_images, &remote_images);
+        let attached_skills = std::mem::take(&mut self.attached_skills);
+        let content =
+            build_submission_content(&text, &local_images, &remote_images, &attached_skills);
         if content.is_empty() {
             ComposerIntent::None
         } else {
@@ -595,6 +633,7 @@ impl ChatComposer {
             }
             if local_images.is_empty()
                 && remote_images.is_empty()
+                && attached_skills.is_empty()
                 && !leading_space_escape
                 && let Some(command_text) = text.strip_prefix('/')
             {
@@ -614,8 +653,11 @@ impl ChatComposer {
 
     fn sync_completion(&mut self) {
         self.prune_attached_images();
-        self.completion
-            .sync_from_input(self.textarea.text(), self.textarea.byte_cursor());
+        self.completion.sync_from_input(
+            self.textarea.text(),
+            self.textarea.byte_cursor(),
+            &self.available_skills,
+        );
     }
 
     fn prune_attached_images(&mut self) {
@@ -634,6 +676,8 @@ impl ChatComposer {
         self.local_images = retained;
         self.remote_images
             .retain(|image| present_placeholders.contains(&image.placeholder));
+        self.attached_skills
+            .retain(|skill| present_placeholders.contains(&skill.placeholder));
         self.relabel_images_and_update_placeholders();
     }
 
@@ -725,18 +769,37 @@ impl ChatComposer {
     }
 
     fn accept_selected_completion(&mut self) {
-        let Some(selected) = self.completion.selected() else {
+        let Some(selected) = self.completion.selected().cloned() else {
             return;
         };
-        if let Some(command) = selected.command {
-            if command.spec().argument_hint.is_some() {
-                self.textarea.set_text(format!("/{} ", command.name()));
-            } else {
-                self.textarea.set_text(format!("/{}", command.name()));
+        match selected.selection {
+            CompletionSelection::Command(command) => {
+                if command.spec().argument_hint.is_some() {
+                    self.textarea.set_text(format!("/{} ", command.name()));
+                } else {
+                    self.textarea.set_text(format!("/{}", command.name()));
+                }
             }
-        } else if self.textarea.text().starts_with("/filter") {
-            self.textarea
-                .set_text(format!("/filter {} ", selected.insertion));
+            CompletionSelection::FilterValue(value) => {
+                if self.textarea.text().starts_with("/filter") {
+                    self.textarea.set_text(format!("/filter {value} "));
+                }
+            }
+            CompletionSelection::Skill(skill) => {
+                if let Some(range) = self.completion.selected_skill_replace_range() {
+                    self.textarea.replace_char_range(range, "");
+                    self.attach_skill(skill.name, skill.path);
+                    if self
+                        .textarea
+                        .text()
+                        .chars()
+                        .last()
+                        .is_some_and(|ch| !ch.is_whitespace())
+                    {
+                        self.apply_textarea_edit(|textarea| textarea.insert_str(" "));
+                    }
+                }
+            }
         }
         self.completion.clear();
     }
@@ -920,6 +983,7 @@ fn build_submission_content(
     text: &str,
     local_images: &[LocalAttachedImage],
     remote_images: &[RemoteAttachedImage],
+    attached_skills: &[AttachedSkill],
 ) -> Vec<InputItem> {
     let mut content = Vec::new();
     let mut remaining = text;
@@ -929,30 +993,56 @@ fn build_submission_content(
         .chain(remote_images.iter().map(PendingImage::Remote))
         .filter(|image| text.contains(image.placeholder()))
         .collect::<Vec<_>>();
+    let mut skills = attached_skills
+        .iter()
+        .filter(|skill| text.contains(&skill.placeholder))
+        .collect::<Vec<_>>();
 
-    while !images.is_empty() {
-        let next = images
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, image)| {
-                remaining
-                    .find(image.placeholder())
-                    .map(|offset| (idx, offset))
-            })
+    while !images.is_empty() || !skills.is_empty() {
+        let next_image = images.iter().enumerate().filter_map(|(idx, image)| {
+            remaining
+                .find(image.placeholder())
+                .map(|offset| (idx, offset))
+        });
+        let next_skill = skills.iter().enumerate().filter_map(|(idx, skill)| {
+            remaining
+                .find(&skill.placeholder)
+                .map(|offset| (idx, offset))
+        });
+        let next = next_image
+            .map(|(idx, offset)| (PendingSubmissionItem::Image(idx), offset))
+            .chain(next_skill.map(|(idx, offset)| (PendingSubmissionItem::Skill(idx), offset)))
             .min_by_key(|(_, offset)| *offset);
 
-        let Some((image_idx, offset)) = next else {
+        let Some((item, offset)) = next else {
             break;
         };
-        let image = images.remove(image_idx);
         let (before, rest) = remaining.split_at(offset);
         push_text_item(&mut content, before);
-        content.push(image.to_input_item());
-        remaining = &rest[image.placeholder().len()..];
+        match item {
+            PendingSubmissionItem::Image(image_idx) => {
+                let image = images.remove(image_idx);
+                content.push(image.to_input_item());
+                remaining = &rest[image.placeholder().len()..];
+            }
+            PendingSubmissionItem::Skill(skill_idx) => {
+                let skill = skills.remove(skill_idx);
+                content.push(InputItem::Skill {
+                    name: skill.name.clone(),
+                    path: skill.path.clone(),
+                });
+                remaining = &rest[skill.placeholder.len()..];
+            }
+        }
     }
 
     push_text_item(&mut content, remaining);
     content
+}
+
+enum PendingSubmissionItem {
+    Image(usize),
+    Skill(usize),
 }
 
 fn push_text_item(content: &mut Vec<InputItem>, text: &str) {
@@ -1008,6 +1098,8 @@ fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
         SlashCommand::Filter => ComposerIntent::Filter(args.trim().to_string()),
         SlashCommand::Permissions => ComposerIntent::Permissions(args.trim().to_string()),
         SlashCommand::Config => ComposerIntent::Config,
+        SlashCommand::Skill => ComposerIntent::Skill(args.trim().to_string()),
+        SlashCommand::Skills => ComposerIntent::Skills,
         SlashCommand::Gateway => ComposerIntent::Gateway,
         SlashCommand::Exit => ComposerIntent::Exit,
     }
@@ -1071,6 +1163,32 @@ mod tests {
         let action = composer.handle_key(key(KeyCode::Enter));
         assert_eq!(action, Some(ComposerIntent::Copy));
         assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn dollar_skill_mention_opens_completion_and_inserts_structured_skill() {
+        let mut composer = ChatComposer::new();
+        composer.set_available_skills(vec![SkillCompletion {
+            name: "repo-reader".to_string(),
+            description: "Read repository structure".to_string(),
+            path: "D:\\repo\\.cloudagent\\skills\\repo-reader\\SKILL.md".to_string(),
+        }]);
+        type_text(&mut composer, "$rep");
+
+        assert!(composer.completion.is_active());
+
+        let action = composer.handle_key(key(KeyCode::Enter));
+        assert_eq!(action, Some(ComposerIntent::None));
+        assert_eq!(composer.textarea.text(), "$repo-reader ");
+
+        let submit = composer.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            submit,
+            Some(ComposerIntent::Submit(vec![InputItem::Skill {
+                name: "repo-reader".to_string(),
+                path: "D:\\repo\\.cloudagent\\skills\\repo-reader\\SKILL.md".to_string(),
+            }]))
+        );
     }
 
     #[test]
@@ -1288,6 +1406,44 @@ mod tests {
                 },
                 InputItem::Text {
                     text: "please".to_string(),
+                },
+            ]))
+        );
+    }
+
+    #[test]
+    fn submit_preserves_text_skill_and_image_order() {
+        let mut composer = ChatComposer::new();
+        type_text(&mut composer, "use this");
+        composer.attach_skill(
+            "repo-reader".to_string(),
+            "D:\\repo\\.cloudagent\\skills\\repo-reader\\SKILL.md".to_string(),
+        );
+        let image_path = create_test_png();
+        composer.attach_image(image_path.clone());
+        type_text(&mut composer, "now");
+
+        let action = composer.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(
+            action,
+            Some(ComposerIntent::Submit(vec![
+                InputItem::Text {
+                    text: "use this".to_string(),
+                },
+                InputItem::Skill {
+                    name: "repo-reader".to_string(),
+                    path: "D:\\repo\\.cloudagent\\skills\\repo-reader\\SKILL.md".to_string(),
+                },
+                InputItem::Image {
+                    source: AttachmentRef::LocalPath {
+                        path: image_path_string(&image_path),
+                    },
+                    detail: None,
+                    alt: None,
+                },
+                InputItem::Text {
+                    text: "now".to_string(),
                 },
             ]))
         );

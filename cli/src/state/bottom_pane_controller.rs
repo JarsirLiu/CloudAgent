@@ -10,6 +10,7 @@ use crate::ui::widgets::input_pane::{
 use crate::ui::widgets::session_picker::SessionPickerMode;
 use crate::ui::widgets::weixin_binding_view::WeixinBindingViewModel;
 use agent_core::InputItem;
+use agent_core::SkillMetadata;
 use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
 use crossterm::event::KeyEvent;
@@ -127,6 +128,14 @@ impl BottomPaneController {
 
     pub(crate) fn attach_image(&mut self, path: PathBuf) -> bool {
         self.input_pane.attach_image(path)
+    }
+
+    pub(crate) fn attach_skill(&mut self, name: String, path: String) -> bool {
+        self.input_pane.attach_skill(name, path)
+    }
+
+    pub(crate) fn set_available_skills(&mut self, skills: Vec<SkillMetadata>) {
+        self.input_pane.set_available_skills(skills);
     }
 
     #[allow(clippy::too_many_arguments)]

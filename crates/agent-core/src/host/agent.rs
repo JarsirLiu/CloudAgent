@@ -52,6 +52,7 @@ pub struct AgentHost {
     approval_grants: Arc<dyn ApprovalGrantStoreBackend>,
     rollout_recorder: Arc<dyn RolloutRecorderBackend>,
     memory: Arc<dyn MemoryBackend>,
+    skills: crate::SkillRuntime,
 }
 
 impl AgentHost {
@@ -68,6 +69,7 @@ impl AgentHost {
             approval_grants: parts.approval_grants,
             rollout_recorder: parts.rollout_recorder,
             memory: parts.memory,
+            skills: parts.skills,
         }
     }
 
@@ -152,6 +154,16 @@ impl AgentHost {
 
     pub async fn list_conversations(&self) -> Result<Vec<ConversationSummary>> {
         self.store.list_conversations().await
+    }
+
+    pub fn list_skills(&self) -> Vec<crate::SkillMetadata> {
+        self.skills
+            .load_catalog(&self.context.workspace_root)
+            .skills
+    }
+
+    pub fn skill_watch_roots(&self) -> Vec<std::path::PathBuf> {
+        self.skills.watch_roots(&self.context.workspace_root)
     }
 
     pub async fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()> {
@@ -584,6 +596,9 @@ impl AgentHostExt for AgentHost {
     fn memory(&self) -> &Arc<dyn MemoryBackend> {
         &self.memory
     }
+    fn skills(&self) -> &crate::SkillRuntime {
+        &self.skills
+    }
 }
 
 #[async_trait]
@@ -602,6 +617,9 @@ impl TurnHost for AgentHost {
     }
     fn raw_memory_fragment(&self) -> Option<String> {
         self.memory.raw_memory_fragment()
+    }
+    fn skills(&self) -> crate::SkillRuntime {
+        self.skills.clone()
     }
     fn resolve_regular_turn_tool_exposure(
         &self,
