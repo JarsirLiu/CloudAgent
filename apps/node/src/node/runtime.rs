@@ -2,6 +2,7 @@ use crate::node::conversation_execution::ConversationExecutionRegistry;
 use crate::node::conversation_registry::ConversationRegistry;
 use crate::node::platform::PlatformManager;
 use crate::node::worker_manager::WorkerManager;
+use agent_core::{SkillMetadata, SkillRuntime};
 use agent_protocol::NodeStatusResponse;
 use infra_store::JsonConversationStore;
 use std::path::PathBuf;
@@ -17,6 +18,8 @@ pub(crate) struct NodeRuntime {
     conversation_store: Arc<JsonConversationStore>,
     platforms: PlatformManager,
     listen_address: String,
+    workspace_root: PathBuf,
+    skills: SkillRuntime,
     data_root_dir: PathBuf,
     shutdown: Arc<Notify>,
 }
@@ -27,6 +30,8 @@ impl NodeRuntime {
         conversation_store: JsonConversationStore,
         platforms: PlatformManager,
         listen_address: impl Into<String>,
+        workspace_root: PathBuf,
+        skills: SkillRuntime,
         data_root_dir: PathBuf,
     ) -> Self {
         Self {
@@ -36,6 +41,8 @@ impl NodeRuntime {
             conversation_store: Arc::new(conversation_store),
             platforms,
             listen_address: listen_address.into(),
+            workspace_root,
+            skills,
             data_root_dir,
             shutdown: Arc::new(Notify::new()),
         }
@@ -67,6 +74,10 @@ impl NodeRuntime {
 
     pub(crate) fn listen_address(&self) -> &str {
         &self.listen_address
+    }
+
+    pub(crate) fn list_skills(&self) -> Vec<SkillMetadata> {
+        self.skills.load_catalog(&self.workspace_root).skills
     }
 
     pub(crate) async fn status(&self) -> NodeStatusResponse {

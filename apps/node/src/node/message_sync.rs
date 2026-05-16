@@ -157,7 +157,10 @@ mod tests {
     use crate::node::runtime::NodeRuntime;
     use crate::node::test_support::{test_worker_program, unique_temp_path};
     use crate::node::worker_manager::WorkerManager;
-    use agent_core::conversation::{ConversationSnapshot, ConversationStatus, ConversationSummary};
+    use agent_core::{
+        SkillRuntime,
+        conversation::{ConversationSnapshot, ConversationStatus, ConversationSummary},
+    };
     use agent_protocol::{AppServerMessage, AppServerNotification, FrontendMode};
 
     async fn test_runtime() -> NodeRuntime {
@@ -169,6 +172,8 @@ mod tests {
                 .await
                 .expect("platform manager"),
             "127.0.0.1:47070",
+            root.clone(),
+            SkillRuntime::new(true, Vec::new()),
             root,
         )
     }

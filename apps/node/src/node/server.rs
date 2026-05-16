@@ -7,6 +7,7 @@ use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
 use crate::node::source::NodeSource;
 use crate::node::worker_manager::NodeEvent;
+use agent_core::SkillRuntime;
 use agent_protocol::{
     JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse,
     TransportInitializeParams, TransportInitializeResult, TransportServerInfo,
@@ -30,6 +31,9 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
     let data_root_dir =
         arg_value(args, "--data-dir").or_else(|| std::env::var_os("CLOUDAGENT_DATA_ROOT_DIR"));
     let resolved_data_root_dir = resolve_data_root_dir(data_root_dir.as_deref());
+    let workspace_root =
+        std::env::current_dir().context("failed to resolve node workspace root")?;
+    let skill_runtime = load_node_skill_runtime(&workspace_root);
 
     let listener = TcpListener::bind(&listen_address)
         .await
@@ -58,6 +62,8 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
         conversation_store,
         platforms,
         listen_address.clone(),
+        workspace_root,
+        skill_runtime,
         resolved_data_root_dir,
     );
     let platform_runtime = runtime.clone();
@@ -102,6 +108,21 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
 
     runtime.shutdown().await?;
     Ok(())
+}
+
+fn load_node_skill_runtime(workspace_root: &Path) -> SkillRuntime {
+    match config::AgentConfig::load_user_only(workspace_root.to_path_buf()) {
+        Ok(config) => SkillRuntime::new(
+            config.runtime.skills_enabled,
+            config.runtime.skill_roots.clone(),
+        ),
+        Err(error) => {
+            tracing::warn!(
+                "failed to load node skill config, falling back to default roots: {error:#}"
+            );
+            SkillRuntime::new(true, Vec::new())
+        }
+    }
 }
 
 async fn run_connection<R, W>(
@@ -419,6 +440,7 @@ mod tests {
     use crate::node::session_state::NodeSessionState;
     use crate::node::test_support::{test_worker_program, unique_temp_path};
     use crate::node::worker_manager::WorkerManager;
+    use agent_core::SkillRuntime;
     use agent_protocol::{
         JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId,
         TransportInitializeParams,
@@ -441,6 +463,8 @@ mod tests {
             infra_store::JsonConversationStore::new(root.join("conversations")),
             platforms,
             "127.0.0.1:47070",
+            root.clone(),
+            SkillRuntime::new(true, Vec::new()),
             root,
         )
     }

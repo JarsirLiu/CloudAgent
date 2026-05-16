@@ -11,7 +11,7 @@ use agent_protocol::{
     ConversationHistoryPageResponse, ConversationHistoryResponse, ConversationListResponse,
     ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest,
     NodeStatusResponse, NodeStopResponse, PlatformConfigResponse, PlatformControlListResponse,
-    PlatformControlStatusResponse, PlatformControlUpdateResponse, RequestId,
+    PlatformControlStatusResponse, PlatformControlUpdateResponse, RequestId, SkillsListResponse,
     WeixinLoginStartResponse, WeixinLoginStatusResponse,
 };
 use anyhow::{Context, Result};
@@ -197,6 +197,14 @@ where
                 unreachable!("request path always returns jsonrpc")
             }
         }
+        return Ok(Some(true));
+    }
+
+    if matches!(envelope.command, AppClientCommand::ListSkills) {
+        let result = serde_json::to_value(SkillsListResponse {
+            skills: runtime.list_skills(),
+        })?;
+        write_jsonrpc_response(writer, envelope.request_id, result).await?;
         return Ok(Some(true));
     }
 
@@ -391,7 +399,6 @@ fn hub_mode_only_error_response(
     command: &AppClientCommand,
 ) -> Option<HubModeOnlyResponse> {
     let unsupported = match command {
-        AppClientCommand::ListSkills => "ListSkills",
         AppClientCommand::ListOnlineNodes => "ListOnlineNodes",
         AppClientCommand::SelectTargetNode { .. } => "SelectTargetNode",
         _ => return None,
@@ -791,13 +798,13 @@ mod tests {
     use crate::node::session_state::NodeSessionState;
     use crate::node::test_support::{test_worker_program, unique_temp_path};
     use crate::node::worker_manager::{NodeEvent, WorkerManager};
-    use agent_core::{ApprovalPolicy, PermissionProfile};
+    use agent_core::{ApprovalPolicy, PermissionProfile, SkillRuntime};
     use agent_core::{EventMsg, InputItem};
     use agent_protocol::JsonRpcNotification;
     use agent_protocol::{
         AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
-        FrontendMode, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestId, TurnPolicy,
-        UserTurnInput,
+        FrontendMode, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestId, SkillsListResponse,
+        TurnPolicy, UserTurnInput,
     };
     use tokio::io::{AsyncBufReadExt, BufReader, duplex};
     use tokio::sync::broadcast;
@@ -817,6 +824,8 @@ mod tests {
             infra_store::JsonConversationStore::new(root.join("conversations")),
             platforms,
             "127.0.0.1:47070",
+            root.clone(),
+            SkillRuntime::new(true, Vec::new()),
             root,
         )
     }
@@ -997,6 +1006,43 @@ mod tests {
                 assert_eq!(request_id, RequestId::Integer(9));
                 assert_eq!(error.code, -32000);
                 assert!(error.message.contains("hub mode only"));
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_skills_request_returns_typed_response_in_direct_mode() {
+        let runtime = test_runtime().await;
+        let mut session = NodeSessionState::new("conversation-1", "session-1");
+        let (writer, reader) = duplex(4096);
+        let mut writer = writer;
+        let mut reader = BufReader::new(reader);
+        let rpc = JsonRpcMessage::from(AppClientCommandEnvelope {
+            request_id: RequestId::Integer(17),
+            command: AppClientCommand::ListSkills,
+        });
+
+        let should_continue = handle_command_message(rpc, &runtime, &mut session, &mut writer)
+            .await
+            .expect("handle command");
+
+        assert!(should_continue);
+
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("read response");
+        let message: JsonRpcMessage = serde_json::from_str(&line).expect("parse jsonrpc");
+        match message {
+            JsonRpcMessage::Response(response) => {
+                assert_eq!(response.id, RequestId::Integer(17));
+                let payload: SkillsListResponse =
+                    serde_json::from_value(response.result).expect("skills response");
+                assert!(
+                    payload
+                        .skills
+                        .iter()
+                        .any(|skill| skill.name == "skill-creator")
+                );
             }
             other => panic!("unexpected response: {other:?}"),
         }
