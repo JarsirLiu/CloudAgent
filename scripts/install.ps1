@@ -195,6 +195,29 @@ function Resolve-LatestReleaseTag {
     throw "Failed to resolve latest release tag from $latestUrl"
 }
 
+function Get-Sha256Hash {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLowerInvariant()
+    }
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function Ensure-UserPath {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $parts = @()
@@ -217,12 +240,12 @@ function Write-Launcher {
 set CMD=%1
 if /I "%CMD%"=="upgrade" (
   shift
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/$Repo/main/scripts/upgrade.ps1 | iex"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$ts=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); irm https://raw.githubusercontent.com/$Repo/main/scripts/upgrade.ps1?ts=$ts | iex"
   exit /b %ERRORLEVEL%
 )
 if /I "%CMD%"=="uninstall" (
   shift
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/$Repo/main/scripts/uninstall.ps1 | iex"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$ts=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); irm https://raw.githubusercontent.com/$Repo/main/scripts/uninstall.ps1?ts=$ts | iex"
   exit /b %ERRORLEVEL%
 )
 "$CurrentDir\cloudagent.exe" %*
@@ -263,7 +286,7 @@ try {
         -Label "Downloading checksum manifest"
     Write-Host "Verifying package checksum"
     $expected = (Select-String -Path $checksumPath -Pattern ([regex]::Escape($assetName)) | Select-Object -First 1).Line.Split(' ')[0]
-    $actual = (Get-FileHash -Algorithm SHA256 -Path $zipPath).Hash.ToLowerInvariant()
+    $actual = Get-Sha256Hash -Path $zipPath
     if ($expected.ToLowerInvariant() -ne $actual) {
         throw "Checksum verification failed for $assetName"
     }

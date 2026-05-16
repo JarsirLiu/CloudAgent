@@ -202,8 +202,9 @@ function Invoke-InstallScript {
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $installScript = Join-Path $tempRoot "install.ps1"
+    $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     Invoke-DownloadFile `
-        -Uri "https://raw.githubusercontent.com/$Repo/main/scripts/install.ps1" `
+        -Uri "https://raw.githubusercontent.com/$Repo/main/scripts/install.ps1?ts=$cacheBust" `
         -Headers @{ "User-Agent" = "cloudagent-upgrade" } `
         -OutFile $installScript `
         -Label "Downloading installer script"
