@@ -94,38 +94,25 @@ detect_arch() {
   esac
 }
 
-release_api_url() {
-  if [ "$VERSION" = "latest" ]; then
-    printf '%s' "https://api.github.com/repos/$REPO/releases/latest"
-  else
-    printf '%s' "https://api.github.com/repos/$REPO/releases/tags/v$VERSION"
-  fi
-}
-
-extract_field() {
-  key="$1"
-  sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
+resolve_latest_release_tag() {
+  curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" | awk -F/ '{print $NF}'
 }
 
 fetch_release_metadata() {
-  mkdir -p "$WORK"
-  metadata="$WORK/release.json"
   echo "Resolving release metadata"
-  curl_download "$(release_api_url)" "$metadata" "Fetching release metadata"
-  RELEASE_JSON="$metadata"
-  RELEASE_TAG=$(grep -m1 '"tag_name"' "$metadata" | extract_field tag_name)
-  if [ -z "$RELEASE_TAG" ]; then
+  if [ "$VERSION" = "latest" ]; then
+    RELEASE_TAG=$(resolve_latest_release_tag)
+  else
+    RELEASE_TAG="v$VERSION"
+  fi
+  [ -n "$RELEASE_TAG" ] || {
     echo "failed to resolve release version" >&2
     exit 1
-  fi
+  }
   RELEASE_VERSION=${RELEASE_TAG#v}
   ASSET_BASENAME="cloudagent-${RELEASE_TAG}-${OS}-${ARCH}.tar.gz"
-  ASSET_URL=$(sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$metadata" | grep "/$ASSET_BASENAME\$" | head -n 1 || true)
-  CHECKSUM_URL=$(sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$metadata" | grep '/SHA256SUMS$' | head -n 1 || true)
-  if [ -z "$ASSET_URL" ]; then
-    echo "could not find asset $ASSET_BASENAME in release $RELEASE_TAG" >&2
-    exit 1
-  fi
+  ASSET_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/$ASSET_BASENAME"
+  CHECKSUM_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/SHA256SUMS"
 }
 
 current_version() {
@@ -136,10 +123,6 @@ current_version() {
 
 verify_checksum() {
   asset="$1"
-  if [ -z "$CHECKSUM_URL" ]; then
-    echo "warning: no SHA256SUMS asset found; skipping checksum verification" >&2
-    return 0
-  fi
   checksum_file="$WORK/SHA256SUMS"
   curl_download "$CHECKSUM_URL" "$checksum_file" "Downloading checksum manifest"
   echo "Verifying package checksum"

@@ -138,16 +138,61 @@ function Invoke-DownloadFile {
     }
 }
 
-function Get-ReleaseApiUrl {
-    if ($Version -eq "latest") {
-        return "https://api.github.com/repos/$Repo/releases/latest"
-    }
-    return "https://api.github.com/repos/$Repo/releases/tags/v$Version"
-}
-
 function Get-TargetAssetName {
     $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { throw "Unsupported Windows architecture" }
     return "cloudagent-$script:ReleaseTag-windows-$arch.zip"
+}
+
+function Resolve-LatestReleaseTag {
+    $latestUrl = "https://github.com/$Repo/releases/latest"
+
+    if ($script:CurlCommand) {
+        $effectiveUrl = & $script:CurlCommand.Source `
+            --silent `
+            --show-error `
+            --location `
+            --output NUL `
+            --write-out "%{url_effective}" `
+            $latestUrl
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to resolve latest release tag from $latestUrl"
+        }
+        return Split-Path -Leaf $effectiveUrl.Trim()
+    }
+
+    $currentUrl = $latestUrl
+    for ($i = 0; $i -lt 5; $i++) {
+        $request = [System.Net.HttpWebRequest]::Create($currentUrl)
+        $request.Method = "HEAD"
+        $request.AllowAutoRedirect = $false
+        $request.UserAgent = "cloudagent-installer"
+        try {
+            $response = [System.Net.HttpWebResponse]$request.GetResponse()
+            if ($response.StatusCode -ge 300 -and $response.StatusCode -lt 400 -and $response.Headers["Location"]) {
+                $location = $response.Headers["Location"]
+                if ($location.StartsWith("/")) {
+                    $location = "https://github.com$location"
+                }
+                $currentUrl = $location
+                continue
+            }
+            return Split-Path -Leaf $response.ResponseUri.AbsoluteUri
+        }
+        catch [System.Net.WebException] {
+            $response = $_.Exception.Response
+            if ($response -and $response.StatusCode -ge 300 -and $response.StatusCode -lt 400 -and $response.Headers["Location"]) {
+                $location = $response.Headers["Location"]
+                if ($location.StartsWith("/")) {
+                    $location = "https://github.com$location"
+                }
+                $currentUrl = $location
+                continue
+            }
+            throw
+        }
+    }
+
+    throw "Failed to resolve latest release tag from $latestUrl"
 }
 
 function Ensure-UserPath {
@@ -187,18 +232,11 @@ if /I "%CMD%"=="uninstall" (
 
 $headers = @{ "User-Agent" = "cloudagent-installer" }
 Write-Host "Resolving release metadata"
-$release = Invoke-RestMethod -Uri (Get-ReleaseApiUrl) -Headers $headers
-$script:ReleaseTag = $release.tag_name
-if (-not $script:ReleaseTag) {
-    throw "Failed to resolve release tag"
-}
+$script:ReleaseTag = if ($Version -eq "latest") { Resolve-LatestReleaseTag } else { "v$Version" }
 $releaseVersion = $script:ReleaseTag.TrimStart('v')
 $assetName = Get-TargetAssetName
-$asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-$checksums = $release.assets | Where-Object { $_.name -eq "SHA256SUMS" } | Select-Object -First 1
-if (-not $asset) {
-    throw "Could not find asset $assetName in release $script:ReleaseTag"
-}
+$assetUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/$assetName"
+$checksumsUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/SHA256SUMS"
 
 $targetDir = Join-Path $InstallsDir $releaseVersion
 if ((-not $Force) -and (Test-Path $targetDir) -and (Test-Path $CurrentDir) -and ((Get-Item $CurrentDir).Target -eq $targetDir)) {
@@ -212,24 +250,22 @@ New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 try {
     $zipPath = Join-Path $tempRoot $assetName
     Invoke-DownloadFile `
-        -Uri $asset.browser_download_url `
+        -Uri $assetUrl `
         -Headers $headers `
         -OutFile $zipPath `
         -Label "Downloading CloudAgent $releaseVersion"
 
-    if ($checksums) {
-        $checksumPath = Join-Path $tempRoot "SHA256SUMS"
-        Invoke-DownloadFile `
-            -Uri $checksums.browser_download_url `
-            -Headers $headers `
-            -OutFile $checksumPath `
-            -Label "Downloading checksum manifest"
-        Write-Host "Verifying package checksum"
-        $expected = (Select-String -Path $checksumPath -Pattern ([regex]::Escape($assetName)) | Select-Object -First 1).Line.Split(' ')[0]
-        $actual = (Get-FileHash -Algorithm SHA256 -Path $zipPath).Hash.ToLowerInvariant()
-        if ($expected.ToLowerInvariant() -ne $actual) {
-            throw "Checksum verification failed for $assetName"
-        }
+    $checksumPath = Join-Path $tempRoot "SHA256SUMS"
+    Invoke-DownloadFile `
+        -Uri $checksumsUrl `
+        -Headers $headers `
+        -OutFile $checksumPath `
+        -Label "Downloading checksum manifest"
+    Write-Host "Verifying package checksum"
+    $expected = (Select-String -Path $checksumPath -Pattern ([regex]::Escape($assetName)) | Select-Object -First 1).Line.Split(' ')[0]
+    $actual = (Get-FileHash -Algorithm SHA256 -Path $zipPath).Hash.ToLowerInvariant()
+    if ($expected.ToLowerInvariant() -ne $actual) {
+        throw "Checksum verification failed for $assetName"
     }
 
     $unpackRoot = Join-Path $tempRoot "unpack"
