@@ -58,46 +58,48 @@ function Invoke-DownloadFile {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
 
-    $webClient = New-Object System.Net.WebClient
-    try {
-        foreach ($entry in $Headers.GetEnumerator()) {
-            $webClient.Headers[[string]$entry.Key] = [string]$entry.Value
+    $request = [System.Net.WebRequest]::Create($Uri)
+    $request.Method = "GET"
+    foreach ($entry in $Headers.GetEnumerator()) {
+        if ([string]$entry.Key -ieq "User-Agent") {
+            $request.UserAgent = [string]$entry.Value
         }
-
-        $downloadCompleted = [System.Threading.ManualResetEvent]::new($false)
-        $downloadError = [ref]$null
-        $progressHandler = [System.Net.DownloadProgressChangedEventHandler]{
-            param($sender, $eventArgs)
-            Write-DownloadStatus -Label $Label -DownloadedBytes $eventArgs.BytesReceived -TotalBytes $eventArgs.TotalBytesToReceive
-        }
-        $completedHandler = [System.ComponentModel.AsyncCompletedEventHandler]{
-            param($sender, $eventArgs)
-            if ($eventArgs.Error) {
-                $downloadError.Value = $eventArgs.Error
-            }
-            $downloadCompleted.Set() | Out-Null
-        }
-        $webClient.add_DownloadProgressChanged($progressHandler)
-        $webClient.add_DownloadFileCompleted($completedHandler)
-
-        try {
-            $webClient.DownloadFileAsync([Uri]$Uri, $OutFile)
-            while (-not $downloadCompleted.WaitOne(250)) {
-                Start-Sleep -Milliseconds 50
-            }
-            if ($downloadError.Value) {
-                throw $downloadError.Value
-            }
-            Write-Progress -Activity $Label -Completed
-        }
-        finally {
-            $webClient.remove_DownloadProgressChanged($progressHandler)
-            $webClient.remove_DownloadFileCompleted($completedHandler)
-            $downloadCompleted.Dispose()
+        else {
+            $request.Headers[[string]$entry.Key] = [string]$entry.Value
         }
     }
+
+    $response = $null
+    $responseStream = $null
+    $fileStream = $null
+    try {
+        $response = $request.GetResponse()
+        $totalBytes = $response.ContentLength
+        if ($totalBytes -lt 0) {
+            $totalBytes = $null
+        }
+
+        $responseStream = $response.GetResponseStream()
+        $fileStream = [System.IO.File]::Open($OutFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $buffer = New-Object byte[] (128KB)
+        $downloadedBytes = 0L
+        while (($read = $responseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $fileStream.Write($buffer, 0, $read)
+            $downloadedBytes += $read
+            Write-DownloadStatus -Label $Label -DownloadedBytes $downloadedBytes -TotalBytes $totalBytes
+        }
+        Write-Progress -Activity $Label -Completed
+    }
     finally {
-        $webClient.Dispose()
+        if ($fileStream) {
+            $fileStream.Dispose()
+        }
+        if ($responseStream) {
+            $responseStream.Dispose()
+        }
+        if ($response) {
+            $response.Dispose()
+        }
     }
 }
 
