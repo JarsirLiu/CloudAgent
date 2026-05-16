@@ -38,7 +38,7 @@ In progress:
 
 Planned:
 - [ ] MCP
-- [x] Skills (workspace/user local skill packages, initial Codex-style support)
+- [x] Skills (workspace/user local skill packages, initial local skill support)
 - [ ] Long-term memory
 - [ ] Web access
 
@@ -199,7 +199,7 @@ CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连
 
 未开发：
 - [ ] MCP
-- [x] Skill（已支持 workspace / user 本地 skill 包，当前为首版 Codex 风格能力）
+- [x] Skill（已支持 workspace / user 本地 skill 包，当前为首版本地 skill 能力）
 - [ ] 长期记忆
 - [ ] Web 访问
 
