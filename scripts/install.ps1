@@ -11,6 +11,8 @@ $InstallsDir = Join-Path $InstallRoot "installs"
 $CurrentDir = Join-Path $InstallRoot "current"
 $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
+$script:LastDownloadStatusLength = 0
+$script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
 
 function Format-ByteSize {
     param([double]$Bytes)
@@ -38,9 +40,23 @@ function Write-DownloadStatus {
     if ($TotalBytes.HasValue -and $TotalBytes.Value -gt 0) {
         $totalText = Format-ByteSize $TotalBytes.Value
         $percent = [math]::Min(100, [int](($DownloadedBytes * 100) / $TotalBytes.Value))
-        Write-Progress -Activity $Label -Status "$downloadedText / $totalText" -PercentComplete $percent
+        $line = "$Label  $downloadedText / $totalText ($percent%)"
     } else {
-        Write-Progress -Activity $Label -Status "$downloadedText downloaded" -PercentComplete -1
+        $line = "$Label  $downloadedText downloaded"
+    }
+
+    $padding = ""
+    if ($script:LastDownloadStatusLength -gt $line.Length) {
+        $padding = " " * ($script:LastDownloadStatusLength - $line.Length)
+    }
+    Write-Host -NoNewline ("`r" + $line + $padding)
+    $script:LastDownloadStatusLength = $line.Length
+}
+
+function Complete-DownloadStatus {
+    if ($script:LastDownloadStatusLength -gt 0) {
+        Write-Host ""
+        $script:LastDownloadStatusLength = 0
     }
 }
 
@@ -56,6 +72,24 @@ function Invoke-DownloadFile {
     $directory = Split-Path -Parent $OutFile
     if ($directory) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+
+    if ($script:CurlCommand) {
+        $curlArgs = @("--fail", "--location", "-o", $OutFile)
+        foreach ($entry in $Headers.GetEnumerator()) {
+            $curlArgs += @("-H", ("{0}: {1}" -f [string]$entry.Key, [string]$entry.Value))
+        }
+        if (-not [Console]::IsErrorRedirected) {
+            $curlArgs += "--progress-bar"
+        } else {
+            $curlArgs += @("--silent", "--show-error")
+        }
+        $curlArgs += $Uri
+        & $script:CurlCommand.Source @curlArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "curl.exe download failed for $Uri"
+        }
+        return
     }
 
     $request = [System.Net.WebRequest]::Create($Uri)
@@ -88,7 +122,7 @@ function Invoke-DownloadFile {
             $downloadedBytes += $read
             Write-DownloadStatus -Label $Label -DownloadedBytes $downloadedBytes -TotalBytes $totalBytes
         }
-        Write-Progress -Activity $Label -Completed
+        Complete-DownloadStatus
     }
     finally {
         if ($fileStream) {
@@ -100,6 +134,7 @@ function Invoke-DownloadFile {
         if ($response) {
             $response.Dispose()
         }
+        Complete-DownloadStatus
     }
 }
 
