@@ -53,46 +53,51 @@ function Invoke-DownloadFile {
     )
 
     Write-Host $Label
-    $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Uri)
-    foreach ($entry in $Headers.GetEnumerator()) {
-        $request.Headers.TryAddWithoutValidation([string]$entry.Key, [string]$entry.Value) | Out-Null
+    $directory = Split-Path -Parent $OutFile
+    if ($directory) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
 
-    $handler = [System.Net.Http.HttpClientHandler]::new()
-    $client = [System.Net.Http.HttpClient]::new($handler)
+    $webClient = New-Object System.Net.WebClient
     try {
-        $response = $client.SendAsync(
-            $request,
-            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
-        ).GetAwaiter().GetResult()
-        $response.EnsureSuccessStatusCode()
-
-        $totalBytes = $response.Content.Headers.ContentLength
-        $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
-        $directory = Split-Path -Parent $OutFile
-        if ($directory) {
-            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        foreach ($entry in $Headers.GetEnumerator()) {
+            $webClient.Headers[[string]$entry.Key] = [string]$entry.Value
         }
-        $fileStream = [System.IO.File]::Open($OutFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+
+        $downloadCompleted = [System.Threading.ManualResetEvent]::new($false)
+        $downloadError = [ref]$null
+        $progressHandler = [System.Net.DownloadProgressChangedEventHandler]{
+            param($sender, $eventArgs)
+            Write-DownloadStatus -Label $Label -DownloadedBytes $eventArgs.BytesReceived -TotalBytes $eventArgs.TotalBytesToReceive
+        }
+        $completedHandler = [System.ComponentModel.AsyncCompletedEventHandler]{
+            param($sender, $eventArgs)
+            if ($eventArgs.Error) {
+                $downloadError.Value = $eventArgs.Error
+            }
+            $downloadCompleted.Set() | Out-Null
+        }
+        $webClient.add_DownloadProgressChanged($progressHandler)
+        $webClient.add_DownloadFileCompleted($completedHandler)
+
         try {
-            $buffer = New-Object byte[] (1024 * 128)
-            $downloadedBytes = 0L
-            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                $fileStream.Write($buffer, 0, $read)
-                $downloadedBytes += $read
-                Write-DownloadStatus -Label $Label -DownloadedBytes $downloadedBytes -TotalBytes $totalBytes
+            $webClient.DownloadFileAsync([Uri]$Uri, $OutFile)
+            while (-not $downloadCompleted.WaitOne(250)) {
+                Start-Sleep -Milliseconds 50
+            }
+            if ($downloadError.Value) {
+                throw $downloadError.Value
             }
             Write-Progress -Activity $Label -Completed
         }
         finally {
-            $fileStream.Dispose()
-            $stream.Dispose()
+            $webClient.remove_DownloadProgressChanged($progressHandler)
+            $webClient.remove_DownloadFileCompleted($completedHandler)
+            $downloadCompleted.Dispose()
         }
     }
     finally {
-        $request.Dispose()
-        $client.Dispose()
-        $handler.Dispose()
+        $webClient.Dispose()
     }
 }
 
