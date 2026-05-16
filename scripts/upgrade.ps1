@@ -12,6 +12,90 @@ $CurrentExe = Join-Path $CurrentDir "cloudagent.exe"
 $CurrentNode = Join-Path $CurrentDir "node.exe"
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cloudagent-upgrade-$PID"
 
+function Format-ByteSize {
+    param([double]$Bytes)
+
+    if ($Bytes -ge 1GB) {
+        return "{0:N1} GB" -f ($Bytes / 1GB)
+    }
+    if ($Bytes -ge 1MB) {
+        return "{0:N1} MB" -f ($Bytes / 1MB)
+    }
+    if ($Bytes -ge 1KB) {
+        return "{0:N1} KB" -f ($Bytes / 1KB)
+    }
+    return "{0:N0} B" -f $Bytes
+}
+
+function Write-DownloadStatus {
+    param(
+        [string]$Label,
+        [long]$DownloadedBytes,
+        [Nullable[long]]$TotalBytes
+    )
+
+    $downloadedText = Format-ByteSize $DownloadedBytes
+    if ($TotalBytes.HasValue -and $TotalBytes.Value -gt 0) {
+        $totalText = Format-ByteSize $TotalBytes.Value
+        $percent = [math]::Min(100, [int](($DownloadedBytes * 100) / $TotalBytes.Value))
+        Write-Progress -Activity $Label -Status "$downloadedText / $totalText" -PercentComplete $percent
+    } else {
+        Write-Progress -Activity $Label -Status "$downloadedText downloaded" -PercentComplete -1
+    }
+}
+
+function Invoke-DownloadFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$OutFile,
+        [Parameter(Mandatory = $true)][hashtable]$Headers,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    Write-Host $Label
+    $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Uri)
+    foreach ($entry in $Headers.GetEnumerator()) {
+        $request.Headers.TryAddWithoutValidation([string]$entry.Key, [string]$entry.Value) | Out-Null
+    }
+
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    try {
+        $response = $client.SendAsync(
+            $request,
+            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        ).GetAwaiter().GetResult()
+        $response.EnsureSuccessStatusCode()
+
+        $totalBytes = $response.Content.Headers.ContentLength
+        $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $directory = Split-Path -Parent $OutFile
+        if ($directory) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+        $fileStream = [System.IO.File]::Open($OutFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $buffer = New-Object byte[] (1024 * 128)
+            $downloadedBytes = 0L
+            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $fileStream.Write($buffer, 0, $read)
+                $downloadedBytes += $read
+                Write-DownloadStatus -Label $Label -DownloadedBytes $downloadedBytes -TotalBytes $totalBytes
+            }
+            Write-Progress -Activity $Label -Completed
+        }
+        finally {
+            $fileStream.Dispose()
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $request.Dispose()
+        $client.Dispose()
+        $handler.Dispose()
+    }
+}
+
 function Get-ManagedProcessIds {
     if (-not (Test-Path $InstallRoot)) {
         return @()
@@ -76,15 +160,17 @@ function Invoke-InstallScript {
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $installScript = Join-Path $tempRoot "install.ps1"
-    Invoke-WebRequest `
+    Invoke-DownloadFile `
         -Uri "https://raw.githubusercontent.com/$Repo/main/scripts/install.ps1" `
         -Headers @{ "User-Agent" = "cloudagent-upgrade" } `
-        -OutFile $installScript
+        -OutFile $installScript `
+        -Label "Downloading installer script"
     & $installScript -Version $Version -Force:$Force
 }
 
 try {
     $restartNode = Stop-NodeIfRunning
+    Write-Host "Installing updated CloudAgent version"
     Invoke-InstallScript
     if ($restartNode) {
         Start-NodeAfterUpgrade

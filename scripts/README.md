@@ -79,6 +79,12 @@ Upgrade:
 cloudagent upgrade
 ```
 
+Install and upgrade downloads now show terminal-friendly progress:
+
+- PowerShell, Windows Terminal, and `cmd` launched through the PowerShell installer show `MB / total MB` progress
+- Linux and macOS interactive terminals show a `curl` progress bar
+- Non-interactive environments fall back to quieter output
+
 Uninstall:
 
 ```bash

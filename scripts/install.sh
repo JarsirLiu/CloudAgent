@@ -14,6 +14,20 @@ FORCE=0
 
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
+curl_download() {
+  url="$1"
+  output="$2"
+  label="$3"
+
+  echo "$label"
+  mkdir -p "$(dirname "$output")"
+  if [ -t 2 ]; then
+    curl --fail --location --progress-bar -H "User-Agent: cloudagent-installer" "$url" -o "$output"
+  else
+    curl -fsSL -H "User-Agent: cloudagent-installer" "$url" -o "$output"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 CloudAgent installer
@@ -96,7 +110,8 @@ extract_field() {
 fetch_release_metadata() {
   mkdir -p "$WORK"
   metadata="$WORK/release.json"
-  curl -fsSL -H "User-Agent: cloudagent-installer" "$(release_api_url)" -o "$metadata"
+  echo "Resolving release metadata"
+  curl_download "$(release_api_url)" "$metadata" "Fetching release metadata"
   RELEASE_JSON="$metadata"
   RELEASE_TAG=$(grep -m1 '"tag_name"' "$metadata" | extract_field tag_name)
   if [ -z "$RELEASE_TAG" ]; then
@@ -126,7 +141,8 @@ verify_checksum() {
     return 0
   fi
   checksum_file="$WORK/SHA256SUMS"
-  curl -fsSL -H "User-Agent: cloudagent-installer" "$CHECKSUM_URL" -o "$checksum_file"
+  curl_download "$CHECKSUM_URL" "$checksum_file" "Downloading checksum manifest"
+  echo "Verifying package checksum"
   if command -v sha256sum >/dev/null 2>&1; then
     (cd "$WORK" && grep "  $ASSET_BASENAME\$" "$checksum_file" | sha256sum -c -)
   elif command -v shasum >/dev/null 2>&1; then
@@ -140,11 +156,11 @@ verify_checksum() {
 
 download_and_unpack() {
   asset="$WORK/$ASSET_BASENAME"
-  echo "downloading: $ASSET_URL"
-  curl -fL -H "User-Agent: cloudagent-installer" "$ASSET_URL" -o "$asset"
+  curl_download "$ASSET_URL" "$asset" "Downloading CloudAgent $RELEASE_VERSION"
   verify_checksum "$asset"
   unpack_root="$WORK/unpack"
   mkdir -p "$unpack_root"
+  echo "Extracting package"
   tar -xzf "$asset" -C "$unpack_root"
   package_dir=$(find "$unpack_root" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)
   if [ -z "$package_dir" ]; then
@@ -161,13 +177,19 @@ install_files() {
     return 0
   fi
   mkdir -p "$INSTALLS_DIR" "$BIN_DIR" "$DATA_DIR"
-  rm -rf "$target"
+  if [ -e "$target" ]; then
+    echo "Replacing existing installation at $target"
+    rm -rf "$target"
+  fi
+  echo "Installing files to $target"
   mkdir -p "$target"
   cp -R "$STAGED_DIR"/. "$target"/
+  echo "Updating current launcher target"
   ln -sfn "$target" "$CURRENT_LINK"
 }
 
 write_launchers() {
+  echo "Refreshing command launchers"
   cat > "$BIN_DIR/cloudagent" <<EOF
 #!/usr/bin/env sh
 set -eu

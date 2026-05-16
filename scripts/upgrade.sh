@@ -16,6 +16,20 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+curl_download() {
+  url="$1"
+  output="$2"
+  label="$3"
+
+  echo "$label"
+  mkdir -p "$(dirname "$output")"
+  if [ -t 2 ]; then
+    curl --fail --location --progress-bar "$url" -o "$output"
+  else
+    curl -fsSL "$url" -o "$output"
+  fi
+}
+
 node_running() {
   [ -x "$CURRENT_NODE" ] || return 1
   if command -v pgrep >/dev/null 2>&1; then
@@ -63,7 +77,7 @@ invoke_install_script() {
 
   mkdir -p "$WORK"
   install_script="$WORK/install.sh"
-  curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" -o "$install_script"
+  curl_download "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" "$install_script" "Downloading installer script"
   chmod +x "$install_script"
   "$install_script" "$@"
 }
@@ -73,6 +87,7 @@ if stop_node_if_running; then
   restart_node=1
 fi
 
+echo "Installing updated CloudAgent version"
 invoke_install_script "$@"
 
 if [ "$restart_node" -eq 1 ]; then
