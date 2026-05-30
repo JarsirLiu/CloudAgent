@@ -161,6 +161,10 @@ fn spawn_workspace_built_local_node(
         .map(|index| args[index + 1..].to_vec())
         .ok_or_else(|| anyhow!("missing `--` separator in cargo-based local node launcher"))?;
 
+    eprintln!(
+        "Building local development node toolchain in {} ...",
+        target_dir.display()
+    );
     let status = std::process::Command::new(program)
         .args([
             OsString::from("build"),
@@ -172,14 +176,15 @@ fn spawn_workspace_built_local_node(
             target_dir.clone().into_os_string(),
         ])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .status()?;
     if !status.success() {
         return Err(anyhow!(
             "failed to build local node toolchain via cargo (status: {status})"
         ));
     }
+    eprintln!("Local development node toolchain is ready.");
 
     let node_bin = target_dir.join(debug_exe_name("node"));
     let agentd_bin = target_dir.join(debug_exe_name("agentd"));
