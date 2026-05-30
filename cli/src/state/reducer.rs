@@ -208,18 +208,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 item_id,
                 delta,
                 ..
-            }
-            | AppServerNotification::ToolOutputDelta {
-                turn_id,
-                item_id,
-                delta,
-                ..
-            }
-            | AppServerNotification::FileChangeOutputDelta {
-                turn_id,
-                item_id,
-                delta,
-                ..
             } => {
                 actions.push(ServerAction::AppendActiveOutputDelta {
                     turn_id: turn_id.clone(),
@@ -227,6 +215,8 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     delta: delta.clone(),
                 });
             }
+            AppServerNotification::ToolOutputDelta { .. }
+            | AppServerNotification::FileChangeOutputDelta { .. } => {}
             AppServerNotification::ItemCompleted { turn_id, item, .. } => {
                 actions.push(ServerAction::CompleteActiveTurnItem {
                     turn_id: turn_id.clone(),
@@ -562,6 +552,66 @@ mod tests {
                     && *next_delay_ms == 500
             )
         }));
+    }
+
+    #[test]
+    fn command_output_delta_updates_active_output() {
+        let message =
+            AppServerMessage::Notification(AppServerNotification::CommandExecutionOutputDelta {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "cmd-1".to_string(),
+                call_id: Some("call-1".to_string()),
+                delta: "stdout".to_string(),
+            });
+
+        let reduced = apply_server_message(&message);
+
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(
+                action,
+                ServerAction::AppendActiveOutputDelta {
+                    turn_id,
+                    item_id,
+                    delta,
+                } if turn_id == "turn-1" && item_id == "cmd-1" && delta == "stdout"
+            )
+        }));
+    }
+
+    #[test]
+    fn generic_tool_output_deltas_wait_for_completed_item() {
+        let tool_message = AppServerMessage::Notification(AppServerNotification::ToolOutputDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "tool-1".to_string(),
+            call_id: Some("call-1".to_string()),
+            delta: "large streaming tool output".to_string(),
+        });
+        let file_message =
+            AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
+                conversation_id: "default".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "edit-1".to_string(),
+                call_id: Some("call-2".to_string()),
+                delta: "patch output".to_string(),
+            });
+
+        let tool_reduced = apply_server_message(&tool_message);
+        let file_reduced = apply_server_message(&file_message);
+
+        assert!(
+            tool_reduced
+                .actions
+                .iter()
+                .all(|action| !matches!(action, ServerAction::AppendActiveOutputDelta { .. }))
+        );
+        assert!(
+            file_reduced
+                .actions
+                .iter()
+                .all(|action| !matches!(action, ServerAction::AppendActiveOutputDelta { .. }))
+        );
     }
 
     #[test]

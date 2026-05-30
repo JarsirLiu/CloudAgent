@@ -5,7 +5,8 @@ mod wrapping;
 
 use agent_core::{ConversationTurn, TranscriptItem};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Paragraph, Wrap};
 use wrapping::{WrapOptions, word_wrap_text};
 
 pub(crate) use render::{
@@ -499,6 +500,15 @@ impl HistoryCell {
             HistoryKind::Reasoning => render_reasoning_live(self, width),
             _ => self.to_transcript_lines(width),
         }
+    }
+
+    pub fn rendered_line_count(lines: &[Line<'static>], width: usize) -> usize {
+        if lines.is_empty() {
+            return 0;
+        }
+        Paragraph::new(Text::from(lines.to_vec()))
+            .wrap(Wrap { trim: false })
+            .line_count(width as u16)
     }
 }
 

@@ -89,6 +89,7 @@ pub struct McpServerConfig {
 pub struct CliConfig {
     pub pre_llm_filter_enabled: bool,
     pub permission_mode: String,
+    pub terminal_resize_reflow_max_rows: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -172,6 +173,7 @@ struct PartialMcpServerConfig {
 struct PartialCliConfig {
     pre_llm_filter_enabled: Option<bool>,
     permission_mode: Option<String>,
+    terminal_resize_reflow_max_rows: Option<usize>,
 }
 
 impl AgentConfig {
@@ -268,6 +270,7 @@ impl AgentConfig {
             cli: CliConfig {
                 pre_llm_filter_enabled: false,
                 permission_mode: "WorkspaceWrite".to_string(),
+                terminal_resize_reflow_max_rows: Some(20_000),
             },
             workspace_root,
         }
@@ -466,6 +469,13 @@ impl AgentConfig {
             {
                 self.cli.permission_mode = canonical.to_string();
             }
+            if let Some(value) = cli.terminal_resize_reflow_max_rows {
+                self.cli.terminal_resize_reflow_max_rows = if value == 0 {
+                    None
+                } else {
+                    Some(value.max(1_000))
+                };
+            }
         }
     }
 
@@ -652,6 +662,15 @@ impl AgentConfig {
         {
             self.runtime.context_budget_safety_buffer_tokens = parsed.max(512);
         }
+        if let Ok(value) = env::var("CLOUDAGENT_TERMINAL_RESIZE_REFLOW_MAX_ROWS")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.cli.terminal_resize_reflow_max_rows = if parsed == 0 {
+                None
+            } else {
+                Some(parsed.max(1_000))
+            };
+        }
         if !conversation_store_overridden {
             self.runtime.conversation_store_dir = self.runtime.data_root_dir.join("conversations");
         }
@@ -819,7 +838,11 @@ fn default_system_prompt() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{InputModality, normalize_input_modalities, parse_input_modalities};
+    use super::{
+        AgentConfig, InputModality, PartialAgentConfig, PartialCliConfig,
+        normalize_input_modalities, parse_input_modalities,
+    };
+    use std::path::PathBuf;
 
     #[test]
     fn normalize_input_modalities_keeps_text_and_deduplicates() {
@@ -837,5 +860,34 @@ mod tests {
         let got = parse_input_modalities("image");
 
         assert_eq!(got, vec![InputModality::Text, InputModality::Image]);
+    }
+
+    #[test]
+    fn cli_resize_reflow_cap_defaults_to_terminal_scrollback_limit() {
+        let config = AgentConfig::defaults(PathBuf::from("."));
+
+        assert_eq!(config.cli.terminal_resize_reflow_max_rows, Some(20_000));
+    }
+
+    #[test]
+    fn cli_resize_reflow_cap_can_be_configured_or_disabled() {
+        let mut config = AgentConfig::defaults(PathBuf::from("."));
+        config.apply_partial(PartialAgentConfig {
+            cli: Some(PartialCliConfig {
+                terminal_resize_reflow_max_rows: Some(500),
+                ..PartialCliConfig::default()
+            }),
+            ..PartialAgentConfig::default()
+        });
+        assert_eq!(config.cli.terminal_resize_reflow_max_rows, Some(1_000));
+
+        config.apply_partial(PartialAgentConfig {
+            cli: Some(PartialCliConfig {
+                terminal_resize_reflow_max_rows: Some(0),
+                ..PartialCliConfig::default()
+            }),
+            ..PartialAgentConfig::default()
+        });
+        assert_eq!(config.cli.terminal_resize_reflow_max_rows, None);
     }
 }

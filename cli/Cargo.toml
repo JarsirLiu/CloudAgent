@@ -22,7 +22,7 @@ config = { path = "../crates/config" }
 infra-store = { path = "../crates/infra-store" }
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures = "0.3"
-ratatui = "0.29"
+ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

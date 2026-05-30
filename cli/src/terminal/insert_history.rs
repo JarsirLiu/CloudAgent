@@ -42,8 +42,7 @@ pub(crate) fn prepare_history_lines(
     lines
 }
 
-#[cfg(test)]
-fn prepare_history_tail_lines(
+pub(crate) fn prepare_history_tail_lines(
     cells: Vec<HistoryCell>,
     render_width: usize,
     max_rows: usize,
@@ -52,25 +51,32 @@ fn prepare_history_tail_lines(
         return Vec::new();
     }
 
-    let mut selected = Vec::new();
+    let mut selected_start = None;
     let mut selected_rows = 0usize;
-    let mut has_newer_cell = false;
+    let mut has_newer_selected_cell = false;
 
-    for cell in cells.into_iter().rev() {
+    for (index, cell) in cells.iter().enumerate().rev() {
         let display_rows = cell.to_lines_with_mode(render_width).len();
         if display_rows == 0 {
             continue;
         }
-        let separator_rows = usize::from(has_newer_cell && !cell.is_stream_continuation());
+        let separator_rows = usize::from(has_newer_selected_cell && !cell.is_stream_continuation());
         selected_rows = selected_rows.saturating_add(display_rows + separator_rows);
-        selected.push(cell);
-        has_newer_cell = true;
+        selected_start = Some(index);
+        has_newer_selected_cell = true;
         if selected_rows >= max_rows {
             break;
         }
     }
 
-    selected.reverse();
+    let Some(mut start) = selected_start else {
+        return Vec::new();
+    };
+    while start > 0 && cells[start].is_stream_continuation() {
+        start -= 1;
+    }
+
+    let selected = cells.into_iter().skip(start).collect();
     let mut lines = prepare_history_lines(selected, render_width, false);
     if lines.len() > max_rows {
         lines.drain(0..lines.len() - max_rows);
@@ -385,7 +391,7 @@ mod tests {
         prepare_history_lines, prepare_history_tail_lines, wrap_history_line, write_history_line,
     };
     use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
-    use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
+    use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
     use std::str;
@@ -485,6 +491,37 @@ mod tests {
         assert!(lines.len() <= 3);
         assert!(rendered.contains("latest message"));
         assert!(!rendered.contains("oldest message"));
+    }
+
+    #[test]
+    fn tail_history_keeps_stream_continuation_run_together_before_final_trim() {
+        let mut continuation =
+            HistoryCell::agent("assistant", "continued chunk", HistoryFormat::PlainText);
+        continuation.set_stream_continuation(true);
+
+        let lines = prepare_history_tail_lines(
+            vec![
+                HistoryCell::user("old message"),
+                HistoryCell::agent("assistant", "first chunk", HistoryFormat::PlainText),
+                continuation,
+            ],
+            80,
+            3,
+        );
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("first chunk"));
+        assert!(rendered.contains("continued chunk"));
+        assert!(!rendered.contains("old message"));
     }
 
     #[test]

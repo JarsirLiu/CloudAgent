@@ -311,11 +311,11 @@ fn render_active_cell(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) 
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let scroll_y = lines
-        .len()
+    let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+    let scroll_y = paragraph
+        .line_count(inner.width)
         .saturating_sub(inner.height as usize)
         .min(u16::MAX as usize) as u16;
-    let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
     frame.render_widget(paragraph.scroll((scroll_y, 0)), inner);
 }
 

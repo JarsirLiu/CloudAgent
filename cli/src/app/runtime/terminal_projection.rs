@@ -6,6 +6,7 @@ use crate::terminal::PreparedHistoryProjection;
 use crate::terminal::PreparedHistoryUpdate;
 use crate::terminal::TerminalGuard;
 use crate::terminal::prepare_history_lines;
+use crate::terminal::prepare_history_tail_lines;
 use crate::ui::chat_surface::ChatSurface;
 use anyhow::Result;
 use ratatui::layout::Rect;
@@ -13,6 +14,12 @@ use ratatui::layout::Rect;
 #[derive(Default)]
 pub(crate) struct TerminalProjectionController {
     reflow: TranscriptReflowState,
+    reflow_policy: ReflowPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ReflowPolicy {
+    pub(crate) max_rows: Option<usize>,
 }
 
 #[derive(Default)]
@@ -36,6 +43,10 @@ enum ReplayReason {
 }
 
 impl TerminalProjectionController {
+    pub(crate) fn set_reflow_policy(&mut self, policy: ReflowPolicy) {
+        self.reflow_policy = policy;
+    }
+
     pub(crate) fn request_history_replay(&mut self) {
         self.reflow.request_replay();
     }
@@ -114,9 +125,14 @@ impl TerminalProjectionController {
         } = projection;
 
         let history_update = match history_update {
-            HistoryUpdate::ReplayAll(cells) => PreparedHistoryUpdate::ReplayAll(
-                prepare_history_lines(cells, history_render_width, false),
-            ),
+            HistoryUpdate::ReplayAll(cells) => {
+                let lines = if let Some(max_rows) = self.reflow_policy.max_rows {
+                    prepare_history_tail_lines(cells, history_render_width, max_rows)
+                } else {
+                    prepare_history_lines(cells, history_render_width, false)
+                };
+                PreparedHistoryUpdate::ReplayAll(lines)
+            }
             HistoryUpdate::AppendTail(cells) => PreparedHistoryUpdate::AppendTail(
                 prepare_history_lines(cells, history_render_width, has_existing_history),
             ),
@@ -190,9 +206,10 @@ impl TranscriptReflowState {
 
 #[cfg(test)]
 mod tests {
-    use super::TerminalProjectionController;
+    use super::{ReflowPolicy, TerminalProjectionController};
     use crate::app::core::transcript_owner::TranscriptOwner;
-    use crate::terminal::HistoryUpdate;
+    use crate::terminal::{HistoryProjection, HistoryUpdate, PreparedHistoryUpdate};
+    use crate::ui::widgets::history_cell::HistoryCell;
 
     #[test]
     fn explicit_replay_with_empty_committed_history_still_replays_all() {
@@ -257,6 +274,45 @@ mod tests {
         match second.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected final repair after stream boundary"),
+        }
+    }
+
+    #[test]
+    fn reflow_policy_caps_prepared_replay_lines_without_changing_plan() {
+        let mut controller = TerminalProjectionController::default();
+        controller.set_reflow_policy(ReflowPolicy { max_rows: Some(3) });
+
+        let prepared = controller.prepare_projection(
+            HistoryProjection {
+                viewport_height: 5,
+                history_render_width: 80,
+                history_update: HistoryUpdate::ReplayAll(vec![
+                    HistoryCell::user("oldest message"),
+                    HistoryCell::user("middle message"),
+                    HistoryCell::user("latest message"),
+                ]),
+            },
+            false,
+        );
+
+        match prepared.history_update {
+            PreparedHistoryUpdate::ReplayAll(lines) => {
+                let rendered = lines
+                    .iter()
+                    .map(|line| {
+                        line.spans
+                            .iter()
+                            .map(|span| span.content.as_ref())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                assert!(lines.len() <= 3);
+                assert!(rendered.contains("latest message"));
+                assert!(!rendered.contains("oldest message"));
+            }
+            PreparedHistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
         }
     }
 }

@@ -23,7 +23,9 @@ pub use color_compat::apply_color_cli_preference;
 pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
-pub(crate) use insert_history::{insert_history_lines_raw, prepare_history_lines};
+pub(crate) use insert_history::{
+    insert_history_lines_raw, prepare_history_lines, prepare_history_tail_lines,
+};
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 

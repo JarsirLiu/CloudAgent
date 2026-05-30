@@ -15,6 +15,7 @@ pub struct ConsoleConfig {
     pub conversation_store_dir: PathBuf,
     pub initial_filter_enabled: bool,
     pub initial_permission_mode: String,
+    pub terminal_resize_reflow_max_rows: Option<usize>,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
     pub target_label: String,
