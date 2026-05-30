@@ -4,6 +4,7 @@ use crate::state::RunState;
 use crate::state::bottom_pane_controller::BottomPaneController;
 use agent_core::AgentHost;
 use agent_core::ConversationSummary;
+use config::TerminalResizeReflowMaxRows;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ pub struct ConsoleConfig {
     pub conversation_store_dir: PathBuf,
     pub initial_filter_enabled: bool,
     pub initial_permission_mode: String,
-    pub terminal_resize_reflow_max_rows: Option<usize>,
+    pub terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
     pub target_label: String,

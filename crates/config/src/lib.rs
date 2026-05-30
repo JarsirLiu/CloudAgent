@@ -89,7 +89,15 @@ pub struct McpServerConfig {
 pub struct CliConfig {
     pub pre_llm_filter_enabled: bool,
     pub permission_mode: String,
-    pub terminal_resize_reflow_max_rows: Option<usize>,
+    pub terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TerminalResizeReflowMaxRows {
+    #[default]
+    Auto,
+    Disabled,
+    Limit(usize),
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -270,7 +278,7 @@ impl AgentConfig {
             cli: CliConfig {
                 pre_llm_filter_enabled: false,
                 permission_mode: "WorkspaceWrite".to_string(),
-                terminal_resize_reflow_max_rows: Some(20_000),
+                terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows::Auto,
             },
             workspace_root,
         }
@@ -471,9 +479,9 @@ impl AgentConfig {
             }
             if let Some(value) = cli.terminal_resize_reflow_max_rows {
                 self.cli.terminal_resize_reflow_max_rows = if value == 0 {
-                    None
+                    TerminalResizeReflowMaxRows::Disabled
                 } else {
-                    Some(value.max(1_000))
+                    TerminalResizeReflowMaxRows::Limit(value)
                 };
             }
         }
@@ -666,9 +674,9 @@ impl AgentConfig {
             && let Ok(parsed) = value.parse::<usize>()
         {
             self.cli.terminal_resize_reflow_max_rows = if parsed == 0 {
-                None
+                TerminalResizeReflowMaxRows::Disabled
             } else {
-                Some(parsed.max(1_000))
+                TerminalResizeReflowMaxRows::Limit(parsed)
             };
         }
         if !conversation_store_overridden {
@@ -840,7 +848,7 @@ fn default_system_prompt() -> String {
 mod tests {
     use super::{
         AgentConfig, InputModality, PartialAgentConfig, PartialCliConfig,
-        normalize_input_modalities, parse_input_modalities,
+        TerminalResizeReflowMaxRows, normalize_input_modalities, parse_input_modalities,
     };
     use std::path::PathBuf;
 
@@ -863,10 +871,13 @@ mod tests {
     }
 
     #[test]
-    fn cli_resize_reflow_cap_defaults_to_terminal_scrollback_limit() {
+    fn cli_resize_reflow_cap_defaults_to_auto() {
         let config = AgentConfig::defaults(PathBuf::from("."));
 
-        assert_eq!(config.cli.terminal_resize_reflow_max_rows, Some(20_000));
+        assert_eq!(
+            config.cli.terminal_resize_reflow_max_rows,
+            TerminalResizeReflowMaxRows::Auto
+        );
     }
 
     #[test]
@@ -879,7 +890,10 @@ mod tests {
             }),
             ..PartialAgentConfig::default()
         });
-        assert_eq!(config.cli.terminal_resize_reflow_max_rows, Some(1_000));
+        assert_eq!(
+            config.cli.terminal_resize_reflow_max_rows,
+            TerminalResizeReflowMaxRows::Limit(500)
+        );
 
         config.apply_partial(PartialAgentConfig {
             cli: Some(PartialCliConfig {
@@ -888,6 +902,9 @@ mod tests {
             }),
             ..PartialAgentConfig::default()
         });
-        assert_eq!(config.cli.terminal_resize_reflow_max_rows, None);
+        assert_eq!(
+            config.cli.terminal_resize_reflow_max_rows,
+            TerminalResizeReflowMaxRows::Disabled
+        );
     }
 }

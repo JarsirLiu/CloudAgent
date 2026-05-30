@@ -4,6 +4,7 @@ mod draw_coordinator;
 pub mod events;
 mod insert_history;
 mod keyboard_modes;
+mod resize_reflow_cap;
 
 use anyhow::Result;
 use crossterm::SynchronizedUpdate;
@@ -26,6 +27,7 @@ pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
 pub(crate) use insert_history::{
     insert_history_lines_raw, prepare_history_lines, prepare_history_tail_lines,
 };
+pub(crate) use resize_reflow_cap::resize_reflow_max_rows;
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 

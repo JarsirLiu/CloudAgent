@@ -1707,4 +1707,24 @@ mod tests {
         assert!(composer.flush_paste_burst_if_due());
         assert_eq!(composer.textarea.text(), "ab\n");
     }
+
+    #[test]
+    fn paste_burst_with_multiple_newlines_does_not_submit() {
+        let mut composer = ChatComposer::new();
+
+        let _ = composer.handle_key(key(KeyCode::Char('a')));
+        let _ = composer.handle_key(key(KeyCode::Char('b')));
+        let first_enter = composer.handle_key(key(KeyCode::Enter));
+        let _ = composer.handle_key(key(KeyCode::Char('c')));
+        let second_enter = composer.handle_key(key(KeyCode::Enter));
+        let _ = composer.handle_key(key(KeyCode::Char('d')));
+
+        assert_eq!(first_enter, Some(ComposerIntent::None));
+        assert_eq!(second_enter, Some(ComposerIntent::None));
+        assert_eq!(composer.textarea.text(), "");
+
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        assert!(composer.flush_paste_burst_if_due());
+        assert_eq!(composer.textarea.text(), "ab\nc\nd");
+    }
 }

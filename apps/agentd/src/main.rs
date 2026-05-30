@@ -4,7 +4,7 @@ use anyhow::Result;
 use cli::agent_host::build_agent_host;
 use cli::app::cli_settings::load_cli_settings;
 use cli::{ConsoleBootstrap, ConsoleConfig, run_console};
-use config::AgentConfig;
+use config::{AgentConfig, TerminalResizeReflowMaxRows};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
 
 async fn run_console_mode(
     runtime: Arc<AgentHost>,
-    terminal_resize_reflow_max_rows: Option<usize>,
+    terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows,
 ) -> Result<()> {
     let conversation_id = runtime.ensure_active_conversation().await?;
     let workspace_root = std::env::current_dir()?;
