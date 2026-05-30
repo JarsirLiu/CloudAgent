@@ -187,8 +187,13 @@ struct PartialCliConfig {
 impl AgentConfig {
     pub fn load(workspace_root: impl Into<PathBuf>) -> Result<Self> {
         let workspace_root = workspace_root.into();
+        let paths = config_search_paths(&workspace_root);
+        Self::load_from_paths(workspace_root, paths)
+    }
+
+    fn load_from_paths(workspace_root: PathBuf, paths: Vec<PathBuf>) -> Result<Self> {
         let mut config = Self::defaults(workspace_root.clone());
-        for config_path in config_search_paths(&workspace_root) {
+        for config_path in paths {
             if config_path.exists() {
                 let text = std::fs::read_to_string(&config_path)
                     .with_context(|| format!("failed to read {}", config_path.display()))?;
@@ -750,12 +755,16 @@ fn parse_input_modalities(value: &str) -> Vec<InputModality> {
 }
 
 fn config_search_paths(workspace_root: &Path) -> Vec<PathBuf> {
+    config_search_paths_with_home(workspace_root, user_home_dir())
+}
+
+fn config_search_paths_with_home(workspace_root: &Path, home: Option<PathBuf>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Some(home) = user_home_dir() {
+    paths.push(workspace_root.join("configs").join("config.toml"));
+    paths.push(workspace_root.join(".cloudagent").join("config.toml"));
+    if let Some(home) = home {
         paths.push(home.join(".cloudagent").join("config.toml"));
     }
-    paths.push(workspace_root.join(".cloudagent").join("config.toml"));
-    paths.push(workspace_root.join("configs").join("config.toml"));
     paths
 }
 
@@ -848,9 +857,11 @@ fn default_system_prompt() -> String {
 mod tests {
     use super::{
         AgentConfig, InputModality, PartialAgentConfig, PartialCliConfig,
-        TerminalResizeReflowMaxRows, normalize_input_modalities, parse_input_modalities,
+        TerminalResizeReflowMaxRows, config_search_paths_with_home, normalize_input_modalities,
+        parse_input_modalities,
     };
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn normalize_input_modalities_keeps_text_and_deduplicates() {
@@ -906,5 +917,61 @@ mod tests {
             config.cli.terminal_resize_reflow_max_rows,
             TerminalResizeReflowMaxRows::Disabled
         );
+    }
+
+    #[test]
+    fn config_search_paths_apply_user_config_last() {
+        let workspace = PathBuf::from("D:/repo");
+        let home = PathBuf::from("C:/Users/alice");
+
+        let paths = config_search_paths_with_home(&workspace, Some(home.clone()));
+
+        assert_eq!(
+            paths,
+            vec![
+                workspace.join("configs").join("config.toml"),
+                workspace.join(".cloudagent").join("config.toml"),
+                home.join(".cloudagent").join("config.toml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn user_config_overrides_workspace_config_on_load() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cloudagent-config-test-{unique}"));
+        let workspace = root.join("workspace");
+        let home = root.join("home");
+        let workspace_config = workspace.join("configs").join("config.toml");
+        let user_config = home.join(".cloudagent").join("config.toml");
+        std::fs::create_dir_all(workspace_config.parent().expect("workspace config parent"))
+            .expect("create workspace config dir");
+        std::fs::create_dir_all(user_config.parent().expect("user config parent"))
+            .expect("create user config dir");
+        std::fs::write(
+            &workspace_config,
+            "[llm]\nbase_url = \"https://workspace.example/v1\"\napi_key = \"workspace-key\"\nmodel = \"workspace-model\"\n",
+        )
+        .expect("write workspace config");
+        std::fs::write(
+            &user_config,
+            "[llm]\nbase_url = \"https://user.example/v1\"\napi_key = \"user-key\"\nmodel = \"user-model\"\n",
+        )
+        .expect("write user config");
+
+        let config = AgentConfig::load_from_paths(
+            workspace.clone(),
+            config_search_paths_with_home(&workspace, Some(home)),
+        )
+        .expect("load config");
+
+        assert_eq!(config.llm.base_url, "https://user.example/v1");
+        assert_eq!(config.llm.api_key, "user-key");
+        assert_eq!(config.llm.model, "user-model");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
