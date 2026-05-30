@@ -606,7 +606,7 @@ impl ChatComposer {
     fn layout(&self, mode: FrontendMode, width: usize) -> ComposerLayout {
         let prompt_text = match mode {
             FrontendMode::WaitingForServerRequest => "?",
-            FrontendMode::Running | FrontendMode::Idle => ">",
+            FrontendMode::Running | FrontendMode::Idle => "›",
         };
         let prompt_prefix = format!("  {prompt_text} ");
         let prompt_width = display_width(&prompt_prefix);

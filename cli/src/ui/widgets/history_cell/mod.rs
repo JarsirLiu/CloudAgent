@@ -597,37 +597,53 @@ impl Transcript {
 }
 
 fn render_user(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    word_wrap_text(
-        cell.body(),
-        WrapOptions::new(width)
-            .initial_indent(Line::from(vec![Span::styled(
-                "› ",
-                Style::default().fg(Color::Rgb(140, 150, 170)),
-            )]))
-            .subsequent_indent(Line::from("  ")),
-    )
-    .into_iter()
-    .map(|line| {
-        let spans = line
-            .spans
-            .into_iter()
-            .enumerate()
-            .map(|(index, span)| {
-                if index == 0 {
-                    span
-                } else {
-                    Span::styled(
-                        span.content.into_owned(),
-                        Style::default()
-                            .fg(Color::Rgb(220, 220, 235))
-                            .add_modifier(Modifier::BOLD),
-                    )
-                }
-            })
-            .collect::<Vec<_>>();
-        Line::from(spans)
-    })
-    .collect()
+    let inner = width.saturating_sub(2).max(8);
+    word_wrap_text(cell.body(), WrapOptions::new(inner))
+        .into_iter()
+        .enumerate()
+        .map(|(line_index, line)| {
+            let mut spans = Vec::with_capacity(line.spans.len() + 1);
+            spans.push(if line_index == 0 {
+                Span::styled("› ", Style::default().fg(Color::Rgb(140, 150, 170)))
+            } else {
+                Span::raw("  ")
+            });
+            spans.extend(
+                line.spans
+                    .into_iter()
+                    .map(|span| {
+                        Span::styled(
+                            span.content.into_owned(),
+                            Style::default()
+                                .fg(Color::Rgb(220, 220, 235))
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn render_prefixed_agent_lines(
+    md_lines: Vec<Line<'static>>,
+    first_prefix: Span<'static>,
+    continuation_prefix: Span<'static>,
+) -> Vec<Line<'static>> {
+    md_lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let mut spans = vec![if i == 0 {
+                first_prefix.clone()
+            } else {
+                continuation_prefix.clone()
+            }];
+            spans.extend(line.spans);
+            Line::from(spans)
+        })
+        .collect()
 }
 
 fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -664,21 +680,11 @@ fn render_agent_transcript(cell: &HistoryCell, width: usize) -> Vec<Line<'static
         HistoryFormat::Markdown => markdown::render_markdown(cell.body(), inner),
         HistoryFormat::PlainText => markdown::render_plaintext(cell.body(), inner),
     };
-    let mut out = Vec::new();
-    for (i, line) in md_lines.into_iter().enumerate() {
-        let mut spans = Vec::new();
-        if i == 0 {
-            spans.push(Span::styled(
-                "• ",
-                Style::default().fg(Color::Rgb(100, 180, 255)),
-            ));
-        } else {
-            spans.push(Span::raw("  "));
-        }
-        spans.extend(line.spans);
-        out.push(Line::from(spans));
-    }
-    out
+    render_prefixed_agent_lines(
+        md_lines,
+        Span::styled("• ", Style::default().fg(Color::Rgb(100, 180, 255))),
+        Span::raw("  "),
+    )
 }
 
 fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -1513,6 +1519,24 @@ mod tests {
         assert!(rendered.contains("thirteen"));
         assert!(!rendered.contains("... +"));
         assert!(!rendered.contains("… +"));
+    }
+
+    #[test]
+    fn user_cells_only_prefix_first_multiline_row() {
+        let cell = HistoryCell::user("first line\nsecond line\nthird line");
+
+        let rendered = cell.to_lines_with_mode(80);
+        let plain = rendered
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(plain, vec!["› first line", "  second line", "  third line"]);
     }
 
     #[test]

@@ -72,16 +72,37 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                     pulldown_cmark::HeadingLevel::H1 => "# ".to_string(),
                     pulldown_cmark::HeadingLevel::H2 => "## ".to_string(),
                     pulldown_cmark::HeadingLevel::H3 => "### ".to_string(),
-                    _ => "• ".to_string(),
+                    pulldown_cmark::HeadingLevel::H4
+                    | pulldown_cmark::HeadingLevel::H5
+                    | pulldown_cmark::HeadingLevel::H6 => "#### ".to_string(),
                 };
-                style_stack.push(
-                    Style::default()
-                        .fg(Color::Rgb(170, 190, 255))
-                        .add_modifier(Modifier::BOLD),
-                );
+                let heading_style = match level {
+                    pulldown_cmark::HeadingLevel::H1 => Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::UNDERLINED),
+                    pulldown_cmark::HeadingLevel::H2 => {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    }
+                    pulldown_cmark::HeadingLevel::H3 => Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::ITALIC),
+                    pulldown_cmark::HeadingLevel::H4
+                    | pulldown_cmark::HeadingLevel::H5
+                    | pulldown_cmark::HeadingLevel::H6 => {
+                        Style::default().add_modifier(Modifier::ITALIC)
+                    }
+                };
+                style_stack.push(heading_style);
             }
             Event::End(TagEnd::Heading(_)) => {
-                flush(&mut current, &mut out, width, &heading_prefix);
+                let heading_style = *style_stack.last().unwrap_or(&Style::default());
+                push_wrapped_spans_with_prefix(
+                    &mut current,
+                    &mut out,
+                    width,
+                    Line::from(vec![Span::styled(heading_prefix.clone(), heading_style)]),
+                    Line::from(" ".repeat(display_width(&heading_prefix))),
+                );
                 current.clear();
                 out.push(Line::raw(""));
                 heading_prefix.clear();
@@ -452,11 +473,27 @@ fn push_wrapped_spans(
     width: usize,
     prefix: &str,
 ) {
+    push_wrapped_spans_with_prefix(
+        spans,
+        out,
+        width,
+        Line::from(prefix.to_string()),
+        Line::from(" ".repeat(display_width(prefix))),
+    );
+}
+
+fn push_wrapped_spans_with_prefix(
+    spans: &mut [Span<'static>],
+    out: &mut Vec<Line<'static>>,
+    width: usize,
+    initial_prefix: Line<'static>,
+    subsequent_prefix: Line<'static>,
+) {
     let wrapped = word_wrap_spans(
         spans,
         WrapOptions::new(width)
-            .initial_indent(Line::from(prefix.to_string()))
-            .subsequent_indent(Line::from(" ".repeat(display_width(prefix)))),
+            .initial_indent(initial_prefix)
+            .subsequent_indent(subsequent_prefix),
     );
     out.extend(wrapped);
 }
@@ -476,6 +513,7 @@ fn grapheme_len(value: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{render_markdown, render_plaintext};
+    use ratatui::style::Modifier;
 
     fn joined(lines: &[ratatui::text::Line<'static>]) -> String {
         lines
@@ -529,5 +567,16 @@ mod tests {
         assert!(text.contains("command"));
         assert!(text.contains(" | "));
         assert!(text.lines().count() > 3);
+    }
+
+    #[test]
+    fn heading_markers_use_heading_style() {
+        let rendered = render_markdown("## Summary\n\nBody", 80);
+        let heading = rendered.first().expect("heading line");
+
+        assert_eq!(heading.spans[0].content.as_ref(), "## ");
+        assert!(heading.spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(heading.spans[1].content.as_ref(), "Summary");
+        assert!(heading.spans[1].style.add_modifier.contains(Modifier::BOLD));
     }
 }
