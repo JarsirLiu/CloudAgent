@@ -55,7 +55,7 @@ impl TerminalProjectionController {
         viewport_height: u16,
         terminal_width: u16,
         has_active_stream: bool,
-        visible_history_rows: u16,
+        history_capacity_rows: u16,
     ) -> HistoryProjection {
         let should_replay =
             self.reflow
@@ -64,10 +64,10 @@ impl TerminalProjectionController {
         let history_update = if should_replay {
             let committed = transcript_owner.committed_history_cells();
             transcript_owner.mark_committed_history_replayed();
-            if visible_history_rows > 0 && self.reflow.replay_reason() == ReplayReason::Metrics {
+            if history_capacity_rows > 0 && self.reflow.replay_reason() == ReplayReason::Metrics {
                 HistoryUpdate::ReplayTail {
                     cells: committed,
-                    max_rows: visible_history_rows as usize,
+                    max_rows: history_capacity_rows as usize,
                 }
             } else {
                 HistoryUpdate::ReplayAll(committed)
@@ -96,13 +96,14 @@ impl TerminalProjectionController {
         let size = terminal.terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
         let viewport_height = ChatSurface::desired_viewport_height(app, area);
+        let history_capacity_rows = area.height.saturating_sub(viewport_height);
         let has_active_stream = app.transcript_owner.active_turn_id().is_some();
         let plan = self.build_plan(
             &mut app.transcript_owner,
             viewport_height,
             area.width,
             has_active_stream,
-            terminal.terminal.visible_history_rows(),
+            history_capacity_rows,
         );
         let prepared = self.prepare_projection(plan, terminal.terminal.visible_history_rows() > 0);
         terminal.draw_projection(prepared, |frame| app.render(frame))?;
@@ -249,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn metrics_change_with_visible_history_replays_tail() {
+    fn metrics_change_replays_tail_capped_to_history_capacity() {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
