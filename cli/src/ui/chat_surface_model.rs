@@ -44,10 +44,7 @@ fn transcript_container_height(line_count: usize, max_body_height: usize) -> u16
         return 0;
     }
     let visible_lines = line_count.min(max_body_height);
-    let vertical_margin = 2usize;
-    (visible_lines + vertical_margin)
-        .min(max_body_height.max(1))
-        .min(u16::MAX as usize) as u16
+    visible_lines.min(u16::MAX as usize) as u16
 }
 
 fn visible_transcript_lines(

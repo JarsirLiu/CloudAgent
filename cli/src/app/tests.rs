@@ -1415,5 +1415,31 @@ fn active_body_height_tracks_wrapped_physical_rows_during_streaming() {
     };
 
     assert!(active.lines.len() > 1, "wrapped lines: {:?}", active.lines);
-    assert!(model.body_height >= active.lines.len() as u16);
+    assert_eq!(model.body_height, active.lines.len() as u16);
+}
+
+#[test]
+fn active_body_height_does_not_add_phantom_margin_rows() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+        "assistant",
+        "one visible line".to_string(),
+        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+    ));
+
+    let model = build_chat_surface_model(&mut app, 80, 20);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+
+    assert_eq!(active.lines.len(), 1);
+    assert_eq!(model.body_height, 1);
 }
