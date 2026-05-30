@@ -12,6 +12,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::time::Instant;
 
 use crate::app::clipboard_paste::{is_supported_image_path, normalize_pasted_image_path};
@@ -314,6 +315,10 @@ impl ChatComposer {
             }
             FlushResult::None => false,
         }
+    }
+
+    pub(crate) fn next_paste_flush_delay(&self) -> Option<Duration> {
+        self.paste_burst.recommended_flush_delay()
     }
 
     pub fn render(&self, mode: FrontendMode, width: usize) -> ComposerRender {

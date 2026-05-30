@@ -23,6 +23,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub struct InputPane {
     composer: ChatComposer,
@@ -173,6 +174,14 @@ impl InputPane {
 
     pub(crate) fn handle_tick(&mut self) -> bool {
         self.view_stack.is_empty() && self.composer.flush_paste_burst_if_due()
+    }
+
+    pub(crate) fn next_paste_flush_delay(&self) -> Option<Duration> {
+        if self.view_stack.is_empty() {
+            self.composer.next_paste_flush_delay()
+        } else {
+            None
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

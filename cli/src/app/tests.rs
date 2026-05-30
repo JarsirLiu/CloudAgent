@@ -824,9 +824,12 @@ fn reset_local_view_requests_history_replay() {
 
     let plan = app
         .terminal_projection
-        .build_plan(&mut app.transcript_owner, 5, 80, false);
+        .build_plan(&mut app.transcript_owner, 5, 80, false, 0);
     match plan.history_update {
         crate::terminal::HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
+        crate::terminal::HistoryUpdate::ReplayTail { .. } => {
+            panic!("expected replay-all after reset")
+        }
         crate::terminal::HistoryUpdate::AppendTail(_) => panic!("expected replay-all after reset"),
     }
 }

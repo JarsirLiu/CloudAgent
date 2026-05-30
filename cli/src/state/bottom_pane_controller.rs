@@ -16,6 +16,7 @@ use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry,
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub(crate) struct StatusViewModel {
     pub(crate) indicator: Option<String>,
@@ -116,6 +117,10 @@ impl BottomPaneController {
             needs_redraw = true;
         }
         needs_redraw
+    }
+
+    pub(crate) fn next_paste_flush_delay(&self) -> Option<Duration> {
+        self.input_pane.next_paste_flush_delay()
     }
 
     pub(crate) fn composer_has_selection(&self) -> bool {

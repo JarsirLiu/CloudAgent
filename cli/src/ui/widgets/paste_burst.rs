@@ -42,6 +42,18 @@ pub(crate) enum FlushResult {
 }
 
 impl PasteBurst {
+    pub(crate) fn recommended_flush_delay(&self) -> Option<Duration> {
+        if !self.is_active() {
+            return None;
+        }
+        let timeout = if self.is_active_internal() {
+            PASTE_BURST_ACTIVE_IDLE_TIMEOUT
+        } else {
+            PASTE_BURST_CHAR_INTERVAL
+        };
+        Some(timeout + Duration::from_millis(1))
+    }
+
     pub(crate) fn on_plain_char(&mut self, ch: char, now: Instant) -> CharDecision {
         self.note_plain_char(now);
 
@@ -211,8 +223,14 @@ mod tests {
             CharDecision::RetainFirstChar
         ));
 
+        assert_eq!(
+            burst.recommended_flush_delay(),
+            Some(PASTE_BURST_CHAR_INTERVAL + Duration::from_millis(1))
+        );
+
         let t1 = t0 + PASTE_BURST_CHAR_INTERVAL + Duration::from_millis(1);
         assert!(matches!(burst.flush_if_due(t1), FlushResult::Typed('a')));
+        assert_eq!(burst.recommended_flush_delay(), None);
     }
 
     #[test]
@@ -242,6 +260,12 @@ mod tests {
         ));
         burst.append_char_to_buffer('b', t1);
 
+        assert_eq!(
+            burst.recommended_flush_delay(),
+            Some(PASTE_BURST_ACTIVE_IDLE_TIMEOUT + Duration::from_millis(1))
+        );
+
         assert!(matches!(burst.flush_if_due(t2), FlushResult::Paste(ref s) if s == "ab"));
+        assert_eq!(burst.recommended_flush_delay(), None);
     }
 }

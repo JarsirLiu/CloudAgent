@@ -46,6 +46,9 @@ impl RuntimeController {
                 {
                     return Ok(RuntimeControl::Break);
                 }
+                if let Some(delay) = app.bottom_pane.next_paste_flush_delay() {
+                    frame_requester.schedule_tick_in(delay);
+                }
                 frame_requester.schedule_frame();
                 RuntimeControl::Continue
             }

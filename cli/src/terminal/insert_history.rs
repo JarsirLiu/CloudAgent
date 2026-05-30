@@ -42,6 +42,41 @@ pub(crate) fn prepare_history_lines(
     lines
 }
 
+pub(crate) fn prepare_history_tail_lines(
+    cells: Vec<HistoryCell>,
+    render_width: usize,
+    max_rows: usize,
+) -> Vec<Line<'static>> {
+    if max_rows == 0 || cells.is_empty() {
+        return Vec::new();
+    }
+
+    let mut selected = Vec::new();
+    let mut selected_rows = 0usize;
+    let mut has_newer_cell = false;
+
+    for cell in cells.into_iter().rev() {
+        let display_rows = cell.to_lines_with_mode(render_width).len();
+        if display_rows == 0 {
+            continue;
+        }
+        let separator_rows = usize::from(has_newer_cell && !cell.is_stream_continuation());
+        selected_rows = selected_rows.saturating_add(display_rows + separator_rows);
+        selected.push(cell);
+        has_newer_cell = true;
+        if selected_rows >= max_rows {
+            break;
+        }
+    }
+
+    selected.reverse();
+    let mut lines = prepare_history_lines(selected, render_width, false);
+    if lines.len() > max_rows {
+        lines.drain(0..lines.len() - max_rows);
+    }
+    lines
+}
+
 pub(crate) fn insert_history_lines_raw<B>(
     terminal: &mut Terminal<B>,
     lines: Vec<Line<'static>>,
@@ -345,7 +380,9 @@ impl crossterm::Command for ResetScrollRegion {
 
 #[cfg(test)]
 mod tests {
-    use super::{prepare_history_lines, wrap_history_line, write_history_line};
+    use super::{
+        prepare_history_lines, prepare_history_tail_lines, wrap_history_line, write_history_line,
+    };
     use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
     use ratatui::style::{Color, Style};
@@ -420,6 +457,33 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(rendered.iter().any(|line| line.is_empty()));
+    }
+
+    #[test]
+    fn tail_history_lines_are_capped_to_latest_rows() {
+        let lines = prepare_history_tail_lines(
+            vec![
+                HistoryCell::user("oldest message"),
+                HistoryCell::user("middle message"),
+                HistoryCell::user("latest message"),
+            ],
+            80,
+            3,
+        );
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(lines.len() <= 3);
+        assert!(rendered.contains("latest message"));
+        assert!(!rendered.contains("oldest message"));
     }
 
     #[test]
