@@ -115,7 +115,7 @@ pub fn default_node_launcher() -> (OsString, Vec<OsString>) {
 }
 
 pub fn should_launch_node_via_cargo() -> bool {
-    if config::release_mode_enabled() {
+    if !cfg!(debug_assertions) {
         return false;
     }
 
