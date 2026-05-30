@@ -206,45 +206,7 @@ CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连
 ### 安装
 GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
 
-Linux / macOS：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh
-```
-
-Windows：
-
-```bash
-irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 | iex
-```
-
-常用运行命令：
-
-```bash
-# 启动本地常驻 node 服务
-cloudagent start
-
-# 打开 CLI
-cloudagent cli
-
-# 查看本地 node 状态
-cloudagent status
-
-# 停止本地 node 服务
-cloudagent stop
-
-# 将 CloudAgent 更新到最新版本
-# 如果本地 node 正在运行，升级会先停止它，并在安装后自动重新启动
-cloudagent upgrade
-
-# 卸载 CloudAgent，但保留用户数据
-cloudagent uninstall
-
-# 卸载 CloudAgent，并删除用户数据
-cloudagent uninstall --purge
-```
-
-`cloudagent uninstall` 默认会保留用户数据目录，并移除安装器为 CloudAgent 添加的 PATH 项。使用 `cloudagent uninstall --purge` 可以把用户数据也一起删除。
+z
 
 ### 权限
 CloudAgent 当前支持三种会话权限模式：
