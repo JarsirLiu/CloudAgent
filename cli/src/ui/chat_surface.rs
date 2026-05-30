@@ -12,7 +12,8 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 const MAX_CONTENT_WIDTH: u16 = 140;
 const MIN_RENDER_WIDTH: u16 = 40;
-const HORIZONTAL_CHROME_WIDTH: u16 = 6;
+const HISTORY_CHROME_WIDTH: u16 = 6;
+const ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH: u16 = 4;
 const VIEWPORT_TOP_GUTTER_HEIGHT: u16 = 1;
 const BODY_BOTTOM_GAP_HEIGHT: u16 = 1;
 
@@ -29,7 +30,15 @@ impl ChatSurface {
         let content = centered_column(area, MAX_CONTENT_WIDTH);
         content
             .width
-            .saturating_sub(HORIZONTAL_CHROME_WIDTH)
+            .saturating_sub(HISTORY_CHROME_WIDTH)
+            .max(MIN_RENDER_WIDTH) as usize
+    }
+
+    pub(crate) fn active_render_width_for_area(area: Rect) -> usize {
+        let content = centered_column(area, MAX_CONTENT_WIDTH);
+        content
+            .width
+            .saturating_sub(ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH)
             .max(MIN_RENDER_WIDTH) as usize
     }
 
@@ -40,7 +49,7 @@ impl ChatSurface {
         let surface_area = viewport_surface_area(area, shows_welcome);
         let status = app.bottom_pane.build_status_view_model(app);
         let content = centered_column(surface_area, MAX_CONTENT_WIDTH);
-        let render_width = Self::render_width_for_area(surface_area);
+        let render_width = Self::active_render_width_for_area(surface_area);
         let bottom_height = bottom_pane_height(app, content.width)
             .min(content.height)
             .max(1);
@@ -89,7 +98,7 @@ impl ChatSurface {
         let surface_area = viewport_surface_area(terminal_area, shows_welcome);
         let status = app.bottom_pane.build_status_view_model(app);
         let content = centered_column(surface_area, MAX_CONTENT_WIDTH);
-        let render_width = Self::render_width_for_area(surface_area);
+        let render_width = Self::active_render_width_for_area(surface_area);
         let bottom_height = bottom_pane_height(app, content.width)
             .min(content.height)
             .max(1);

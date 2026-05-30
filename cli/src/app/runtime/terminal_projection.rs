@@ -170,7 +170,7 @@ impl TranscriptReflowState {
             self.replay_requested_during_stream = true;
         }
 
-        if self.replay_requested || (!has_active_stream && replay_metrics_changed) {
+        if self.replay_requested || replay_metrics_changed {
             self.last_replay_reason = if self.replay_requested {
                 self.pending_replay_reason
             } else {
@@ -178,7 +178,6 @@ impl TranscriptReflowState {
             };
             self.replay_requested = false;
             self.pending_replay_reason = ReplayReason::None;
-            self.replay_requested_during_stream = false;
             self.last_replayed_width = Some(width);
             self.last_replayed_viewport_height = Some(viewport_height);
             true
@@ -243,21 +242,21 @@ mod tests {
     }
 
     #[test]
-    fn resize_during_stream_defers_replay_until_stream_boundary() {
+    fn resize_during_stream_replays_now_and_repairs_at_stream_boundary() {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
         let first = controller.build_plan(&mut transcript_owner, 5, 80, true, 0);
         match first.history_update {
-            HistoryUpdate::AppendTail(cells) => assert!(cells.is_empty()),
-            HistoryUpdate::ReplayAll(_) => panic!("streaming frame should defer replay"),
+            HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
+            HistoryUpdate::AppendTail(_) => panic!("streaming metrics change should replay now"),
         }
 
         controller.on_stream_boundary();
         let second = controller.build_plan(&mut transcript_owner, 5, 80, false, 0);
         match second.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
-            HistoryUpdate::AppendTail(_) => panic!("expected replay after stream boundary"),
+            HistoryUpdate::AppendTail(_) => panic!("expected final repair after stream boundary"),
         }
     }
 }
