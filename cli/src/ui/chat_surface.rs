@@ -302,19 +302,12 @@ fn render_active_cell(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) 
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let visible_lines = tail_visible_lines(lines, inner.height as usize);
-    frame.render_widget(
-        Paragraph::new(Text::from(visible_lines)).wrap(Wrap { trim: false }),
-        inner,
-    );
-}
-
-fn tail_visible_lines(lines: Vec<Line<'static>>, max_lines: usize) -> Vec<Line<'static>> {
-    if lines.len() <= max_lines {
-        lines
-    } else {
-        lines[lines.len().saturating_sub(max_lines)..].to_vec()
-    }
+    let scroll_y = lines
+        .len()
+        .saturating_sub(inner.height as usize)
+        .min(u16::MAX as usize) as u16;
+    let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph.scroll((scroll_y, 0)), inner);
 }
 
 fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {

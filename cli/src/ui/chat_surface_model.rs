@@ -30,8 +30,8 @@ pub(crate) fn build_chat_surface_model(
             body_height: max_body_height.min(u16::MAX as usize) as u16,
         }
     } else {
-        let lines = visible_transcript_lines(app, render_width, max_body_height);
-        let body_height = transcript_container_height(lines.len(), max_body_height);
+        let lines = transcript_lines_for_width(app, render_width);
+        let body_height = transcript_container_height(lines.len());
         ChatSurfaceModel {
             body: ChatSurfaceBody::ActiveCell(ActiveCellSurface { lines }),
             body_height,
@@ -39,28 +39,18 @@ pub(crate) fn build_chat_surface_model(
     }
 }
 
-fn transcript_container_height(line_count: usize, max_body_height: usize) -> u16 {
+fn transcript_container_height(line_count: usize) -> u16 {
     if line_count == 0 {
         return 0;
     }
-    let visible_lines = line_count.min(max_body_height);
-    visible_lines.min(u16::MAX as usize) as u16
+    line_count.min(u16::MAX as usize) as u16
 }
 
-fn visible_transcript_lines(
-    app: &mut TuiApp,
-    render_width: usize,
-    max_lines: usize,
-) -> Vec<Line<'static>> {
-    let lines = wrap_transcript_lines(
+fn transcript_lines_for_width(app: &mut TuiApp, render_width: usize) -> Vec<Line<'static>> {
+    wrap_transcript_lines(
         transcript_lines(app.transcript_owner.active_cell(), render_width),
         render_width,
-    );
-    if lines.len() > max_lines {
-        lines[lines.len().saturating_sub(max_lines)..].to_vec()
-    } else {
-        lines
-    }
+    )
 }
 
 fn transcript_lines(active_cell: Option<&HistoryCell>, render_width: usize) -> Vec<Line<'static>> {
@@ -73,7 +63,7 @@ fn transcript_lines(active_cell: Option<&HistoryCell>, render_width: usize) -> V
 
 fn push_cell_lines(lines: &mut Vec<Line<'static>>, cell: &HistoryCell, render_width: usize) {
     if !cell.body().trim().is_empty() {
-        lines.extend(cell.to_transcript_lines(render_width));
+        lines.extend(cell.to_live_transcript_lines(render_width));
     }
 }
 

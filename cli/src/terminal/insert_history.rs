@@ -42,7 +42,8 @@ pub(crate) fn prepare_history_lines(
     lines
 }
 
-pub(crate) fn prepare_history_tail_lines(
+#[cfg(test)]
+fn prepare_history_tail_lines(
     cells: Vec<HistoryCell>,
     render_width: usize,
     max_rows: usize,

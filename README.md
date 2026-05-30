@@ -171,7 +171,7 @@ cargo run -p cli
 | `/archive <id>` | Archive the specified conversation |
 | `/delete [id]` | Hard delete a conversation. If `id` is omitted, you can choose from the session list |
 | `/filter` | Set the pre-LLM input filter |
-| `/permissions` | Set the session permission mode |
+| `/permissions` | Set the model execution permission mode |
 | `/gateway` | Configure and connect IM platforms |
 | `/clear` | Clear this conversation |
 | `/exit` | Exit CloudAgent |

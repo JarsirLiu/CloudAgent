@@ -493,6 +493,13 @@ impl HistoryCell {
             HistoryKind::Notice => render_notice_transcript(self, width),
         }
     }
+
+    pub fn to_live_transcript_lines(&self, width: usize) -> Vec<Line<'static>> {
+        match self.kind() {
+            HistoryKind::Reasoning => render_reasoning_live(self, width),
+            _ => self.to_transcript_lines(width),
+        }
+    }
 }
 
 impl PartialEq for HistoryCell {
@@ -665,6 +672,19 @@ fn render_agent_transcript(cell: &HistoryCell, width: usize) -> Vec<Line<'static
 }
 
 fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    let max_lines = if cell.is_expanded() { 24usize } else { 12usize };
+    render_reasoning_with_limit(cell, width, Some(max_lines))
+}
+
+fn render_reasoning_live(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    render_reasoning_with_limit(cell, width, None)
+}
+
+fn render_reasoning_with_limit(
+    cell: &HistoryCell,
+    width: usize,
+    max_lines: Option<usize>,
+) -> Vec<Line<'static>> {
     let HistoryContent::Reasoning(reasoning) = &cell.content else {
         return Vec::new();
     };
@@ -716,7 +736,9 @@ fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     }) {
         out.pop();
     }
-    let max_lines = if cell.is_expanded() { 24usize } else { 12usize };
+    let Some(max_lines) = max_lines else {
+        return out;
+    };
     let hidden_lines = out.len().saturating_sub(max_lines);
     if hidden_lines == 0 {
         return out;

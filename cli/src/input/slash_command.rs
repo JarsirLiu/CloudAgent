@@ -114,7 +114,7 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         command: SlashCommand::Permissions,
         name: "permissions",
         aliases: &[],
-        description: "set session permissions: ReadOnly(reads direct, writes need approval), WorkspaceWrite(workspace writes direct; outside-workspace, network, and risky actions need approval), FullAccess(broad access; risky actions still need approval)",
+        description: "set model execution permission mode",
         argument_hint: None,
         supports_inline_args: true,
     },

@@ -708,6 +708,53 @@ fn streaming_reasoning_stays_fully_visible_until_completion() {
 }
 
 #[test]
+fn live_reasoning_tail_shows_latest_lines_without_history_collapse() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.transcript_owner
+        .start_local_user(local_input("hello"), false);
+    app.transcript_owner
+        .bind_turn_id("turn-1".to_string(), false);
+    app.transcript_owner.start_item(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        TurnItemKind::Reasoning,
+        Some("Reasoning".to_string()),
+        false,
+    );
+    let text = (0..30)
+        .map(|line| format!("reasoning line {line:02}"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    app.transcript_owner.append_reasoning_delta(
+        "turn-1".to_string(),
+        "r1".to_string(),
+        text,
+        false,
+    );
+
+    let model = build_chat_surface_model(&mut app, 80, 8);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("reasoning line 29"));
+    assert!(!rendered.contains("… +"));
+}
+
+#[test]
 fn chat_surface_model_renders_placeholder_before_first_delta() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -827,9 +874,6 @@ fn reset_local_view_requests_history_replay() {
         .build_plan(&mut app.transcript_owner, 5, 80, false, 0);
     match plan.history_update {
         crate::terminal::HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
-        crate::terminal::HistoryUpdate::ReplayTail { .. } => {
-            panic!("expected replay-all after reset")
-        }
         crate::terminal::HistoryUpdate::AppendTail(_) => panic!("expected replay-all after reset"),
     }
 }
@@ -1181,6 +1225,85 @@ fn failed_turn_without_pending_draft_does_not_claim_restore() {
     assert!(active.contains("failed: worker app server closed unexpectedly"));
     assert!(!active.contains("draft restored for retry"));
     assert!(app.can_submit_turn());
+}
+
+#[test]
+fn agent_stream_commits_complete_lines_and_keeps_tail_live() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "stable line\nlive tail".to_string(),
+        false,
+    );
+
+    let live = owner
+        .live_cells()
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(live, vec!["live tail"]);
+
+    let pending = owner
+        .pending_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert!(pending.iter().any(|body| body.contains("stable line")));
+    assert!(!pending.iter().any(|body| body.contains("live tail")));
+}
+
+#[test]
+fn completing_streamed_agent_message_only_commits_remaining_tail() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "stable line\nlive tail".to_string(),
+        false,
+    );
+
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent("a1", "stable line\nlive tail"),
+        false,
+    );
+
+    let pending = owner
+        .pending_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    let stable_count = pending
+        .iter()
+        .filter(|body| body.contains("stable line"))
+        .count();
+    let tail_count = pending
+        .iter()
+        .filter(|body| body.contains("live tail"))
+        .count();
+    assert_eq!(stable_count, 1);
+    assert_eq!(tail_count, 1);
 }
 
 #[test]

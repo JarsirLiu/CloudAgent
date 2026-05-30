@@ -1,5 +1,6 @@
+use super::streaming::{AgentStreamController, AgentStreamFinish, AgentStreamOutput};
 use crate::ui::widgets::history_cell::{
-    HistoryCell, HistoryFormat, HistoryTone, humanize_tool_label, render_active_item_placeholder,
+    HistoryCell, HistoryTone, humanize_tool_label, render_active_item_placeholder,
     render_history_entry,
 };
 use agent_core::conversation::{InputItem, TranscriptItem, input_items_to_plain_text};
@@ -63,6 +64,7 @@ pub(crate) struct ActiveTurnState {
     last_copyable_output: Option<String>,
     replayed_item_ids: HashSet<String>,
     pending_local_user_input: Option<Vec<InputItem>>,
+    agent_stream: Option<AgentStreamController>,
 }
 
 impl ActiveTurnState {
@@ -78,6 +80,7 @@ impl ActiveTurnState {
         self.last_copyable_output = None;
         self.replayed_item_ids.clear();
         self.pending_local_user_input = None;
+        self.agent_stream = None;
         ActiveTurnEffects::default()
     }
 
@@ -92,6 +95,7 @@ impl ActiveTurnState {
                 self.last_copyable_output = None;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = Some(user_input);
+                self.agent_stream = None;
                 ActiveTurnEffects {
                     active_cell: None,
                     last_copyable_output: None,
@@ -126,17 +130,10 @@ impl ActiveTurnState {
                 delta,
             } => {
                 self.ensure_turn(&turn_id);
-                let replay_cells = self.ensure_live_tail(
-                    &item_id,
-                    HistoryCell::agent("", "responding".to_string(), HistoryFormat::Markdown),
-                );
-                if let Some(cell) = self.live_cell.as_mut() {
-                    if cell.body() == "responding" {
-                        cell.replace_body(delta.clone());
-                    } else {
-                        cell.append_body(&delta);
-                    }
-                }
+                let mut replay_cells = self.ensure_agent_stream_tail(&item_id);
+                let output = self.push_agent_stream_delta(&item_id, &delta);
+                replay_cells.extend(output.stable_cells);
+                self.live_cell = output.live_cell;
                 self.last_copyable_output = Some(format!(
                     "{}{}",
                     self.last_copyable_output.as_deref().unwrap_or(""),
@@ -190,12 +187,20 @@ impl ActiveTurnState {
                 if self.live_item_id.as_deref() == Some(item_id.as_str())
                     || self.should_replace_live_tool_placeholder(&item)
                 {
+                    if matches!(item, TranscriptItem::AgentMessage { .. })
+                        && let Some(streamed) = self.take_finished_agent_stream(&item_id)
+                    {
+                        if streamed.emitted_any {
+                            replay_cells.extend(streamed.stable_cells);
+                        } else if !cell.is_empty() {
+                            replay_cells.push(cell);
+                        }
+                    } else if !cell.is_empty() {
+                        replay_cells.push(cell);
+                    }
                     self.live_item_id = None;
                     self.live_item_kind = None;
                     self.live_cell = None;
-                    if !cell.is_empty() {
-                        replay_cells.push(cell);
-                    }
                 } else if !self.replayed_item_ids.contains(&item_id) && !cell.is_empty() {
                     self.replayed_item_ids.insert(item_id.clone());
                     replay_cells.push(cell);
@@ -219,6 +224,7 @@ impl ActiveTurnState {
                 self.last_copyable_output = None;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = None;
+                self.agent_stream = None;
                 ActiveTurnEffects {
                     active_cell: None,
                     last_copyable_output,
@@ -239,6 +245,7 @@ impl ActiveTurnState {
                 self.last_copyable_output = None;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = None;
+                self.agent_stream = None;
             }
             None => {
                 self.turn_id = Some(turn_id.to_string());
@@ -258,6 +265,46 @@ impl ActiveTurnState {
         replay_cells
     }
 
+    fn ensure_agent_stream_tail(&mut self, item_id: &str) -> Vec<HistoryCell> {
+        let replay_cells = self.flush_live_tail_if_different(item_id);
+        if self
+            .agent_stream
+            .as_ref()
+            .map(AgentStreamController::item_id)
+            != Some(item_id)
+        {
+            self.agent_stream = Some(AgentStreamController::new(item_id));
+        }
+        self.live_item_id = Some(item_id.to_string());
+        self.live_item_kind = Some(TurnItemKind::AssistantMessage);
+        replay_cells
+    }
+
+    fn push_agent_stream_delta(&mut self, item_id: &str, delta: &str) -> AgentStreamOutput {
+        let Some(stream) = self.agent_stream.as_mut() else {
+            return AgentStreamOutput {
+                stable_cells: Vec::new(),
+                live_cell: None,
+            };
+        };
+        if stream.item_id() != item_id {
+            return AgentStreamOutput {
+                stable_cells: Vec::new(),
+                live_cell: None,
+            };
+        }
+        stream.push_delta(delta)
+    }
+
+    fn take_finished_agent_stream(&mut self, item_id: &str) -> Option<AgentStreamFinish> {
+        let stream = self.agent_stream.take()?;
+        if stream.item_id() != item_id {
+            self.agent_stream = Some(stream);
+            return None;
+        }
+        Some(stream.finish())
+    }
+
     fn flush_live_tail_if_different(&mut self, item_id: &str) -> Vec<HistoryCell> {
         if self.live_item_id.as_deref() == Some(item_id) {
             return Vec::new();
@@ -265,6 +312,13 @@ impl ActiveTurnState {
         let flushed_item_id = self.live_item_id.take();
         if let Some(flushed_item_id) = flushed_item_id.as_ref() {
             self.replayed_item_ids.insert(flushed_item_id.clone());
+        }
+        if self
+            .agent_stream
+            .as_ref()
+            .is_some_and(|stream| Some(stream.item_id()) == flushed_item_id.as_deref())
+        {
+            self.agent_stream = None;
         }
         let flushed = if self.should_discard_live_cell_on_flush() {
             self.live_cell.take();

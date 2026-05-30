@@ -6,7 +6,6 @@ use crate::terminal::PreparedHistoryProjection;
 use crate::terminal::PreparedHistoryUpdate;
 use crate::terminal::TerminalGuard;
 use crate::terminal::prepare_history_lines;
-use crate::terminal::prepare_history_tail_lines;
 use crate::ui::chat_surface::ChatSurface;
 use anyhow::Result;
 use ratatui::layout::Rect;
@@ -14,7 +13,6 @@ use ratatui::layout::Rect;
 #[derive(Default)]
 pub(crate) struct TerminalProjectionController {
     reflow: TranscriptReflowState,
-    active_stream_viewport_height: Option<u16>,
 }
 
 #[derive(Default)]
@@ -44,7 +42,6 @@ impl TerminalProjectionController {
 
     pub(crate) fn reset(&mut self) {
         self.reflow.reset();
-        self.active_stream_viewport_height = None;
     }
 
     pub(crate) fn on_stream_boundary(&mut self) {
@@ -57,7 +54,7 @@ impl TerminalProjectionController {
         viewport_height: u16,
         terminal_width: u16,
         has_active_stream: bool,
-        history_capacity_rows: u16,
+        _history_capacity_rows: u16,
     ) -> HistoryProjection {
         let should_replay =
             self.reflow
@@ -66,14 +63,7 @@ impl TerminalProjectionController {
         let history_update = if should_replay {
             let committed = transcript_owner.committed_history_cells();
             transcript_owner.mark_committed_history_replayed();
-            if history_capacity_rows > 0 && self.reflow.replay_reason() == ReplayReason::Metrics {
-                HistoryUpdate::ReplayTail {
-                    cells: committed,
-                    max_rows: history_capacity_rows as usize,
-                }
-            } else {
-                HistoryUpdate::ReplayAll(committed)
-            }
+            HistoryUpdate::ReplayAll(committed)
         } else {
             HistoryUpdate::AppendTail(transcript_owner.drain_pending_history_cells())
         };
@@ -97,15 +87,9 @@ impl TerminalProjectionController {
     ) -> Result<()> {
         let size = terminal.terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
-        let has_active_stream = app.transcript_owner.active_turn_id().is_some();
-        let desired_viewport_height = ChatSurface::desired_viewport_height(app, area);
-        let viewport_height = self.stabilized_viewport_height(
-            desired_viewport_height,
-            terminal.terminal.viewport_area.height,
-            area.height,
-            has_active_stream,
-        );
+        let viewport_height = ChatSurface::desired_viewport_height(app, area);
         let history_capacity_rows = area.height.saturating_sub(viewport_height);
+        let has_active_stream = app.transcript_owner.active_turn_id().is_some();
         let plan = self.build_plan(
             &mut app.transcript_owner,
             viewport_height,
@@ -116,27 +100,6 @@ impl TerminalProjectionController {
         let prepared = self.prepare_projection(plan, terminal.terminal.visible_history_rows() > 0);
         terminal.draw_projection(prepared, |frame| app.render(frame))?;
         Ok(())
-    }
-
-    fn stabilized_viewport_height(
-        &mut self,
-        desired_height: u16,
-        current_height: u16,
-        terminal_height: u16,
-        has_active_stream: bool,
-    ) -> u16 {
-        let max_height = terminal_height.max(1);
-        let desired_height = desired_height.clamp(1, max_height);
-        if !has_active_stream {
-            self.active_stream_viewport_height = None;
-            return desired_height;
-        }
-
-        let stable_height = self
-            .active_stream_viewport_height
-            .get_or_insert_with(|| current_height.max(1).min(max_height).max(desired_height));
-        *stable_height = (*stable_height).clamp(1, max_height);
-        *stable_height
     }
 
     fn prepare_projection(
@@ -153,9 +116,6 @@ impl TerminalProjectionController {
         let history_update = match history_update {
             HistoryUpdate::ReplayAll(cells) => PreparedHistoryUpdate::ReplayAll(
                 prepare_history_lines(cells, history_render_width, false),
-            ),
-            HistoryUpdate::ReplayTail { cells, max_rows } => PreparedHistoryUpdate::ReplayAll(
-                prepare_history_tail_lines(cells, history_render_width, max_rows),
             ),
             HistoryUpdate::AppendTail(cells) => PreparedHistoryUpdate::AppendTail(
                 prepare_history_lines(cells, history_render_width, has_existing_history),
@@ -195,10 +155,6 @@ impl TranscriptReflowState {
             self.replay_requested_during_stream = false;
             self.pending_replay_reason = ReplayReason::Metrics;
         }
-    }
-
-    fn replay_reason(&self) -> ReplayReason {
-        self.last_replay_reason
     }
 
     fn begin_frame(&mut self, width: u16, viewport_height: u16, has_active_stream: bool) -> bool {
@@ -249,7 +205,6 @@ mod tests {
 
         match plan.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
-            HistoryUpdate::ReplayTail { .. } => panic!("explicit replay should replay all"),
             HistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
         }
     }
@@ -262,24 +217,18 @@ mod tests {
         let first = controller.build_plan(&mut transcript_owner, 5, 80, false, 0);
         match first.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
-            HistoryUpdate::ReplayTail { .. } => {
-                panic!("initial replay without visible rows should replay all")
-            }
             HistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
         }
 
         let second = controller.build_plan(&mut transcript_owner, 6, 80, false, 0);
         match second.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
-            HistoryUpdate::ReplayTail { .. } => {
-                panic!("metrics replay without visible rows should replay all")
-            }
             HistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
         }
     }
 
     #[test]
-    fn metrics_change_replays_tail_capped_to_history_capacity() {
+    fn metrics_change_replays_all_history_even_with_visible_capacity() {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
@@ -288,13 +237,7 @@ mod tests {
 
         let second = controller.build_plan(&mut transcript_owner, 6, 80, false, 4);
         match second.history_update {
-            HistoryUpdate::ReplayTail { cells, max_rows } => {
-                assert!(cells.is_empty());
-                assert_eq!(max_rows, 4);
-            }
-            HistoryUpdate::ReplayAll(_) => {
-                panic!("metrics replay should cap to visible history rows")
-            }
+            HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected replay after metrics changed"),
         }
     }
@@ -308,39 +251,13 @@ mod tests {
         match first.history_update {
             HistoryUpdate::AppendTail(cells) => assert!(cells.is_empty()),
             HistoryUpdate::ReplayAll(_) => panic!("streaming frame should defer replay"),
-            HistoryUpdate::ReplayTail { .. } => panic!("streaming frame should defer replay"),
         }
 
         controller.on_stream_boundary();
         let second = controller.build_plan(&mut transcript_owner, 5, 80, false, 0);
         match second.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
-            HistoryUpdate::ReplayTail { .. } => {
-                panic!("stream-boundary replay without visible rows should replay all")
-            }
             HistoryUpdate::AppendTail(_) => panic!("expected replay after stream boundary"),
         }
-    }
-
-    #[test]
-    fn active_stream_keeps_viewport_height_stable() {
-        let mut controller = TerminalProjectionController::default();
-
-        let first = controller.stabilized_viewport_height(6, 8, 24, true);
-        let second = controller.stabilized_viewport_height(16, 8, 24, true);
-        let third = controller.stabilized_viewport_height(4, 8, 24, true);
-
-        assert_eq!(first, 8);
-        assert_eq!(second, 8);
-        assert_eq!(third, 8);
-    }
-
-    #[test]
-    fn stream_viewport_height_resets_after_stream() {
-        let mut controller = TerminalProjectionController::default();
-
-        assert_eq!(controller.stabilized_viewport_height(6, 8, 24, true), 8);
-        assert_eq!(controller.stabilized_viewport_height(5, 8, 24, false), 5);
-        assert_eq!(controller.stabilized_viewport_height(7, 3, 24, true), 7);
     }
 }
