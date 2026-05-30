@@ -4,6 +4,7 @@ use crate::tool::{ToolCall, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 mod execution;
@@ -81,6 +82,17 @@ impl ModelRetryDecision {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelProviderSettings {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+}
+
+pub trait ChatModelFactory: Send + Sync {
+    fn build(&self, settings: ModelProviderSettings) -> Result<Arc<dyn ChatModel>>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReasoningDelta {
     SummaryText { summary_index: usize, delta: String },
@@ -131,6 +143,64 @@ pub trait ChatModel: Send + Sync {
             observer.on_text_delta(content);
         }
         Ok(response)
+    }
+}
+
+pub struct ReloadableChatModel {
+    inner: RwLock<Arc<dyn ChatModel>>,
+}
+
+impl ReloadableChatModel {
+    pub fn new(inner: Arc<dyn ChatModel>) -> Self {
+        Self {
+            inner: RwLock::new(inner),
+        }
+    }
+
+    pub fn replace(&self, inner: Arc<dyn ChatModel>) {
+        let mut guard = self
+            .inner
+            .write()
+            .expect("reloadable chat model lock poisoned");
+        *guard = inner;
+    }
+
+    pub fn snapshot(&self) -> Arc<dyn ChatModel> {
+        self.inner
+            .read()
+            .expect("reloadable chat model lock poisoned")
+            .clone()
+    }
+}
+
+#[async_trait]
+impl ChatModel for ReloadableChatModel {
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
+        self.snapshot().complete(request).await
+    }
+
+    fn request_max_retries(&self) -> u64 {
+        self.snapshot().request_max_retries()
+    }
+
+    fn stream_max_retries(&self) -> u64 {
+        self.snapshot().stream_max_retries()
+    }
+
+    fn classify_request_error(&self, err: &anyhow::Error) -> ModelRetryDecision {
+        self.snapshot().classify_request_error(err)
+    }
+
+    fn classify_stream_error(&self, err: &anyhow::Error) -> ModelRetryDecision {
+        self.snapshot().classify_stream_error(err)
+    }
+
+    async fn complete_streaming(
+        &self,
+        request: ModelRequest,
+        observer: &mut dyn ModelStreamObserver,
+    ) -> Result<ModelResponse> {
+        self.snapshot().complete_streaming(request, observer).await
     }
 }
 

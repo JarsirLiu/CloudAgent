@@ -155,6 +155,13 @@ pub(crate) async fn handle_tui_input(
                 return Ok(false);
             }
             save_user_llm_config(&api_key, &base_url, &model)?;
+            if let Err(err) = client.send_command(AppClientCommand::ReloadLlmConfig {
+                api_key: api_key.clone(),
+                base_url: base_url.clone(),
+                model: model.clone(),
+            }) {
+                tracing::warn!("failed to reload LLM config after save: {err}");
+            }
             show_local_notice(
                 app,
                 NoticeLevel::Info,

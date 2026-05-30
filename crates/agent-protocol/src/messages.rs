@@ -251,6 +251,11 @@ pub enum AppClientCommand {
         platform: String,
         key: String,
     },
+    ReloadLlmConfig {
+        api_key: String,
+        base_url: String,
+        model: String,
+    },
     StartWeixinLogin,
     CheckWeixinLogin {
         session_id: String,
@@ -306,6 +311,7 @@ impl AppClientCommand {
             | Self::SetPlatformEnabled { .. }
             | Self::SetPlatformConfigValue { .. }
             | Self::ClearPlatformConfigValue { .. }
+            | Self::ReloadLlmConfig { .. }
             | Self::StartWeixinLogin
             | Self::CheckWeixinLogin { .. }
             | Self::Exit => None,

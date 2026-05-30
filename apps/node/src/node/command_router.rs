@@ -698,6 +698,7 @@ fn command_name(command: &AppClientCommand) -> &'static str {
         AppClientCommand::SetPlatformEnabled { .. } => "set_platform_enabled",
         AppClientCommand::SetPlatformConfigValue { .. } => "set_platform_config_value",
         AppClientCommand::ClearPlatformConfigValue { .. } => "clear_platform_config_value",
+        AppClientCommand::ReloadLlmConfig { .. } => "reload_llm_config",
         AppClientCommand::StartWeixinLogin => "start_weixin_login",
         AppClientCommand::CheckWeixinLogin { .. } => "check_weixin_login",
         AppClientCommand::ArchiveConversation { .. } => "archive_conversation",
@@ -781,6 +782,7 @@ pub(crate) async fn target_conversation_id(
         | AppClientCommand::SetPlatformEnabled { .. }
         | AppClientCommand::SetPlatformConfigValue { .. }
         | AppClientCommand::ClearPlatformConfigValue { .. }
+        | AppClientCommand::ReloadLlmConfig { .. }
         | AppClientCommand::StartWeixinLogin
         | AppClientCommand::CheckWeixinLogin { .. }
         | AppClientCommand::Exit => session.active_conversation_id().to_string(),

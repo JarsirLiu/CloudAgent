@@ -392,6 +392,7 @@ fn worker_command_name(command: &AppClientCommand) -> &'static str {
         AppClientCommand::SetPlatformEnabled { .. } => "set_platform_enabled",
         AppClientCommand::SetPlatformConfigValue { .. } => "set_platform_config_value",
         AppClientCommand::ClearPlatformConfigValue { .. } => "clear_platform_config_value",
+        AppClientCommand::ReloadLlmConfig { .. } => "reload_llm_config",
         AppClientCommand::StartWeixinLogin => "start_weixin_login",
         AppClientCommand::CheckWeixinLogin { .. } => "check_weixin_login",
         AppClientCommand::ArchiveConversation { .. } => "archive_conversation",

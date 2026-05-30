@@ -31,7 +31,8 @@ pub use host::{
     MemoryBackend, RolloutRecorderBackend,
 };
 pub use model::{
-    ChatModel, ModelRequest, ModelResponse, ModelRetryDecision, ModelStreamObserver, ModelUsage,
+    ChatModel, ChatModelFactory, ModelProviderSettings, ModelRequest, ModelResponse,
+    ModelRetryDecision, ModelStreamObserver, ModelUsage, ReloadableChatModel,
     await_server_request_decision, complete_model_request, complete_model_request_streaming,
 };
 pub use observability::{

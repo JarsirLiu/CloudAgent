@@ -2,8 +2,8 @@ mod agent;
 
 use crate::{
     AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy, ChatModel,
-    ConversationHistory, ConversationSummary, ExecutionPolicy, PermissionProfile,
-    RegularTurnSettings, RolloutItem, SkillRuntime, ToolBackend,
+    ChatModelFactory, ConversationHistory, ConversationSummary, ExecutionPolicy, PermissionProfile,
+    RegularTurnSettings, ReloadableChatModel, RolloutItem, SkillRuntime, ToolBackend,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -28,6 +28,8 @@ pub struct AgentHostParts {
     pub regular_turn_settings: RegularTurnSettings,
     pub policy: ExecutionPolicy,
     pub model: Arc<dyn ChatModel>,
+    pub reloadable_model: Option<Arc<ReloadableChatModel>>,
+    pub model_factory: Option<Arc<dyn ChatModelFactory>>,
     pub tools: Arc<
         dyn ToolBackend<PermissionProfile = PermissionProfile, ApprovalPolicy = ApprovalPolicy>,
     >,

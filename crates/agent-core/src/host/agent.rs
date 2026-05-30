@@ -21,8 +21,9 @@ use crate::turn::{
 };
 use crate::{
     ActiveTurnHandle, AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy,
-    ChatModel, ContextManager, ConversationTurn, ExecutionPolicy, PermissionProfile,
-    RegularTurnSettings, ResponseItem, build_turns_from_rollout_items, complete_model_request,
+    ChatModel, ChatModelFactory, ContextManager, ConversationTurn, ExecutionPolicy,
+    ModelProviderSettings, PermissionProfile, RegularTurnSettings, ReloadableChatModel,
+    ResponseItem, build_turns_from_rollout_items, complete_model_request,
     complete_model_request_streaming, input_items_attachment_count, input_items_preview_text,
     paginate_turns, visible_message_count,
 };
@@ -44,6 +45,8 @@ pub struct AgentHost {
     regular_turn_settings: RegularTurnSettings,
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
+    reloadable_model: Option<Arc<ReloadableChatModel>>,
+    model_factory: Option<Arc<dyn ChatModelFactory>>,
     tools: Arc<
         dyn ToolBackend<PermissionProfile = PermissionProfile, ApprovalPolicy = ApprovalPolicy>,
     >,
@@ -63,6 +66,8 @@ impl AgentHost {
             regular_turn_settings: parts.regular_turn_settings,
             policy: parts.policy,
             model: parts.model,
+            reloadable_model: parts.reloadable_model,
+            model_factory: parts.model_factory,
             tools: parts.tools,
             state: parts.state,
             store: parts.store,
@@ -82,6 +87,29 @@ impl AgentHost {
 
     pub fn llm_model_name(&self) -> &str {
         &self.metadata.llm_model_name
+    }
+
+    pub fn replace_chat_model(&self, model: Arc<dyn ChatModel>) -> bool {
+        let Some(reloadable_model) = &self.reloadable_model else {
+            return false;
+        };
+        reloadable_model.replace(model);
+        true
+    }
+
+    pub fn reload_model_settings(&self, settings: ModelProviderSettings) -> Result<bool> {
+        let Some(model_factory) = &self.model_factory else {
+            return Ok(false);
+        };
+        let model = model_factory.build(settings)?;
+        Ok(self.replace_chat_model(model))
+    }
+
+    fn model_snapshot(&self) -> Arc<dyn ChatModel> {
+        self.reloadable_model
+            .as_ref()
+            .map(|model| model.snapshot())
+            .unwrap_or_else(|| self.model.clone())
     }
 
     pub fn conversation_store_dir(&self) -> &Path {
@@ -190,7 +218,8 @@ impl AgentHost {
             tools: Vec::new(),
             temperature: 0.2,
         };
-        let response = self.model.complete(request).await?;
+        let model = self.model_snapshot();
+        let response = model.complete(request).await?;
         Ok(response
             .content
             .unwrap_or_default()
@@ -687,8 +716,9 @@ impl TurnHost for AgentHost {
         cancellation_token: &CancellationToken,
         request: crate::ModelRequest,
     ) -> Result<crate::ModelResponse> {
+        let model = self.model_snapshot();
         complete_model_request(
-            self.model.as_ref(),
+            model.as_ref(),
             cancellation_token,
             request,
             TURN_INTERRUPTED_ERROR,
@@ -702,8 +732,9 @@ impl TurnHost for AgentHost {
         request: crate::ModelRequest,
         observer: &mut dyn crate::ModelStreamObserver,
     ) -> Result<crate::ModelResponse> {
+        let model = self.model_snapshot();
         complete_model_request_streaming(
-            self.model.as_ref(),
+            model.as_ref(),
             cancellation_token,
             request,
             observer,

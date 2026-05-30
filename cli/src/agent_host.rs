@@ -2,6 +2,7 @@ use agent_core::SkillRuntime;
 use agent_core::approval::ApprovalGrantStoreBackend;
 use agent_core::context::AgentContext;
 use agent_core::host::{AgentHost, AgentHostParts, AgentMetadata};
+use agent_core::model::{ChatModel, ChatModelFactory, ModelProviderSettings, ReloadableChatModel};
 use agent_core::state::AgentState;
 use agent_core::turn::{ExecutionPolicy, RegularTurnSettings};
 use agent_memory::LongTermMemoryFacade;
@@ -13,6 +14,20 @@ use infra_store::{JsonConversationStore, RolloutRecorder};
 use std::env;
 use std::path::Path;
 use std::sync::Arc;
+
+struct OpenAiCompatibleModelFactory {
+    template: config::LlmConfig,
+}
+
+impl ChatModelFactory for OpenAiCompatibleModelFactory {
+    fn build(&self, settings: ModelProviderSettings) -> Result<Arc<dyn ChatModel>> {
+        let mut config = self.template.clone();
+        config.api_key = settings.api_key;
+        config.base_url = settings.base_url;
+        config.model = settings.model;
+        Ok(Arc::new(OpenAiCompatibleModel::new(config)?))
+    }
+}
 
 pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     config.validate()?;
@@ -63,7 +78,16 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         shell_name: default_shell_name(),
         system_prompt: config.runtime.system_prompt.clone(),
     };
-    let model = Arc::new(OpenAiCompatibleModel::new(config.llm.clone())?);
+    let model_factory = Arc::new(OpenAiCompatibleModelFactory {
+        template: config.llm.clone(),
+    });
+    let initial_model = model_factory.build(ModelProviderSettings {
+        api_key: config.llm.api_key.clone(),
+        base_url: config.llm.base_url.clone(),
+        model: config.llm.model.clone(),
+    })?;
+    let reloadable_model = Arc::new(ReloadableChatModel::new(initial_model));
+    let model: Arc<dyn ChatModel> = reloadable_model.clone();
     let tools = Arc::new(ToolRegistry::new(config.tools.max_read_chars));
     let store = Arc::new(JsonConversationStore::new(
         config.runtime.conversation_store_dir.clone(),
@@ -79,6 +103,8 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         regular_turn_settings,
         policy,
         model,
+        reloadable_model: Some(reloadable_model),
+        model_factory: Some(model_factory),
         tools,
         state,
         store,

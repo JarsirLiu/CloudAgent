@@ -204,6 +204,11 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
             platform: value_field(params.clone(), "platform")?,
             key: value_field(params, "key")?,
         }),
+        "llm/config/reload" => Ok(AppClientCommand::ReloadLlmConfig {
+            api_key: value_field(params.clone(), "api_key")?,
+            base_url: value_field(params.clone(), "base_url")?,
+            model: value_field(params, "model")?,
+        }),
         "weixin/login/start" => Ok(AppClientCommand::StartWeixinLogin),
         "weixin/login/check" => Ok(AppClientCommand::CheckWeixinLogin {
             session_id: value_field(params, "session_id")?,
@@ -319,6 +324,18 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
         AppClientCommand::ClearPlatformConfigValue { platform, key } => (
             "platform/config/clear",
             serde_json::json!({ "platform": platform, "key": key }),
+        ),
+        AppClientCommand::ReloadLlmConfig {
+            api_key,
+            base_url,
+            model,
+        } => (
+            "llm/config/reload",
+            serde_json::json!({
+                "api_key": api_key,
+                "base_url": base_url,
+                "model": model,
+            }),
         ),
         AppClientCommand::StartWeixinLogin => ("weixin/login/start", Value::Null),
         AppClientCommand::CheckWeixinLogin { session_id } => (

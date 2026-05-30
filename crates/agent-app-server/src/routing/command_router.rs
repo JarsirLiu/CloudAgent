@@ -4,8 +4,8 @@ use crate::session::listener::ConversationListenerHandle;
 use crate::session::service as session_service;
 use crate::session::subscriptions::ConversationSubscriptions;
 use crate::turn::service as turn_service;
-use agent_core::AgentHost;
 use agent_core::ConversationTurn;
+use agent_core::{AgentHost, ModelProviderSettings};
 use agent_core::{ServerRequest, ServerRequestDecision, TurnState};
 use agent_protocol::{AppClientCommand, AppServerMessage};
 use anyhow::Result;
@@ -330,6 +330,17 @@ pub(crate) async fn handle_command(
         }
         AppClientCommand::ClearPlatformConfigValue { .. } => {
             report_node_managed_only_command(event_tx, &state, "ClearPlatformConfigValue").await;
+        }
+        AppClientCommand::ReloadLlmConfig {
+            api_key,
+            base_url,
+            model,
+        } => {
+            runtime.reload_model_settings(ModelProviderSettings {
+                api_key,
+                base_url,
+                model,
+            })?;
         }
         AppClientCommand::StartWeixinLogin => {
             report_node_managed_only_command(event_tx, &state, "StartWeixinLogin").await;
