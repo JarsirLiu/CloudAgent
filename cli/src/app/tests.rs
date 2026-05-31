@@ -1585,6 +1585,62 @@ fn active_transcript_tail_keeps_latest_reasoning_visible() {
 }
 
 #[test]
+fn active_transcript_manual_scroll_is_preserved_across_new_content() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+        "assistant",
+        (0..10)
+            .map(|idx| format!("line {idx}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+    ));
+
+    let initial = build_chat_surface_model(&mut app, 80, 4);
+    let ChatSurfaceBody::ActiveCell(initial_active) = initial.body else {
+        panic!("expected active cell body");
+    };
+    assert_eq!(initial_active.scroll_top, 6);
+
+    assert!(
+        app.active_transcript_scroll
+            .handle_key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::PageUp,
+                crossterm::event::KeyModifiers::NONE,
+            ))
+    );
+
+    let scrolled = build_chat_surface_model(&mut app, 80, 4);
+    let ChatSurfaceBody::ActiveCell(scrolled_active) = scrolled.body else {
+        panic!("expected active cell body");
+    };
+    assert_eq!(scrolled_active.scroll_top, 3);
+
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+        "assistant",
+        (0..14)
+            .map(|idx| format!("line {idx}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+    ));
+
+    let updated = build_chat_surface_model(&mut app, 80, 4);
+    let ChatSurfaceBody::ActiveCell(updated_active) = updated.body else {
+        panic!("expected active cell body");
+    };
+    assert_eq!(updated_active.scroll_top, 3);
+}
+
+#[test]
 fn active_body_height_tracks_wrapped_physical_rows_during_streaming() {
     let mut app = TuiApp::new(
         "default".to_string(),

@@ -10,6 +10,7 @@ pub(crate) enum ChatSurfaceBody {
 
 pub(crate) struct ActiveCellSurface {
     pub(crate) lines: Vec<Line<'static>>,
+    pub(crate) scroll_top: u16,
 }
 
 pub(crate) struct ChatSurfaceModel {
@@ -30,8 +31,11 @@ pub(crate) fn build_chat_surface_model(
     } else {
         let lines = transcript_lines_for_width(app, render_width);
         let body_height = transcript_container_height(&lines, render_width);
+        let scroll_top = app
+            .active_transcript_scroll
+            .top_row_for_render(body_height as usize, max_body_height);
         ChatSurfaceModel {
-            body: ChatSurfaceBody::ActiveCell(ActiveCellSurface { lines }),
+            body: ChatSurfaceBody::ActiveCell(ActiveCellSurface { lines, scroll_top }),
             body_height,
         }
     }

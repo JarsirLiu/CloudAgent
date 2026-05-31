@@ -26,6 +26,7 @@ impl TuiApp {
             conversation_summaries: Vec::new(),
             target_label: target_label.to_string(),
             transcript_owner: TranscriptOwner::default(),
+            active_transcript_scroll: Default::default(),
             run_state,
             bottom_pane: BottomPaneController::new(),
             terminal_projection: TerminalProjectionController::default(),
@@ -41,6 +42,7 @@ impl TuiApp {
         let filter_enabled = self.run_state.pre_llm_filter_enabled;
         let permission_mode = self.run_state.permission_mode.clone();
         self.transcript_owner.clear();
+        self.active_transcript_scroll.reset();
         self.run_state = RunState::new(&self.target_label);
         self.run_state.pre_llm_filter_enabled = filter_enabled;
         self.run_state.permission_mode = permission_mode;
@@ -137,6 +139,7 @@ impl TuiApp {
         self.bottom_pane.prepare_for_submit();
         self.transcript_owner
             .start_local_user(content.to_vec(), self.run_state.expand_tool_details);
+        self.active_transcript_scroll.reset();
     }
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
@@ -152,6 +155,7 @@ impl TuiApp {
                     self.transcript_owner
                         .clear_active_turn(self.run_state.expand_tool_details);
                 }
+                self.active_transcript_scroll.reset();
             }
             TurnDispatch::Failed { error } => {
                 let restored_draft =
@@ -169,12 +173,14 @@ impl TuiApp {
                     format!("failed: {error}")
                 };
                 self.push_live_cell(HistoryCell::info("turn", message, HistoryTone::Error));
+                self.active_transcript_scroll.reset();
             }
             TurnDispatch::Cancelled { reason } => {
                 self.run_state.pending_submitted_input = None;
                 self.transcript_owner
                     .clear_active_turn(self.run_state.expand_tool_details);
                 self.push_live_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));
+                self.active_transcript_scroll.reset();
             }
         }
     }

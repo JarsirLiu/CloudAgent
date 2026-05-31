@@ -269,7 +269,7 @@ fn render_body_area(app: &TuiApp, frame: &mut Frame, area: Rect, model: ChatSurf
     match model.body {
         ChatSurfaceBody::Welcome => render_welcome(app, frame, area),
         ChatSurfaceBody::ActiveCell(active_cell) => {
-            render_active_cell(frame, area, active_cell.lines)
+            render_active_cell(frame, area, active_cell.lines, active_cell.scroll_top)
         }
     }
 }
@@ -300,7 +300,7 @@ fn render_status_area(
     );
 }
 
-fn render_active_cell(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
+fn render_active_cell(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>, scroll_top: u16) {
     if area.height == 0 || area.width == 0 || lines.is_empty() {
         return;
     }
@@ -312,11 +312,7 @@ fn render_active_cell(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) 
         return;
     }
     let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
-    let scroll_y = paragraph
-        .line_count(inner.width)
-        .saturating_sub(inner.height as usize)
-        .min(u16::MAX as usize) as u16;
-    frame.render_widget(paragraph.scroll((scroll_y, 0)), inner);
+    frame.render_widget(paragraph.scroll((scroll_top, 0)), inner);
 }
 
 fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {

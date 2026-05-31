@@ -10,6 +10,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl TuiApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
+        if self.current_mode() != agent_protocol::FrontendMode::Idle
+            && self.transcript_owner.active_turn_id().is_some()
+            && self.active_transcript_scroll.handle_key(key)
+        {
+            return None;
+        }
+
         if matches_ctrl_char(key, 'c') {
             if self.current_mode() == agent_protocol::FrontendMode::Idle
                 && self.bottom_pane.composer_has_selection()

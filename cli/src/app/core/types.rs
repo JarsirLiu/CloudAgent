@@ -1,3 +1,4 @@
+use crate::app::core::active_transcript_scroll::ActiveTranscriptScroll;
 use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::runtime::terminal_projection::TerminalProjectionController;
 use crate::state::RunState;
@@ -56,6 +57,7 @@ pub(crate) struct TuiApp {
     pub(crate) conversation_summaries: Vec<ConversationSummary>,
     pub(crate) target_label: String,
     pub(crate) transcript_owner: TranscriptOwner,
+    pub(crate) active_transcript_scroll: ActiveTranscriptScroll,
     pub(crate) run_state: RunState,
     pub(crate) bottom_pane: BottomPaneController,
     pub(crate) terminal_projection: TerminalProjectionController,
