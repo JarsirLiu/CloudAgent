@@ -90,6 +90,19 @@ mod tests {
     use super::*;
     use agent_core::conversation::{AttachmentRef, TranscriptItem};
 
+    fn joined(cell: &HistoryCell, width: usize) -> String {
+        cell.to_lines_with_mode(width)
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .into_iter()
+                    .map(|span| span.content.into_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn user_message_renders_image_placeholders_in_history() {
         let message = TranscriptItem::user_message(
@@ -134,9 +147,12 @@ mod tests {
 
         let mut context = RenderContext;
         let cell = render_history_entry(&message, &mut context);
+        let rendered = joined(&cell, 120);
 
-        assert!(!cell.body().contains("*** Begin Patch"));
+        assert!(!rendered.contains("*** Begin Patch"));
         assert!(cell.body().contains("failed 0 files"));
+        assert!(rendered.contains("expected lines not found"));
+        assert!(!rendered.contains("Tool execution failed"));
     }
 
     #[test]
@@ -491,7 +507,7 @@ fn render_file_change(
         .or_else(|| {
             (matches!(status, WriteFileStatus::Failed | WriteFileStatus::Declined)
                 && !summary.trim().is_empty())
-            .then(|| compact_tool_failure(summary))
+            .then(|| compact_file_change_failure(summary))
         });
     HistoryCell::edit(
         humanize_tool_label(tool_name),
@@ -505,12 +521,44 @@ fn render_file_change(
     )
 }
 
-fn compact_tool_failure(summary: &str) -> String {
-    let first = summary
+fn compact_file_change_failure(summary: &str) -> String {
+    let text = summary.trim();
+    if text.contains("Failed to find expected lines") {
+        return "expected lines not found".to_string();
+    }
+    if text.contains("patch did not contain any editable file hunks") {
+        return "invalid patch format".to_string();
+    }
+    if text.contains("refusing to add existing file") {
+        return "file already exists".to_string();
+    }
+    if text.contains("refusing to update missing file") {
+        return "file does not exist".to_string();
+    }
+    if text.contains("partial_changes=") {
+        return compact_partial_change_failure(text);
+    }
+    let first = text
         .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("edit failed");
+    let first = first
+        .strip_prefix("Tool execution failed:")
+        .unwrap_or(first)
+        .trim();
+    let first = first
+        .strip_prefix("apply_patch failed:")
+        .unwrap_or(first)
+        .trim();
     compact_inline(first, 72)
+}
+
+fn compact_partial_change_failure(summary: &str) -> String {
+    summary
+        .lines()
+        .find(|line| line.contains("partial_changes="))
+        .map(|line| compact_inline(line.trim(), 72))
+        .unwrap_or_else(|| "partial changes may have been written".to_string())
 }
 
 fn exit_suffix(exit_code: Option<i32>) -> String {

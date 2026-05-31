@@ -69,7 +69,9 @@ pub(super) fn format_exec_result_content(view: CommandResultView<'_>) -> String 
     let next_step = if view.original_token_count > view.max_output_tokens {
         Some("narrow the command, tighten the `rg` pattern, or read a smaller file slice")
     } else if matches!(view.status, CommandExecutionStatus::InProgress) {
-        Some("reuse the returned `session_id` to send more stdin or poll for additional output")
+        Some(
+            "poll this `session_id` until it completes before depending on the result, committing changes, or reporting success",
+        )
     } else {
         Some(
             "if the user request is not fully closed, continue with the next tool call before answering",
@@ -319,5 +321,26 @@ mod tests {
         });
 
         assert!(content.contains("Next step: if the user request is not fully closed"));
+    }
+
+    #[test]
+    fn in_progress_command_result_requires_polling_before_success() {
+        let content = format_exec_result_content(CommandResultView {
+            command: "cargo test --workspace --quiet",
+            current_directory: ".",
+            session_id: Some("exec:1"),
+            status: CommandExecutionStatus::InProgress,
+            exit_code: None,
+            duration_ms: 1_000,
+            output: "",
+            max_output_tokens: 1_000,
+            original_token_count: 0,
+        });
+
+        assert!(content.contains("Status: in_progress"));
+        assert!(content.contains("poll this `session_id` until it completes"));
+        assert!(content.contains("before depending on the result"));
+        assert!(content.contains("committing changes"));
+        assert!(content.contains("reporting success"));
     }
 }
