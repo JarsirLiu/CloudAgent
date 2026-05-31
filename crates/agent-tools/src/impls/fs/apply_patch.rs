@@ -149,7 +149,9 @@ impl LocalTool for ApplyPatchLocalTool {
         let changed_paths = changed_files.into_iter().collect::<Vec<_>>();
 
         Ok(ToolInvocationOutput {
-            content: format!("Applied patch. files_changed={files_changed}"),
+            content: format!(
+                "Applied patch. files_changed={files_changed}. If the user request is not fully closed, continue with the next tool call before answering."
+            ),
             structured: Some(StructuredToolResult::EditFile {
                 changed_paths,
                 files_changed,

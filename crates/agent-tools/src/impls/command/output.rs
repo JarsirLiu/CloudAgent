@@ -71,7 +71,9 @@ pub(super) fn format_exec_result_content(view: CommandResultView<'_>) -> String 
     } else if matches!(view.status, CommandExecutionStatus::InProgress) {
         Some("reuse the returned `session_id` to send more stdin or poll for additional output")
     } else {
-        None
+        Some(
+            "if the user request is not fully closed, continue with the next tool call before answering",
+        )
     };
     finalize(summary, lines, next_step)
 }
@@ -300,5 +302,22 @@ mod tests {
 
         assert!(content.len() < large.len());
         assert!(content.contains("Original token count"));
+    }
+
+    #[test]
+    fn completed_command_result_includes_continuation_hint() {
+        let content = format_exec_result_content(CommandResultView {
+            command: "rg foo",
+            current_directory: ".",
+            session_id: None,
+            status: CommandExecutionStatus::Completed,
+            exit_code: Some(0),
+            duration_ms: 1,
+            output: "match",
+            max_output_tokens: 1_000,
+            original_token_count: 5,
+        });
+
+        assert!(content.contains("Next step: if the user request is not fully closed"));
     }
 }
