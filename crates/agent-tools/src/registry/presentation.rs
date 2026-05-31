@@ -118,7 +118,7 @@ pub(crate) fn tool_item_title(call: &ToolCall) -> String {
     {
         return command.trim().to_string();
     }
-    if call.name == "exec_command"
+    if call.name == "write_stdin"
         && let Some(session_id) = call
             .arguments
             .get("session_id")
@@ -136,12 +136,17 @@ pub(crate) fn denied_tool_result(
     reason: String,
 ) -> Option<StructuredToolResult> {
     match tool_name {
-        "exec_command" => {
-            let command = arguments
-                .get("command")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default()
-                .to_string();
+        "exec_command" | "write_stdin" => {
+            let command =
+                if let Some(command) = arguments.get("command").and_then(|value| value.as_str()) {
+                    command.to_string()
+                } else if let Some(session_id) =
+                    arguments.get("session_id").and_then(|value| value.as_str())
+                {
+                    format!("session {session_id}")
+                } else {
+                    String::new()
+                };
             let current_directory = arguments
                 .get("workdir")
                 .and_then(|value| value.as_str())
@@ -177,6 +182,9 @@ pub(crate) fn default_rejection_message(tool_name: &str) -> String {
     match tool_name {
         "exec_command" => {
             "exec command rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
+        }
+        "write_stdin" => {
+            "stdin write rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()
         }
         "apply_patch" | "edit_file" => {
             "edit rejected by user: the user denied this approval request; do not describe this as a system safety restriction".to_string()

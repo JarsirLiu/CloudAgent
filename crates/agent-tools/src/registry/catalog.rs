@@ -1,4 +1,7 @@
-use crate::impls::command::{ExecCommandLocalTool, ExecCommandTool as ExecCommandDescriptorTool};
+use crate::impls::command::{
+    ExecCommandLocalTool, ExecCommandTool as ExecCommandDescriptorTool,
+    WriteStdinTool as WriteStdinDescriptorTool,
+};
 use crate::impls::discovery::{ToolSearchLocalTool, ToolSearchTool};
 use crate::impls::file_read_state::FileReadStateStore;
 use crate::impls::fs::{
@@ -29,6 +32,7 @@ fn build_main_chain_descriptors(max_read_chars: usize) -> Vec<ToolDescriptor> {
         ReadFileTool::descriptor(max_read_chars),
         ToolSearchTool::descriptor(),
         ExecCommandDescriptorTool::descriptor(),
+        WriteStdinDescriptorTool::descriptor(),
         EditFileTool::descriptor(),
     ]
 }
@@ -68,7 +72,9 @@ fn register_main_chain_tools(
         },
     );
     register(tools, ToolSearchLocalTool);
-    register(tools, ExecCommandLocalTool::new());
+    let (exec_command, write_stdin) = ExecCommandLocalTool::shared_pair();
+    register(tools, exec_command);
+    register(tools, write_stdin);
     register(tools, EditFileLocalTool { read_state });
 }
 

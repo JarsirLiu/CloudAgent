@@ -96,7 +96,11 @@ impl LocalTool for ReadFileLocalTool {
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
         let args: ReadFileArgs = invocation.payload.parse_arguments()?;
-        let path = resolve_read_path(&ctx.workspace_root, Some(args.path.as_str()))?;
+        let path = resolve_read_path(
+            &ctx.workspace_root,
+            &ctx.permission_profile,
+            Some(args.path.as_str()),
+        )?;
         let text = read_text_snippet(
             &path,
             &TextReadOptions::for_single_file(self.max_read_chars, args.start_line, args.max_lines),

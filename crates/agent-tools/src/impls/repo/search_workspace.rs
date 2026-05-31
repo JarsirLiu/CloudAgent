@@ -416,7 +416,7 @@ async fn run_file_search(
     offset: usize,
     ctx: &ToolExecutionContext,
 ) -> Result<FileSearchResult> {
-    let root = resolve_read_path(&ctx.workspace_root, path_scope)?;
+    let root = resolve_read_path(&ctx.workspace_root, &ctx.permission_profile, path_scope)?;
     let workspace_root = ctx.workspace_root.clone();
     let query = if case_sensitive {
         pattern.to_string()
@@ -565,7 +565,7 @@ async fn run_text_search(
     offset: usize,
     ctx: &ToolExecutionContext,
 ) -> Result<TextSearchResult> {
-    let search_root = resolve_read_path(&ctx.workspace_root, path_scope)?;
+    let search_root = resolve_read_path(&ctx.workspace_root, &ctx.permission_profile, path_scope)?;
     let workspace_root = ctx.workspace_root.clone();
     let query_for_search = query.to_string();
 

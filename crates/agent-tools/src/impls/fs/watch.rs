@@ -380,7 +380,11 @@ impl LocalTool for WatchLocalTool {
     ) -> Result<ToolInvocationOutput> {
         let args: WatchArgs = invocation.payload.parse_arguments()?;
         let recursive = args.recursive.unwrap_or(true);
-        let path = resolve_read_path(&ctx.workspace_root, Some(args.path.as_str()))?;
+        let path = resolve_read_path(
+            &ctx.workspace_root,
+            &ctx.permission_profile,
+            Some(args.path.as_str()),
+        )?;
         let canonical_path = self.manager.watch(&args.watch_id, &path, recursive)?;
         Ok(ToolInvocationOutput {
             content: format!(

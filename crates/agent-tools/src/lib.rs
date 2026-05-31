@@ -1,3 +1,4 @@
+pub(crate) mod command_access;
 pub mod impls;
 pub mod policy;
 pub mod registry;

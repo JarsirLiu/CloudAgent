@@ -1,3 +1,4 @@
+use crate::command_access::classify_command;
 use agent_core::{
     ApprovalGrantKey, ApprovalPolicy, ApprovalRequirement, PermissionProfile, ToolCall, ToolSpec,
 };
@@ -16,6 +17,7 @@ pub fn approval_requirement_for_tool(
         "exec_command" => {
             exec_command_requirement(call, workspace_root, permission_profile, approval_policy)
         }
+        "write_stdin" => write_stdin_requirement(call, permission_profile, approval_policy),
         _ if spec.requires_approval => match permission_profile {
             PermissionProfile::ReadOnly => ApprovalRequirement::required(
                 spec.approval_reason
@@ -57,19 +59,17 @@ struct ExecCommandArgs {
     command: Option<String>,
     #[serde(default)]
     workdir: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WriteStdinArgs {
     #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    stdin: Option<String>,
-    #[serde(default)]
-    close_stdin: Option<bool>,
-    #[serde(default)]
-    start_new_session: Option<bool>,
+    chars: Option<String>,
 }
 
 fn exec_command_requirement(
     call: &ToolCall,
-    _workspace_root: &Path,
+    workspace_root: &Path,
     permission_profile: &PermissionProfile,
     approval_policy: &ApprovalPolicy,
 ) -> ApprovalRequirement {
@@ -80,26 +80,13 @@ fn exec_command_requirement(
     };
 
     let command = args.command.as_deref().unwrap_or("").trim();
-    let writes_to_session = args.stdin.as_deref().is_some_and(|value| !value.is_empty())
-        || args.close_stdin.unwrap_or(false);
-    if args.session_id.is_some() && writes_to_session {
-        return ApprovalRequirement::required(
-            "Interactive command session writes require approval.",
-        );
-    }
-    if args.start_new_session.unwrap_or(false) {
-        return ApprovalRequirement::required("Long-running command sessions require approval.");
-    }
     if command.is_empty() {
         return ApprovalRequirement::required("Empty command executions require approval.");
     }
 
-    let normalized = normalize_command(command);
-    let readonly = is_safe_readonly_command(command);
-    let workdir_escape = workdir_mentions_parent_escape(args.workdir.as_deref());
-    let dangerous = is_dangerous_command(&normalized);
-    let network = contains_network_indicator(&normalized);
-    if dangerous {
+    let access = classify_command(command);
+    let workdir_escape = workdir_escapes_workspace(workspace_root, args.workdir.as_deref());
+    if access.is_dangerous() {
         return ApprovalRequirement::required(
             "Dangerous commands (e.g. rm -rf / recursive delete) require approval.",
         );
@@ -109,7 +96,7 @@ fn exec_command_requirement(
         PermissionProfile::FullAccess => match approval_policy {
             ApprovalPolicy::Never => ApprovalRequirement::not_required(),
             ApprovalPolicy::OnRequest => {
-                if readonly {
+                if access.is_read_only() {
                     ApprovalRequirement::not_required()
                 } else {
                     ApprovalRequirement::required(
@@ -119,15 +106,15 @@ fn exec_command_requirement(
             }
         },
         PermissionProfile::WorkspaceWrite => {
-            if workdir_escape {
+            if !access.is_read_only() && workdir_escape {
                 return ApprovalRequirement::required(
-                    "This command needs permissions outside the workspace.",
+                    "Writing outside the workspace requires stronger permissions.",
                 );
             }
             match approval_policy {
                 ApprovalPolicy::Never => ApprovalRequirement::not_required(),
                 ApprovalPolicy::OnRequest => {
-                    if network {
+                    if access.is_network() {
                         ApprovalRequirement::required(
                             "Network commands require approval under the current approval policy.",
                         )
@@ -138,7 +125,7 @@ fn exec_command_requirement(
             }
         }
         PermissionProfile::ReadOnly => {
-            if readonly && !workdir_escape {
+            if access.is_read_only() && !workdir_escape {
                 ApprovalRequirement::not_required()
             } else {
                 ApprovalRequirement::required(
@@ -160,189 +147,83 @@ fn exec_command_grant_key(call: &ToolCall) -> Option<ApprovalGrantKey> {
         "exec_command",
         json!({
             "identity": call.identity,
-            "command": normalize_command(command),
+            "command": command.trim().to_ascii_lowercase(),
             "workdir": args.workdir.as_deref().map(str::trim).filter(|value| !value.is_empty()),
-            "session_id_present": args.session_id.is_some(),
-            "stdin_present": args.stdin.as_deref().is_some_and(|value| !value.is_empty()),
-            "start_new_session": args.start_new_session.unwrap_or(false),
         }),
     ))
 }
 
-fn workdir_mentions_parent_escape(workdir: Option<&str>) -> bool {
-    workdir.is_some_and(|value| {
-        let trimmed = value.trim();
-        trimmed.starts_with("..") || trimmed.contains("\\..\\") || trimmed.contains("/../")
-    })
-}
-
-fn is_safe_readonly_command(command: &str) -> bool {
-    let normalized = normalize_command(command);
-    if normalized.is_empty() {
-        return false;
-    }
-
-    if contains_write_operator(&normalized) || contains_network_indicator(&normalized) {
-        return false;
-    }
-
-    if is_safe_readonly_chain(&normalized) {
-        return true;
-    }
-
-    let Some(program) = normalized.split_whitespace().next() else {
-        return false;
+fn write_stdin_requirement(
+    call: &ToolCall,
+    permission_profile: &PermissionProfile,
+    approval_policy: &ApprovalPolicy,
+) -> ApprovalRequirement {
+    let Ok(args) = serde_json::from_value::<WriteStdinArgs>(call.arguments.clone()) else {
+        return ApprovalRequirement::required(
+            "Interactive command input requires approval when its arguments cannot be classified safely.",
+        );
     };
-
-    match program {
-        "pwd" | "ls" | "dir" | "cat" | "type" | "head" | "tail" | "find" | "tree" | "rg" | "fd"
-        | "findstr" | "select-string" | "get-childitem" | "get-content" | "measure-object"
-        | "where-object" | "sort-object" | "select-object" => true,
-        "git" => is_safe_git_command(&normalized),
-        _ => false,
-    }
-}
-
-fn is_safe_readonly_chain(command: &str) -> bool {
-    if command.contains("&&") {
-        return command
-            .split("&&")
-            .map(str::trim)
-            .filter(|segment| !segment.is_empty())
-            .all(is_safe_readonly_segment);
+    let writes_input = args.chars.as_deref().is_some_and(|value| !value.is_empty());
+    if !writes_input {
+        return ApprovalRequirement::not_required();
     }
 
-    if command.contains(';') {
-        return command
-            .split(';')
-            .map(str::trim)
-            .filter(|segment| !segment.is_empty())
-            .all(is_safe_readonly_segment);
-    }
-
-    is_safe_readonly_segment(command)
-}
-
-fn is_safe_readonly_segment(segment: &str) -> bool {
-    let normalized = segment.trim();
-    if normalized.is_empty() {
-        return false;
-    }
-
-    if contains_write_operator(normalized) || contains_network_indicator(normalized) {
-        return false;
-    }
-
-    let Some(program) = normalized.split_whitespace().next() else {
-        return false;
-    };
-
-    match program {
-        "cd" | "set-location" | "pushd" => {
-            let location = normalized
-                .split_whitespace()
-                .skip(1)
-                .collect::<Vec<_>>()
-                .join(" ");
-            !location.is_empty()
-                && !location.starts_with("..")
-                && !location.contains("/../")
-                && !location.contains("\\..\\")
+    match permission_profile {
+        PermissionProfile::ReadOnly | PermissionProfile::WorkspaceWrite => {
+            ApprovalRequirement::required(
+                "Interactive command input requires stronger permissions because it can modify files.",
+            )
         }
-        "pwd" | "ls" | "dir" | "cat" | "type" | "head" | "tail" | "find" | "tree" | "rg" | "fd"
-        | "findstr" | "select-string" | "get-childitem" | "get-content" | "measure-object"
-        | "where-object" | "sort-object" | "select-object" => true,
-        "git" => is_safe_git_command(normalized),
-        _ => false,
+        PermissionProfile::FullAccess => match approval_policy {
+            ApprovalPolicy::Never => ApprovalRequirement::not_required(),
+            ApprovalPolicy::OnRequest => ApprovalRequirement::required(
+                "Interactive command input requires approval under the current approval policy.",
+            ),
+        },
     }
 }
 
-fn normalize_command(command: &str) -> String {
-    command.trim().to_ascii_lowercase()
+fn workdir_escapes_workspace(workspace_root: &Path, workdir: Option<&str>) -> bool {
+    let Some(workdir) = workdir.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    let root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let input = Path::new(workdir);
+    let candidate = if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        root.join(input)
+    };
+    let candidate = normalize_existing_ancestor_path(&candidate);
+    !candidate.starts_with(&root)
 }
 
-fn contains_write_operator(command: &str) -> bool {
-    let write_markers = [
-        " >",
-        ">>",
-        " out-file",
-        " set-content",
-        " add-content",
-        " tee-object",
-        " remove-item",
-        " move-item",
-        " copy-item",
-        " rename-item",
-        " new-item",
-        " set-item",
-        " rm ",
-        " del ",
-        " mv ",
-        " cp ",
-        " chmod ",
-        " chown ",
-        " mkdir ",
-        " rmdir ",
-        " sed -i",
-    ];
-    write_markers.iter().any(|marker| command.contains(marker))
-}
+fn normalize_existing_ancestor_path(path: &Path) -> std::path::PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
 
-fn contains_network_indicator(command: &str) -> bool {
-    let network_markers = [
-        "curl ",
-        "wget ",
-        "invoke-webrequest",
-        "invoke-restmethod",
-        "http://",
-        "https://",
-        " ping ",
-        "ssh ",
-        "scp ",
-        "ftp ",
-        "npm install",
-        "pnpm install",
-        "yarn add",
-        "cargo install",
-        "go get",
-        "pip install",
-    ];
-    network_markers
-        .iter()
-        .any(|marker| command.contains(marker))
-}
-
-fn is_safe_git_command(command: &str) -> bool {
-    [
-        "git status",
-        "git diff",
-        "git show",
-        "git log",
-        "git branch",
-        "git rev-parse",
-        "git cat-file",
-        "git ls-files",
-        "git grep",
-    ]
-    .iter()
-    .any(|prefix| command.starts_with(prefix))
-}
-
-fn is_dangerous_command(command: &str) -> bool {
-    let dangerous_markers = [
-        "rm -rf /",
-        "rm -rf *",
-        "del /s",
-        "format ",
-        "mkfs",
-        "diskpart",
-        "shutdown ",
-        "reboot ",
-        "init 0",
-    ];
-    dangerous_markers
-        .iter()
-        .any(|marker| command.contains(marker))
+    let mut suffix = Vec::new();
+    let mut current = path;
+    loop {
+        let Some(name) = current.file_name() else {
+            return path.to_path_buf();
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = current.parent() else {
+            return path.to_path_buf();
+        };
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            let mut normalized = canonical_parent;
+            for segment in suffix.iter().rev() {
+                normalized.push(segment);
+            }
+            return normalized;
+        }
+        current = parent;
+    }
 }
 
 #[cfg(test)]
@@ -350,15 +231,20 @@ mod tests {
     use super::*;
     use agent_core::ToolIdentity;
     use serde_json::json;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn exec_call(arguments: serde_json::Value) -> ToolCall {
+    fn tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {
         ToolCall {
             id: "call-1".to_string(),
-            name: "exec_command".to_string(),
-            identity: ToolIdentity::built_in("exec_command"),
+            name: name.to_string(),
+            identity: ToolIdentity::built_in(name),
             arguments,
         }
+    }
+
+    fn exec_call(arguments: serde_json::Value) -> ToolCall {
+        tool_call("exec_command", arguments)
     }
 
     fn approval_for(arguments: serde_json::Value) -> ApprovalRequirement {
@@ -370,48 +256,146 @@ mod tests {
         )
     }
 
+    fn unique_workspace() -> (PathBuf, PathBuf, PathBuf) {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("agent-tools-policy-{suffix}"));
+        let workspace = base.join("workspace");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        (base, workspace, outside)
+    }
+
     #[test]
-    fn empty_stdin_does_not_count_as_interactive_session_write() {
+    fn workspace_write_allows_non_network_commands() {
         let requirement = approval_for(json!({
             "command": "Get-ChildItem -Force -LiteralPath .\\data",
-            "session_id": "exec:test:1",
-            "stdin": "",
             "workdir": "."
         }));
 
-        assert_ne!(
-            requirement.reason.as_deref(),
-            Some("Interactive command session writes require approval.")
-        );
+        assert!(!requirement.requires_approval);
     }
 
     #[test]
-    fn non_empty_stdin_requires_interactive_session_write_approval() {
+    fn workspace_write_allows_readonly_listing_with_legacy_session_fields() {
         let requirement = approval_for(json!({
-            "command": "powershell",
-            "session_id": "exec:test:1",
-            "stdin": "exit\n",
-            "workdir": "."
-        }));
-
-        assert_eq!(
-            requirement.reason.as_deref(),
-            Some("Interactive command session writes require approval.")
-        );
-    }
-
-    #[test]
-    fn close_stdin_requires_interactive_session_write_approval() {
-        let requirement = approval_for(json!({
-            "command": "powershell",
-            "session_id": "exec:test:1",
+            "command": "Get-ChildItem -Force -LiteralPath data | Format-List Name,FullName,Mode,Length,LastWriteTime",
             "close_stdin": true,
             "workdir": "."
         }));
 
+        assert!(
+            !requirement.requires_approval,
+            "legacy session fields must not turn a read-only listing into an approval request"
+        );
+    }
+
+    #[test]
+    fn workspace_write_requires_approval_for_network_commands() {
+        let requirement = approval_for(json!({
+            "command": "curl https://example.com",
+            "workdir": "."
+        }));
+
         assert_eq!(
             requirement.reason.as_deref(),
-            Some("Interactive command session writes require approval.")
+            Some("Network commands require approval under the current approval policy.")
+        );
+    }
+
+    #[test]
+    fn workspace_write_allows_readonly_command_in_external_workdir() {
+        let (base, workspace, outside) = unique_workspace();
+
+        let requirement = exec_command_requirement(
+            &exec_call(json!({
+                "command": "Get-ChildItem -Force",
+                "workdir": outside.to_string_lossy()
+            })),
+            &workspace,
+            &PermissionProfile::WorkspaceWrite,
+            &ApprovalPolicy::OnRequest,
+        );
+
+        assert!(!requirement.requires_approval);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn workspace_write_requires_approval_for_mutating_external_workdir() {
+        let (base, workspace, outside) = unique_workspace();
+
+        let requirement = exec_command_requirement(
+            &exec_call(json!({
+                "command": "Set-Content out.txt hi",
+                "workdir": outside.to_string_lossy()
+            })),
+            &workspace,
+            &PermissionProfile::WorkspaceWrite,
+            &ApprovalPolicy::OnRequest,
+        );
+
+        assert_eq!(
+            requirement.reason.as_deref(),
+            Some("Writing outside the workspace requires stronger permissions.")
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn full_access_still_requires_approval_for_dangerous_commands() {
+        let (base, workspace, outside) = unique_workspace();
+
+        let requirement = exec_command_requirement(
+            &exec_call(json!({
+                "command": format!("Remove-Item -Recurse -Force {}", outside.to_string_lossy()),
+                "workdir": workspace.to_string_lossy()
+            })),
+            &workspace,
+            &PermissionProfile::FullAccess,
+            &ApprovalPolicy::Never,
+        );
+
+        assert_eq!(
+            requirement.reason.as_deref(),
+            Some("Dangerous commands (e.g. rm -rf / recursive delete) require approval.")
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn write_stdin_poll_does_not_require_approval() {
+        let requirement = write_stdin_requirement(
+            &tool_call(
+                "write_stdin",
+                json!({"session_id": "exec:test:1", "chars": ""}),
+            ),
+            &PermissionProfile::WorkspaceWrite,
+            &ApprovalPolicy::OnRequest,
+        );
+
+        assert!(!requirement.requires_approval);
+    }
+
+    #[test]
+    fn write_stdin_input_requires_stronger_permissions_for_workspace_write() {
+        let requirement = write_stdin_requirement(
+            &tool_call(
+                "write_stdin",
+                json!({"session_id": "exec:test:1", "chars": "exit\n"}),
+            ),
+            &PermissionProfile::WorkspaceWrite,
+            &ApprovalPolicy::OnRequest,
+        );
+
+        assert_eq!(
+            requirement.reason.as_deref(),
+            Some(
+                "Interactive command input requires stronger permissions because it can modify files."
+            )
         );
     }
 }

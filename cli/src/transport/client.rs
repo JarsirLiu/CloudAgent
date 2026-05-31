@@ -41,6 +41,14 @@ pub async fn create_local_node_client(
     args: &[std::ffi::OsString],
     expected_data_root_dir: &Path,
 ) -> Result<AppServerClient> {
+    if launches_node_via_cargo(program, args) {
+        if let Ok(client) = connect_local_node_once(address).await {
+            let client =
+                verify_local_node_data_root(client, address, expected_data_root_dir).await?;
+            stop_existing_development_node(client, address).await?;
+        }
+    }
+
     match connect_local_node_once(address).await {
         Ok(client) => verify_local_node_data_root(client, address, expected_data_root_dir).await,
         Err(first_error) => {
@@ -63,6 +71,35 @@ pub async fn create_local_node_client(
                 )
             })?;
             verify_local_node_data_root(client, address, expected_data_root_dir).await
+        }
+    }
+}
+
+async fn stop_existing_development_node(client: AppServerClient, address: &str) -> Result<()> {
+    let _ = client.stop_node_typed().await.map_err(|error| {
+        anyhow!("failed to stop existing development local node at {address}: {error}")
+    })?;
+    wait_for_local_node_to_stop(address, Duration::from_secs(5), Duration::from_millis(100)).await
+}
+
+async fn wait_for_local_node_to_stop(
+    address: &str,
+    timeout: Duration,
+    retry_interval: Duration,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match connect_local_node_once(address).await {
+            Ok(_) => {
+                if Instant::now() >= deadline {
+                    return Err(anyhow!(
+                        "existing development local node at {address} did not stop within {} ms",
+                        timeout.as_millis()
+                    ));
+                }
+                tokio::time::sleep(retry_interval).await;
+            }
+            Err(_) => return Ok(()),
         }
     }
 }

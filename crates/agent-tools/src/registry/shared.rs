@@ -178,7 +178,23 @@ pub(crate) fn resolve_workspace_path(
     Ok(candidate)
 }
 
-pub(crate) fn resolve_read_path(workspace_root: &Path, value: Option<&str>) -> Result<PathBuf> {
+pub(crate) fn resolve_read_path(
+    workspace_root: &Path,
+    permission_profile: &PermissionProfile,
+    value: Option<&str>,
+) -> Result<PathBuf> {
+    match permission_profile {
+        PermissionProfile::ReadOnly => resolve_workspace_path(workspace_root, value),
+        PermissionProfile::WorkspaceWrite | PermissionProfile::FullAccess => {
+            resolve_external_read_path(workspace_root, value)
+        }
+    }
+}
+
+pub(crate) fn resolve_external_read_path(
+    workspace_root: &Path,
+    value: Option<&str>,
+) -> Result<PathBuf> {
     let root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.to_path_buf());
@@ -323,7 +339,10 @@ pub(crate) fn structured_failure_result(
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_existing_ancestor_path, resolve_workspace_path, resolve_write_path};
+    use super::{
+        normalize_existing_ancestor_path, resolve_read_path, resolve_workspace_path,
+        resolve_write_path,
+    };
     use agent_core::PermissionProfile;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -417,6 +436,54 @@ mod tests {
             resolve_write_path(
                 &workspace,
                 &PermissionProfile::WorkspaceWrite,
+                Some(&path_string(&outside_target)),
+            )
+            .is_err()
+        );
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn resolve_read_path_matches_permission_profile_boundaries() {
+        let (base, workspace, outside) = create_workspace();
+        let inside = workspace.join("nested").join("file.txt");
+        let outside_target = outside.join("file.txt");
+
+        let readonly_inside = resolve_read_path(
+            &workspace,
+            &PermissionProfile::ReadOnly,
+            Some(&path_string(&inside)),
+        )
+        .unwrap();
+        let workspace_write_outside = resolve_read_path(
+            &workspace,
+            &PermissionProfile::WorkspaceWrite,
+            Some(&path_string(&outside_target)),
+        )
+        .unwrap();
+        let full_access_outside = resolve_read_path(
+            &workspace,
+            &PermissionProfile::FullAccess,
+            Some(&path_string(&outside_target)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            normalize_existing_ancestor_path(&readonly_inside),
+            normalize_existing_ancestor_path(&inside)
+        );
+        assert_eq!(
+            normalize_existing_ancestor_path(&workspace_write_outside),
+            normalize_existing_ancestor_path(&outside_target)
+        );
+        assert_eq!(
+            normalize_existing_ancestor_path(&full_access_outside),
+            normalize_existing_ancestor_path(&outside_target)
+        );
+        assert!(
+            resolve_read_path(
+                &workspace,
+                &PermissionProfile::ReadOnly,
                 Some(&path_string(&outside_target)),
             )
             .is_err()
