@@ -29,18 +29,12 @@ use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToolRegistryOptions {
-    pub search_workspace_enabled: bool,
-    pub read_file_enabled: bool,
-    pub edit_file_enabled: bool,
     pub apply_patch_enabled: bool,
 }
 
 impl Default for ToolRegistryOptions {
     fn default() -> Self {
         Self {
-            search_workspace_enabled: false,
-            read_file_enabled: false,
-            edit_file_enabled: false,
             apply_patch_enabled: true,
         }
     }
@@ -383,51 +377,6 @@ mod tests {
     }
 
     #[test]
-    fn edit_tool_exposure_can_be_switched() {
-        let registry = ToolRegistry::with_options(
-            4_096,
-            ToolRegistryOptions {
-                search_workspace_enabled: false,
-                read_file_enabled: false,
-                edit_file_enabled: true,
-                apply_patch_enabled: false,
-            },
-        );
-        let resolved = registry
-            .resolve_regular_turn_tool_exposure(&PermissionProfile::WorkspaceWrite)
-            .default_tools;
-        let names = resolved
-            .iter()
-            .map(|spec| spec.name.as_str())
-            .collect::<Vec<_>>();
-
-        assert!(names.contains(&"edit_file"));
-        assert!(!names.contains(&"apply_patch"));
-    }
-
-    #[test]
-    fn legacy_repo_tools_can_be_switched_on_explicitly() {
-        let registry = ToolRegistry::with_options(
-            4_096,
-            ToolRegistryOptions {
-                search_workspace_enabled: true,
-                read_file_enabled: true,
-                ..ToolRegistryOptions::default()
-            },
-        );
-        let resolved = registry
-            .resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly)
-            .default_tools;
-        let names = resolved
-            .iter()
-            .map(|spec| spec.name.as_str())
-            .collect::<Vec<_>>();
-
-        assert!(names.contains(&"search_workspace"));
-        assert!(names.contains(&"read_file"));
-    }
-
-    #[test]
     fn regular_turn_hides_mcp_tools_without_a_configured_client() {
         let mut registry = ToolRegistry::new(4_096);
         registry.register_mcp_tool(McpToolDescriptor::new(
@@ -560,55 +509,6 @@ mod tests {
                 .deferred_tools
                 .iter()
                 .any(|spec| spec.name == "mcp__demo__bytes")
-        );
-    }
-
-    #[test]
-    fn batch_execution_strategy_prefers_parallel_only_for_safe_batches() {
-        let registry = ToolRegistry::with_options(
-            4_096,
-            ToolRegistryOptions {
-                search_workspace_enabled: true,
-                read_file_enabled: true,
-                ..ToolRegistryOptions::default()
-            },
-        );
-        let parallel_calls = vec![
-            ToolCall {
-                id: "call-1".to_string(),
-                name: "search_workspace".to_string(),
-                identity: agent_core::ToolIdentity::built_in("search_workspace"),
-                arguments: serde_json::json!({"mode": "text", "query": "foo"}),
-            },
-            ToolCall {
-                id: "call-2".to_string(),
-                name: "read_file".to_string(),
-                identity: agent_core::ToolIdentity::built_in("read_file"),
-                arguments: serde_json::json!({"path": "src/main.rs"}),
-            },
-        ];
-        let sequential_calls = vec![
-            ToolCall {
-                id: "call-1".to_string(),
-                name: "search_workspace".to_string(),
-                identity: agent_core::ToolIdentity::built_in("search_workspace"),
-                arguments: serde_json::json!({"mode": "text", "query": "foo"}),
-            },
-            ToolCall {
-                id: "call-2".to_string(),
-                name: "exec_command".to_string(),
-                identity: agent_core::ToolIdentity::built_in("exec_command"),
-                arguments: serde_json::json!({"command": "git status"}),
-            },
-        ];
-
-        assert_eq!(
-            registry.batch_execution_strategy(&parallel_calls),
-            ToolBatchExecutionStrategy::Parallel
-        );
-        assert_eq!(
-            registry.batch_execution_strategy(&sequential_calls),
-            ToolBatchExecutionStrategy::Sequential
         );
     }
 

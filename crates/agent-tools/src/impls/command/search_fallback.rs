@@ -1,5 +1,23 @@
-use crate::impls::repo::DEFAULT_IGNORED_DIRS;
 use std::env;
+
+const DEFAULT_IGNORED_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    "target-verify",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".cache",
+    "coverage",
+    ".venv",
+    "venv",
+    "__pycache__",
+];
 
 pub(super) fn translate_search_command(command: &str) -> Option<String> {
     let trimmed = command.trim();

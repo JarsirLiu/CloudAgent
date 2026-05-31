@@ -12,6 +12,7 @@ pub(crate) fn push_section(lines: &mut Vec<String>, title: &str, body: impl Into
     lines.push(body);
 }
 
+#[cfg(test)]
 pub(crate) fn push_list_section(lines: &mut Vec<String>, title: &str, items: &[String]) {
     if items.is_empty() {
         return;

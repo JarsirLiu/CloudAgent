@@ -71,9 +71,6 @@ pub struct RuntimeConfig {
 pub struct ToolConfig {
     pub default_shell_timeout_ms: u64,
     pub max_read_chars: usize,
-    pub search_workspace_enabled: bool,
-    pub read_file_enabled: bool,
-    pub edit_file_enabled: bool,
     pub apply_patch_enabled: bool,
     pub mcp_servers: Vec<McpServerConfig>,
 }
@@ -168,9 +165,6 @@ struct PartialMemoryConfig {
 struct PartialToolConfig {
     default_shell_timeout_ms: Option<u64>,
     max_read_chars: Option<usize>,
-    search_workspace_enabled: Option<bool>,
-    read_file_enabled: Option<bool>,
-    edit_file_enabled: Option<bool>,
     apply_patch_enabled: Option<bool>,
     mcp_servers: Option<Vec<PartialMcpServerConfig>>,
 }
@@ -289,9 +283,6 @@ impl AgentConfig {
             tools: ToolConfig {
                 default_shell_timeout_ms: 120_000,
                 max_read_chars: 20_000,
-                search_workspace_enabled: false,
-                read_file_enabled: false,
-                edit_file_enabled: false,
                 apply_patch_enabled: true,
                 mcp_servers: Vec::new(),
             },
@@ -482,15 +473,6 @@ impl AgentConfig {
             }
             if let Some(value) = tools.max_read_chars {
                 self.tools.max_read_chars = value.max(1_024);
-            }
-            if let Some(value) = tools.search_workspace_enabled {
-                self.tools.search_workspace_enabled = value;
-            }
-            if let Some(value) = tools.read_file_enabled {
-                self.tools.read_file_enabled = value;
-            }
-            if let Some(value) = tools.edit_file_enabled {
-                self.tools.edit_file_enabled = value;
             }
             if let Some(value) = tools.apply_patch_enabled {
                 self.tools.apply_patch_enabled = value;
@@ -955,29 +937,20 @@ mod tests {
     }
 
     #[test]
-    fn edit_tool_flags_can_be_configured() {
+    fn apply_patch_tool_flag_can_be_configured() {
         let mut config = AgentConfig::defaults(PathBuf::from("."));
 
-        assert!(!config.tools.edit_file_enabled);
         assert!(config.tools.apply_patch_enabled);
-        assert!(!config.tools.search_workspace_enabled);
-        assert!(!config.tools.read_file_enabled);
 
         config.apply_partial(PartialAgentConfig {
             tools: Some(PartialToolConfig {
-                search_workspace_enabled: Some(true),
-                read_file_enabled: Some(true),
-                edit_file_enabled: Some(true),
                 apply_patch_enabled: Some(false),
                 ..PartialToolConfig::default()
             }),
             ..PartialAgentConfig::default()
         });
 
-        assert!(config.tools.edit_file_enabled);
         assert!(!config.tools.apply_patch_enabled);
-        assert!(config.tools.search_workspace_enabled);
-        assert!(config.tools.read_file_enabled);
     }
 
     #[test]

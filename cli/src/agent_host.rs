@@ -93,9 +93,6 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     let tools = Arc::new(ToolRegistry::with_options(
         config.tools.max_read_chars,
         ToolRegistryOptions {
-            search_workspace_enabled: config.tools.search_workspace_enabled,
-            read_file_enabled: config.tools.read_file_enabled,
-            edit_file_enabled: config.tools.edit_file_enabled,
             apply_patch_enabled: config.tools.apply_patch_enabled,
         },
     ));
