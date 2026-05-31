@@ -156,6 +156,30 @@ mod tests {
     }
 
     #[test]
+    fn file_change_renders_bounded_path_details() {
+        let message = TranscriptItem::FileChange {
+            id: "tool-1".to_string(),
+            tool_name: "apply_patch".to_string(),
+            path: "a.rs, b.rs, c.rs, d.rs, e.rs".to_string(),
+            status: WriteFileStatus::Completed,
+            files_changed: 5,
+            summary: "Applied patch.".to_string(),
+        };
+
+        let mut context = RenderContext;
+        let cell = render_history_entry(&message, &mut context);
+        let rendered = joined(&cell, 120);
+
+        assert!(cell.body().contains("edited 5 files"));
+        assert!(rendered.contains("a.rs"));
+        assert!(rendered.contains("b.rs"));
+        assert!(rendered.contains("+3 more files"));
+        assert!(!rendered.contains("c.rs"));
+        assert!(!rendered.contains("d.rs"));
+        assert!(!rendered.contains("e.rs"));
+    }
+
+    #[test]
     fn empty_write_stdin_poll_does_not_render_history_cell() {
         let message = TranscriptItem::CommandExecution {
             id: "tool-1".to_string(),
@@ -452,18 +476,10 @@ fn render_tool_result(
             WriteFileStatus::Declined => "declined",
             WriteFileStatus::Failed => "failed",
         };
-        if let Some(path) = changed_paths.first() {
-            return HistoryCell::edit(
-                humanize_tool_label(tool_name),
-                format!("{verb} {files_changed} files"),
-                Some(compact_path(path, 48)),
-                HistoryTone::Control,
-            );
-        }
         return HistoryCell::edit(
             humanize_tool_label(tool_name),
             format!("{verb} {files_changed} files"),
-            None,
+            format_changed_paths_detail(changed_paths.iter().map(String::as_str)),
             HistoryTone::Control,
         );
     }
@@ -499,16 +515,11 @@ fn render_file_change(
         WriteFileStatus::Declined => "declined",
         WriteFileStatus::Failed => "failed",
     };
-    let detail = path
-        .split(',')
-        .map(str::trim)
-        .find(|value| !value.is_empty())
-        .map(|value| compact_path(value, 48))
-        .or_else(|| {
-            (matches!(status, WriteFileStatus::Failed | WriteFileStatus::Declined)
-                && !summary.trim().is_empty())
-            .then(|| compact_file_change_failure(summary))
-        });
+    let detail = format_changed_paths_detail(path.split(',').map(str::trim)).or_else(|| {
+        (matches!(status, WriteFileStatus::Failed | WriteFileStatus::Declined)
+            && !summary.trim().is_empty())
+        .then(|| compact_file_change_failure(summary))
+    });
     HistoryCell::edit(
         humanize_tool_label(tool_name),
         format!("{verb} {files_changed} files"),
@@ -519,6 +530,27 @@ fn render_file_change(
             _ => HistoryTone::Control,
         },
     )
+}
+
+fn format_changed_paths_detail<'a>(paths: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let paths = paths
+        .into_iter()
+        .filter(|path| !path.trim().is_empty())
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return None;
+    }
+
+    let visible_paths = if paths.len() > 3 { 2 } else { 3 };
+    let mut lines = paths
+        .iter()
+        .take(visible_paths)
+        .map(|path| compact_path(path.trim(), 64))
+        .collect::<Vec<_>>();
+    if paths.len() > visible_paths {
+        lines.push(format!("+{} more files", paths.len() - visible_paths));
+    }
+    Some(lines.join("\n"))
 }
 
 fn compact_file_change_failure(summary: &str) -> String {
