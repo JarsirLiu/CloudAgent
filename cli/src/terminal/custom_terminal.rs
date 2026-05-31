@@ -255,16 +255,11 @@ where
             area.y = size.height.saturating_sub(area.height);
         }
 
-        if area.y < previous.y {
-            let grow_by = previous.y - area.y;
-            if !terminal_height_shrank {
-                self.scroll_region_up(0..previous.top(), grow_by)?;
-            }
-        }
-
         if area.bottom() > size.height {
             let scroll_by = area.bottom() - size.height;
-            self.scroll_region_up(0..area.top(), scroll_by)?;
+            if !terminal_height_shrank {
+                self.scroll_region_up(0..area.top(), scroll_by)?;
+            }
             area.y = size.height - area.height;
         } else if terminal_height_grew && viewport_was_bottom_aligned {
             area.y = size.height.saturating_sub(area.height);

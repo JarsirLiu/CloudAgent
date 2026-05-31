@@ -857,9 +857,16 @@ fn reset_local_view_requests_history_replay() {
         .start_local_user(local_input("hello"), false);
     app.reset_local_view();
 
-    let plan = app
-        .terminal_projection
-        .build_plan(&mut app.transcript_owner, 5, 80, false, 0);
+    let plan = app.terminal_projection.build_plan(
+        &mut app.transcript_owner,
+        5,
+        ratatui::layout::Size {
+            width: 80,
+            height: 24,
+        },
+        false,
+        0,
+    );
     match plan.history_update {
         crate::terminal::HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
         crate::terminal::HistoryUpdate::AppendTail(_) => panic!("expected replay-all after reset"),

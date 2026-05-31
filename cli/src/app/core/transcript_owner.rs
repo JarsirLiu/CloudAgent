@@ -68,6 +68,11 @@ impl TranscriptOwner {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn queue_history_cells_for_test(&mut self, cells: Vec<HistoryCell>) {
+        self.queue_history_cells(cells);
+    }
+
     pub(crate) fn committed_history_cells(&self) -> Vec<HistoryCell> {
         self.committed_store.cells()
     }

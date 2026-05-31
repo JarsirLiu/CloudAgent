@@ -166,6 +166,43 @@ where
     Ok(())
 }
 
+pub(crate) fn repaint_visible_history_tail<B>(
+    terminal: &mut Terminal<B>,
+    lines: Vec<Line<'static>>,
+) -> Result<()>
+where
+    B: Backend + Write,
+{
+    if lines.is_empty() || terminal.viewport_area.top() == 0 {
+        return Ok(());
+    }
+
+    let area = terminal.viewport_area;
+    let last_cursor_pos = terminal.last_known_cursor_pos;
+    let capabilities = terminal.capabilities();
+    let wrap_width = area.width.max(1) as usize;
+    let mut lines = wrap_history_lines(lines, wrap_width);
+    let max_rows = area.top() as usize;
+    if lines.len() > max_rows {
+        lines.drain(0..lines.len() - max_rows);
+    }
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    let start_y = area.top().saturating_sub(lines.len() as u16);
+    let writer = terminal.backend_mut();
+    queue!(writer, ResetScrollRegion)?;
+    for (offset, line) in lines.iter().enumerate() {
+        let y = start_y.saturating_add(offset as u16);
+        queue!(writer, MoveTo(0, y))?;
+        write_history_line(writer, line, wrap_width, capabilities)?;
+    }
+    queue!(writer, MoveTo(last_cursor_pos.x, last_cursor_pos.y))?;
+    std::io::Write::flush(writer)?;
+    Ok(())
+}
+
 fn wrap_history_lines(lines: Vec<Line<'static>>, wrap_width: usize) -> Vec<Line<'static>> {
     lines
         .into_iter()

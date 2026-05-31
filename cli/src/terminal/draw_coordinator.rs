@@ -8,6 +8,7 @@ use crate::terminal::PreparedHistoryProjection;
 use crate::terminal::PreparedHistoryUpdate;
 use crate::terminal::custom_terminal::Terminal;
 use crate::terminal::insert_history_lines_raw;
+use crate::terminal::repaint_visible_history_tail;
 
 pub(crate) struct DrawCoordinator<'a> {
     terminal: &'a mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -26,6 +27,7 @@ impl<'a> DrawCoordinator<'a> {
         let PreparedHistoryProjection {
             viewport_height,
             history_update,
+            history_repair_tail,
         } = projection;
 
         match history_update {
@@ -50,6 +52,7 @@ impl<'a> DrawCoordinator<'a> {
                 }
             }
         }
+        repaint_visible_history_tail(self.terminal, history_repair_tail)?;
         self.terminal.draw(render)?;
         Ok(())
     }

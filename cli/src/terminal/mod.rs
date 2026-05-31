@@ -26,6 +26,7 @@ use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
 pub(crate) use insert_history::{
     insert_history_lines_raw, prepare_history_lines, prepare_history_tail_lines,
+    repaint_visible_history_tail,
 };
 pub(crate) use resize_reflow_cap::resize_reflow_max_rows;
 
@@ -40,11 +41,18 @@ pub(crate) struct HistoryProjection {
     pub(crate) viewport_height: u16,
     pub(crate) history_render_width: usize,
     pub(crate) history_update: HistoryUpdate,
+    pub(crate) history_repair: Option<HistoryRepair>,
 }
 
 pub(crate) struct PreparedHistoryProjection {
     pub(crate) viewport_height: u16,
     pub(crate) history_update: PreparedHistoryUpdate,
+    pub(crate) history_repair_tail: Vec<Line<'static>>,
+}
+
+pub(crate) struct HistoryRepair {
+    pub(crate) cells: Vec<HistoryCell>,
+    pub(crate) max_rows: usize,
 }
 
 pub(crate) enum HistoryUpdate {
