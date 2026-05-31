@@ -85,17 +85,54 @@ impl ConversationHistoryBuilder {
     }
 
     fn push_response_item(&mut self, item: &ResponseItem) {
-        if self
-            .current_turn
-            .as_ref()
-            .is_some_and(|turn| turn.opened_explicitly)
+        if matches!(item, ResponseItem::User { .. })
+            && self
+                .current_turn
+                .as_ref()
+                .is_some_and(|turn| turn.opened_explicitly)
         {
+            return;
+        }
+        if self.merge_explicit_turn_assistant_response(item) {
             return;
         }
         if let Some(mut item) = transcript_item_from_response_item(item) {
             assign_response_item_id(&mut item, self.current_rollout_index);
             self.upsert_item_in_current_turn(item);
         }
+    }
+
+    fn merge_explicit_turn_assistant_response(&mut self, item: &ResponseItem) -> bool {
+        let ResponseItem::Assistant {
+            content: Some(content),
+            ..
+        } = item
+        else {
+            return false;
+        };
+        if content.trim().is_empty() {
+            return false;
+        }
+        let Some(turn) = self
+            .current_turn
+            .as_mut()
+            .filter(|turn| turn.opened_explicitly)
+        else {
+            return false;
+        };
+        let Some(index) = turn
+            .items
+            .iter()
+            .rposition(|item| matches!(item, TranscriptItem::AgentMessage { .. }))
+        else {
+            return false;
+        };
+        if let TranscriptItem::AgentMessage { text, .. } = &mut turn.items[index] {
+            *text = content.clone();
+            turn.rollout_end_index = self.current_rollout_index;
+            return true;
+        }
+        false
     }
 
     fn push_event_msg(&mut self, event: &EventMsg) {
@@ -1197,6 +1234,123 @@ mod tests {
                 TranscriptItem::UserMessage { content: second, .. },
                 TranscriptItem::AgentMessage { text: two, .. }
             ] if input_items_to_plain_text(second) == "second" && two == "two"
+        ));
+    }
+
+    #[test]
+    fn explicit_turn_restores_response_items_without_item_completed_events() {
+        let items = vec![
+            RolloutItem::from(ResponseItem::User {
+                content: text_input_items("hi"),
+            }),
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: crate::text_input_items("hi"),
+            }),
+            RolloutItem::from(ResponseItem::Assistant {
+                content: Some("hello".to_string()),
+                reasoning: None,
+                tool_calls: Vec::new(),
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "turn-1");
+        assert_eq!(turns[0].state, TurnState::Completed);
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { content, .. },
+                TranscriptItem::AgentMessage { text, .. },
+            ] if input_items_to_plain_text(content) == "hi" && text == "hello"
+        ));
+    }
+
+    #[test]
+    fn explicit_turn_restores_tool_response_items_without_item_completed_events() {
+        let items = vec![
+            RolloutItem::from(ResponseItem::User {
+                content: text_input_items("inspect"),
+            }),
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: crate::text_input_items("inspect"),
+            }),
+            RolloutItem::from(ResponseItem::Tool {
+                tool_call_id: "call-1".to_string(),
+                name: "read_file".to_string(),
+                content: "Summary: read file".to_string(),
+                structured: Some(StructuredToolResult::ToolError {
+                    tool_name: "read_file".to_string(),
+                    message: "example".to_string(),
+                }),
+            }),
+            RolloutItem::from(ResponseItem::Assistant {
+                content: Some("done".to_string()),
+                reasoning: None,
+                tool_calls: Vec::new(),
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { .. },
+                TranscriptItem::ToolResult { tool_name, .. },
+                TranscriptItem::AgentMessage { text, .. },
+            ] if tool_name == "read_file" && text == "done"
+        ));
+    }
+
+    #[test]
+    fn explicit_turn_skips_duplicate_response_user_item() {
+        let items = vec![
+            RolloutItem::from(ResponseItem::User {
+                content: text_input_items("hi"),
+            }),
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: crate::text_input_items("hi"),
+            }),
+            RolloutItem::from(ResponseItem::User {
+                content: text_input_items("hi"),
+            }),
+            RolloutItem::from(ResponseItem::Assistant {
+                content: Some("hello".to_string()),
+                reasoning: None,
+                tool_calls: Vec::new(),
+            }),
+            RolloutItem::from(EventMsg::TurnCompleted {
+                turn_id: "turn-1".to_string(),
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(
+            turns[0]
+                .items
+                .iter()
+                .filter(|item| matches!(item, TranscriptItem::UserMessage { .. }))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            turns[0].items.last(),
+            Some(TranscriptItem::AgentMessage { text, .. }) if text == "hello"
         ));
     }
 

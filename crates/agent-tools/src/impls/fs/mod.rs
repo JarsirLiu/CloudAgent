@@ -1,4 +1,3 @@
-#[cfg(test)]
 mod apply_patch;
 mod copy_path;
 mod create_directory;
@@ -7,6 +6,8 @@ mod remove_path;
 mod skill_scaffold;
 mod watch;
 
+pub(crate) use apply_patch::ApplyPatchLocalTool;
+pub use apply_patch::ApplyPatchTool;
 pub(crate) use copy_path::CopyPathLocalTool;
 pub use copy_path::CopyPathTool;
 pub(crate) use create_directory::CreateDirectoryLocalTool;

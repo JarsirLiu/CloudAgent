@@ -44,13 +44,13 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
             stderr.as_deref().or(Some(summary.as_str())),
         ),
         TranscriptItem::FileChange {
-            tool_name, summary, ..
-        } => HistoryCell::edit(
-            humanize_tool_label(tool_name),
-            summary.clone(),
-            None,
-            HistoryTone::Control,
-        ),
+            tool_name,
+            path,
+            status,
+            files_changed,
+            summary,
+            ..
+        } => render_file_change(tool_name, path, status, *files_changed, summary),
         TranscriptItem::Reasoning { text, .. } => HistoryCell::reasoning("Reasoning", text.clone()),
     }
 }
@@ -119,6 +119,24 @@ mod tests {
         let cell = render_history_entry(&message, &mut context);
 
         assert_eq!(cell.body(), "[Image #1]\n[Image #2]\n\nplease inspect");
+    }
+
+    #[test]
+    fn failed_file_change_does_not_render_full_patch_error() {
+        let message = TranscriptItem::FileChange {
+            id: "tool-1".to_string(),
+            tool_name: "apply_patch".to_string(),
+            path: String::new(),
+            status: WriteFileStatus::Failed,
+            files_changed: 0,
+            summary: "Tool execution failed: failed to apply patch for file.rs: Failed to find expected lines:\n*** Begin Patch\n*** Update File: file.rs\n@@\n-old\n+new\n*** End Patch".to_string(),
+        };
+
+        let mut context = RenderContext;
+        let cell = render_history_entry(&message, &mut context);
+
+        assert!(!cell.body().contains("*** Begin Patch"));
+        assert!(cell.body().contains("failed 0 files"));
     }
 }
 
@@ -414,6 +432,49 @@ fn render_tool_result(
         compact_inline(first, 100),
         HistoryTone::Control,
     )
+}
+
+fn render_file_change(
+    tool_name: &str,
+    path: &str,
+    status: &WriteFileStatus,
+    files_changed: usize,
+    summary: &str,
+) -> HistoryCell {
+    let verb = match status {
+        WriteFileStatus::InProgress => "editing",
+        WriteFileStatus::Completed => "edited",
+        WriteFileStatus::Declined => "declined",
+        WriteFileStatus::Failed => "failed",
+    };
+    let detail = path
+        .split(',')
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(|value| compact_path(value, 48))
+        .or_else(|| {
+            (matches!(status, WriteFileStatus::Failed | WriteFileStatus::Declined)
+                && !summary.trim().is_empty())
+            .then(|| compact_tool_failure(summary))
+        });
+    HistoryCell::edit(
+        humanize_tool_label(tool_name),
+        format!("{verb} {files_changed} files"),
+        detail,
+        match status {
+            WriteFileStatus::Failed => HistoryTone::Error,
+            WriteFileStatus::Declined => HistoryTone::Warning,
+            _ => HistoryTone::Control,
+        },
+    )
+}
+
+fn compact_tool_failure(summary: &str) -> String {
+    let first = summary
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("edit failed");
+    compact_inline(first, 72)
 }
 
 fn exit_suffix(exit_code: Option<i32>) -> String {

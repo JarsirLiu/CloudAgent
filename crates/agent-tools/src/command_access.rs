@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandAccess {
     ReadOnly,
+    DirectFileWrite,
     Network,
     Dangerous,
     MutatingOrUnknown,
@@ -13,6 +14,10 @@ impl CommandAccess {
 
     pub(crate) fn is_network(self) -> bool {
         matches!(self, Self::Network)
+    }
+
+    pub(crate) fn is_direct_file_write(self) -> bool {
+        matches!(self, Self::DirectFileWrite)
     }
 
     pub(crate) fn is_dangerous(self) -> bool {
@@ -48,10 +53,13 @@ pub(crate) fn classify_command(command: &str) -> CommandAccess {
     if is_dangerous_command(&normalized) {
         return CommandAccess::Dangerous;
     }
+    if contains_direct_file_write_indicator(&normalized) {
+        return CommandAccess::DirectFileWrite;
+    }
     if contains_network_indicator(&normalized) {
         return CommandAccess::Network;
     }
-    if contains_write_operator(&normalized) {
+    if contains_mutating_indicator(&normalized) {
         return CommandAccess::MutatingOrUnknown;
     }
     if is_safe_readonly_chain(&normalized) {
@@ -91,7 +99,7 @@ fn is_safe_readonly_segment(segment: &str) -> bool {
         return false;
     }
 
-    if contains_write_operator(normalized) || contains_network_indicator(normalized) {
+    if contains_mutating_indicator(normalized) || contains_network_indicator(normalized) {
         return false;
     }
 
@@ -119,8 +127,29 @@ fn is_safe_readonly_segment(segment: &str) -> bool {
     }
 }
 
-fn contains_write_operator(command: &str) -> bool {
+fn contains_direct_file_write_indicator(command: &str) -> bool {
+    let searchable = command_search_text(command);
     let write_markers = [
+        " >",
+        ">>",
+        " out-file",
+        " set-content",
+        " add-content",
+        " tee-object",
+        ".write_text(",
+        ".write_bytes(",
+        "writealltext(",
+        "writeallbytes(",
+        "writefilesync(",
+    ];
+    write_markers
+        .iter()
+        .any(|marker| searchable.contains(marker) || command.contains(marker))
+}
+
+fn contains_mutating_indicator(command: &str) -> bool {
+    let searchable = command_search_text(command);
+    let mutating_markers = [
         " >",
         ">>",
         " out-file",
@@ -143,7 +172,23 @@ fn contains_write_operator(command: &str) -> bool {
         " rmdir ",
         " sed -i",
     ];
-    write_markers.iter().any(|marker| command.contains(marker))
+    mutating_markers
+        .iter()
+        .any(|marker| searchable.contains(marker) || command.contains(marker))
+}
+
+fn command_search_text(command: &str) -> String {
+    let mut searchable = String::with_capacity(command.len() + 2);
+    searchable.push(' ');
+    for ch in command.chars() {
+        if matches!(ch, '\n' | '\r' | ';' | '|' | '&') {
+            searchable.push(' ');
+        } else {
+            searchable.push(ch);
+        }
+    }
+    searchable.push(' ');
+    searchable
 }
 
 fn contains_network_indicator(command: &str) -> bool {
@@ -233,7 +278,15 @@ mod tests {
     fn classifies_mutating_network_and_dangerous_commands() {
         assert_eq!(
             classify_command("Set-Content out.txt hi"),
-            CommandAccess::MutatingOrUnknown
+            CommandAccess::DirectFileWrite
+        );
+        assert_eq!(
+            classify_command("$text = Get-Content file -Raw; Set-Content file $text"),
+            CommandAccess::DirectFileWrite
+        );
+        assert_eq!(
+            classify_command("python -c \"Path('x').write_text('hi')\""),
+            CommandAccess::DirectFileWrite
         );
         assert_eq!(
             classify_command("curl https://example.com"),

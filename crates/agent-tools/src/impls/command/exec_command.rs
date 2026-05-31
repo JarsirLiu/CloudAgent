@@ -1,4 +1,4 @@
-use crate::command_access::classify_command;
+use crate::command_access::{CommandAccess, classify_command};
 use crate::impls::command::descriptor::ExecCommandTool;
 use crate::impls::command::output::{CommandResultView, format_exec_result_content};
 use crate::impls::command::session::ExecSessionStore;
@@ -65,15 +65,18 @@ impl LocalTool for ExecCommandLocalTool {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow!("`command` is required"))?;
+        let command_access = classify_command(command);
         let workdir = resolve_command_workdir(
             &ctx.workspace_root,
             &ctx.permission_profile,
-            command,
+            command_access,
             args.workdir.as_deref(),
         )?;
 
-        if looks_like_apply_patch_command(command) {
-            return Ok(reject_patch_via_exec_command(command, &workdir));
+        if let Some(rejection) =
+            reject_workspace_file_edit_command(command, command_access, &workdir)
+        {
+            return Ok(rejection);
         }
 
         self.sessions
@@ -92,18 +95,34 @@ impl LocalTool for ExecCommandLocalTool {
 fn resolve_command_workdir(
     workspace_root: &std::path::Path,
     permission_profile: &PermissionProfile,
-    command: &str,
+    command_access: CommandAccess,
     workdir: Option<&str>,
 ) -> Result<std::path::PathBuf> {
     if matches!(
         permission_profile,
         PermissionProfile::WorkspaceWrite | PermissionProfile::FullAccess
-    ) && classify_command(command).is_read_only()
+    ) && command_access.is_read_only()
     {
         return resolve_external_read_path(workspace_root, workdir);
     }
 
     resolve_write_path(workspace_root, permission_profile, workdir)
+}
+
+fn reject_workspace_file_edit_command(
+    command: &str,
+    command_access: CommandAccess,
+    workdir: &std::path::Path,
+) -> Option<ToolInvocationOutput> {
+    let reason = if looks_like_apply_patch_command(command) {
+        Some("patch")
+    } else if command_access.is_direct_file_write() {
+        Some("direct file write")
+    } else {
+        None
+    }?;
+
+    Some(reject_file_edit_via_exec_command(command, workdir, reason))
 }
 
 fn looks_like_apply_patch_command(command: &str) -> bool {
@@ -115,9 +134,15 @@ fn looks_like_apply_patch_command(command: &str) -> bool {
         || normalized.contains("; apply_patch ")
 }
 
-fn reject_patch_via_exec_command(command: &str, workdir: &std::path::Path) -> ToolInvocationOutput {
+fn reject_file_edit_via_exec_command(
+    command: &str,
+    workdir: &std::path::Path,
+    reason: &str,
+) -> ToolInvocationOutput {
     let current_directory = workdir.display().to_string();
-    let message = "Use the dedicated file editing tool instead of exec_command for workspace file edits. Prefer `edit_file` for structured replacements in known files.".to_string();
+    let message = format!(
+        "Use the dedicated file editing tool instead of exec_command for workspace file edits ({reason}). Prefer `apply_patch` for structured workspace file changes."
+    );
     let content = format_exec_result_content(CommandResultView {
         kind: "edit",
         command,
@@ -212,7 +237,7 @@ mod tests {
         let resolved = resolve_command_workdir(
             &workspace,
             &PermissionProfile::WorkspaceWrite,
-            "Get-ChildItem -Force",
+            classify_command("Get-ChildItem -Force"),
             Some(&outside.to_string_lossy()),
         )
         .expect("workspace write can read external workdir");
@@ -241,7 +266,7 @@ mod tests {
         let err = resolve_command_workdir(
             &workspace,
             &PermissionProfile::WorkspaceWrite,
-            "Set-Content out.txt hi",
+            classify_command("Set-Content out.txt hi"),
             Some(&outside.to_string_lossy()),
         )
         .expect_err("workspace write cannot write external workdir");
@@ -253,28 +278,13 @@ mod tests {
     #[tokio::test]
     async fn exec_command_rejects_apply_patch_style_commands() {
         let (tool, _) = ExecCommandLocalTool::shared_pair();
-        let ctx = ToolExecutionContext {
-            conversation_id: "test".to_string(),
-            workspace_root: std::env::temp_dir(),
-            conversation_store_dir: std::env::temp_dir(),
-            permission_profile: PermissionProfile::ReadOnly,
-            default_shell_timeout_ms: 5_000,
-            cancellation_token: CancellationToken::new(),
-            discoverable_tools: Vec::new(),
-            output_tx: None,
-        };
+        let ctx = test_context(PermissionProfile::ReadOnly);
 
         let output = tool
             .invoke(
-                LocalToolInvocation {
-                    identity: agent_core::ToolIdentity::built_in("exec_command"),
-                    source: LocalToolSource::BuiltIn,
-                    payload: LocalToolPayload::Function {
-                        arguments: serde_json::json!({
-                            "command": "apply_patch *** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch"
-                        }),
-                    },
-                },
+                command_invocation(
+                    "apply_patch *** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch",
+                ),
                 &ctx,
             )
             .await
@@ -290,6 +300,55 @@ mod tests {
                 );
             }
             other => panic!("expected structured command rejection, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_command_rejects_direct_file_write_commands() {
+        let (tool, _) = ExecCommandLocalTool::shared_pair();
+        let ctx = test_context(PermissionProfile::WorkspaceWrite);
+
+        let output = tool
+            .invoke(
+                command_invocation(
+                    "$text = Get-Content cli/src/ui/widgets/footer.rs -Raw; Set-Content cli/src/ui/widgets/footer.rs $text",
+                ),
+                &ctx,
+            )
+            .await
+            .expect("exec command handled");
+
+        match output.structured {
+            Some(StructuredToolResult::CommandExecution { status, stderr, .. }) => {
+                assert_eq!(status, CommandExecutionStatus::Failed);
+                let stderr = stderr.unwrap_or_default();
+                assert!(stderr.contains("direct file write"));
+                assert!(stderr.contains("dedicated file editing tool"));
+            }
+            other => panic!("expected structured command rejection, got {other:?}"),
+        }
+    }
+
+    fn test_context(permission_profile: PermissionProfile) -> ToolExecutionContext {
+        ToolExecutionContext {
+            conversation_id: "test".to_string(),
+            workspace_root: std::env::temp_dir(),
+            conversation_store_dir: std::env::temp_dir(),
+            permission_profile,
+            default_shell_timeout_ms: 5_000,
+            cancellation_token: CancellationToken::new(),
+            discoverable_tools: Vec::new(),
+            output_tx: None,
+        }
+    }
+
+    fn command_invocation(command: &str) -> LocalToolInvocation {
+        LocalToolInvocation {
+            identity: agent_core::ToolIdentity::built_in("exec_command"),
+            source: LocalToolSource::BuiltIn,
+            payload: LocalToolPayload::Function {
+                arguments: serde_json::json!({ "command": command }),
+            },
         }
     }
 }

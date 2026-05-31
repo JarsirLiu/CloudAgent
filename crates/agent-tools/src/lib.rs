@@ -6,6 +6,7 @@ pub mod spec;
 
 pub use registry::{
     McpToolClient, McpToolDescriptor, McpToolInvocation, McpToolResponse, ToolRegistry,
+    ToolRegistryOptions,
 };
 
 pub fn crate_name() -> &'static str {

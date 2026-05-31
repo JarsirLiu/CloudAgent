@@ -26,6 +26,21 @@ use presentation::{
 use shared::{LocalToolInvocation, LocalToolPayload, LocalToolSource, structured_failure_result};
 use std::path::Path;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolRegistryOptions {
+    pub edit_file_enabled: bool,
+    pub apply_patch_enabled: bool,
+}
+
+impl Default for ToolRegistryOptions {
+    fn default() -> Self {
+        Self {
+            edit_file_enabled: false,
+            apply_patch_enabled: true,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ToolRegistry {
     tools: LocalToolMap,
@@ -48,10 +63,14 @@ struct LocalToolRoute {
 
 impl ToolRegistry {
     pub fn new(max_read_chars: usize) -> Self {
+        Self::with_options(max_read_chars, ToolRegistryOptions::default())
+    }
+
+    pub fn with_options(max_read_chars: usize, options: ToolRegistryOptions) -> Self {
         Self {
-            tools: build_tools(max_read_chars),
+            tools: build_tools(max_read_chars, options),
             mcp: McpRegistry::default(),
-            descriptors: build_descriptors(max_read_chars),
+            descriptors: build_descriptors(max_read_chars, options),
         }
     }
 
@@ -274,7 +293,13 @@ mod tests {
             workspace_write
                 .default_tools
                 .iter()
-                .any(|spec| spec.name == "edit_file")
+                .all(|spec| spec.name != "edit_file")
+        );
+        assert!(
+            workspace_write
+                .default_tools
+                .iter()
+                .any(|spec| spec.name == "apply_patch")
         );
         assert!(
             read_only
@@ -339,11 +364,32 @@ mod tests {
             vec![
                 "search_workspace",
                 "read_file",
-                "edit_file",
+                "apply_patch",
                 "exec_command",
                 "tool_search",
             ]
         );
+    }
+
+    #[test]
+    fn edit_tool_exposure_can_be_switched() {
+        let registry = ToolRegistry::with_options(
+            4_096,
+            ToolRegistryOptions {
+                edit_file_enabled: true,
+                apply_patch_enabled: false,
+            },
+        );
+        let resolved = registry
+            .resolve_regular_turn_tool_exposure(&PermissionProfile::WorkspaceWrite)
+            .default_tools;
+        let names = resolved
+            .iter()
+            .map(|spec| spec.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"edit_file"));
+        assert!(!names.contains(&"apply_patch"));
     }
 
     #[test]

@@ -70,6 +70,8 @@ pub struct RuntimeConfig {
 pub struct ToolConfig {
     pub default_shell_timeout_ms: u64,
     pub max_read_chars: usize,
+    pub edit_file_enabled: bool,
+    pub apply_patch_enabled: bool,
     pub mcp_servers: Vec<McpServerConfig>,
 }
 
@@ -162,6 +164,8 @@ struct PartialMemoryConfig {
 struct PartialToolConfig {
     default_shell_timeout_ms: Option<u64>,
     max_read_chars: Option<usize>,
+    edit_file_enabled: Option<bool>,
+    apply_patch_enabled: Option<bool>,
     mcp_servers: Option<Vec<PartialMcpServerConfig>>,
 }
 
@@ -278,6 +282,8 @@ impl AgentConfig {
             tools: ToolConfig {
                 default_shell_timeout_ms: 120_000,
                 max_read_chars: 20_000,
+                edit_file_enabled: false,
+                apply_patch_enabled: true,
                 mcp_servers: Vec::new(),
             },
             cli: CliConfig {
@@ -464,6 +470,12 @@ impl AgentConfig {
             }
             if let Some(value) = tools.max_read_chars {
                 self.tools.max_read_chars = value.max(1_024);
+            }
+            if let Some(value) = tools.edit_file_enabled {
+                self.tools.edit_file_enabled = value;
+            }
+            if let Some(value) = tools.apply_patch_enabled {
+                self.tools.apply_patch_enabled = value;
             }
             if let Some(servers) = tools.mcp_servers {
                 self.tools.mcp_servers = servers
@@ -843,6 +855,7 @@ fn default_system_prompt() -> String {
         "If a search returns weak results, broaden scope or reformulate the query with adjacent code terms instead of repeating another single-keyword probe.",
         "Use structured repository tools for repository discovery before falling back to exec_command; reserve commands mainly for build, test, git, and runtime verification.",
         "Prefer `search_workspace` and `read_file` for repository understanding; prefer `exec_command` mainly for validation, not for first-pass codebase discovery.",
+        "For workspace source or configuration file edits, use `apply_patch`; do not use `exec_command` with Python, PowerShell, shell redirection, or patch commands to write workspace files.",
         "When shell search is truly needed, prefer `rg` or `rg --files` over slower or noisier alternatives.",
         "Use platform-appropriate commands and workspace-relative paths unless absolute paths are explicitly required.",
         "Prefer safe, read-first workflows before mutating actions.",
@@ -856,7 +869,7 @@ fn default_system_prompt() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentConfig, InputModality, PartialAgentConfig, PartialCliConfig,
+        AgentConfig, InputModality, PartialAgentConfig, PartialCliConfig, PartialToolConfig,
         TerminalResizeReflowMaxRows, config_search_paths_with_home, normalize_input_modalities,
         parse_input_modalities,
     };
@@ -917,6 +930,26 @@ mod tests {
             config.cli.terminal_resize_reflow_max_rows,
             TerminalResizeReflowMaxRows::Disabled
         );
+    }
+
+    #[test]
+    fn edit_tool_flags_can_be_configured() {
+        let mut config = AgentConfig::defaults(PathBuf::from("."));
+
+        assert!(!config.tools.edit_file_enabled);
+        assert!(config.tools.apply_patch_enabled);
+
+        config.apply_partial(PartialAgentConfig {
+            tools: Some(PartialToolConfig {
+                edit_file_enabled: Some(true),
+                apply_patch_enabled: Some(false),
+                ..PartialToolConfig::default()
+            }),
+            ..PartialAgentConfig::default()
+        });
+
+        assert!(config.tools.edit_file_enabled);
+        assert!(!config.tools.apply_patch_enabled);
     }
 
     #[test]

@@ -32,7 +32,7 @@ impl CreateDirectoryTool {
                 ],
                 avoid_for: vec!["editing source files", "discovering repository structure"],
                 follow_up_hint: Some(
-                    "follow with `edit_file` for source changes or `copy_path` when seeding a directory from an existing path",
+                    "follow with `apply_patch` for source changes or `copy_path` when seeding a directory from an existing path",
                 ),
                 ..ToolUsageGuidance::default()
             },

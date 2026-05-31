@@ -506,3 +506,84 @@ pub fn summarize_arguments(arguments: &Value) -> String {
         rendered
     }
 }
+
+pub fn summarize_tool_arguments(tool_name: &str, arguments: &Value) -> String {
+    if tool_name == "apply_patch"
+        && let Some(patch) = arguments.get("patch").and_then(Value::as_str)
+    {
+        return summarize_patch_argument(patch);
+    }
+    summarize_arguments(arguments)
+}
+
+fn summarize_patch_argument(patch: &str) -> String {
+    let mut added = 0usize;
+    let mut updated = 0usize;
+    let mut deleted = 0usize;
+    let mut paths = Vec::new();
+    for line in patch.lines() {
+        let parsed = if let Some(path) = line.strip_prefix("*** Add File: ") {
+            added += 1;
+            Some(path)
+        } else if let Some(path) = line.strip_prefix("*** Update File: ") {
+            updated += 1;
+            Some(path)
+        } else if let Some(path) = line.strip_prefix("*** Delete File: ") {
+            deleted += 1;
+            Some(path)
+        } else {
+            None
+        };
+        if let Some(path) = parsed {
+            let path = path.trim();
+            if !path.is_empty() {
+                paths.push(path.to_string());
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        return "patch with no file sections".to_string();
+    }
+
+    let mut parts = Vec::new();
+    if added > 0 {
+        parts.push(format!("{added} add"));
+    }
+    if updated > 0 {
+        parts.push(format!("{updated} update"));
+    }
+    if deleted > 0 {
+        parts.push(format!("{deleted} delete"));
+    }
+    let mut preview = paths.into_iter().take(3).collect::<Vec<_>>().join(", ");
+    let file_count = added + updated + deleted;
+    if file_count > 3 {
+        preview.push_str(&format!(", +{} more", file_count - 3));
+    }
+    format!(
+        "patch {} files ({}) — {}",
+        file_count,
+        parts.join(", "),
+        preview
+    )
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn apply_patch_arguments_are_summarized_without_patch_body() {
+        let summary = summarize_tool_arguments(
+            "apply_patch",
+            &json!({
+                "patch": "*** Begin Patch\n*** Update File: a.rs\n@@\n-old\n+new\n*** Add File: b.rs\n+new\n*** End Patch"
+            }),
+        );
+
+        assert_eq!(summary, "patch 2 files (1 add, 1 update) — a.rs, b.rs");
+        assert!(!summary.contains("*** Begin Patch"));
+    }
+}

@@ -449,10 +449,7 @@ mod tests {
             status.live_banner.as_deref(),
             Some("running command: rg cli")
         );
-        assert_eq!(
-            status.runtime_hint.as_deref(),
-            Some("0s • esc to interrupt")
-        );
+        assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
     }
 
     #[test]
@@ -472,10 +469,7 @@ mod tests {
             status.live_banner.as_deref(),
             Some("reconnecting (stream retry 2, next in 1.0s)")
         );
-        assert_eq!(
-            status.runtime_hint.as_deref(),
-            Some("0s • esc to interrupt")
-        );
+        assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
     }
 
     #[test]
@@ -493,10 +487,7 @@ mod tests {
 
         assert_eq!(status.text, "Working");
         assert_eq!(status.live_banner.as_deref(), Some("Thinking"));
-        assert_eq!(
-            status.runtime_hint.as_deref(),
-            Some("0s • esc to interrupt")
-        );
+        assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
     }
 
     #[test]
@@ -511,10 +502,7 @@ mod tests {
 
         assert_eq!(status.text, "Working");
         assert_eq!(status.live_banner.as_deref(), Some("Thinking"));
-        assert_eq!(
-            status.runtime_hint.as_deref(),
-            Some("0s • esc to interrupt")
-        );
+        assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
     }
 
     #[test]

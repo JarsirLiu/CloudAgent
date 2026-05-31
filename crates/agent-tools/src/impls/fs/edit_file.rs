@@ -230,6 +230,12 @@ impl EditFileLocalTool {
                 path.display()
             );
         }
+        if snapshot.is_partial_view {
+            bail!(
+                "latest available read of {} was partial; rerun `read_file` without `start_line` or `max_lines` before editing",
+                path.display()
+            );
+        }
 
         let current_bytes = fs::read(&path).await?;
         let current_version_token = version_token_for_bytes(&current_bytes);
@@ -754,8 +760,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn edit_file_accepts_partial_read_witness_when_version_matches() {
-        let base = test_workspace("edit_file_accepts_partial_read_witness_when_version_matches");
+    async fn edit_file_rejects_partial_read_witness() {
+        let base = test_workspace("edit_file_rejects_partial_read_witness");
         fs::create_dir_all(base.join("src"))
             .await
             .expect("create src");
@@ -769,6 +775,42 @@ mod tests {
         let token = version_token_for_bytes(&bytes);
         read_state
             .record_snapshot("test", &path, Some(token), true)
+            .await;
+
+        let tool = EditFileLocalTool { read_state };
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "path": "src/lib.rs",
+                    "edits": [{
+                        "old_string": "line2\n",
+                        "new_string": "changed\n"
+                    }]
+                })),
+                &tool_context(&base),
+            )
+            .await
+            .expect_err("partial read witness should fail");
+
+        assert!(err.to_string().contains("was partial"));
+    }
+
+    #[tokio::test]
+    async fn edit_file_accepts_full_read_witness_when_version_matches() {
+        let base = test_workspace("edit_file_accepts_full_read_witness_when_version_matches");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        let path = base.join("src/lib.rs");
+        fs::write(&path, "line1\nline2\nline3\n")
+            .await
+            .expect("write");
+
+        let read_state = FileReadStateStore::new();
+        let bytes = fs::read(&path).await.expect("read file for token");
+        let token = version_token_for_bytes(&bytes);
+        read_state
+            .record_snapshot("test", &path, Some(token), false)
             .await;
 
         let tool = EditFileLocalTool { read_state };

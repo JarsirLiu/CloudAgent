@@ -13,7 +13,6 @@ pub(crate) enum LineEnding {
 }
 
 impl LineEnding {
-    #[cfg(test)]
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Lf => "\n",
@@ -34,6 +33,7 @@ pub(crate) enum TextDecodeFailure {
     UnsupportedEncoding,
     InvalidUtf8,
     InvalidUtf16,
+    MalformedLineEndings,
 }
 
 impl TextDecodeFailure {
@@ -46,6 +46,9 @@ impl TextDecodeFailure {
             Self::InvalidUtf16 => {
                 "[file omitted: invalid UTF-16 text; safe editing is unavailable]"
             }
+            Self::MalformedLineEndings => {
+                "[file omitted: malformed line endings; normalize line endings before editing]"
+            }
         }
     }
 }
@@ -55,6 +58,7 @@ pub(crate) fn decode_text_file(bytes: &[u8]) -> Result<DecodedTextFile, TextDeco
         let text = std::str::from_utf8(rest)
             .map_err(|_| TextDecodeFailure::InvalidUtf8)?
             .to_string();
+        validate_line_endings(&text)?;
         return Ok(DecodedTextFile {
             line_ending: detect_line_ending(&text),
             text,
@@ -63,6 +67,7 @@ pub(crate) fn decode_text_file(bytes: &[u8]) -> Result<DecodedTextFile, TextDeco
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
         let text = decode_utf16_bytes(rest, true)?;
+        validate_line_endings(&text)?;
         return Ok(DecodedTextFile {
             line_ending: detect_line_ending(&text),
             text,
@@ -71,6 +76,7 @@ pub(crate) fn decode_text_file(bytes: &[u8]) -> Result<DecodedTextFile, TextDeco
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
         let text = decode_utf16_bytes(rest, false)?;
+        validate_line_endings(&text)?;
         return Ok(DecodedTextFile {
             line_ending: detect_line_ending(&text),
             text,
@@ -87,6 +93,7 @@ pub(crate) fn decode_text_file(bytes: &[u8]) -> Result<DecodedTextFile, TextDeco
             }
         })?
         .to_string();
+    validate_line_endings(&text)?;
     Ok(DecodedTextFile {
         line_ending: detect_line_ending(&text),
         text,
@@ -113,6 +120,22 @@ fn detect_line_ending(text: &str) -> LineEnding {
     } else {
         LineEnding::Lf
     }
+}
+
+fn validate_line_endings(text: &str) -> Result<(), TextDecodeFailure> {
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'\r' {
+            index += 1;
+            continue;
+        }
+        if bytes.get(index + 1) != Some(&b'\n') {
+            return Err(TextDecodeFailure::MalformedLineEndings);
+        }
+        index += 2;
+    }
+    Ok(())
 }
 
 fn decode_utf16_bytes(bytes: &[u8], little_endian: bool) -> Result<String, TextDecodeFailure> {
@@ -179,5 +202,11 @@ mod tests {
     fn rejects_invalid_utf8_without_lossy_fallback() {
         let err = decode_text_file(&[0xD6, 0xD0, 0xCE, 0xC4]).expect_err("should reject");
         assert_eq!(err, TextDecodeFailure::UnsupportedEncoding);
+    }
+
+    #[test]
+    fn rejects_malformed_line_endings() {
+        let err = decode_text_file(b"a\r\r\nb\n").expect_err("should reject");
+        assert_eq!(err, TextDecodeFailure::MalformedLineEndings);
     }
 }

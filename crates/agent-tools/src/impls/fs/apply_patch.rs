@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use tokio::fs;
 
 pub struct ApplyPatchTool;
@@ -29,6 +30,9 @@ Each file section must start with one of:
 - `*** Update File: <path>`
 
 Within an update section, include one or more hunks introduced by `@@`.
+Use `@@ <context>` to narrow the search to a nearby class, function, or section.
+Use `*** Move to: <path>` immediately after an update header to rename a file.
+Use `*** End of File` at the end of a hunk to require an end-of-file match.
 Within a hunk, each line must start with:
 - space for unchanged context
 - `-` for removed lines
@@ -115,59 +119,29 @@ impl LocalTool for ApplyPatchLocalTool {
         if file_patches.is_empty() {
             anyhow::bail!(invalid_patch_message(&args.patch));
         }
+        let planned_changes = plan_file_changes(&ctx.workspace_root, file_patches).await?;
         let mut changed_files = BTreeSet::new();
-        for file_patch in file_patches {
-            match (file_patch.old_path.as_str(), file_patch.new_path.as_str()) {
-                ("/dev/null", new_path) => {
-                    let path = resolve_workspace_path(&ctx.workspace_root, Some(new_path))?;
-                    if path.exists() {
-                        anyhow::bail!("refusing to add existing file {}", path.display());
-                    }
-                    let next = render_hunks_as_new_file(&file_patch.hunks)?;
+        for planned_change in planned_changes {
+            match planned_change {
+                PlannedFileChange::Write {
+                    display_path,
+                    path,
+                    bytes,
+                    remove_source,
+                } => {
                     let Some(parent) = path.parent() else {
                         anyhow::bail!("cannot determine parent directory for {}", path.display());
                     };
                     fs::create_dir_all(parent).await?;
-                    fs::write(&path, next.as_bytes()).await?;
-                    changed_files.insert(new_path.to_string());
-                }
-                (old_path, "/dev/null") => {
-                    let path = resolve_workspace_path(&ctx.workspace_root, Some(old_path))?;
-                    if !path.exists() {
-                        anyhow::bail!("refusing to delete missing file {}", path.display());
+                    fs::write(&path, bytes).await?;
+                    if let Some(source_path) = remove_source {
+                        fs::remove_file(&source_path).await?;
                     }
+                    changed_files.insert(display_path);
+                }
+                PlannedFileChange::Delete { display_path, path } => {
                     fs::remove_file(&path).await?;
-                    changed_files.insert(old_path.to_string());
-                }
-                (_, new_path) => {
-                    if file_patch.old_path != file_patch.new_path {
-                        anyhow::bail!(
-                            "file moves/renames are not supported by apply_patch; use a delete and add patch instead"
-                        );
-                    }
-                    let path = resolve_workspace_path(&ctx.workspace_root, Some(new_path))?;
-                    if !path.exists() {
-                        anyhow::bail!("refusing to update missing file {}", path.display());
-                    }
-                    let current_bytes = fs::read(&path).await?;
-                    let decoded = decode_text_file(&current_bytes).map_err(|err| {
-                        anyhow::anyhow!("failed to apply patch for {}: {}", new_path, err.render())
-                    })?;
-                    let next = apply_hunks(&decoded.text, decoded.line_ending, &file_patch.hunks)
-                        .map_err(|err| {
-                        anyhow::anyhow!("failed to apply patch for {}: {err}", new_path)
-                    })?;
-                    if next != decoded.text {
-                        let Some(parent) = path.parent() else {
-                            anyhow::bail!(
-                                "cannot determine parent directory for {}",
-                                path.display()
-                            );
-                        };
-                        fs::create_dir_all(parent).await?;
-                        fs::write(&path, encode_text_file(&decoded, &next)).await?;
-                        changed_files.insert(new_path.to_string());
-                    }
+                    changed_files.insert(display_path);
                 }
             }
         }
@@ -187,15 +161,109 @@ impl LocalTool for ApplyPatchLocalTool {
 }
 
 #[derive(Debug)]
+enum PlannedFileChange {
+    Write {
+        display_path: String,
+        path: PathBuf,
+        bytes: Vec<u8>,
+        remove_source: Option<PathBuf>,
+    },
+    Delete {
+        display_path: String,
+        path: PathBuf,
+    },
+}
+
+async fn plan_file_changes(
+    workspace_root: &std::path::Path,
+    file_patches: Vec<FilePatch>,
+) -> anyhow::Result<Vec<PlannedFileChange>> {
+    let mut planned_changes = Vec::new();
+    for file_patch in file_patches {
+        match (file_patch.old_path.as_str(), file_patch.new_path.as_str()) {
+            ("/dev/null", new_path) => {
+                let path = resolve_workspace_path(workspace_root, Some(new_path))?;
+                ensure_not_directory(&path).await?;
+                let next = render_hunks_as_new_file(&file_patch.hunks)?;
+                planned_changes.push(PlannedFileChange::Write {
+                    display_path: new_path.to_string(),
+                    path,
+                    bytes: next.into_bytes(),
+                    remove_source: None,
+                });
+            }
+            (old_path, "/dev/null") => {
+                let path = resolve_workspace_path(workspace_root, Some(old_path))?;
+                if !path.exists() {
+                    anyhow::bail!("refusing to delete missing file {}", path.display());
+                }
+                ensure_not_directory(&path).await?;
+                planned_changes.push(PlannedFileChange::Delete {
+                    display_path: old_path.to_string(),
+                    path,
+                });
+            }
+            (_, new_path) => {
+                let old_path = resolve_workspace_path(workspace_root, Some(&file_patch.old_path))?;
+                if !old_path.exists() {
+                    anyhow::bail!("refusing to update missing file {}", old_path.display());
+                }
+                ensure_not_directory(&old_path).await?;
+                let current_bytes = fs::read(&old_path).await?;
+                let decoded = decode_text_file(&current_bytes).map_err(|err| {
+                    anyhow::anyhow!("failed to apply patch for {}: {}", new_path, err.render())
+                })?;
+                let next = apply_hunks(&decoded.text, decoded.line_ending, &file_patch.hunks)
+                    .map_err(|err| {
+                        anyhow::anyhow!("failed to apply patch for {}: {err}", new_path)
+                    })?;
+                let destination_path = resolve_workspace_path(
+                    workspace_root,
+                    Some(file_patch.move_path.as_deref().unwrap_or(new_path)),
+                )?;
+                ensure_not_directory(&destination_path).await?;
+                if next != decoded.text || destination_path != old_path {
+                    let display_path = file_patch
+                        .move_path
+                        .as_deref()
+                        .unwrap_or(new_path)
+                        .to_string();
+                    let remove_source = (destination_path != old_path).then_some(old_path);
+                    planned_changes.push(PlannedFileChange::Write {
+                        display_path,
+                        path: destination_path,
+                        bytes: encode_text_file(&decoded, &next),
+                        remove_source,
+                    });
+                }
+            }
+        }
+    }
+    Ok(planned_changes)
+}
+
+async fn ensure_not_directory(path: &std::path::Path) -> anyhow::Result<()> {
+    if fs::metadata(path)
+        .await
+        .is_ok_and(|metadata| metadata.is_dir())
+    {
+        anyhow::bail!("path is a directory: {}", path.display());
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
 struct FilePatch {
     old_path: String,
     new_path: String,
+    move_path: Option<String>,
     hunks: Vec<Hunk>,
 }
 
 #[derive(Debug)]
 struct Hunk {
-    old_start_line: Option<usize>,
+    change_context: Option<String>,
+    is_end_of_file: bool,
     lines: Vec<String>,
 }
 
@@ -203,6 +271,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
     let mut file_patches = Vec::new();
     let mut current_old_path: Option<String> = None;
     let mut current_new_path: Option<String> = None;
+    let mut current_move_path: Option<String> = None;
     let mut hunks: Vec<Hunk> = Vec::new();
     let mut current_hunk: Option<Hunk> = None;
     let mut in_patch_block = false;
@@ -210,6 +279,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
     let flush_current = |file_patches: &mut Vec<FilePatch>,
                          current_old_path: &mut Option<String>,
                          current_new_path: &mut Option<String>,
+                         current_move_path: &mut Option<String>,
                          hunks: &mut Vec<Hunk>,
                          current_hunk: &mut Option<Hunk>| {
         if let Some(h) = current_hunk.take() {
@@ -220,10 +290,20 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             file_patches.push(FilePatch {
                 old_path,
                 new_path,
+                move_path: current_move_path.take(),
                 hunks: std::mem::take(hunks),
             });
         }
+        *current_move_path = None;
     };
+
+    let patch = patch.trim();
+    if !patch.starts_with("*** Begin Patch") {
+        anyhow::bail!(invalid_patch_message(patch));
+    }
+    if !patch.ends_with("*** End Patch") {
+        anyhow::bail!("patch must end with `*** End Patch`");
+    }
 
     for line in patch.lines() {
         if line == "*** Begin Patch" {
@@ -235,6 +315,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
                 &mut file_patches,
                 &mut current_old_path,
                 &mut current_new_path,
+                &mut current_move_path,
                 &mut hunks,
                 &mut current_hunk,
             );
@@ -252,6 +333,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
                 &mut file_patches,
                 &mut current_old_path,
                 &mut current_new_path,
+                &mut current_move_path,
                 &mut hunks,
                 &mut current_hunk,
             );
@@ -264,6 +346,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
                 &mut file_patches,
                 &mut current_old_path,
                 &mut current_new_path,
+                &mut current_move_path,
                 &mut hunks,
                 &mut current_hunk,
             );
@@ -276,12 +359,34 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
                 &mut file_patches,
                 &mut current_old_path,
                 &mut current_new_path,
+                &mut current_move_path,
                 &mut hunks,
                 &mut current_hunk,
             );
             let path = path.trim().to_string();
             current_old_path = Some(path.clone());
             current_new_path = Some(path);
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("*** Move to: ") {
+            let Some(old_path) = current_old_path.as_deref() else {
+                anyhow::bail!("move target found before update file");
+            };
+            if old_path == "/dev/null" || current_new_path.as_deref() == Some("/dev/null") {
+                anyhow::bail!("move target is only valid in update file sections");
+            }
+            if current_move_path.is_some() {
+                anyhow::bail!("update file section contains multiple move targets");
+            }
+            if current_hunk.is_some() || !hunks.is_empty() {
+                anyhow::bail!("move target must appear before update hunks");
+            }
+            let Some(new_path) = current_new_path.as_mut() else {
+                anyhow::bail!("move target found before update file");
+            };
+            let path = path.trim().to_string();
+            current_move_path = Some(path.clone());
+            *new_path = path;
             continue;
         }
         if line.starts_with("@@") {
@@ -292,26 +397,87 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
                 hunks.push(h);
             }
             current_hunk = Some(Hunk {
-                old_start_line: parse_old_start_line(line),
+                change_context: parse_change_context(line),
+                is_end_of_file: false,
                 lines: Vec::new(),
             });
             continue;
+        }
+        if current_hunk.is_none()
+            && current_new_path.is_some()
+            && (line.starts_with(' ') || line.starts_with('+') || line.starts_with('-'))
+        {
+            current_hunk = Some(Hunk {
+                change_context: None,
+                is_end_of_file: false,
+                lines: Vec::new(),
+            });
         }
         if let Some(hunk) = current_hunk.as_mut() {
             if line.starts_with('\\') {
                 continue;
             }
+            if line.trim() == "*** End of File" {
+                hunk.is_end_of_file = true;
+                continue;
+            }
             hunk.lines.push(line.to_string());
+            continue;
+        }
+        if current_new_path.is_some() && !line.trim().is_empty() {
+            anyhow::bail!("unexpected line in patch section: {line}");
         }
     }
     flush_current(
         &mut file_patches,
         &mut current_old_path,
         &mut current_new_path,
+        &mut current_move_path,
         &mut hunks,
         &mut current_hunk,
     );
+    validate_file_patches(&file_patches)?;
     Ok(file_patches)
+}
+
+fn validate_file_patches(file_patches: &[FilePatch]) -> anyhow::Result<()> {
+    let mut affected_paths = BTreeSet::new();
+    for file_patch in file_patches {
+        let mut section_paths = BTreeSet::new();
+        for path in [
+            file_patch.old_path.as_str(),
+            file_patch.new_path.as_str(),
+            file_patch.move_path.as_deref().unwrap_or(""),
+        ] {
+            if path.is_empty() || path == "/dev/null" {
+                continue;
+            }
+            section_paths.insert(path.to_string());
+        }
+        for path in section_paths {
+            if !affected_paths.insert(path.clone()) {
+                anyhow::bail!("patch contains duplicate file section for `{path}`");
+            }
+        }
+        match (file_patch.old_path.as_str(), file_patch.new_path.as_str()) {
+            ("/dev/null", _) => {}
+            (_, "/dev/null") if file_patch.hunks.is_empty() => {}
+            (_, "/dev/null") => {
+                anyhow::bail!(
+                    "delete file section for `{}` must not contain hunks",
+                    file_patch.old_path
+                );
+            }
+            (_, _) if file_patch.hunks.is_empty() => {
+                anyhow::bail!(
+                    "update file section for `{}` does not contain any hunks",
+                    file_patch.old_path
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn invalid_patch_message(patch: &str) -> String {
@@ -340,26 +506,47 @@ fn render_hunks_as_new_file(hunks: &[Hunk]) -> anyhow::Result<String> {
             }
         }
     }
-    Ok(lines.join("\n"))
-}
-
-fn apply_hunks(original: &str, line_ending: LineEnding, hunks: &[Hunk]) -> anyhow::Result<String> {
-    let mut content = original.to_string();
-    for hunk in hunks {
-        content = apply_single_hunk(&content, line_ending, hunk)?;
+    let mut content = lines.join("\n");
+    if !content.is_empty() {
+        content.push('\n');
     }
     Ok(content)
 }
 
+fn apply_hunks(original: &str, line_ending: LineEnding, hunks: &[Hunk]) -> anyhow::Result<String> {
+    let mut lines = original
+        .split('\n')
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+
+    let replacements = compute_replacements(&lines, hunks)?;
+    let mut next_lines = apply_replacements(lines, &replacements);
+    if !next_lines.last().is_some_and(String::is_empty) {
+        next_lines.push(String::new());
+    }
+    Ok(next_lines.join(line_ending.as_str()))
+}
+
+#[cfg(test)]
 fn apply_single_hunk(
     content: &str,
     line_ending: LineEnding,
     hunk: &Hunk,
 ) -> anyhow::Result<String> {
+    apply_hunks(content, line_ending, std::slice::from_ref(hunk))
+}
+
+fn hunk_blocks(hunk: &Hunk) -> anyhow::Result<(Vec<String>, Vec<String>)> {
     let mut old_block: Vec<String> = Vec::new();
     let mut new_block: Vec<String> = Vec::new();
     for line in &hunk.lines {
-        if let Some(rest) = line.strip_prefix(' ') {
+        if line.is_empty() {
+            old_block.push(String::new());
+            new_block.push(String::new());
+        } else if let Some(rest) = line.strip_prefix(' ') {
             old_block.push(rest.to_string());
             new_block.push(rest.to_string());
         } else if let Some(rest) = line.strip_prefix('-') {
@@ -370,56 +557,137 @@ fn apply_single_hunk(
             anyhow::bail!("unsupported hunk line: {line}");
         }
     }
-
-    if old_block.is_empty() {
-        anyhow::bail!("empty deletion context is not supported");
-    }
-
-    let has_trailing_newline = content.ends_with('\n');
-    let mut lines = content.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
-    let start = resolve_hunk_start(&lines, &old_block, hunk.old_start_line)?;
-    let end = start + old_block.len();
-    lines.splice(start..end, new_block);
-
-    let mut next = lines.join(line_ending.as_str());
-    if has_trailing_newline {
-        next.push_str(line_ending.as_str());
-    }
-    Ok(next)
+    Ok((old_block, new_block))
 }
 
-fn parse_old_start_line(header: &str) -> Option<usize> {
-    let header = header.trim();
-    let marker = header.strip_prefix("@@ -")?;
-    let number = marker
-        .split_whitespace()
-        .next()?
-        .split(',')
-        .next()?
-        .parse::<usize>()
-        .ok()?;
-    Some(number)
-}
+fn compute_replacements(
+    original_lines: &[String],
+    hunks: &[Hunk],
+) -> anyhow::Result<Vec<(usize, usize, Vec<String>)>> {
+    let mut replacements = Vec::new();
+    let mut line_index = 0usize;
 
-fn resolve_hunk_start(
-    lines: &[String],
-    old_block: &[String],
-    preferred_start_line: Option<usize>,
-) -> anyhow::Result<usize> {
-    let Some(start_line) = preferred_start_line else {
-        anyhow::bail!("patch hunk is missing a source line position");
-    };
-    let preferred_index = start_line.saturating_sub(1);
-    if block_matches(lines, preferred_index, old_block) {
-        return Ok(preferred_index);
+    for hunk in hunks {
+        if let Some(context) = &hunk.change_context {
+            let Some(context_index) = seek_sequence(
+                original_lines,
+                std::slice::from_ref(context),
+                line_index,
+                false,
+            ) else {
+                anyhow::bail!("Failed to find context '{context}'");
+            };
+            line_index = context_index + 1;
+        }
+
+        let (old_block, new_block) = hunk_blocks(hunk)?;
+        if old_block.is_empty() {
+            replacements.push((original_lines.len(), 0, new_block));
+            continue;
+        }
+
+        let mut pattern = old_block.as_slice();
+        let mut new_slice = new_block.as_slice();
+        let mut found = seek_sequence(original_lines, pattern, line_index, hunk.is_end_of_file);
+
+        if found.is_none() && pattern.last().is_some_and(String::is_empty) {
+            pattern = &pattern[..pattern.len() - 1];
+            if new_slice.last().is_some_and(String::is_empty) {
+                new_slice = &new_slice[..new_slice.len() - 1];
+            }
+            found = seek_sequence(original_lines, pattern, line_index, hunk.is_end_of_file);
+        }
+
+        let Some(start_index) = found else {
+            anyhow::bail!("Failed to find expected lines:\n{}", old_block.join("\n"));
+        };
+        replacements.push((start_index, pattern.len(), new_slice.to_vec()));
+        line_index = start_index + pattern.len();
     }
-    anyhow::bail!("could not find hunk context at the expected source location")
+
+    replacements.sort_by_key(|(start_index, _, _)| *start_index);
+    Ok(replacements)
 }
 
-fn block_matches(lines: &[String], start: usize, old_block: &[String]) -> bool {
+fn apply_replacements(
+    mut lines: Vec<String>,
+    replacements: &[(usize, usize, Vec<String>)],
+) -> Vec<String> {
+    for (start_index, old_len, new_segment) in replacements.iter().rev() {
+        for _ in 0..*old_len {
+            if *start_index < lines.len() {
+                lines.remove(*start_index);
+            }
+        }
+        for (offset, new_line) in new_segment.iter().enumerate() {
+            lines.insert(*start_index + offset, new_line.clone());
+        }
+    }
     lines
-        .get(start..start.saturating_add(old_block.len()))
-        .is_some_and(|slice| slice == old_block)
+}
+
+fn parse_change_context(header: &str) -> Option<String> {
+    let header = header.trim();
+    let context = header.strip_prefix("@@")?.trim();
+    if context.is_empty() || context.starts_with('-') {
+        None
+    } else {
+        Some(context.to_string())
+    }
+}
+
+fn seek_sequence(
+    lines: &[String],
+    pattern: &[String],
+    start: usize,
+    is_end_of_file: bool,
+) -> Option<usize> {
+    if pattern.is_empty() {
+        return Some(start.min(lines.len()));
+    }
+    if pattern.len() > lines.len() {
+        return None;
+    }
+
+    let search_start = if is_end_of_file {
+        lines.len().saturating_sub(pattern.len())
+    } else {
+        start.min(lines.len().saturating_sub(pattern.len()))
+    };
+
+    for matcher in [
+        lines_match_exact as fn(&[String], &[String], usize) -> bool,
+        lines_match_trim_end,
+        lines_match_trim,
+    ] {
+        for index in search_start..=lines.len().saturating_sub(pattern.len()) {
+            if matcher(lines, pattern, index) {
+                return Some(index);
+            }
+        }
+    }
+
+    None
+}
+
+fn lines_match_exact(lines: &[String], pattern: &[String], index: usize) -> bool {
+    lines
+        .get(index..index.saturating_add(pattern.len()))
+        .is_some_and(|slice| slice == pattern)
+}
+
+fn lines_match_trim_end(lines: &[String], pattern: &[String], index: usize) -> bool {
+    pattern
+        .iter()
+        .enumerate()
+        .all(|(offset, expected)| lines[index + offset].trim_end() == expected.trim_end())
+}
+
+fn lines_match_trim(lines: &[String], pattern: &[String], index: usize) -> bool {
+    pattern
+        .iter()
+        .enumerate()
+        .all(|(offset, expected)| lines[index + offset].trim() == expected.trim())
 }
 
 #[cfg(test)]
@@ -435,8 +703,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
-    async fn apply_patch_refuses_to_add_existing_file() {
-        let base = test_workspace("apply_patch_refuses_to_add_existing_file");
+    async fn apply_patch_overwrites_existing_file_with_add_file() {
+        let base = test_workspace("apply_patch_overwrites_existing_file_with_add_file");
         fs::create_dir_all(base.join("src"))
             .await
             .expect("create src");
@@ -446,16 +714,19 @@ mod tests {
 
         let tool = ApplyPatchLocalTool;
         let ctx = tool_context(&base);
-        let result = tool
-            .invoke(
-                tool_invocation(serde_json::json!({
-                    "patch": "*** Begin Patch\n*** Add File: src/lib.rs\n+ new\n*** End Patch"
-                })),
-                &ctx,
-            )
-            .await;
+        tool.invoke(
+            tool_invocation(serde_json::json!({
+                "patch": "*** Begin Patch\n*** Add File: src/lib.rs\n+new\n*** End Patch"
+            })),
+            &ctx,
+        )
+        .await
+        .expect("apply patch");
 
-        assert!(result.is_err());
+        let updated = fs::read_to_string(base.join("src/lib.rs"))
+            .await
+            .expect("read updated file");
+        assert_eq!(updated, "new\n");
     }
 
     #[tokio::test]
@@ -473,6 +744,34 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn apply_patch_rejects_delete_section_with_hunks() {
+        let base = test_workspace("apply_patch_rejects_delete_section_with_hunks");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "old\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Delete File: src/lib.rs\n-old\n*** End Patch"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("delete section with hunk should fail");
+
+        assert!(
+            err.to_string()
+                .contains("delete file section for `src/lib.rs` must not contain hunks")
+        );
     }
 
     #[tokio::test]
@@ -504,8 +803,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_patch_refuses_rename_style_patch() {
-        let base = test_workspace("apply_patch_refuses_rename_style_patch");
+    async fn apply_patch_rejects_empty_update_section() {
+        let base = test_workspace("apply_patch_rejects_empty_update_section");
         fs::create_dir_all(base.join("src"))
             .await
             .expect("create src");
@@ -515,21 +814,146 @@ mod tests {
 
         let tool = ApplyPatchLocalTool;
         let ctx = tool_context(&base);
-        let result = tool
+        let err = tool
             .invoke(
                 tool_invocation(serde_json::json!({
-                    "patch": "--- a/src/lib.rs\n+++ b/src/main.rs\n@@\n- old\n+ new\n"
+                    "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch"
                 })),
                 &ctx,
             )
-            .await;
+            .await
+            .expect_err("empty update section should fail");
 
-        assert!(result.is_err());
+        assert!(
+            err.to_string()
+                .contains("update file section for `src/lib.rs` does not contain any hunks")
+        );
     }
 
     #[tokio::test]
-    async fn apply_patch_uses_hunk_position_instead_of_first_text_match() {
-        let base = test_workspace("apply_patch_uses_hunk_position_instead_of_first_text_match");
+    async fn apply_patch_rejects_duplicate_file_sections() {
+        let base = test_workspace("apply_patch_rejects_duplicate_file_sections");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "old\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** Update File: src/lib.rs\n@@\n-new\n+newer\n*** End Patch"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("duplicate sections should fail");
+
+        assert!(
+            err.to_string()
+                .contains("patch contains duplicate file section for `src/lib.rs`")
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_does_not_write_partial_multi_file_patch() {
+        let base = test_workspace("apply_patch_does_not_write_partial_multi_file_patch");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/first.rs"), "old\n")
+            .await
+            .expect("write first file");
+        fs::write(base.join("src/second.rs"), "actual\n")
+            .await
+            .expect("write second file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Update File: src/first.rs\n@@\n-old\n+new\n*** Update File: src/second.rs\n@@\n-expected\n+changed\n*** End Patch"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("second file mismatch should fail entire patch before writing");
+
+        assert!(err.to_string().contains("Failed to find expected lines"));
+        let first = fs::read_to_string(base.join("src/first.rs"))
+            .await
+            .expect("read first file");
+        let second = fs::read_to_string(base.join("src/second.rs"))
+            .await
+            .expect("read second file");
+        assert_eq!(first, "old\n");
+        assert_eq!(second, "actual\n");
+    }
+
+    #[tokio::test]
+    async fn apply_patch_supports_move_to() {
+        let base = test_workspace("apply_patch_supports_move_to");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "old\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n*** Move to: src/main.rs\n@@\n-old\n+new\n*** End Patch"
+                })),
+                &ctx,
+            )
+            .await
+            .expect("apply patch");
+
+        assert!(!base.join("src/lib.rs").exists());
+        let moved = fs::read_to_string(base.join("src/main.rs"))
+            .await
+            .expect("read moved file");
+        assert_eq!(moved, "new\n");
+    }
+
+    #[tokio::test]
+    async fn apply_patch_rejects_move_after_hunk() {
+        let base = test_workspace("apply_patch_rejects_move_after_hunk");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "old\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** Move to: src/main.rs\n*** End Patch"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("move after hunk should fail");
+
+        assert!(
+            err.to_string()
+                .contains("move target must appear before update hunks")
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_uses_change_context_instead_of_line_numbers() {
+        let base = test_workspace("apply_patch_uses_change_context_instead_of_line_numbers");
         fs::create_dir_all(base.join("src"))
             .await
             .expect("create src");
@@ -543,8 +967,8 @@ mod tests {
         let tool = ApplyPatchLocalTool;
         let ctx = tool_context(&base);
         tool.invoke(
-            tool_invocation(serde_json::json!({
-                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@ -5,3 +5,3 @@\n fn b() {\n-    println!(\"same\");\n+    println!(\"changed\");\n }\n*** End Patch"
+                tool_invocation(serde_json::json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@ fn b() {\n-    println!(\"same\");\n+    println!(\"changed\");\n*** End Patch"
             })),
             &ctx,
         )
@@ -559,16 +983,89 @@ mod tests {
     }
 
     #[test]
-    fn apply_patch_rejects_hunk_without_position_hint() {
+    fn apply_patch_can_apply_hunk_without_position_hint() {
         let content = "same\nsame\n";
         let hunk = Hunk {
-            old_start_line: None,
+            change_context: None,
+            is_end_of_file: false,
             lines: vec!["-same".to_string(), "+changed".to_string()],
         };
 
-        let err = apply_single_hunk(content, LineEnding::Lf, &hunk)
-            .expect_err("should reject missing position");
-        assert!(err.to_string().contains("missing a source line position"));
+        let updated = apply_single_hunk(content, LineEnding::Lf, &hunk).expect("apply hunk");
+        assert_eq!(updated, "changed\nsame\n");
+    }
+
+    #[test]
+    fn apply_patch_uses_change_context_to_disambiguate() {
+        let content = "fn a() {\n    same\n}\n\nfn b() {\n    same\n}\n";
+        let hunk = Hunk {
+            change_context: Some("fn b() {".to_string()),
+            is_end_of_file: false,
+            lines: vec!["-    same".to_string(), "+    changed".to_string()],
+        };
+
+        let updated = apply_single_hunk(content, LineEnding::Lf, &hunk).expect("apply hunk");
+        assert!(updated.contains("fn a() {\n    same\n}"));
+        assert!(updated.contains("fn b() {\n    changed\n}"));
+    }
+
+    #[test]
+    fn apply_patch_can_append_at_end_of_file() {
+        let content = "one\n";
+        let hunk = Hunk {
+            change_context: None,
+            is_end_of_file: true,
+            lines: vec!["+two".to_string()],
+        };
+
+        let updated = apply_single_hunk(content, LineEnding::Lf, &hunk).expect("apply hunk");
+        assert_eq!(updated, "one\ntwo\n");
+    }
+
+    #[test]
+    fn apply_patch_computes_replacements_before_applying_them() {
+        let content = "line1\nline2\nline3\n";
+        let hunks = vec![
+            Hunk {
+                change_context: None,
+                is_end_of_file: false,
+                lines: vec!["+after-context".to_string(), "+second-line".to_string()],
+            },
+            Hunk {
+                change_context: None,
+                is_end_of_file: false,
+                lines: vec![
+                    " line1".to_string(),
+                    "-line2".to_string(),
+                    "-line3".to_string(),
+                    "+line2-replacement".to_string(),
+                ],
+            },
+        ];
+
+        let updated = apply_hunks(content, LineEnding::Lf, &hunks).expect("apply hunks");
+        assert_eq!(
+            updated,
+            "line1\nline2-replacement\nafter-context\nsecond-line\n"
+        );
+    }
+
+    #[test]
+    fn apply_patch_treats_blank_hunk_lines_as_blank_context() {
+        let content = "before\n\nafter\n";
+        let hunk = Hunk {
+            change_context: None,
+            is_end_of_file: false,
+            lines: vec![
+                " before".to_string(),
+                String::new(),
+                "-after".to_string(),
+                "+done".to_string(),
+            ],
+        };
+
+        let updated = apply_single_hunk(content, LineEnding::Lf, &hunk).expect("apply hunk");
+        assert_eq!(updated, "before\n\ndone\n");
     }
 
     #[tokio::test]

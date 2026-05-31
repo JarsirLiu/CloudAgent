@@ -67,7 +67,7 @@ impl BottomPaneRuntimeState {
     pub(crate) fn on_context_compaction_started(&mut self, estimated_tokens: u64) {
         self.active_tool_title = None;
         self.live_label = Some(format!(
-            "Compacting context (~{} tokens)",
+            "Compacting context (~{})",
             compact_number(estimated_tokens)
         ));
     }

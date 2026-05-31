@@ -153,7 +153,7 @@ fn approval_request_for_call(
     spec: &ToolSpec,
     reason: String,
 ) -> ServerRequest {
-    let preview = crate::tool::summarize_arguments(&call.arguments);
+    let preview = crate::tool::summarize_tool_arguments(&call.name, &call.arguments);
     match spec.item_kind {
         TurnItemKind::CommandExecution => ServerRequest::CommandApproval {
             request: CommandApprovalRequest {

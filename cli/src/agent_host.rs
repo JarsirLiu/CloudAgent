@@ -7,7 +7,7 @@ use agent_core::state::AgentState;
 use agent_core::turn::{ExecutionPolicy, RegularTurnSettings};
 use agent_memory::LongTermMemoryFacade;
 use agent_model_provider::OpenAiCompatibleModel;
-use agent_tools::ToolRegistry;
+use agent_tools::{ToolRegistry, ToolRegistryOptions};
 use anyhow::Result;
 use config::AgentConfig;
 use infra_store::{JsonConversationStore, RolloutRecorder};
@@ -88,7 +88,13 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     })?;
     let reloadable_model = Arc::new(ReloadableChatModel::new(initial_model));
     let model: Arc<dyn ChatModel> = reloadable_model.clone();
-    let tools = Arc::new(ToolRegistry::new(config.tools.max_read_chars));
+    let tools = Arc::new(ToolRegistry::with_options(
+        config.tools.max_read_chars,
+        ToolRegistryOptions {
+            edit_file_enabled: config.tools.edit_file_enabled,
+            apply_patch_enabled: config.tools.apply_patch_enabled,
+        },
+    ));
     let store = Arc::new(JsonConversationStore::new(
         config.runtime.conversation_store_dir.clone(),
     ));

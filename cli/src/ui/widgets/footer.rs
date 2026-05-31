@@ -40,6 +40,7 @@ pub fn status_line(
                 .add_modifier(Modifier::BOLD),
         ),
     ];
+
     if !status_text.trim().is_empty() && !status_text.eq_ignore_ascii_case(mode_label) {
         spans.push(Span::styled(
             " · ",
@@ -50,6 +51,7 @@ pub fn status_line(
             Style::default().fg(Color::Rgb(140, 140, 155)),
         ));
     }
+
     if !meta.is_empty() {
         let current_width: usize = spans
             .iter()
@@ -71,6 +73,7 @@ pub fn status_line(
             Style::default().fg(Color::Rgb(95, 105, 120)),
         ));
     }
+
     Line::from(spans)
 }
 
@@ -98,13 +101,18 @@ fn running_status_line(
                 .add_modifier(Modifier::BOLD),
         ),
     ];
-    if let Some(runtime_hint) = runtime_hint.filter(|hint| !hint.trim().is_empty()) {
+
+    if let Some(runtime_hint) = runtime_hint
+        .map(|hint| hint.split('·').next().unwrap_or(hint).trim())
+        .filter(|hint| !hint.is_empty())
+    {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
             format!("({runtime_hint})"),
             Style::default().fg(Color::Rgb(132, 138, 150)),
         ));
     }
+
     if !meta.is_empty() {
         let current_width: usize = spans
             .iter()
@@ -114,24 +122,22 @@ fn running_status_line(
         let terminal_wrap_guard = 1usize;
         let available_meta =
             width.saturating_sub(current_width + separator_width + terminal_wrap_guard);
-        if available_meta > 0 {
-            spans.push(Span::styled(
-                " · ",
-                Style::default().fg(Color::Rgb(60, 60, 70)),
-            ));
+        if available_meta != 0 {
+            spans.push(Span::raw(" "));
             spans.push(Span::styled(
                 truncate_single_line(meta, available_meta),
                 Style::default().fg(Color::Rgb(95, 105, 120)),
             ));
         }
     }
+
     Line::from(spans)
 }
 
 pub fn hint_line(mode: FrontendMode, width: usize, meta: &str) -> Line<'static> {
     let base = match mode {
         FrontendMode::Idle => "  Enter submit  .  Ctrl+D exit  .  / commands",
-        FrontendMode::Running => "  Esc interrupt the current turn",
+        FrontendMode::Running => "  Esc to interrupt",
         FrontendMode::WaitingForServerRequest => "  Enter submit  .  y approve  .  n deny",
     };
     let hint = if mode == FrontendMode::Idle && !meta.trim().is_empty() {
@@ -189,12 +195,34 @@ mod tests {
             FrontendMode::Running,
             Some("⠋"),
             "Request approved:",
-            Some("0s • esc to interrupt"),
+            Some("0s · esc to interrupt"),
             "in 1.3k tokens · out 93 tokens · cached 0 tokens · total 1.4k tokens",
             58,
         );
 
         assert!(line_width(&line) < 58);
+    }
+
+    #[test]
+    fn running_status_line_only_shows_short_runtime_hint() {
+        let line = status_line(
+            FrontendMode::Running,
+            Some("⠋"),
+            "Working",
+            Some("15s · esc to interrupt"),
+            "in 7.7k tokens · out 35 tokens · cached 0 tokens · total 7.7k tokens · context 3%",
+            80,
+        );
+
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains("(15s)"));
+        assert!(!rendered.contains("esc to interrupt"));
+        assert!(rendered.contains("tokens"));
     }
 
     #[test]
