@@ -15,6 +15,7 @@ pub(crate) struct TransientNotice {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BottomPaneRuntimeState {
     pub(crate) active_tool_title: Option<String>,
+    pub(crate) active_command: Option<CommandRuntimeState>,
     pub(crate) live_label: Option<String>,
     pub(crate) transient_notice: Option<TransientNotice>,
     pub(crate) turn_active: bool,
@@ -24,6 +25,7 @@ pub(crate) struct BottomPaneRuntimeState {
 impl BottomPaneRuntimeState {
     pub(crate) fn reset(&mut self) {
         self.active_tool_title = None;
+        self.active_command = None;
         self.live_label = None;
         self.transient_notice = None;
         self.turn_active = false;
@@ -59,6 +61,7 @@ impl BottomPaneRuntimeState {
 
     pub(crate) fn on_tool_finished(&mut self) {
         self.active_tool_title = None;
+        self.active_command = None;
         if self.live_label.is_none() {
             self.live_label = Some("Working".to_string());
         }
@@ -66,6 +69,7 @@ impl BottomPaneRuntimeState {
 
     pub(crate) fn on_context_compaction_started(&mut self, estimated_tokens: u64) {
         self.active_tool_title = None;
+        self.active_command = None;
         self.live_label = Some(format!(
             "Compacting context (~{} tokens)",
             compact_number(estimated_tokens)
@@ -74,6 +78,7 @@ impl BottomPaneRuntimeState {
 
     pub(crate) fn on_context_compaction_finished(&mut self) {
         self.active_tool_title = None;
+        self.active_command = None;
         if self.turn_active {
             self.live_label = Some("Working".to_string());
         } else {
@@ -119,22 +124,26 @@ impl BottomPaneRuntimeState {
         ));
     }
 
-    pub(crate) fn on_active_item_started(&mut self, kind: &TurnItemKind, title: Option<&str>) {
+    pub(crate) fn on_active_item_started(
+        &mut self,
+        item_id: &str,
+        kind: &TurnItemKind,
+        title: Option<&str>,
+    ) {
         match kind {
             TurnItemKind::AssistantMessage => {
                 self.active_tool_title = None;
+                self.active_command = None;
                 self.live_label = Some("Working".to_string());
             }
             TurnItemKind::Reasoning => {
                 self.active_tool_title = None;
+                self.active_command = None;
                 self.live_label = Some("Thinking".to_string());
             }
             TurnItemKind::CommandExecution => {
-                self.active_tool_title =
-                    Some(match title.map(str::trim).filter(|s| !s.is_empty()) {
-                        Some(command) => format!("running command: {command}"),
-                        None => "running command".to_string(),
-                    });
+                self.active_tool_title = None;
+                self.active_command = Some(CommandRuntimeState::started(item_id, title));
                 self.live_label = Some("Working".to_string());
             }
             TurnItemKind::ToolCall => {
@@ -143,12 +152,30 @@ impl BottomPaneRuntimeState {
                         Some(tool) => format!("executing tool: {}", humanize_runtime_title(tool)),
                         None => "executing tool".to_string(),
                     });
+                self.active_command = None;
                 self.live_label = Some("Working".to_string());
             }
             _ => {
                 self.active_tool_title =
                     title.map(humanize_runtime_title).filter(|s| !s.is_empty());
+                self.active_command = None;
             }
+        }
+    }
+
+    pub(crate) fn on_command_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
+        if let Some(command) = self.active_command.as_mut() {
+            command.append_output(item_id, delta);
+        }
+    }
+
+    pub(crate) fn on_command_finished(&mut self, item_id: &str) {
+        if self
+            .active_command
+            .as_ref()
+            .is_some_and(|command| command.item_id == item_id)
+        {
+            self.active_command = None;
         }
     }
 
@@ -201,4 +228,66 @@ fn compact_number(value: u64) -> String {
     } else {
         value.to_string()
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CommandRuntimeState {
+    pub(crate) item_id: String,
+    pub(crate) title: String,
+    pub(crate) recent_output: Option<String>,
+}
+
+impl CommandRuntimeState {
+    fn started(item_id: &str, title: Option<&str>) -> Self {
+        let title = match title.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(command) => format!("running command: {command}"),
+            None => "running command".to_string(),
+        };
+        Self {
+            item_id: item_id.to_string(),
+            title,
+            recent_output: None,
+        }
+    }
+
+    fn append_output(&mut self, item_id: Option<&str>, delta: &str) {
+        if let Some(item_id) = item_id
+            && item_id != self.item_id
+        {
+            return;
+        }
+        let delta = delta.trim();
+        if delta.is_empty() {
+            return;
+        }
+        let compact = compact_recent_output(delta, 120);
+        self.recent_output = Some(match self.recent_output.take() {
+            Some(previous) if !previous.trim().is_empty() => {
+                compact_recent_output(&format!("{previous} {compact}"), 120)
+            }
+            _ => compact,
+        });
+    }
+
+    pub(crate) fn banner_text(&self) -> String {
+        match self
+            .recent_output
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            Some(output) => format!("{} · {output}", self.title),
+            None => self.title.clone(),
+        }
+    }
+}
+
+fn compact_recent_output(value: &str, max_chars: usize) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+    let keep = max_chars.saturating_sub(1);
+    let mut out = normalized.chars().rev().take(keep).collect::<Vec<_>>();
+    out.reverse();
+    format!("…{}", out.into_iter().collect::<String>())
 }

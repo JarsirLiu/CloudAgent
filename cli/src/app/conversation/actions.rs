@@ -727,7 +727,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             kind,
             title,
         } => {
-            app.on_server_active_item_started(&kind, title.as_deref());
+            app.on_server_active_item_started(&item_id, &kind, title.as_deref());
             app.transcript_owner.start_item(
                 turn_id,
                 item_id,
@@ -760,23 +760,20 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 app.run_state.expand_tool_details,
             );
         }
-        ServerAction::AppendActiveOutputDelta {
-            turn_id,
-            item_id,
-            delta,
-        } => {
-            app.transcript_owner.append_output_delta(
-                turn_id,
-                item_id,
-                delta,
-                app.run_state.expand_tool_details,
-            );
+        ServerAction::AppendCommandOutputDelta { item_id, delta } => {
+            app.bottom_pane
+                .on_command_output_delta(Some(&item_id), &delta);
         }
         ServerAction::CompleteActiveTurnItem {
             turn_id,
             item_id,
             item,
         } => {
+            if let agent_core::conversation::TranscriptItem::CommandExecution { status, .. } = &item
+                && !matches!(status, agent_core::CommandExecutionStatus::InProgress)
+            {
+                app.bottom_pane.on_command_finished(&item_id);
+            }
             app.transcript_owner.complete_item(
                 turn_id,
                 item_id,

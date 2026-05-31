@@ -43,17 +43,32 @@ fn agent(id: &str, text: &str) -> TranscriptItem {
 }
 
 fn command(id: &str, command: &str) -> TranscriptItem {
+    command_with_status(id, command, CommandExecutionStatus::Completed)
+}
+
+fn command_with_status(id: &str, command: &str, status: CommandExecutionStatus) -> TranscriptItem {
     TranscriptItem::CommandExecution {
         id: id.to_string(),
         tool_name: "exec_command".to_string(),
         command: command.to_string(),
         current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
-        status: CommandExecutionStatus::Completed,
-        exit_code: Some(0),
+        status: status.clone(),
+        exit_code: matches!(status, CommandExecutionStatus::Completed).then_some(0),
         output: Some(String::new()),
         duration_ms: Some(1),
         summary: command.to_string(),
     }
+}
+
+fn test_app() -> TuiApp {
+    TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    )
 }
 
 fn read_file_result(id: &str, path: &str) -> TranscriptItem {
@@ -262,12 +277,6 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
         Some("rg *".to_string()),
         false,
     );
-    owner.append_output_delta(
-        "turn-1".to_string(),
-        "c1".to_string(),
-        "rg *".to_string(),
-        false,
-    );
 
     let visible = owner
         .live_cells()
@@ -275,8 +284,7 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>();
 
-    assert_eq!(visible.len(), 1);
-    assert_eq!(visible, vec!["rg *"]);
+    assert!(visible.is_empty());
 
     owner.complete_item(
         "turn-1".to_string(),
@@ -332,12 +340,6 @@ fn completing_older_item_does_not_flush_current_live_item() {
         Some("rg esc".to_string()),
         false,
     );
-    owner.append_output_delta(
-        "turn-1".to_string(),
-        "c1".to_string(),
-        "rg esc".to_string(),
-        false,
-    );
 
     owner.complete_item(
         "turn-1".to_string(),
@@ -351,8 +353,7 @@ fn completing_older_item_does_not_flush_current_live_item() {
         .iter()
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(visible.len(), 1);
-    assert_eq!(visible, vec!["rg esc"]);
+    assert!(visible.is_empty());
 }
 
 #[test]
@@ -384,12 +385,6 @@ fn runtime_non_agent_cells_do_not_become_stream_continuations() {
         "c1".to_string(),
         TurnItemKind::CommandExecution,
         Some("Run command".to_string()),
-        false,
-    );
-    owner.append_output_delta(
-        "turn-1".to_string(),
-        "c1".to_string(),
-        "rg cli".to_string(),
         false,
     );
     owner.complete_item(
@@ -995,6 +990,88 @@ fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell()
     );
     assert!(app.transcript_owner.active_cell().is_none());
     assert!(!app.transcript_owner.has_transcript_content());
+}
+
+#[test]
+fn command_output_delta_updates_status_without_transcript_history() {
+    let mut app = test_app();
+    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+    app.bottom_pane.on_turn_started();
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::StartActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "cmd-1".to_string(),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("rg TODO".to_string()),
+        },
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::AppendCommandOutputDelta {
+            item_id: "cmd-1".to_string(),
+            delta: "src/lib.rs: TODO".to_string(),
+        },
+    );
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(
+        status.live_banner.as_deref(),
+        Some("running command: rg TODO · src/lib.rs: TODO")
+    );
+    assert!(app.transcript_owner.active_cell().is_none());
+    assert!(app.transcript_owner.pending_history_cells().is_empty());
+}
+
+#[test]
+fn in_progress_command_completion_keeps_status_until_final_completion() {
+    let mut app = test_app();
+    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+    app.bottom_pane.on_turn_started();
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::StartActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "cmd-1".to_string(),
+            kind: TurnItemKind::CommandExecution,
+            title: Some("slow command".to_string()),
+        },
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::CompleteActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "cmd-1".to_string(),
+            item: command_with_status("cmd-1", "slow command", CommandExecutionStatus::InProgress),
+        },
+    );
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(
+        status.live_banner.as_deref(),
+        Some("running command: slow command")
+    );
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::CompleteActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "cmd-1".to_string(),
+            item: command("cmd-1", "slow command"),
+        },
+    );
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(status.live_banner, None);
+    let committed = app
+        .transcript_owner
+        .pending_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(committed, vec!["slow command"]);
 }
 
 #[test]

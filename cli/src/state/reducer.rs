@@ -108,8 +108,7 @@ pub(crate) enum ServerAction {
         item_id: String,
         delta: String,
     },
-    AppendActiveOutputDelta {
-        turn_id: TurnId,
+    AppendCommandOutputDelta {
         item_id: String,
         delta: String,
     },
@@ -203,14 +202,8 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 });
             }
             AppServerNotification::ReasoningSummaryPartAdded { .. } => {}
-            AppServerNotification::CommandExecutionOutputDelta {
-                turn_id,
-                item_id,
-                delta,
-                ..
-            } => {
-                actions.push(ServerAction::AppendActiveOutputDelta {
-                    turn_id: turn_id.clone(),
+            AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. } => {
+                actions.push(ServerAction::AppendCommandOutputDelta {
                     item_id: item_id.clone(),
                     delta: delta.clone(),
                 });
@@ -553,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn command_output_delta_updates_active_output() {
+    fn command_output_delta_updates_runtime_status() {
         let message =
             AppServerMessage::Notification(AppServerNotification::CommandExecutionOutputDelta {
                 conversation_id: "default".to_string(),
@@ -568,11 +561,8 @@ mod tests {
         assert!(reduced.actions.iter().any(|action| {
             matches!(
                 action,
-                ServerAction::AppendActiveOutputDelta {
-                    turn_id,
-                    item_id,
-                    delta,
-                } if turn_id == "turn-1" && item_id == "cmd-1" && delta == "stdout"
+                ServerAction::AppendCommandOutputDelta { item_id, delta }
+                    if item_id == "cmd-1" && delta == "stdout"
             )
         }));
     }
@@ -602,13 +592,13 @@ mod tests {
             tool_reduced
                 .actions
                 .iter()
-                .all(|action| !matches!(action, ServerAction::AppendActiveOutputDelta { .. }))
+                .all(|action| !matches!(action, ServerAction::AppendCommandOutputDelta { .. }))
         );
         assert!(
             file_reduced
                 .actions
                 .iter()
-                .all(|action| !matches!(action, ServerAction::AppendActiveOutputDelta { .. }))
+                .all(|action| !matches!(action, ServerAction::AppendCommandOutputDelta { .. }))
         );
     }
 

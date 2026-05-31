@@ -105,10 +105,12 @@ impl TuiApp {
 
     pub(crate) fn on_server_active_item_started(
         &mut self,
+        item_id: &str,
         kind: &TurnItemKind,
         title: Option<&str>,
     ) {
-        self.bottom_pane.on_active_item_started(kind, title);
+        self.bottom_pane
+            .on_active_item_started(item_id, kind, title);
     }
 
     pub(crate) fn show_server_request_prompt(

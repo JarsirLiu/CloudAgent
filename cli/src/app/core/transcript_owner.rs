@@ -167,22 +167,6 @@ impl TranscriptOwner {
         self.queue_history_cells(replay_cells);
     }
 
-    pub(crate) fn append_output_delta(
-        &mut self,
-        turn_id: TurnId,
-        item_id: String,
-        delta: String,
-        expand_details: bool,
-    ) {
-        let replay_cells = self.active_cell_controller.append_output_delta(
-            turn_id,
-            item_id,
-            delta,
-            expand_details,
-        );
-        self.queue_history_cells(replay_cells);
-    }
-
     pub(crate) fn complete_item(
         &mut self,
         turn_id: TurnId,

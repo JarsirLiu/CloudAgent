@@ -51,6 +51,14 @@ impl BottomPaneController {
         self.runtime.on_tool_finished();
     }
 
+    pub(crate) fn on_command_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
+        self.runtime.on_command_output_delta(item_id, delta);
+    }
+
+    pub(crate) fn on_command_finished(&mut self, item_id: &str) {
+        self.runtime.on_command_finished(item_id);
+    }
+
     pub(crate) fn on_context_compaction_started(&mut self, estimated_tokens: u64) {
         self.runtime.on_context_compaction_started(estimated_tokens);
     }
@@ -73,8 +81,13 @@ impl BottomPaneController {
             .on_model_retrying(stage, attempt, next_delay_ms);
     }
 
-    pub(crate) fn on_active_item_started(&mut self, kind: &TurnItemKind, title: Option<&str>) {
-        self.runtime.on_active_item_started(kind, title);
+    pub(crate) fn on_active_item_started(
+        &mut self,
+        item_id: &str,
+        kind: &TurnItemKind,
+        title: Option<&str>,
+    ) {
+        self.runtime.on_active_item_started(item_id, kind, title);
     }
 
     pub(crate) fn prepare_for_submit(&mut self) {
@@ -331,6 +344,9 @@ impl BottomPaneController {
         if let Some(notice) = self.runtime.transient_notice.as_ref() {
             return (Some(notice.message.clone()), Some(notice.level));
         }
+        if let Some(command) = self.runtime.active_command.as_ref() {
+            return (Some(command.banner_text()), None);
+        }
         if let Some(tool_title) = self.runtime.active_tool_title.as_deref() {
             return (Some(tool_title.to_string()), None);
         }
@@ -448,6 +464,117 @@ mod tests {
             Some("running command: rg cli")
         );
         assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
+    }
+
+    #[test]
+    fn command_output_delta_stays_in_runtime_banner() {
+        let mut app = test_app();
+        app.run_state.live_animation_frame = 1;
+        mark_running(&mut app);
+        app.bottom_pane.on_active_item_started(
+            "cmd-1",
+            &agent_core::TurnItemKind::CommandExecution,
+            Some("rg TODO"),
+        );
+        app.bottom_pane
+            .on_command_output_delta(Some("cmd-1"), "src/main.rs:12: TODO clean this up\n");
+
+        let status = app.bottom_pane.build_status_view_model(&app);
+
+        assert_eq!(
+            status.live_banner.as_deref(),
+            Some("running command: rg TODO · src/main.rs:12: TODO clean this up")
+        );
+
+        app.bottom_pane.on_command_finished("cmd-1");
+        let after = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(after.live_banner, None);
+    }
+
+    #[test]
+    fn command_output_delta_keeps_recent_tail_compact() {
+        let mut app = test_app();
+        mark_running(&mut app);
+        app.bottom_pane.on_active_item_started(
+            "cmd-1",
+            &agent_core::TurnItemKind::CommandExecution,
+            Some("long command"),
+        );
+
+        app.bottom_pane
+            .on_command_output_delta(Some("cmd-1"), &"alpha ".repeat(80));
+        app.bottom_pane
+            .on_command_output_delta(Some("cmd-1"), "omega");
+
+        let status = app.bottom_pane.build_status_view_model(&app);
+        let banner = status.live_banner.expect("command banner");
+        assert!(banner.starts_with("running command: long command · …"));
+        assert!(banner.ends_with("omega"));
+        assert!(banner.chars().count() <= "running command: long command · ".chars().count() + 121);
+    }
+
+    #[test]
+    fn stale_command_output_delta_does_not_update_current_banner() {
+        let mut app = test_app();
+        mark_running(&mut app);
+        app.bottom_pane.on_active_item_started(
+            "cmd-current",
+            &agent_core::TurnItemKind::CommandExecution,
+            Some("cargo check"),
+        );
+
+        app.bottom_pane
+            .on_command_output_delta(Some("cmd-old"), "old command output");
+
+        let status = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(
+            status.live_banner.as_deref(),
+            Some("running command: cargo check")
+        );
+    }
+
+    #[test]
+    fn stale_command_finish_does_not_clear_current_banner() {
+        let mut app = test_app();
+        mark_running(&mut app);
+        app.bottom_pane.on_active_item_started(
+            "cmd-current",
+            &agent_core::TurnItemKind::CommandExecution,
+            Some("cargo test"),
+        );
+
+        app.bottom_pane.on_command_finished("cmd-old");
+
+        let status = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(
+            status.live_banner.as_deref(),
+            Some("running command: cargo test")
+        );
+    }
+
+    #[test]
+    fn in_progress_completion_keeps_command_runtime_until_final_completion() {
+        let mut app = test_app();
+        mark_running(&mut app);
+        app.bottom_pane.on_active_item_started(
+            "cmd-1",
+            &agent_core::TurnItemKind::CommandExecution,
+            Some("slow command"),
+        );
+
+        let status = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(
+            status.live_banner.as_deref(),
+            Some("running command: slow command")
+        );
+
+        app.bottom_pane
+            .on_command_output_delta(Some("cmd-1"), "still running");
+        let status = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(
+            status.live_banner.as_deref(),
+            Some("running command: slow command · still running")
+        );
     }
 
     #[test]
