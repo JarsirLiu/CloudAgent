@@ -128,33 +128,8 @@ impl LocalTool for ApplyPatchLocalTool {
         let planned_changes = plan_file_changes(&ctx.workspace_root, file_patches)
             .await
             .map_err(format_apply_patch_failure)?;
-        let mut changed_files = BTreeSet::new();
-        for planned_change in planned_changes {
-            match planned_change {
-                PlannedFileChange::Write {
-                    display_path,
-                    path,
-                    bytes,
-                    remove_source,
-                } => {
-                    let Some(parent) = path.parent() else {
-                        anyhow::bail!("cannot determine parent directory for {}", path.display());
-                    };
-                    fs::create_dir_all(parent).await?;
-                    fs::write(&path, bytes).await?;
-                    if let Some(source_path) = remove_source {
-                        fs::remove_file(&source_path).await?;
-                    }
-                    changed_files.insert(display_path);
-                }
-                PlannedFileChange::Delete { display_path, path } => {
-                    fs::remove_file(&path).await?;
-                    changed_files.insert(display_path);
-                }
-            }
-        }
-        let files_changed = changed_files.len();
-        let changed_paths = changed_files.into_iter().collect::<Vec<_>>();
+        let changed_paths = apply_planned_changes(planned_changes).await?;
+        let files_changed = changed_paths.len();
 
         Ok(ToolInvocationOutput {
             content: format!(
@@ -174,6 +149,104 @@ fn format_apply_patch_failure(err: anyhow::Error) -> anyhow::Error {
     anyhow::anyhow!(
         "apply_patch failed: {err:#}\nRecovery: reread the smallest relevant slice of each target file, then retry with one focused `*** Update File` hunk per logical edit. Do not retry the same hunk unchanged. Do not use `*** Add File` to replace an existing file."
     )
+}
+
+#[derive(Debug, Default)]
+struct AppliedPatchDelta {
+    changed_paths: BTreeSet<String>,
+    exact: bool,
+}
+
+impl AppliedPatchDelta {
+    fn exact() -> Self {
+        Self {
+            changed_paths: BTreeSet::new(),
+            exact: true,
+        }
+    }
+
+    fn mark_changed(&mut self, display_path: String) {
+        self.changed_paths.insert(display_path);
+    }
+
+    fn mark_inexact(&mut self) {
+        self.exact = false;
+    }
+
+    fn into_paths(self) -> Vec<String> {
+        self.changed_paths.into_iter().collect()
+    }
+
+    fn failure_summary(&self) -> String {
+        let paths = self.changed_paths.iter().cloned().collect::<Vec<_>>();
+        let applied = if paths.is_empty() {
+            "none".to_string()
+        } else {
+            paths.join(", ")
+        };
+        let exact = if self.exact { "true" } else { "false" };
+        format!("partial_changes={applied}; exact={exact}")
+    }
+}
+
+async fn apply_planned_changes(
+    planned_changes: Vec<PlannedFileChange>,
+) -> anyhow::Result<Vec<String>> {
+    let mut delta = AppliedPatchDelta::exact();
+
+    for planned_change in planned_changes {
+        match apply_one_planned_change(planned_change, &mut delta).await {
+            Ok(()) => {}
+            Err(err) => {
+                anyhow::bail!(
+                    "failed while writing planned patch changes: {err:#}\n{}",
+                    delta.failure_summary()
+                );
+            }
+        }
+    }
+
+    Ok(delta.into_paths())
+}
+
+async fn apply_one_planned_change(
+    planned_change: PlannedFileChange,
+    delta: &mut AppliedPatchDelta,
+) -> anyhow::Result<()> {
+    match planned_change {
+        PlannedFileChange::Write {
+            display_path,
+            path,
+            bytes,
+            remove_source,
+        } => {
+            let Some(parent) = path.parent() else {
+                anyhow::bail!("cannot determine parent directory for {}", path.display());
+            };
+            fs::create_dir_all(parent).await?;
+            match fs::write(&path, bytes).await {
+                Ok(()) => {
+                    delta.mark_changed(display_path);
+                }
+                Err(err) => {
+                    delta.mark_inexact();
+                    return Err(err.into());
+                }
+            }
+            if let Some(source_path) = remove_source {
+                if let Err(err) = fs::remove_file(&source_path).await {
+                    delta.mark_inexact();
+                    return Err(err.into());
+                }
+            }
+            Ok(())
+        }
+        PlannedFileChange::Delete { display_path, path } => {
+            fs::remove_file(&path).await?;
+            delta.mark_changed(display_path);
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -642,9 +715,13 @@ fn compute_replacements(
         }
 
         let Some(start_index) = found else {
+            let closest = closest_current_lines(original_lines, &old_block)
+                .map(|lines| format!("\nClosest current lines:\n{}", lines.join("\n")))
+                .unwrap_or_default();
             anyhow::bail!(
-                "Failed to find expected lines:\n{}\nHint: reread the target file and copy the exact current lines, including indentation and blank lines. Prefer a smaller hunk if the surrounding code changed.",
-                old_block.join("\n")
+                "Failed to find expected lines:\n{}{}\nHint: retry with the closest current lines above, including indentation and blank lines exactly. Prefer a smaller hunk if the surrounding code changed.",
+                old_block.join("\n"),
+                closest
             );
         };
         replacements.push((start_index, pattern.len(), new_slice.to_vec()));
@@ -653,6 +730,77 @@ fn compute_replacements(
 
     replacements.sort_by_key(|(start_index, _, _)| *start_index);
     Ok(replacements)
+}
+
+fn closest_current_lines(lines: &[String], pattern: &[String]) -> Option<Vec<String>> {
+    if lines.is_empty() || pattern.is_empty() {
+        return None;
+    }
+
+    if let Some(index) = closest_anchor_index(lines, pattern) {
+        let count = pattern.len().max(1).min(lines.len() - index);
+        return Some(lines[index..index + count].to_vec());
+    }
+
+    let window_len = pattern.len().min(lines.len());
+    let mut best: Option<(usize, usize)> = None;
+    for index in 0..=lines.len().saturating_sub(window_len) {
+        let score = pattern
+            .iter()
+            .take(window_len)
+            .enumerate()
+            .filter(|(offset, expected)| {
+                normalize_common_text_differences(&lines[index + offset])
+                    == normalize_common_text_differences(expected)
+            })
+            .count();
+        if score > best.map(|(_, best_score)| best_score).unwrap_or(0) {
+            best = Some((index, score));
+        }
+    }
+
+    let (index, score) = best?;
+    if score == 0 {
+        return None;
+    }
+    Some(lines[index..index + window_len].to_vec())
+}
+
+fn closest_anchor_index(lines: &[String], pattern: &[String]) -> Option<usize> {
+    let anchors = pattern
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .flat_map(|line| {
+            let mut values = Vec::new();
+            if let Some(name) = extract_rust_item_name(line) {
+                values.push(name);
+            }
+            values.push(line.trim().to_string());
+            values
+        })
+        .collect::<Vec<_>>();
+
+    anchors.iter().find_map(|anchor| {
+        lines
+            .iter()
+            .position(|line| line.trim().contains(anchor.as_str()))
+    })
+}
+
+fn extract_rust_item_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    for marker in ["fn ", "struct ", "enum ", "trait ", "impl "] {
+        if let Some(rest) = trimmed.split_once(marker).map(|(_, rest)| rest) {
+            let name = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect::<String>();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    None
 }
 
 fn apply_replacements(
@@ -830,6 +978,37 @@ mod tests {
         assert!(message.contains("Failed to find expected lines"));
         assert!(message.contains("reread the smallest relevant slice"));
         assert!(message.contains("Do not retry the same hunk unchanged"));
+    }
+
+    #[tokio::test]
+    async fn failed_update_file_includes_closest_current_lines() {
+        let base = test_workspace("failed_update_file_includes_closest_current_lines");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(
+            base.join("src/lib.rs"),
+            "impl Host {\n    pub fn cli_permission_mode(&self) -> &str {\n        &self.metadata.cli_permission_mode\n    }\n\n    pub fn new_conversation_id(&self) -> String {\n        timestamp_conversation_id()\n    }\n}\n",
+        )
+        .await
+        .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n    pub fn cli_permission_mode(&self) -> &str {\n        &self.metadata.cli_permission_mode\n    }\n    pub fn new_conversation_id(&self) -> String {\n        Uuid::now_v7().to_string()\n    }\n*** End Patch"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("stale context must fail safely");
+
+        let message = err.to_string();
+        assert!(message.contains("Closest current lines:"));
+        assert!(message.contains("timestamp_conversation_id()"));
+        assert!(message.contains("including indentation and blank lines exactly"));
     }
 
     #[tokio::test]
@@ -1019,6 +1198,40 @@ mod tests {
             .expect("read second file");
         assert_eq!(first, "old\n");
         assert_eq!(second, "actual\n");
+    }
+
+    #[tokio::test]
+    async fn write_stage_failure_reports_partial_changes() {
+        let base = test_workspace("write_stage_failure_reports_partial_changes");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+
+        let err = apply_planned_changes(vec![
+            PlannedFileChange::Write {
+                display_path: "src/first.rs".to_string(),
+                path: base.join("src/first.rs"),
+                bytes: b"created\n".to_vec(),
+                remove_source: None,
+            },
+            PlannedFileChange::Delete {
+                display_path: "src/missing.rs".to_string(),
+                path: base.join("src/missing.rs"),
+            },
+        ])
+        .await
+        .expect_err("second write-stage operation should fail");
+
+        let message = err.to_string();
+        assert!(message.contains("failed while writing planned patch changes"));
+        assert!(message.contains("partial_changes=src/first.rs"));
+        assert!(message.contains("exact=true"));
+        assert_eq!(
+            fs::read_to_string(base.join("src/first.rs"))
+                .await
+                .expect("read created file"),
+            "created\n"
+        );
     }
 
     #[tokio::test]

@@ -33,8 +33,9 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
 pub const MANUAL_COMPACTION_MIN_HISTORY_TOKENS: usize = 20_000;
@@ -125,7 +126,7 @@ impl AgentHost {
     }
 
     pub fn new_conversation_id(&self) -> String {
-        Uuid::now_v7().to_string()
+        timestamp_conversation_id()
     }
 
     pub async fn create_conversation_with_timestamp_id(&self) -> Result<String> {
@@ -874,4 +875,48 @@ fn latest_budget_baseline_from_rollout_items(
         }),
         _ => None,
     })
+}
+
+fn timestamp_conversation_id() -> String {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let total_seconds = duration.as_secs();
+    let days = total_seconds / 86_400;
+    let secs_of_day = total_seconds % 86_400;
+
+    let (year, month, day) = civil_from_days(days as i64);
+    let hour = secs_of_day / 3_600;
+    let minute = (secs_of_day % 3_600) / 60;
+    let second = secs_of_day % 60;
+    let suffix = random_suffix();
+
+    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}-{suffix}")
+}
+
+fn random_suffix() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let mut x = now.as_nanos() as u64 ^ COUNTER.fetch_add(1, Ordering::Relaxed);
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    let n = x.wrapping_mul(0x2545_F491_4F6C_DD1D);
+    format!("{:04x}", (n & 0xFFFF) as u16)
+}
+
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year, m, d)
 }

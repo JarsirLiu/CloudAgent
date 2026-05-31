@@ -289,7 +289,7 @@ impl JsonConversationStore {
         )?
         .into_iter()
         .filter(|row| {
-            !should_hide_ephemeral_draft_row(
+            !should_hide_empty_placeholder_row(
                 &row.conversation_id,
                 row.message_count,
                 row.title.as_deref(),
@@ -364,6 +364,12 @@ impl JsonConversationStore {
         let legacy = self.legacy_rollout_path(conversation_id);
         if canonical != legacy && legacy.exists() && !canonical.exists() {
             let _ = std::fs::rename(&legacy, &canonical);
+        }
+        if canonical.exists() {
+            return canonical;
+        }
+        if legacy.exists() {
+            return legacy;
         }
         canonical
     }
@@ -557,14 +563,28 @@ fn canonicalize_conversation_file_stem(value: &str) -> String {
     sanitize_conversation_id(value)
 }
 
-fn should_hide_ephemeral_draft_row(
+fn should_hide_empty_placeholder_row(
     conversation_id: &str,
     message_count: usize,
     title: Option<&str>,
 ) -> bool {
-    conversation_id.starts_with("draft-")
+    is_timestamp_conversation_id(conversation_id)
         && message_count == 0
         && title.is_none_or(|value| value.trim().is_empty())
+}
+
+fn is_timestamp_conversation_id(value: &str) -> bool {
+    let mut parts = value.split('-');
+    let date = parts.next().unwrap_or_default();
+    let time = parts.next().unwrap_or_default();
+    let suffix = parts.next().unwrap_or_default();
+    parts.next().is_none()
+        && date.len() == 8
+        && time.len() == 6
+        && suffix.len() == 4
+        && date.chars().all(|c| c.is_ascii_digit())
+        && time.chars().all(|c| c.is_ascii_digit())
+        && suffix.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -762,9 +782,9 @@ mod tests {
 
     #[tokio::test]
     async fn marking_active_conversation_does_not_create_empty_session() {
-        let root = unique_temp_path("cloudagent-draft-session");
+        let root = unique_temp_path("cloudagent-placeholder-session");
         let store = JsonConversationStore::new(&root);
-        let conversation_id = "draft-only";
+        let conversation_id = "20260531-181152-ab3f";
         store.ensure_root_dir().await.expect("create root");
 
         store
@@ -783,7 +803,7 @@ mod tests {
             !store
                 .has_conversation(conversation_id)
                 .await
-                .expect("check draft visibility")
+                .expect("check placeholder visibility")
         );
         assert!(
             store
@@ -791,17 +811,17 @@ mod tests {
                 .await
                 .expect("list conversations")
                 .is_empty(),
-            "draft conversations should not appear in the session list before first message"
+            "empty placeholder conversations should not appear in the session list before first message"
         );
 
         let _ = fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
-    async fn create_conversation_promotes_existing_draft_to_visible_session() {
-        let root = unique_temp_path("cloudagent-draft-promote");
+    async fn create_conversation_promotes_existing_placeholder_to_visible_session() {
+        let root = unique_temp_path("cloudagent-placeholder-promote");
         let store = JsonConversationStore::new(&root);
-        let conversation_id = "draft-promote";
+        let conversation_id = "20260531-181152-b4c2";
         store.ensure_root_dir().await.expect("create root");
 
         store
@@ -839,21 +859,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_persisted_draft_rows_are_hidden_from_session_list() {
-        let root = unique_temp_path("cloudagent-hidden-draft");
+    async fn empty_persisted_placeholder_rows_are_hidden_from_session_list() {
+        let root = unique_temp_path("cloudagent-hidden-placeholder");
         let store = JsonConversationStore::new(&root);
         store.ensure_root_dir().await.expect("create root");
 
         session_index::upsert_session(
             &session_index::db_path(&root),
             &root.to_string_lossy(),
-            "draft-legacy-empty",
+            "20260531-181152-c3d4",
             0,
             now_ms(),
             false,
             None,
         )
-        .expect("upsert draft row");
+        .expect("upsert placeholder row");
 
         let summaries = store
             .list_conversations()
@@ -865,11 +885,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn archived_conversation_with_fallback_draft_keeps_session_list_clean() {
+    async fn archived_conversation_with_fallback_placeholder_keeps_session_list_clean() {
         let root = unique_temp_path("cloudagent-archive-fallback");
         let store = JsonConversationStore::new(&root);
         let conversation_id = "session-archive-me";
-        let fallback_draft_id = "draft-fallback";
+        let fallback_placeholder_id = "20260531-181152-d4e5";
         store.ensure_root_dir().await.expect("create root");
 
         store
@@ -881,16 +901,16 @@ mod tests {
             .await
             .expect("archive conversation");
         store
-            .mark_active_conversation(fallback_draft_id)
+            .mark_active_conversation(fallback_placeholder_id)
             .await
-            .expect("mark fallback draft active");
+            .expect("mark fallback placeholder active");
 
         assert_eq!(
             store
                 .load_active_conversation()
                 .await
                 .expect("load active conversation"),
-            Some(fallback_draft_id.to_string())
+            Some(fallback_placeholder_id.to_string())
         );
         assert!(
             store
@@ -898,18 +918,18 @@ mod tests {
                 .await
                 .expect("list conversations")
                 .is_empty(),
-            "archived conversations and empty fallback drafts should stay out of /session"
+            "archived conversations and empty fallback placeholders should stay out of /session"
         );
 
         let _ = fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
-    async fn deleted_conversation_with_fallback_draft_keeps_session_list_clean() {
+    async fn deleted_conversation_with_fallback_placeholder_keeps_session_list_clean() {
         let root = unique_temp_path("cloudagent-delete-fallback");
         let store = JsonConversationStore::new(&root);
         let conversation_id = "session-delete-me";
-        let fallback_draft_id = "draft-fallback";
+        let fallback_placeholder_id = "20260531-181152-e5f6";
         store.ensure_root_dir().await.expect("create root");
 
         store
@@ -921,9 +941,9 @@ mod tests {
             .await
             .expect("delete conversation");
         store
-            .mark_active_conversation(fallback_draft_id)
+            .mark_active_conversation(fallback_placeholder_id)
             .await
-            .expect("mark fallback draft active");
+            .expect("mark fallback placeholder active");
 
         assert!(
             !store
@@ -937,7 +957,7 @@ mod tests {
                 .load_active_conversation()
                 .await
                 .expect("load active conversation"),
-            Some(fallback_draft_id.to_string())
+            Some(fallback_placeholder_id.to_string())
         );
         assert!(
             store
@@ -945,9 +965,17 @@ mod tests {
                 .await
                 .expect("list conversations")
                 .is_empty(),
-            "deleted conversations and empty fallback drafts should stay out of /session"
+            "deleted conversations and empty fallback placeholders should stay out of /session"
         );
 
         let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[test]
+    fn timestamp_conversation_ids_are_detected() {
+        assert!(is_timestamp_conversation_id("20260531-181152-ab3f"));
+        assert!(is_timestamp_conversation_id("20260531-181152-0000"));
+        assert!(!is_timestamp_conversation_id("20260531-181152"));
+        assert!(!is_timestamp_conversation_id("20260531-181152-ab3f-extra"));
     }
 }
