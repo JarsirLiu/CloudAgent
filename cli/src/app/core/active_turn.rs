@@ -58,13 +58,52 @@ pub(crate) struct ActiveTurnEffects {
 #[derive(Default)]
 pub(crate) struct ActiveTurnState {
     turn_id: Option<TurnId>,
-    live_item_id: Option<String>,
-    live_item_kind: Option<TurnItemKind>,
-    live_cell: Option<HistoryCell>,
+    live_item: Option<ActiveItemView>,
     last_copyable_output: Option<String>,
     replayed_item_ids: HashSet<String>,
     pending_local_user_input: Option<Vec<InputItem>>,
     agent_stream: Option<AgentStreamController>,
+}
+
+#[derive(Clone)]
+struct ActiveItemView {
+    item_id: String,
+    kind: TurnItemKind,
+    cell: HistoryCell,
+}
+
+impl ActiveItemView {
+    fn new(item_id: impl Into<String>, kind: TurnItemKind, cell: HistoryCell) -> Self {
+        Self {
+            item_id: item_id.into(),
+            kind,
+            cell,
+        }
+    }
+
+    fn into_cell(self) -> HistoryCell {
+        self.cell
+    }
+
+    fn to_cell(&self) -> HistoryCell {
+        self.cell.clone()
+    }
+
+    fn append_body(&mut self, delta: &str) {
+        self.cell.append_body(delta);
+    }
+
+    fn replace_body(&mut self, body: impl Into<String>) {
+        self.cell.replace_body(body);
+    }
+
+    fn body(&self) -> &str {
+        self.cell.body()
+    }
+
+    fn label(&self) -> &str {
+        self.cell.label()
+    }
 }
 
 impl ActiveTurnState {
@@ -74,9 +113,7 @@ impl ActiveTurnState {
 
     pub(crate) fn clear(&mut self) -> ActiveTurnEffects {
         self.turn_id = None;
-        self.live_item_id = None;
-        self.live_item_kind = None;
-        self.live_cell = None;
+        self.live_item = None;
         self.last_copyable_output = None;
         self.replayed_item_ids.clear();
         self.pending_local_user_input = None;
@@ -89,9 +126,7 @@ impl ActiveTurnState {
             ActiveTurnAction::Clear => self.clear(),
             ActiveTurnAction::StartLocalUser { user_input } => {
                 self.turn_id = None;
-                self.live_item_id = None;
-                self.live_item_kind = None;
-                self.live_cell = None;
+                self.live_item = None;
                 self.last_copyable_output = None;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = Some(user_input);
@@ -116,11 +151,10 @@ impl ActiveTurnState {
             } => {
                 self.ensure_turn(&turn_id);
                 let replay_cells = self.flush_live_tail_if_different(&item_id);
-                self.live_item_id = Some(item_id);
-                self.live_item_kind = Some(kind.clone());
-                self.live_cell = Some(render_active_item_placeholder(
-                    kind,
-                    title.as_deref().unwrap_or(""),
+                self.live_item = Some(ActiveItemView::new(
+                    item_id,
+                    kind.clone(),
+                    render_active_item_placeholder(kind, title.as_deref().unwrap_or("")),
                 ));
                 self.snapshot_effects_with_replay(replay_cells)
             }
@@ -133,7 +167,9 @@ impl ActiveTurnState {
                 let mut replay_cells = self.ensure_agent_stream_tail(&item_id);
                 let output = self.push_agent_stream_delta(&item_id, &delta);
                 replay_cells.extend(output.stable_cells);
-                self.live_cell = output.live_cell;
+                self.live_item = output.live_cell.map(|cell| {
+                    ActiveItemView::new(item_id.clone(), TurnItemKind::AssistantMessage, cell)
+                });
                 self.last_copyable_output = Some(format!(
                     "{}{}",
                     self.last_copyable_output.as_deref().unwrap_or(""),
@@ -149,11 +185,11 @@ impl ActiveTurnState {
                 self.ensure_turn(&turn_id);
                 let replay_cells = self
                     .ensure_live_tail(&item_id, HistoryCell::reasoning("Reasoning", "thinking"));
-                if let Some(cell) = self.live_cell.as_mut() {
-                    if cell.body() == "thinking" {
-                        cell.replace_body(delta.clone());
+                if let Some(live_item) = self.live_item.as_mut() {
+                    if live_item.body() == "thinking" {
+                        live_item.replace_body(delta.clone());
                     } else {
-                        cell.append_body(&delta);
+                        live_item.append_body(&delta);
                     }
                 }
                 self.snapshot_effects_with_replay(replay_cells)
@@ -168,8 +204,10 @@ impl ActiveTurnState {
                     &item_id,
                     HistoryCell::info("Run command", String::new(), HistoryTone::Control),
                 );
-                if let Some(cell) = self.live_cell.as_mut() {
-                    cell.append_body(&delta);
+                if let Some(live_item) = self.live_item.as_mut()
+                    && live_item.kind != TurnItemKind::CommandExecution
+                {
+                    live_item.append_body(&delta);
                 }
                 self.snapshot_effects_with_replay(replay_cells)
             }
@@ -184,7 +222,10 @@ impl ActiveTurnState {
                 if let Some(text) = copyable_output(&item) {
                     self.last_copyable_output = Some(text);
                 }
-                if self.live_item_id.as_deref() == Some(item_id.as_str())
+                if self
+                    .live_item
+                    .as_ref()
+                    .is_some_and(|live_item| live_item.item_id == item_id)
                     || self.should_replace_live_tool_placeholder(&item)
                 {
                     if matches!(item, TranscriptItem::AgentMessage { .. })
@@ -195,12 +236,14 @@ impl ActiveTurnState {
                         } else if !cell.is_empty() {
                             replay_cells.push(cell);
                         }
+                    } else if !cell.is_empty() && should_keep_completed_item_live(&item) {
+                        self.live_item =
+                            Some(ActiveItemView::new(item_id, turn_item_kind(&item), cell));
+                        return self.snapshot_effects_with_replay(replay_cells);
                     } else if !cell.is_empty() {
                         replay_cells.push(cell);
                     }
-                    self.live_item_id = None;
-                    self.live_item_kind = None;
-                    self.live_cell = None;
+                    self.live_item = None;
                 } else if !self.replayed_item_ids.contains(&item_id) && !cell.is_empty() {
                     self.replayed_item_ids.insert(item_id.clone());
                     replay_cells.push(cell);
@@ -212,13 +255,15 @@ impl ActiveTurnState {
                     return self.clear();
                 }
                 let replay_cells = if self.should_discard_live_cell_on_flush() {
-                    self.live_cell.take();
+                    self.live_item.take();
                     Vec::new()
                 } else {
-                    self.live_cell.take().into_iter().collect::<Vec<_>>()
+                    self.live_item
+                        .take()
+                        .map(ActiveItemView::into_cell)
+                        .into_iter()
+                        .collect::<Vec<_>>()
                 };
-                self.live_item_id = None;
-                self.live_item_kind = None;
                 let last_copyable_output = self.last_copyable_output.clone();
                 self.turn_id = None;
                 self.last_copyable_output = None;
@@ -239,9 +284,7 @@ impl ActiveTurnState {
             Some(existing) if existing == turn_id => {}
             Some(_) => {
                 self.turn_id = Some(turn_id.to_string());
-                self.live_item_id = None;
-                self.live_item_kind = None;
-                self.live_cell = None;
+                self.live_item = None;
                 self.last_copyable_output = None;
                 self.replayed_item_ids.clear();
                 self.pending_local_user_input = None;
@@ -255,12 +298,22 @@ impl ActiveTurnState {
 
     fn ensure_live_tail(&mut self, item_id: &str, placeholder: HistoryCell) -> Vec<HistoryCell> {
         let replay_cells = self.flush_live_tail_if_different(item_id);
-        if self.live_item_id.as_deref() != Some(item_id) {
-            self.live_item_id = Some(item_id.to_string());
-            self.live_item_kind = None;
-            self.live_cell = Some(placeholder);
-        } else if self.live_cell.is_none() {
-            self.live_cell = Some(placeholder);
+        if !self
+            .live_item
+            .as_ref()
+            .is_some_and(|live_item| live_item.item_id == item_id)
+        {
+            self.live_item = Some(ActiveItemView::new(
+                item_id,
+                TurnItemKind::ToolResult,
+                placeholder,
+            ));
+        } else if self.live_item.is_none() {
+            self.live_item = Some(ActiveItemView::new(
+                item_id,
+                TurnItemKind::ToolResult,
+                placeholder,
+            ));
         }
         replay_cells
     }
@@ -275,8 +328,9 @@ impl ActiveTurnState {
         {
             self.agent_stream = Some(AgentStreamController::new(item_id));
         }
-        self.live_item_id = Some(item_id.to_string());
-        self.live_item_kind = Some(TurnItemKind::AssistantMessage);
+        if self.live_item.as_ref().map(|item| item.item_id.as_str()) != Some(item_id) {
+            self.live_item = None;
+        }
         replay_cells
     }
 
@@ -306,10 +360,15 @@ impl ActiveTurnState {
     }
 
     fn flush_live_tail_if_different(&mut self, item_id: &str) -> Vec<HistoryCell> {
-        if self.live_item_id.as_deref() == Some(item_id) {
+        if self
+            .live_item
+            .as_ref()
+            .is_some_and(|live_item| live_item.item_id == item_id)
+        {
             return Vec::new();
         }
-        let flushed_item_id = self.live_item_id.take();
+        let flushed_item = self.live_item.take();
+        let flushed_item_id = flushed_item.as_ref().map(|item| item.item_id.clone());
         if let Some(flushed_item_id) = flushed_item_id.as_ref() {
             self.replayed_item_ids.insert(flushed_item_id.clone());
         }
@@ -320,37 +379,41 @@ impl ActiveTurnState {
         {
             self.agent_stream = None;
         }
-        let flushed = if self.should_discard_live_cell_on_flush() {
-            self.live_cell.take();
+        let flushed = if self.should_discard_live_item_on_flush(flushed_item.as_ref()) {
             Vec::new()
         } else {
-            self.live_cell.take().into_iter().collect::<Vec<_>>()
+            flushed_item
+                .map(ActiveItemView::into_cell)
+                .into_iter()
+                .collect::<Vec<_>>()
         };
-        self.live_item_id = None;
-        self.live_item_kind = None;
         flushed
     }
 
     fn should_replace_live_tool_placeholder(&self, item: &TranscriptItem) -> bool {
-        let Some(live_cell) = self.live_cell.as_ref() else {
+        let Some(live_item) = self.live_item.as_ref() else {
             return false;
         };
-        if self.live_item_kind != Some(TurnItemKind::ToolCall) {
+        if live_item.kind != TurnItemKind::ToolCall {
             return false;
         }
         let TranscriptItem::ToolResult { tool_name, .. } = item else {
             return false;
         };
-        matches!(live_cell.body().trim(), "" | "running")
-            && live_cell.label() == humanize_tool_label(tool_name)
+        matches!(live_item.body().trim(), "" | "running")
+            && live_item.label() == humanize_tool_label(tool_name)
     }
 
     fn should_discard_live_cell_on_flush(&self) -> bool {
-        let Some(live_cell) = self.live_cell.as_ref() else {
+        self.should_discard_live_item_on_flush(self.live_item.as_ref())
+    }
+
+    fn should_discard_live_item_on_flush(&self, live_item: Option<&ActiveItemView>) -> bool {
+        let Some(live_item) = live_item else {
             return false;
         };
-        self.live_item_kind == Some(TurnItemKind::ToolCall)
-            && matches!(live_cell.body().trim(), "" | "running")
+        live_item.kind == TurnItemKind::ToolCall
+            && matches!(live_item.body().trim(), "" | "running")
     }
 
     fn snapshot_effects(&self) -> ActiveTurnEffects {
@@ -359,7 +422,7 @@ impl ActiveTurnState {
 
     fn snapshot_effects_with_replay(&self, replay_cells: Vec<HistoryCell>) -> ActiveTurnEffects {
         ActiveTurnEffects {
-            active_cell: self.live_cell.clone(),
+            active_cell: self.live_item.as_ref().map(ActiveItemView::to_cell),
             last_copyable_output: self.last_copyable_output.clone(),
             replay_cells,
         }
@@ -372,4 +435,25 @@ fn copyable_output(item: &TranscriptItem) -> Option<String> {
     } else {
         None
     }
+}
+
+fn turn_item_kind(item: &TranscriptItem) -> TurnItemKind {
+    match item {
+        TranscriptItem::SystemMessage { .. } => TurnItemKind::SystemNote,
+        TranscriptItem::UserMessage { .. } => TurnItemKind::UserMessage,
+        TranscriptItem::AgentMessage { .. } => TurnItemKind::AssistantMessage,
+        TranscriptItem::Reasoning { .. } => TurnItemKind::Reasoning,
+        TranscriptItem::CommandExecution { .. } => TurnItemKind::CommandExecution,
+        TranscriptItem::FileChange { .. } => TurnItemKind::FileChange,
+        TranscriptItem::ToolResult { .. } => TurnItemKind::ToolResult,
+    }
+}
+
+fn should_keep_completed_item_live(item: &TranscriptItem) -> bool {
+    matches!(
+        item,
+        TranscriptItem::CommandExecution { .. }
+            | TranscriptItem::FileChange { .. }
+            | TranscriptItem::ToolResult { .. }
+    )
 }

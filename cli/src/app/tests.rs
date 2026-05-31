@@ -261,7 +261,7 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
         "turn-1".to_string(),
         "c1".to_string(),
         TurnItemKind::CommandExecution,
-        Some("Run command".to_string()),
+        Some("rg *".to_string()),
         false,
     );
     owner.append_output_delta(
@@ -278,10 +278,7 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
         .collect::<Vec<_>>();
 
     assert_eq!(visible.len(), 1);
-    assert!(
-        visible[0].contains("rg *") || visible[0].contains("inspect command"),
-        "visible: {visible:?}"
-    );
+    assert_eq!(visible, vec!["rg *"]);
 
     owner.complete_item(
         "turn-1".to_string(),
@@ -334,7 +331,7 @@ fn completing_older_item_does_not_flush_current_live_item() {
         "turn-1".to_string(),
         "c1".to_string(),
         TurnItemKind::CommandExecution,
-        Some("Run command".to_string()),
+        Some("rg esc".to_string()),
         false,
     );
     owner.append_output_delta(
@@ -357,10 +354,7 @@ fn completing_older_item_does_not_flush_current_live_item() {
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>();
     assert_eq!(visible.len(), 1);
-    assert!(
-        visible[0].contains("rg esc") || visible[0].contains("inspect command"),
-        "visible: {visible:?}"
-    );
+    assert_eq!(visible, vec!["rg esc"]);
 }
 
 #[test]
@@ -406,6 +400,7 @@ fn runtime_non_agent_cells_do_not_become_stream_continuations() {
         command("c1", "rg cli"),
         false,
     );
+    owner.complete_turn("turn-1".to_string(), false);
 
     let cells = owner
         .pending_history_cells()

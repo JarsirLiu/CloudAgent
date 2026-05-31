@@ -368,6 +368,7 @@ pub enum StructuredToolResult {
 #[serde(rename_all = "snake_case")]
 pub enum SearchWorkspaceOperation {
     Search,
+    Refine,
     Close,
 }
 

@@ -8,18 +8,14 @@ data/logs/*
 data/sessions/*
 data/conversations/*
 data/ui-settings.json
-data/platform/*.json
-data/platforms/*.db
-data/platforms/*.sqlite*
-data/platforms/control.json
-!data/**/.gitkeep
+data/platform/*
+data/platforms/*
 cli/data/state/*
 cli/data/cache/*
 cli/data/logs/*
 cli/data/sessions/*
 cli/data/conversations/*
 cli/data/ui-settings.json
-!cli/data/**/.gitkeep
 
 # Local config and secrets
 configs/agent.toml

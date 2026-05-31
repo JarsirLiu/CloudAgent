@@ -15,7 +15,7 @@ mod tests {
     use crate::registry::shared::{
         LocalTool, LocalToolInvocation, LocalToolPayload, LocalToolSource,
     };
-    use agent_core::{SearchWorkspaceMode, StructuredToolResult};
+    use agent_core::{SearchWorkspaceMode, SearchWorkspaceOperation, StructuredToolResult};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::fs;
@@ -459,6 +459,74 @@ mod tests {
             .await
             .expect("close search session");
         assert!(closed.content.contains("Closed search session"));
+    }
+
+    #[tokio::test]
+    async fn search_workspace_empty_session_id_starts_fresh_search() {
+        let base = test_workspace("search_workspace_empty_session_id_starts_fresh_search");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "fn render_active_cell() {}\n")
+            .await
+            .expect("write file");
+
+        let tool = SearchWorkspaceLocalTool::new();
+        let ctx = tool_context(&base);
+        let output = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "operation": "search",
+                    "session_id": "",
+                    "mode": "text",
+                    "query": "render_active",
+                    "path_scope": "src",
+                    "max_results": 10
+                })),
+                &ctx,
+            )
+            .await
+            .expect("empty session id should not refine");
+
+        assert!(matches!(
+            output.structured.as_ref(),
+            Some(StructuredToolResult::SearchWorkspace {
+                session_id,
+                operation: SearchWorkspaceOperation::Search,
+                query,
+                ..
+            }) if session_id == "search:test:1" && query == "render_active"
+        ));
+    }
+
+    #[tokio::test]
+    async fn search_workspace_refine_requires_runtime_session_id() {
+        let base = test_workspace("search_workspace_refine_requires_runtime_session_id");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "fn render_active_cell() {}\n")
+            .await
+            .expect("write file");
+
+        let tool = SearchWorkspaceLocalTool::new();
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "operation": "refine",
+                    "session_id": "search:test:99",
+                    "query": "render_active"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("refine should require a known runtime session");
+
+        assert!(
+            err.to_string()
+                .contains("search session `search:test:99` was not found")
+        );
     }
 
     #[tokio::test]

@@ -43,13 +43,13 @@ impl SearchWorkspaceTool {
             ToolSpec {
                 name: "search_workspace".to_string(),
                 identity: ToolIdentity::built_in("search_workspace"),
-                description: "Search repository files or text through one structured entry point. Use mode=`files` for likely path matches and mode=`text` for symbol, string, or UI wording matches. Treat the first search as a coverage pass across multiple plausible files, then reuse `session_id` to refine instead of restarting from scratch. The goal is to make the next 1-3 `read_file` calls obvious.".to_string(),
+                description: "Search repository files or text through one structured entry point. Use operation=`search` to start a fresh runtime-managed search session, operation=`refine` with a returned session_id to narrow an existing search, and operation=`close` when done. Use mode=`files` for likely path matches and mode=`text` for symbol, string, or UI wording matches. Treat the first search as a coverage pass across multiple plausible files. The goal is to make the next 1-3 `read_file` calls obvious.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "operation": {
                             "type": "string",
-                            "enum": ["search", "close"]
+                            "enum": ["search", "refine", "close"]
                         },
                         "session_id": { "type": "string" },
                         "mode": {
@@ -88,6 +88,26 @@ impl SearchMode {
             Some("files") => Some(Self::Files),
             Some("text") => Some(Self::Text),
             _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SearchOperation {
+    Search,
+    Refine,
+    Close,
+}
+
+impl SearchOperation {
+    fn parse(value: Option<&str>, has_session_id: bool) -> Result<Self> {
+        match value {
+            Some("search") => Ok(Self::Search),
+            Some("refine") => Ok(Self::Refine),
+            Some("close") => Ok(Self::Close),
+            Some(other) => bail!("unsupported search operation `{other}`"),
+            None if has_session_id => Ok(Self::Refine),
+            None => Ok(Self::Search),
         }
     }
 }
@@ -178,9 +198,11 @@ impl LocalTool for SearchWorkspaceLocalTool {
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
         let args: SearchWorkspaceArgs = invocation.payload.parse_arguments()?;
-        if matches!(args.operation.as_deref(), Some("close")) {
-            let session_id = args
-                .session_id
+        let session_id_arg = normalize_session_id(args.session_id.as_deref()).map(str::to_string);
+        let operation =
+            SearchOperation::parse(args.operation.as_deref(), session_id_arg.is_some())?;
+        if operation == SearchOperation::Close {
+            let session_id = session_id_arg
                 .as_deref()
                 .ok_or_else(|| anyhow!("`session_id` is required when operation=`close`"))?;
             let removed = self.sessions.remove(session_id).await;
@@ -222,7 +244,9 @@ impl LocalTool for SearchWorkspaceLocalTool {
             });
         }
 
-        let mut resolved = self.resolve_request(args, &ctx.conversation_id).await?;
+        let mut resolved = self
+            .resolve_request(args, operation, session_id_arg, &ctx.conversation_id)
+            .await?;
         let session_id = resolved.session_id.clone();
         let content = match resolved.mode {
             SearchMode::Files => {
@@ -282,7 +306,11 @@ impl LocalTool for SearchWorkspaceLocalTool {
             content,
             structured: Some(StructuredToolResult::SearchWorkspace {
                 session_id,
-                operation: SearchWorkspaceOperation::Search,
+                operation: match resolved.operation {
+                    SearchOperation::Search => SearchWorkspaceOperation::Search,
+                    SearchOperation::Refine => SearchWorkspaceOperation::Refine,
+                    SearchOperation::Close => SearchWorkspaceOperation::Close,
+                },
                 mode: match resolved.mode {
                     SearchMode::Files => SearchWorkspaceMode::Files,
                     SearchMode::Text => SearchWorkspaceMode::Text,
@@ -305,6 +333,7 @@ impl LocalTool for SearchWorkspaceLocalTool {
 }
 
 struct ResolvedSearchRequest {
+    operation: SearchOperation,
     session_id: String,
     mode: SearchMode,
     query: String,
@@ -324,9 +353,14 @@ impl SearchWorkspaceLocalTool {
     async fn resolve_request(
         &self,
         args: SearchWorkspaceArgs,
+        operation: SearchOperation,
+        session_id_arg: Option<String>,
         conversation_id: &str,
     ) -> Result<ResolvedSearchRequest> {
-        let existing = if let Some(session_id) = args.session_id.as_deref() {
+        let existing = if operation == SearchOperation::Refine {
+            let session_id = session_id_arg
+                .as_deref()
+                .ok_or_else(|| anyhow!("`session_id` is required when operation=`refine`"))?;
             self.sessions
                 .get(session_id)
                 .await
@@ -354,11 +388,16 @@ impl SearchWorkspaceLocalTool {
         let context_lines = args.context_lines.unwrap_or(existing.context_lines).min(8);
         let max_results = args.max_results.unwrap_or(100).clamp(1, 500);
         let offset = args.offset.unwrap_or(0);
-        let session_id = args
-            .session_id
-            .unwrap_or_else(|| self.sessions.allocate_id(conversation_id));
+        let session_id = match operation {
+            SearchOperation::Search => self.sessions.allocate_id(conversation_id),
+            SearchOperation::Refine => session_id_arg
+                .expect("refine requests require a normalized session id")
+                .to_string(),
+            SearchOperation::Close => unreachable!("close requests return before resolution"),
+        };
 
         Ok(ResolvedSearchRequest {
+            operation,
             session_id,
             mode,
             query,
@@ -393,6 +432,10 @@ fn resolve_query(
         bail!("a non-empty search query is required");
     }
     Ok(raw)
+}
+
+fn normalize_session_id(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 struct FileSearchResult {
