@@ -134,6 +134,7 @@ where
 
     pub(crate) fn draw(&mut self, render_callback: impl FnOnce(&mut Frame)) -> io::Result<()> {
         self.autoresize()?;
+        self.current_buffer_mut().reset();
         let mut frame = self.get_frame();
         render_callback(&mut frame);
         let cursor_position = frame.cursor_position;
