@@ -47,7 +47,10 @@ pub use projection::{
     tool_events_from_turn_events, transcript_item_from_response_item,
     transcript_items_from_response_items, transcript_items_from_rollout_items,
 };
-pub use rollout::RolloutItem;
+pub use rollout::{
+    RolloutItem,
+    policy::{RolloutPersistenceMode, persisted_rollout_item, persisted_rollout_items},
+};
 pub use skill::{
     SkillCatalog, SkillDependencies, SkillDocument, SkillInvocationMode, SkillMetadata,
     SkillRuntime, SkillScaffoldOutcome, SkillScaffoldSpec, SkillScope, SkillValidationReport,

@@ -62,6 +62,8 @@ struct ExecCommandArgs {
     #[serde(default)]
     stdin: Option<String>,
     #[serde(default)]
+    close_stdin: Option<bool>,
+    #[serde(default)]
     start_new_session: Option<bool>,
 }
 
@@ -78,7 +80,9 @@ fn exec_command_requirement(
     };
 
     let command = args.command.as_deref().unwrap_or("").trim();
-    if args.session_id.is_some() && args.stdin.as_deref().is_some() {
+    let writes_to_session = args.stdin.as_deref().is_some_and(|value| !value.is_empty())
+        || args.close_stdin.unwrap_or(false);
+    if args.session_id.is_some() && writes_to_session {
         return ApprovalRequirement::required(
             "Interactive command session writes require approval.",
         );
@@ -339,4 +343,75 @@ fn is_dangerous_command(command: &str) -> bool {
     dangerous_markers
         .iter()
         .any(|marker| command.contains(marker))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_core::ToolIdentity;
+    use serde_json::json;
+    use std::path::Path;
+
+    fn exec_call(arguments: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "call-1".to_string(),
+            name: "exec_command".to_string(),
+            identity: ToolIdentity::built_in("exec_command"),
+            arguments,
+        }
+    }
+
+    fn approval_for(arguments: serde_json::Value) -> ApprovalRequirement {
+        exec_command_requirement(
+            &exec_call(arguments),
+            Path::new("."),
+            &PermissionProfile::WorkspaceWrite,
+            &ApprovalPolicy::OnRequest,
+        )
+    }
+
+    #[test]
+    fn empty_stdin_does_not_count_as_interactive_session_write() {
+        let requirement = approval_for(json!({
+            "command": "Get-ChildItem -Force -LiteralPath .\\data",
+            "session_id": "exec:test:1",
+            "stdin": "",
+            "workdir": "."
+        }));
+
+        assert_ne!(
+            requirement.reason.as_deref(),
+            Some("Interactive command session writes require approval.")
+        );
+    }
+
+    #[test]
+    fn non_empty_stdin_requires_interactive_session_write_approval() {
+        let requirement = approval_for(json!({
+            "command": "powershell",
+            "session_id": "exec:test:1",
+            "stdin": "exit\n",
+            "workdir": "."
+        }));
+
+        assert_eq!(
+            requirement.reason.as_deref(),
+            Some("Interactive command session writes require approval.")
+        );
+    }
+
+    #[test]
+    fn close_stdin_requires_interactive_session_write_approval() {
+        let requirement = approval_for(json!({
+            "command": "powershell",
+            "session_id": "exec:test:1",
+            "close_stdin": true,
+            "workdir": "."
+        }));
+
+        assert_eq!(
+            requirement.reason.as_deref(),
+            Some("Interactive command session writes require approval.")
+        );
+    }
 }

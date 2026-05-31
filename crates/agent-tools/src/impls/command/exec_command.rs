@@ -53,15 +53,42 @@ impl ExecCommandTool {
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "command": { "type": "string" },
-                        "workdir": { "type": "string" },
-                        "timeout_ms": { "type": "integer", "minimum": 1000 },
-                        "start_new_session": { "type": "boolean" },
-                        "session_id": { "type": "string" },
-                        "stdin": { "type": "string" },
-                        "close_stdin": { "type": "boolean" },
-                        "wait_for_exit": { "type": "boolean" }
-                    }
+                        "command": {
+                            "type": "string",
+                            "description": "One-shot shell command to execute. Omit session fields for commands that should finish within timeout_ms."
+                        },
+                        "workdir": {
+                            "type": "string",
+                            "description": "Working directory for the command. Prefer this over inline cd."
+                        },
+                        "timeout_ms": {
+                            "type": "integer",
+                            "minimum": 1000,
+                            "description": "Maximum time to wait for this invocation."
+                        },
+                        "start_new_session": {
+                            "type": "boolean",
+                            "description": "Only set true for long-running or interactive commands that must keep running after this invocation. Do not set for normal listing, search, build, test, or git commands."
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Only reuse an exact session_id returned by a previous exec_command result. Never invent a session_id, and omit this when starting a new command."
+                        },
+                        "stdin": {
+                            "type": "string",
+                            "description": "Input to write to an existing session_id. Omit unless resuming a previously returned session."
+                        },
+                        "close_stdin": {
+                            "type": "boolean",
+                            "description": "Close stdin for an existing session_id. Omit unless resuming a previously returned session."
+                        },
+                        "wait_for_exit": {
+                            "type": "boolean",
+                            "description": "When used with an existing or newly started session, wait for the process to exit before returning."
+                        }
+                    },
+                    "required": ["command"],
+                    "additionalProperties": false
                 }),
                 mutating: true,
                 execution_policy: ToolExecutionPolicy::Sequential,

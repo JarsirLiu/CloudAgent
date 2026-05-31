@@ -5,6 +5,7 @@ use agent_core::host::ConversationStoreBackend;
 use agent_core::projection::conversation_history_from_rollout_items;
 use agent_core::rollout::RolloutItem;
 use agent_core::tool::ApprovalGrantKey;
+use agent_core::{RolloutPersistenceMode, persisted_rollout_items};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -174,6 +175,7 @@ impl JsonConversationStore {
         conversation_id: &str,
         items: &[RolloutItem],
     ) -> Result<()> {
+        let items = persisted_rollout_items(items, RolloutPersistenceMode::Limited);
         if items.is_empty() {
             return Ok(());
         }
@@ -186,7 +188,7 @@ impl JsonConversationStore {
             .open(&path)
             .await
             .with_context(|| format!("failed to open {}", path.display()))?;
-        for item in items {
+        for item in &items {
             let line = serde_json::to_string(item)?;
             file.write_all(line.as_bytes())
                 .await
@@ -568,7 +570,7 @@ fn should_hide_ephemeral_draft_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::ApprovalGrantKey;
+    use agent_core::{ApprovalGrantKey, TurnItemDeltaKind};
     use serde_json::json;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -621,6 +623,35 @@ mod tests {
             .await
             .expect("load events");
         assert_eq!(events.len(), 80);
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn direct_append_events_filters_streaming_deltas() {
+        let root = unique_temp_path("cloudagent-storage-policy");
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "streaming-deltas";
+
+        store
+            .append_event(
+                conversation_id,
+                &EventMsg::ItemDelta {
+                    turn_id: "turn-1".to_string(),
+                    item_id: "assistant:1".to_string(),
+                    call_id: None,
+                    kind: TurnItemDeltaKind::Text,
+                    segment_index: None,
+                    delta: "hello".to_string(),
+                },
+            )
+            .await
+            .expect("append filtered delta");
+
+        assert!(
+            !store.rollout_path(conversation_id).exists(),
+            "filtered streaming deltas should not materialize rollout files"
+        );
 
         let _ = fs::remove_dir_all(root).await;
     }

@@ -1,4 +1,6 @@
-use agent_core::{RolloutItem, RolloutRecorderBackend};
+use agent_core::{
+    RolloutItem, RolloutPersistenceMode, RolloutRecorderBackend, persisted_rollout_items,
+};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot};
@@ -54,13 +56,14 @@ impl RolloutRecorder {
 #[async_trait]
 impl RolloutRecorderBackend for RolloutRecorder {
     fn record_items(&self, conversation_id: &str, items: &[RolloutItem]) -> Result<()> {
+        let items = persisted_rollout_items(items, RolloutPersistenceMode::Limited);
         if items.is_empty() {
             return Ok(());
         }
         self.tx
             .send(RolloutCmd::AddItems {
                 conversation_id: conversation_id.to_string(),
-                items: items.to_vec(),
+                items,
             })
             .map_err(|err| anyhow!("failed to queue rollout items: {err}"))
     }
