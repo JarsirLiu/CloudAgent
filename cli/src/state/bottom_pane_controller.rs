@@ -284,12 +284,10 @@ impl BottomPaneController {
             }
             FrontendMode::Idle => None,
         };
-        let runtime_hint = self.runtime.turn_started_at.map(|started| {
-            format!(
-                "{} • esc to interrupt",
-                fmt_elapsed_compact(started.elapsed().as_secs())
-            )
-        });
+        let runtime_hint = self
+            .runtime
+            .turn_started_at
+            .map(|started| fmt_elapsed_compact(started.elapsed().as_secs()));
 
         let mut parts = Vec::new();
         let hint_meta = format!(

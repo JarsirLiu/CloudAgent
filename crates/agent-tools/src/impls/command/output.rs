@@ -1,32 +1,33 @@
 use crate::impls::result_format::{finalize, push_fact, push_section};
 use crate::registry::shared::decode_utf8_chunk;
+use agent_core::output_truncation::{
+    DEFAULT_MAX_OUTPUT_TOKENS, approximate_token_count, truncate_text_to_token_budget,
+};
 use agent_core::{CommandExecutionStatus, ToolOutputStream};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::Mutex;
 
-pub(super) const MAX_CAPTURE_CHARS_PER_STREAM: usize = 24_000;
-pub(super) const MAX_LIVE_OUTPUT_CHARS_PER_STREAM: usize = 12_000;
-const MAX_RESULT_SECTION_CHARS: usize = 6_000;
-const OUTPUT_TRUNCATION_NOTICE: &str = "\n[output truncated; narrow the command or use `search_workspace` and follow with `read_file` for repository discovery]\n";
+const CAPTURE_TOKEN_HEADROOM_MULTIPLIER: usize = 2;
+pub(super) const DEFAULT_LIVE_OUTPUT_TOKENS_PER_STREAM: usize = 4_000;
+const OUTPUT_TRUNCATION_NOTICE: &str = "\n[output truncated; narrow the command, tighten the `rg` pattern, or read a smaller file slice]\n";
 
 pub(super) struct CommandResultView<'a> {
-    pub(super) kind: &'a str,
     pub(super) command: &'a str,
     pub(super) current_directory: &'a str,
     pub(super) session_id: Option<&'a str>,
     pub(super) status: CommandExecutionStatus,
     pub(super) exit_code: Option<i32>,
-    pub(super) success: Option<bool>,
-    pub(super) stdout: &'a str,
-    pub(super) stderr: &'a str,
+    pub(super) duration_ms: u64,
+    pub(super) output: &'a str,
+    pub(super) max_output_tokens: usize,
+    pub(super) original_token_count: usize,
 }
 
 pub(super) fn format_exec_result_content(view: CommandResultView<'_>) -> String {
-    let summary = render_command_summary(view.command, &view.status, view.success, view.exit_code);
+    let summary = render_command_summary(view.command, &view.status, view.exit_code);
     let mut lines = Vec::new();
-    push_fact(&mut lines, "Kind", view.kind.to_string());
     push_fact(&mut lines, "Command", view.command.to_string());
     push_fact(
         &mut lines,
@@ -44,33 +45,29 @@ pub(super) fn format_exec_result_content(view: CommandResultView<'_>) -> String 
     if let Some(exit_code) = view.exit_code {
         push_fact(&mut lines, "Exit code", exit_code.to_string());
     }
-    if let Some(success) = view.success {
-        push_fact(&mut lines, "Success", success.to_string());
+    push_fact(
+        &mut lines,
+        "Wall time seconds",
+        format!("{:.3}", view.duration_ms as f64 / 1000.0),
+    );
+    if view.original_token_count > view.max_output_tokens {
+        push_fact(
+            &mut lines,
+            "Original token count",
+            view.original_token_count.to_string(),
+        );
     }
     push_section(
         &mut lines,
-        "Stdout",
-        if view.stdout.is_empty() {
+        "Output",
+        if view.output.is_empty() {
             "(empty)".to_string()
         } else {
-            compact_result_section(view.stdout)
+            view.output.to_string()
         },
     );
-    push_section(
-        &mut lines,
-        "Stderr",
-        if view.stderr.is_empty() {
-            "(empty)".to_string()
-        } else {
-            compact_result_section(view.stderr)
-        },
-    );
-    let next_step = if view.stdout.contains("output truncated")
-        || view.stderr.contains("output truncated")
-    {
-        Some(
-            "narrow the command or use `search_workspace` followed by `read_file` for repository discovery",
-        )
+    let next_step = if view.original_token_count > view.max_output_tokens {
+        Some("narrow the command, tighten the `rg` pattern, or read a smaller file slice")
     } else if matches!(view.status, CommandExecutionStatus::InProgress) {
         Some("reuse the returned `session_id` to send more stdin or poll for additional output")
     } else {
@@ -79,25 +76,23 @@ pub(super) fn format_exec_result_content(view: CommandResultView<'_>) -> String 
     finalize(summary, lines, next_step)
 }
 
-fn compact_result_section(text: &str) -> String {
-    if text.chars().count() <= MAX_RESULT_SECTION_CHARS {
-        return text.to_string();
-    }
+pub(super) fn resolve_max_output_tokens(value: Option<usize>) -> usize {
+    value.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS).max(1)
+}
 
-    let head_chars = MAX_RESULT_SECTION_CHARS * 2 / 3;
-    let tail_chars = MAX_RESULT_SECTION_CHARS.saturating_sub(head_chars);
-    let head = text.chars().take(head_chars).collect::<String>();
-    let tail = text
-        .chars()
-        .rev()
-        .take(tail_chars)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
-    format!(
-        "{head}\n[output section compacted; kept head and tail]\n{tail}{OUTPUT_TRUNCATION_NOTICE}"
-    )
+pub(super) fn effective_max_output_tokens(requested: Option<usize>, policy_limit: usize) -> usize {
+    resolve_max_output_tokens(requested).min(policy_limit.max(1))
+}
+
+pub(super) fn capture_token_budget(max_output_tokens: usize) -> usize {
+    max_output_tokens
+        .saturating_mul(CAPTURE_TOKEN_HEADROOM_MULTIPLIER)
+        .max(1)
+}
+
+pub(super) fn truncate_output_to_tokens(text: &str, max_tokens: usize) -> (String, usize) {
+    let truncated = truncate_text_to_token_budget(text, max_tokens, Some(OUTPUT_TRUNCATION_NOTICE));
+    (truncated.text, truncated.original_token_count)
 }
 
 pub(super) async fn pump_exec_reader<R>(
@@ -105,8 +100,8 @@ pub(super) async fn pump_exec_reader<R>(
     stream: ToolOutputStream,
     buffer: Arc<Mutex<String>>,
     output_tx: Option<tokio::sync::mpsc::UnboundedSender<agent_core::ToolOutputDelta>>,
-    capture_limit_chars: usize,
-    live_limit_chars: usize,
+    capture_limit_tokens: usize,
+    live_limit_tokens: usize,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -115,7 +110,7 @@ where
     let mut pending_utf8 = Vec::new();
     let mut capture_truncated = false;
     let mut live_truncated = false;
-    let mut live_chars_sent = 0usize;
+    let mut live_tokens_sent = 0usize;
     loop {
         let read = reader.read(&mut raw).await?;
         if read == 0 {
@@ -127,14 +122,14 @@ where
             append_capped_chunk(
                 &mut *buffer.lock().await,
                 &chunk,
-                capture_limit_chars,
+                capture_limit_tokens,
                 &mut capture_truncated,
             );
             if let Some(output_tx) = &output_tx
                 && let Some(delta) = take_live_chunk(
                     &chunk,
-                    live_limit_chars,
-                    &mut live_chars_sent,
+                    live_limit_tokens,
+                    &mut live_tokens_sent,
                     &mut live_truncated,
                 )
             {
@@ -150,14 +145,14 @@ where
         append_capped_chunk(
             &mut *buffer.lock().await,
             &tail,
-            capture_limit_chars,
+            capture_limit_tokens,
             &mut capture_truncated,
         );
         if let Some(output_tx) = &output_tx
             && let Some(delta) = take_live_chunk(
                 &tail,
-                live_limit_chars,
-                &mut live_chars_sent,
+                live_limit_tokens,
+                &mut live_tokens_sent,
                 &mut live_truncated,
             )
         {
@@ -173,7 +168,6 @@ where
 fn render_command_summary(
     command: &str,
     status: &CommandExecutionStatus,
-    success: Option<bool>,
     exit_code: Option<i32>,
 ) -> String {
     match status {
@@ -190,11 +184,7 @@ fn render_command_summary(
             let exit_fragment = exit_code
                 .map(|value| format!(" (exit code {value})"))
                 .unwrap_or_default();
-            let state = if success == Some(false) {
-                "failed"
-            } else {
-                "did not complete successfully"
-            };
+            let state = "failed";
             format!("Command {state}{exit_fragment}: {command}")
         }
         CommandExecutionStatus::Declined => {
@@ -212,49 +202,56 @@ fn render_command_status(status: &CommandExecutionStatus) -> &'static str {
     }
 }
 
-fn append_capped_chunk(buffer: &mut String, chunk: &str, limit_chars: usize, truncated: &mut bool) {
+fn append_capped_chunk(
+    buffer: &mut String,
+    chunk: &str,
+    limit_tokens: usize,
+    truncated: &mut bool,
+) {
     if *truncated {
         return;
     }
-    let current_chars = buffer.chars().count();
-    if current_chars >= limit_chars {
+    let current_tokens = approximate_token_count(buffer);
+    if current_tokens >= limit_tokens {
         buffer.push_str(OUTPUT_TRUNCATION_NOTICE);
         *truncated = true;
         return;
     }
-    let remaining = limit_chars.saturating_sub(current_chars);
-    let chunk_chars = chunk.chars().count();
-    if chunk_chars <= remaining {
+    let remaining_tokens = limit_tokens.saturating_sub(current_tokens);
+    let chunk_tokens = approximate_token_count(chunk);
+    if chunk_tokens <= remaining_tokens {
         buffer.push_str(chunk);
         return;
     }
-    buffer.push_str(&chunk.chars().take(remaining).collect::<String>());
+    let remaining_chars = remaining_tokens.saturating_mul(3).max(1);
+    buffer.push_str(&chunk.chars().take(remaining_chars).collect::<String>());
     buffer.push_str(OUTPUT_TRUNCATION_NOTICE);
     *truncated = true;
 }
 
 fn take_live_chunk(
     chunk: &str,
-    limit_chars: usize,
-    live_chars_sent: &mut usize,
+    limit_tokens: usize,
+    live_tokens_sent: &mut usize,
     truncated: &mut bool,
 ) -> Option<String> {
     if *truncated {
         return None;
     }
-    if *live_chars_sent >= limit_chars {
+    if *live_tokens_sent >= limit_tokens {
         *truncated = true;
         return Some(OUTPUT_TRUNCATION_NOTICE.to_string());
     }
-    let remaining = limit_chars.saturating_sub(*live_chars_sent);
-    let chunk_chars = chunk.chars().count();
-    if chunk_chars <= remaining {
-        *live_chars_sent += chunk_chars;
+    let remaining_tokens = limit_tokens.saturating_sub(*live_tokens_sent);
+    let chunk_tokens = approximate_token_count(chunk);
+    if chunk_tokens <= remaining_tokens {
+        *live_tokens_sent += chunk_tokens;
         return Some(chunk.to_string());
     }
-    let mut rendered = chunk.chars().take(remaining).collect::<String>();
+    let remaining_chars = remaining_tokens.saturating_mul(3).max(1);
+    let mut rendered = chunk.chars().take(remaining_chars).collect::<String>();
     rendered.push_str(OUTPUT_TRUNCATION_NOTICE);
-    *live_chars_sent = limit_chars;
+    *live_tokens_sent = limit_tokens;
     *truncated = true;
     Some(rendered)
 }
@@ -262,7 +259,8 @@ fn take_live_chunk(
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandResultView, append_capped_chunk, compact_result_section, format_exec_result_content,
+        CommandResultView, append_capped_chunk, format_exec_result_content,
+        truncate_output_to_tokens,
     };
     use agent_core::CommandExecutionStatus;
 
@@ -270,35 +268,37 @@ mod tests {
     fn capped_output_appends_notice() {
         let mut buffer = String::new();
         let mut truncated = false;
-        append_capped_chunk(&mut buffer, "abcdef", 4, &mut truncated);
+        append_capped_chunk(&mut buffer, "abcdef", 1, &mut truncated);
         assert!(truncated);
         assert!(buffer.contains("output truncated"));
     }
 
     #[test]
-    fn result_content_compacts_large_sections() {
-        let large = "x".repeat(8_000);
-        let compacted = compact_result_section(&large);
+    fn result_content_truncates_to_token_budget() {
+        let large = "x".repeat(30_000);
+        let (compacted, original_token_count) = truncate_output_to_tokens(&large, 1_000);
         assert!(compacted.len() < large.len());
-        assert!(compacted.contains("output section compacted"));
+        assert!(compacted.contains("tokens truncated"));
+        assert!(original_token_count > 1_000);
     }
 
     #[test]
     fn command_result_content_does_not_embed_full_large_output() {
         let large = "x".repeat(8_000);
+        let (output, original_token_count) = truncate_output_to_tokens(&large, 1_000);
         let content = format_exec_result_content(CommandResultView {
-            kind: "action",
             command: "echo many",
             current_directory: ".",
             session_id: None,
             status: CommandExecutionStatus::Completed,
             exit_code: Some(0),
-            success: Some(true),
-            stdout: &large,
-            stderr: "",
+            duration_ms: 1,
+            output: &output,
+            max_output_tokens: 1_000,
+            original_token_count,
         });
 
         assert!(content.len() < large.len());
-        assert!(content.contains("output section compacted"));
+        assert!(content.contains("Original token count"));
     }
 }

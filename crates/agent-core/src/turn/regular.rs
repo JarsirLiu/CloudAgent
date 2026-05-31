@@ -141,6 +141,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 tool_specs.clone(),
                 settings.llm_temperature,
             );
+        candidate_request.tool_output_token_limit = settings.tool_output_token_limit;
         candidate_request.messages = context_facade.apply_pre_llm_filter(
             candidate_request.messages,
             filter_policy,
@@ -254,6 +255,8 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 settings.llm_temperature,
             )
             .model_request;
+        let mut model_request = model_request;
+        model_request.tool_output_token_limit = settings.tool_output_token_limit;
         let final_budget = context_facade.check_final_model_request_budget(
             &model_request,
             settings.model_context_window as usize,
@@ -995,6 +998,7 @@ mod tests {
                     post_compact_max_tokens_per_skill: 5_000,
                     post_compact_max_tokens_per_mcp: 3_000,
                     context_budget_safety_buffer_tokens: 8_000,
+                    tool_output_token_limit: crate::ModelRequest::default_tool_output_token_limit(),
                     enable_skill_bucket: false,
                     enable_mcp_bucket: false,
                 },

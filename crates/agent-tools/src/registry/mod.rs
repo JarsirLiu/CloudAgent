@@ -5,6 +5,7 @@ mod resolution;
 pub(crate) mod shared;
 
 use crate::spec::ToolDescriptor;
+use agent_core::output_truncation::truncate_text_to_token_budget;
 use agent_core::{
     ApprovalPolicy, ApprovalRequirement, PermissionProfile, RegularTurnToolExposure,
     StructuredToolResult, ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext,
@@ -28,6 +29,8 @@ use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToolRegistryOptions {
+    pub search_workspace_enabled: bool,
+    pub read_file_enabled: bool,
     pub edit_file_enabled: bool,
     pub apply_patch_enabled: bool,
 }
@@ -35,6 +38,8 @@ pub struct ToolRegistryOptions {
 impl Default for ToolRegistryOptions {
     fn default() -> Self {
         Self {
+            search_workspace_enabled: false,
+            read_file_enabled: false,
             edit_file_enabled: false,
             apply_patch_enabled: true,
         }
@@ -290,6 +295,18 @@ mod tests {
                 .all(|spec| spec.name != "edit_file")
         );
         assert!(
+            read_only
+                .default_tools
+                .iter()
+                .all(|spec| spec.name != "search_workspace")
+        );
+        assert!(
+            read_only
+                .default_tools
+                .iter()
+                .all(|spec| spec.name != "read_file")
+        );
+        assert!(
             workspace_write
                 .default_tools
                 .iter()
@@ -342,12 +359,12 @@ mod tests {
 
         assert_eq!(
             ordered_names,
-            vec!["search_workspace", "read_file", "exec_command"]
+            vec!["exec_command", "tool_search", "write_stdin"]
         );
     }
 
     #[test]
-    fn workspace_write_keeps_repo_exploration_ahead_of_editing() {
+    fn workspace_write_keeps_apply_patch_ahead_of_command_execution() {
         let registry = ToolRegistry::new(4_096);
         let resolved = registry
             .resolve_regular_turn_tool_exposure(&PermissionProfile::WorkspaceWrite)
@@ -361,13 +378,7 @@ mod tests {
 
         assert_eq!(
             ordered_names,
-            vec![
-                "search_workspace",
-                "read_file",
-                "apply_patch",
-                "exec_command",
-                "tool_search",
-            ]
+            vec!["apply_patch", "exec_command", "tool_search", "write_stdin"]
         );
     }
 
@@ -376,6 +387,8 @@ mod tests {
         let registry = ToolRegistry::with_options(
             4_096,
             ToolRegistryOptions {
+                search_workspace_enabled: false,
+                read_file_enabled: false,
                 edit_file_enabled: true,
                 apply_patch_enabled: false,
             },
@@ -390,6 +403,28 @@ mod tests {
 
         assert!(names.contains(&"edit_file"));
         assert!(!names.contains(&"apply_patch"));
+    }
+
+    #[test]
+    fn legacy_repo_tools_can_be_switched_on_explicitly() {
+        let registry = ToolRegistry::with_options(
+            4_096,
+            ToolRegistryOptions {
+                search_workspace_enabled: true,
+                read_file_enabled: true,
+                ..ToolRegistryOptions::default()
+            },
+        );
+        let resolved = registry
+            .resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly)
+            .default_tools;
+        let names = resolved
+            .iter()
+            .map(|spec| spec.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"search_workspace"));
+        assert!(names.contains(&"read_file"));
     }
 
     #[test]
@@ -530,7 +565,14 @@ mod tests {
 
     #[test]
     fn batch_execution_strategy_prefers_parallel_only_for_safe_batches() {
-        let registry = ToolRegistry::new(4_096);
+        let registry = ToolRegistry::with_options(
+            4_096,
+            ToolRegistryOptions {
+                search_workspace_enabled: true,
+                read_file_enabled: true,
+                ..ToolRegistryOptions::default()
+            },
+        );
         let parallel_calls = vec![
             ToolCall {
                 id: "call-1".to_string(),
@@ -629,6 +671,7 @@ mod tests {
                     conversation_store_dir: std::env::temp_dir(),
                     permission_profile: PermissionProfile::ReadOnly,
                     default_shell_timeout_ms: 5_000,
+                    max_tool_output_tokens: ToolExecutionContext::default_max_tool_output_tokens(),
                     cancellation_token: CancellationToken::new(),
                     discoverable_tools: Vec::new(),
                     output_tx: None,
@@ -674,13 +717,16 @@ impl ToolExecutor for ToolRegistry {
         };
 
         match result {
-            Ok(output) => Ok(ToolResult {
-                tool_call_id: call.id,
-                name: call.name,
-                content: output.content,
-                is_error: false,
-                structured: output.structured,
-            }),
+            Ok(output) => {
+                let content = cap_tool_result_content(&output.content, ctx.max_tool_output_tokens);
+                Ok(ToolResult {
+                    tool_call_id: call.id,
+                    name: call.name,
+                    content,
+                    is_error: false,
+                    structured: output.structured,
+                })
+            }
             Err(err) => {
                 let message = format!("Tool execution failed: {err:#}");
                 let structured = match structured_failure_result(&route.invocation) {
@@ -695,13 +741,22 @@ impl ToolExecutor for ToolRegistry {
                 Ok(ToolResult {
                     tool_call_id: call.id,
                     name: call.name,
-                    content: message,
+                    content: cap_tool_result_content(&message, ctx.max_tool_output_tokens),
                     is_error: true,
                     structured,
                 })
             }
         }
     }
+}
+
+fn cap_tool_result_content(content: &str, max_tokens: usize) -> String {
+    truncate_text_to_token_budget(
+        content,
+        max_tokens.max(1),
+        Some("\n[tool output truncated before storing result]\n"),
+    )
+    .text
 }
 
 impl ToolBackend for ToolRegistry {

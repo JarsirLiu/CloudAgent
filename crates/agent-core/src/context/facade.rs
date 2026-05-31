@@ -289,10 +289,10 @@ mod tests {
                 status: CommandExecutionStatus::Completed,
                 exit_code: Some(0),
                 success: Some(true),
-                stdout: Some("modified: a.rs\nnew file: b.rs".to_string()),
-                stderr: None,
-                aggregated_output: None,
+                output: Some("modified: a.rs\nnew file: b.rs".to_string()),
                 duration_ms: Some(1),
+                original_token_count: Some(12),
+                max_output_tokens: Some(10_000),
             }),
         }];
 
@@ -331,10 +331,10 @@ mod tests {
                 status: CommandExecutionStatus::Completed,
                 exit_code: Some(0),
                 success: Some(true),
-                stdout: Some("modified: a.rs\nnew file: b.rs".to_string()),
-                stderr: None,
-                aggregated_output: None,
+                output: Some("modified: a.rs\nnew file: b.rs".to_string()),
                 duration_ms: Some(1),
+                original_token_count: Some(12),
+                max_output_tokens: Some(10_000),
             }),
         }];
 
@@ -379,6 +379,7 @@ mod tests {
                 approval_reason: None,
             }],
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let estimated = facade.estimate_model_request_tokens(&request);
@@ -394,6 +395,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let budget = facade.check_final_model_request_budget(&request, 512, 64);

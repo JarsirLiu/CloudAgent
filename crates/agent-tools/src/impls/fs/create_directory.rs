@@ -151,6 +151,8 @@ mod tests {
             conversation_store_dir: workspace_root.to_path_buf(),
             permission_profile: agent_core::PermissionProfile::WorkspaceWrite,
             default_shell_timeout_ms: 5_000,
+            max_tool_output_tokens:
+                agent_core::ToolExecutionContext::default_max_tool_output_tokens(),
             cancellation_token: CancellationToken::new(),
             discoverable_tools: Vec::new(),
             output_tx: None,

@@ -23,26 +23,6 @@ impl CommandAccess {
     pub(crate) fn is_dangerous(self) -> bool {
         matches!(self, Self::Dangerous)
     }
-
-    pub(crate) fn summary(self, command: &str) -> &'static str {
-        if !self.is_read_only() {
-            return "action";
-        }
-
-        let normalized = normalize_command(command);
-        let Some(program) = normalized.split_whitespace().next() else {
-            return "unknown";
-        };
-
-        match program {
-            "rg" | "grep" | "findstr" | "select-string" => "search",
-            "git" if normalized.starts_with("git ls-files") => "list files",
-            "git" if normalized.starts_with("git grep") => "search",
-            "git" => "inspect",
-            "fd" => "find files",
-            _ => "inspect",
-        }
-    }
 }
 
 pub(crate) fn classify_command(command: &str) -> CommandAccess {

@@ -64,12 +64,15 @@ pub struct RuntimeConfig {
     pub post_compact_max_tokens_per_skill: usize,
     pub post_compact_max_tokens_per_mcp: usize,
     pub context_budget_safety_buffer_tokens: usize,
+    pub tool_output_token_limit: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolConfig {
     pub default_shell_timeout_ms: u64,
     pub max_read_chars: usize,
+    pub search_workspace_enabled: bool,
+    pub read_file_enabled: bool,
     pub edit_file_enabled: bool,
     pub apply_patch_enabled: bool,
     pub mcp_servers: Vec<McpServerConfig>,
@@ -149,6 +152,7 @@ struct PartialRuntimeConfig {
     post_compact_max_tokens_per_skill: Option<usize>,
     post_compact_max_tokens_per_mcp: Option<usize>,
     context_budget_safety_buffer_tokens: Option<usize>,
+    tool_output_token_limit: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -164,6 +168,8 @@ struct PartialMemoryConfig {
 struct PartialToolConfig {
     default_shell_timeout_ms: Option<u64>,
     max_read_chars: Option<usize>,
+    search_workspace_enabled: Option<bool>,
+    read_file_enabled: Option<bool>,
     edit_file_enabled: Option<bool>,
     apply_patch_enabled: Option<bool>,
     mcp_servers: Option<Vec<PartialMcpServerConfig>>,
@@ -268,6 +274,7 @@ impl AgentConfig {
                 post_compact_max_tokens_per_skill: 5_000,
                 post_compact_max_tokens_per_mcp: 3_000,
                 context_budget_safety_buffer_tokens: 8_000,
+                tool_output_token_limit: 10_000,
             },
             llm: LlmConfig {
                 base_url: "https://api.openai.com/v1".to_string(),
@@ -282,6 +289,8 @@ impl AgentConfig {
             tools: ToolConfig {
                 default_shell_timeout_ms: 120_000,
                 max_read_chars: 20_000,
+                search_workspace_enabled: false,
+                read_file_enabled: false,
                 edit_file_enabled: false,
                 apply_patch_enabled: true,
                 mcp_servers: Vec::new(),
@@ -417,6 +426,9 @@ impl AgentConfig {
             if let Some(value) = runtime.context_budget_safety_buffer_tokens {
                 self.runtime.context_budget_safety_buffer_tokens = value.max(512);
             }
+            if let Some(value) = runtime.tool_output_token_limit {
+                self.runtime.tool_output_token_limit = value.max(1);
+            }
             let trigger_tokens = ((self.runtime.model_context_window as f32)
                 * self.runtime.context_compaction_trigger_ratio)
                 as usize;
@@ -470,6 +482,12 @@ impl AgentConfig {
             }
             if let Some(value) = tools.max_read_chars {
                 self.tools.max_read_chars = value.max(1_024);
+            }
+            if let Some(value) = tools.search_workspace_enabled {
+                self.tools.search_workspace_enabled = value;
+            }
+            if let Some(value) = tools.read_file_enabled {
+                self.tools.read_file_enabled = value;
             }
             if let Some(value) = tools.edit_file_enabled {
                 self.tools.edit_file_enabled = value;
@@ -687,6 +705,11 @@ impl AgentConfig {
         {
             self.runtime.context_budget_safety_buffer_tokens = parsed.max(512);
         }
+        if let Ok(value) = env::var("CLOUDAGENT_TOOL_OUTPUT_TOKEN_LIMIT")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.tool_output_token_limit = parsed.max(1);
+        }
         if let Ok(value) = env::var("CLOUDAGENT_TERMINAL_RESIZE_REFLOW_MAX_ROWS")
             && let Ok(parsed) = value.parse::<usize>()
         {
@@ -853,10 +876,9 @@ fn default_system_prompt() -> String {
         "When multiple repository questions are independent, emit multiple tool calls in the same round instead of waiting for one result before requesting the next obvious file or search.",
         "Do not serialize obvious follow-up reads one file at a time when the likely candidate files are already clear.",
         "If a search returns weak results, broaden scope or reformulate the query with adjacent code terms instead of repeating another single-keyword probe.",
-        "Use structured repository tools for repository discovery before falling back to exec_command; reserve commands mainly for build, test, git, and runtime verification.",
-        "Prefer `search_workspace` and `read_file` for repository understanding; prefer `exec_command` mainly for validation, not for first-pass codebase discovery.",
+        "Use `exec_command` for repository discovery and file inspection. Prefer `rg` or `rg --files` for search and platform-appropriate read commands for targeted file slices.",
+        "Do not use deferred tool discovery for normal repository search or reading source files.",
         "For workspace source or configuration file edits, use `apply_patch`; do not use `exec_command` with Python, PowerShell, shell redirection, or patch commands to write workspace files.",
-        "When shell search is truly needed, prefer `rg` or `rg --files` over slower or noisier alternatives.",
         "Use platform-appropriate commands and workspace-relative paths unless absolute paths are explicitly required.",
         "Prefer safe, read-first workflows before mutating actions.",
         "Before modifying code or creating commits, align with the repository's existing style, conventions, and project workflow; do not make arbitrary edits or commits.",
@@ -938,9 +960,13 @@ mod tests {
 
         assert!(!config.tools.edit_file_enabled);
         assert!(config.tools.apply_patch_enabled);
+        assert!(!config.tools.search_workspace_enabled);
+        assert!(!config.tools.read_file_enabled);
 
         config.apply_partial(PartialAgentConfig {
             tools: Some(PartialToolConfig {
+                search_workspace_enabled: Some(true),
+                read_file_enabled: Some(true),
                 edit_file_enabled: Some(true),
                 apply_patch_enabled: Some(false),
                 ..PartialToolConfig::default()
@@ -950,6 +976,8 @@ mod tests {
 
         assert!(config.tools.edit_file_enabled);
         assert!(!config.tools.apply_patch_enabled);
+        assert!(config.tools.search_workspace_enabled);
+        assert!(config.tools.read_file_enabled);
     }
 
     #[test]

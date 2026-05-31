@@ -9,7 +9,7 @@ use adapters::git::filter_git_output;
 use adapters::install::filter_install_output;
 use adapters::rust::filter_rust_build_test_output;
 use adapters::tests::filter_test_output;
-use pipeline::{filter_failure_tail, filter_tool_output, merge_streams};
+use pipeline::{filter_failure_tail, filter_tool_output};
 
 #[derive(Clone, Debug, Default)]
 pub struct ContextInputFilterService;
@@ -77,18 +77,12 @@ fn filter_tool_output_for_item(
     }
     if let Some(StructuredToolResult::CommandExecution {
         command,
-        stdout,
-        stderr,
+        output,
         success,
         ..
     }) = structured
     {
-        return filter_command_execution_output(
-            command,
-            stdout.as_deref(),
-            stderr.as_deref(),
-            *success,
-        );
+        return filter_command_execution_output(command, output.as_deref(), *success);
     }
     filter_tool_output(content)
 }
@@ -217,14 +211,13 @@ fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult)
 
 fn filter_command_execution_output(
     command: &str,
-    stdout: Option<&str>,
-    stderr: Option<&str>,
+    output: Option<&str>,
     success: Option<bool>,
 ) -> String {
     let cmd = command.trim().to_ascii_lowercase();
-    let merged = merge_streams(stdout, stderr);
+    let merged = output.unwrap_or_default();
     if should_passthrough(&cmd) {
-        return merged;
+        return merged.to_string();
     }
     if cmd.starts_with("git ") {
         return wrap_summary("git", &filter_git_output(&cmd, &merged), &merged);
@@ -263,13 +256,8 @@ fn wrap_summary(kind: &str, filtered: &str, raw: &str) -> String {
 }
 
 #[cfg(test)]
-fn run_filter(
-    command: &str,
-    stdout: Option<&str>,
-    stderr: Option<&str>,
-    success: Option<bool>,
-) -> String {
-    filter_command_execution_output(command, stdout, stderr, success)
+fn run_filter(command: &str, output: Option<&str>, success: Option<bool>) -> String {
+    filter_command_execution_output(command, output, success)
 }
 
 #[cfg(test)]
@@ -301,10 +289,10 @@ mod tests {
             status: crate::tool::CommandExecutionStatus::Completed,
             exit_code: Some(0),
             success: Some(true),
-            stdout: Some("+++ a\n--- b\n+line\n-line\n".to_string()),
-            stderr: None,
-            aggregated_output: None,
+            output: Some("+++ a\n--- b\n+line\n-line\n".to_string()),
             duration_ms: Some(1),
+            original_token_count: Some(10),
+            max_output_tokens: Some(10_000),
         };
         let svc = ContextInputFilterService::new();
         let out = svc.filter_for_model(
@@ -332,32 +320,27 @@ mod tests {
 
     #[test]
     fn passthrough_verbose_command() {
-        let out = run_filter(
-            "cargo test -- --nocapture",
-            Some("full output"),
-            None,
-            Some(true),
-        );
+        let out = run_filter("cargo test -- --nocapture", Some("full output"), None);
         assert_eq!(out, "full output");
     }
 
     #[test]
     fn generic_output_has_stable_header() {
-        let out = run_filter("echo hi", Some("line1\nline2"), None, Some(true));
+        let out = run_filter("echo hi", Some("line1\nline2"), None);
         assert!(out.starts_with("[rtk:generic]"));
     }
 
     #[test]
     fn failed_command_keeps_tail_with_header() {
-        let out = run_filter("unknown", Some("a\nb\nc"), Some("err1\nerr2"), Some(false));
+        let out = run_filter("unknown", Some("a\nb\nc"), Some(false));
         assert!(out.starts_with("[rtk:fallback]"));
-        assert!(out.contains("err2"));
+        assert!(out.contains("c"));
     }
 
     #[test]
     fn git_status_uses_git_header() {
         let raw = "modified: a.rs\nnew file: b.rs";
-        let out = run_filter("git status", Some(raw), None, Some(true));
+        let out = run_filter("git status", Some(raw), None);
         assert!(out.starts_with("[rtk:git]"));
         assert!(out.contains("changed files"));
     }
@@ -365,7 +348,7 @@ mod tests {
     #[test]
     fn test_runner_uses_test_header() {
         let raw = "PASSED t1\nFAILED t2";
-        let out = run_filter("pytest -q", Some(raw), None, Some(false));
+        let out = run_filter("pytest -q", Some(raw), None);
         assert!(out.starts_with("[rtk:test]"));
         assert!(out.contains("Test summary"));
     }

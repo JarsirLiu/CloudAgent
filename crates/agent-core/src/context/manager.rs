@@ -1,6 +1,7 @@
 use super::fragments::{ContextFragment, ContextInjectionStrategy, insert_context_fragments};
 use crate::conversation::{ConversationHistory, InputItem, ResponseItem};
 use crate::model::ModelRequest;
+use crate::output_truncation::DEFAULT_MAX_OUTPUT_TOKENS;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 use serde::{Deserialize, Serialize};
 
@@ -122,6 +123,7 @@ impl ContextManager {
             messages: context.into_messages(),
             tools,
             temperature,
+            tool_output_token_limit: DEFAULT_MAX_OUTPUT_TOKENS,
         }
     }
 
@@ -138,6 +140,7 @@ impl ContextManager {
             messages: context.into_messages(),
             tools,
             temperature,
+            tool_output_token_limit: DEFAULT_MAX_OUTPUT_TOKENS,
         }
     }
 
@@ -151,6 +154,7 @@ impl ContextManager {
             messages: context.into_messages(),
             tools,
             temperature,
+            tool_output_token_limit: DEFAULT_MAX_OUTPUT_TOKENS,
         }
     }
 
@@ -182,6 +186,7 @@ impl ContextManager {
             messages,
             tools,
             temperature,
+            tool_output_token_limit: DEFAULT_MAX_OUTPUT_TOKENS,
         }
     }
 }

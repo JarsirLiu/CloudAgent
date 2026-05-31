@@ -42,6 +42,7 @@ pub struct RegularTurnSettings {
     pub post_compact_max_tokens_per_skill: usize,
     pub post_compact_max_tokens_per_mcp: usize,
     pub context_budget_safety_buffer_tokens: usize,
+    pub tool_output_token_limit: usize,
     pub enable_skill_bucket: bool,
     pub enable_mcp_bucket: bool,
 }

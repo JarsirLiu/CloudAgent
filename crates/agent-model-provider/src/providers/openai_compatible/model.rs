@@ -530,6 +530,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let response = tokio::time::timeout(Duration::from_secs(1), async {
@@ -619,6 +620,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let mut observer = TestObserver::default();

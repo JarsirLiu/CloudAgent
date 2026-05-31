@@ -50,9 +50,7 @@ fn command(id: &str, command: &str) -> TranscriptItem {
         current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
         status: CommandExecutionStatus::Completed,
         exit_code: Some(0),
-        stdout: Some(String::new()),
-        stderr: Some(String::new()),
-        aggregated_output: Some(String::new()),
+        output: Some(String::new()),
         duration_ms: Some(1),
         summary: command.to_string(),
     }

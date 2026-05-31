@@ -254,10 +254,10 @@ mod tests {
                     status: crate::tool::CommandExecutionStatus::Completed,
                     exit_code: Some(0),
                     success: Some(true),
-                    stdout: Some("D:\\work".to_string()),
-                    stderr: Some(String::new()),
-                    aggregated_output: Some("D:\\work".to_string()),
+                    output: Some("D:\\work".to_string()),
                     duration_ms: Some(1),
+                    original_token_count: Some(3),
+                    max_output_tokens: Some(10_000),
                 }),
             },
         ];

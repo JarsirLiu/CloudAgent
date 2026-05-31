@@ -29,7 +29,7 @@ impl ToolSearchTool {
                 ],
                 avoid_for: vec![
                     "normal repository search",
-                    "reading code when `read_file` or `search_workspace` already fits",
+                    "reading source files",
                 ],
                 follow_up_hint: Some(
                     "call this when the default tools do not fit; matching deferred tools become visible on the next model roundtrip",
@@ -201,6 +201,7 @@ mod tests {
                     conversation_store_dir: std::env::temp_dir(),
                     permission_profile: PermissionProfile::ReadOnly,
                     default_shell_timeout_ms: 5_000,
+                    max_tool_output_tokens: ToolExecutionContext::default_max_tool_output_tokens(),
                     cancellation_token: CancellationToken::new(),
                     discoverable_tools: vec![ToolSpec {
                         name: "watch".to_string(),

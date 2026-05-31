@@ -1,12 +1,3 @@
-pub(crate) fn merge_streams(stdout: Option<&str>, stderr: Option<&str>) -> String {
-    match (stdout.unwrap_or("").trim(), stderr.unwrap_or("").trim()) {
-        ("", "") => String::new(),
-        (out, "") => out.to_string(),
-        ("", err) => err.to_string(),
-        (out, err) => format!("{out}\n{err}"),
-    }
-}
-
 pub(crate) fn filter_failure_tail(raw: &str) -> String {
     let lines = raw.lines().map(strip_ansi).collect::<Vec<_>>();
     if lines.len() <= 40 {

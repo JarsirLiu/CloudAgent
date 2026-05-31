@@ -32,7 +32,7 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
             current_directory,
             status,
             exit_code,
-            stderr,
+            output,
             summary,
             ..
         } => render_command_execution(
@@ -41,7 +41,7 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
             current_directory,
             status,
             *exit_code,
-            stderr.as_deref().or(Some(summary.as_str())),
+            output.as_deref().or(Some(summary.as_str())),
         ),
         TranscriptItem::FileChange {
             tool_name,
@@ -138,6 +138,26 @@ mod tests {
         assert!(!cell.body().contains("*** Begin Patch"));
         assert!(cell.body().contains("failed 0 files"));
     }
+
+    #[test]
+    fn empty_write_stdin_poll_does_not_render_history_cell() {
+        let message = TranscriptItem::CommandExecution {
+            id: "tool-1".to_string(),
+            tool_name: "write_stdin".to_string(),
+            command: "Get-Content slow.log".to_string(),
+            current_directory: "D:\\work".to_string(),
+            status: CommandExecutionStatus::InProgress,
+            exit_code: None,
+            output: Some(String::new()),
+            duration_ms: Some(250),
+            summary: String::new(),
+        };
+
+        let mut context = RenderContext;
+        let cell = render_history_entry(&message, &mut context);
+
+        assert!(cell.is_empty());
+    }
 }
 
 pub fn render_active_item_placeholder(kind: TurnItemKind, title: &str) -> HistoryCell {
@@ -184,6 +204,9 @@ fn render_command_execution(
     exit_code: Option<i32>,
     detail: Option<&str>,
 ) -> HistoryCell {
+    if is_empty_stdin_poll_result(tool_name, status, detail) {
+        return HistoryCell::info("", "", HistoryTone::Meta);
+    }
     if let Some(exploration) =
         render_exploration_command(tool_name, command, current_directory, status)
     {
@@ -216,6 +239,19 @@ fn render_command_execution(
             _ => HistoryTone::Control,
         },
     )
+}
+
+fn is_empty_stdin_poll_result(
+    tool_name: &str,
+    status: &CommandExecutionStatus,
+    detail: Option<&str>,
+) -> bool {
+    tool_name == "write_stdin"
+        && !matches!(
+            status,
+            CommandExecutionStatus::Failed | CommandExecutionStatus::Declined
+        )
+        && detail.map_or(true, |value| value.trim().is_empty())
 }
 
 fn render_exploration_command(
@@ -253,7 +289,7 @@ fn render_tool_result(
         current_directory,
         status,
         exit_code,
-        stderr,
+        output,
         ..
     }) = structured
     {
@@ -263,7 +299,7 @@ fn render_tool_result(
             current_directory,
             status,
             *exit_code,
-            stderr.as_deref(),
+            output.as_deref(),
         );
     }
     if let Some(StructuredToolResult::ReadFile {

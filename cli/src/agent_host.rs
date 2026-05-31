@@ -36,6 +36,7 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         data_root_dir: config.runtime.data_root_dir.clone(),
         conversation_store_dir: config.runtime.conversation_store_dir.clone(),
         default_shell_timeout_ms: config.tools.default_shell_timeout_ms,
+        tool_output_token_limit: config.runtime.tool_output_token_limit,
     };
     let policy = ExecutionPolicy::new(config.runtime.max_tool_roundtrips);
     let regular_turn_settings = RegularTurnSettings {
@@ -67,6 +68,7 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         post_compact_max_tokens_per_skill: config.runtime.post_compact_max_tokens_per_skill,
         post_compact_max_tokens_per_mcp: config.runtime.post_compact_max_tokens_per_mcp,
         context_budget_safety_buffer_tokens: config.runtime.context_budget_safety_buffer_tokens,
+        tool_output_token_limit: config.runtime.tool_output_token_limit,
         enable_skill_bucket: config.runtime.enable_skill_bucket,
         enable_mcp_bucket: config.runtime.enable_mcp_bucket,
     };
@@ -91,6 +93,8 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     let tools = Arc::new(ToolRegistry::with_options(
         config.tools.max_read_chars,
         ToolRegistryOptions {
+            search_workspace_enabled: config.tools.search_workspace_enabled,
+            read_file_enabled: config.tools.read_file_enabled,
             edit_file_enabled: config.tools.edit_file_enabled,
             apply_patch_enabled: config.tools.apply_patch_enabled,
         },

@@ -4,6 +4,7 @@ pub mod conversation;
 pub mod host;
 pub mod model;
 pub mod observability;
+pub mod output_truncation;
 pub mod projection;
 pub mod rollout;
 pub mod skill;

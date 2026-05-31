@@ -14,9 +14,7 @@ pub(crate) fn transcript_item_from_tool_result(
             current_directory,
             status,
             exit_code,
-            stdout,
-            stderr,
-            aggregated_output,
+            output,
             duration_ms,
             ..
         }) => TranscriptItem::CommandExecution {
@@ -26,9 +24,7 @@ pub(crate) fn transcript_item_from_tool_result(
             current_directory: current_directory.clone(),
             status: status.clone(),
             exit_code: *exit_code,
-            stdout: stdout.clone(),
-            stderr: stderr.clone(),
-            aggregated_output: aggregated_output.clone(),
+            output: output.clone(),
             duration_ms: *duration_ms,
             summary: result.content.clone(),
         },
@@ -67,9 +63,7 @@ pub(crate) fn denied_transcript_item(
             current_directory,
             status,
             exit_code,
-            stdout,
-            stderr,
-            aggregated_output,
+            output,
             duration_ms,
             ..
         }) => TranscriptItem::CommandExecution {
@@ -79,9 +73,7 @@ pub(crate) fn denied_transcript_item(
             current_directory,
             status,
             exit_code,
-            stdout,
-            stderr,
-            aggregated_output,
+            output,
             duration_ms,
             summary: reason.to_string(),
         },
@@ -159,10 +151,10 @@ pub(crate) fn denied_tool_result(
                 status: CommandExecutionStatus::Declined,
                 exit_code: None,
                 success: Some(false),
-                stdout: None,
-                stderr: Some(reason),
-                aggregated_output: None,
+                output: None,
                 duration_ms: None,
+                original_token_count: None,
+                max_output_tokens: None,
             })
         }
         "apply_patch" | "edit_file" => Some(StructuredToolResult::EditFile {

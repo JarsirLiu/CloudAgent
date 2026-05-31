@@ -352,14 +352,12 @@ fn mark_unfinished_transcript_items(items: &mut [TranscriptItem], reason: &str) 
         match item {
             TranscriptItem::CommandExecution {
                 status,
-                stderr,
-                aggregated_output,
+                output,
                 summary,
                 ..
             } if *status == crate::tool::CommandExecutionStatus::InProgress => {
                 *status = crate::tool::CommandExecutionStatus::Failed;
-                *stderr = Some(reason.to_string());
-                *aggregated_output = Some(reason.to_string());
+                *output = Some(reason.to_string());
                 *summary = reason.to_string();
             }
             TranscriptItem::FileChange {
@@ -423,14 +421,14 @@ fn append_delta_to_transcript_item(
         }
         (
             TranscriptItem::CommandExecution {
-                summary, stdout, ..
+                summary, output, ..
             },
             TurnItemDeltaKind::CommandExecutionOutput,
         ) => {
-            if let Some(stdout) = stdout {
-                stdout.push_str(delta);
+            if let Some(output) = output {
+                output.push_str(delta);
             } else {
-                *stdout = Some(delta.to_string());
+                *output = Some(delta.to_string());
             }
             summary.push_str(delta);
         }
@@ -477,9 +475,7 @@ fn transcript_item_from_item_start(
             current_directory: String::new(),
             status: crate::tool::CommandExecutionStatus::InProgress,
             exit_code: None,
-            stdout: Some(String::new()),
-            stderr: None,
-            aggregated_output: None,
+            output: Some(String::new()),
             duration_ms: None,
             summary: String::new(),
         }),
@@ -681,9 +677,7 @@ fn transcript_item_from_tool_response(
             current_directory,
             status,
             exit_code,
-            stdout,
-            stderr,
-            aggregated_output,
+            output,
             duration_ms,
             ..
         }) => TranscriptItem::CommandExecution {
@@ -693,9 +687,7 @@ fn transcript_item_from_tool_response(
             current_directory: current_directory.clone(),
             status: status.clone(),
             exit_code: *exit_code,
-            stdout: stdout.clone(),
-            stderr: stderr.clone(),
-            aggregated_output: aggregated_output.clone(),
+            output: output.clone(),
             duration_ms: *duration_ms,
             summary: content.to_string(),
         },
@@ -1129,10 +1121,10 @@ mod tests {
                 status: CommandExecutionStatus::Completed,
                 exit_code: Some(0),
                 success: Some(true),
-                stdout: Some("D:\\learn\\gifti\\cloudagent".to_string()),
-                stderr: Some(String::new()),
-                aggregated_output: Some("D:\\learn\\gifti\\cloudagent".to_string()),
+                output: Some("D:\\learn\\gifti\\cloudagent".to_string()),
                 duration_ms: Some(1),
+                original_token_count: Some(8),
+                max_output_tokens: Some(10_000),
             }),
         })
         .expect("tool response should project");
@@ -1311,6 +1303,31 @@ mod tests {
                 TranscriptItem::ToolResult { tool_name, .. },
                 TranscriptItem::AgentMessage { text, .. },
             ] if tool_name == "read_file" && text == "done"
+        ));
+    }
+
+    #[test]
+    fn jsonl_rollout_restore_keeps_assistant_response_items() {
+        let jsonl = [
+            r#"{"type":"response_item","item":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+            r#"{"type":"event_msg","event":{"type":"turn_started","turn_id":"turn-1","conversation_id":"default","user_input":[{"type":"text","text":"hi"}]}}"#,
+            r#"{"type":"response_item","item":{"role":"assistant","content":"hello","reasoning":null,"tool_calls":[]}}"#,
+            r#"{"type":"event_msg","event":{"type":"turn_completed","turn_id":"turn-1"}}"#,
+        ];
+        let items = jsonl
+            .iter()
+            .map(|line| serde_json::from_str::<RolloutItem>(line).expect("valid rollout jsonl"))
+            .collect::<Vec<_>>();
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { content, .. },
+                TranscriptItem::AgentMessage { text, .. },
+            ] if input_items_to_plain_text(content) == "hi" && text == "hello"
         ));
     }
 
@@ -1496,9 +1513,7 @@ mod tests {
             current_directory: "D:\\work".to_string(),
             status: CommandExecutionStatus::Completed,
             exit_code: Some(0),
-            stdout: Some("D:\\work".to_string()),
-            stderr: Some(String::new()),
-            aggregated_output: Some("D:\\work".to_string()),
+            output: Some("D:\\work".to_string()),
             duration_ms: Some(1),
             summary: "D:\\work".to_string(),
         };

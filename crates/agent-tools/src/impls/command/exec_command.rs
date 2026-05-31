@@ -1,6 +1,9 @@
 use crate::command_access::{CommandAccess, classify_command};
 use crate::impls::command::descriptor::ExecCommandTool;
-use crate::impls::command::output::{CommandResultView, format_exec_result_content};
+use crate::impls::command::output::{
+    CommandResultView, effective_max_output_tokens, format_exec_result_content,
+    truncate_output_to_tokens,
+};
 use crate::impls::command::session::ExecSessionStore;
 use crate::registry::shared::{
     LocalTool, LocalToolInvocation, ToolInvocationOutput, resolve_external_read_path,
@@ -21,7 +24,9 @@ struct ExecCommandArgs {
     #[serde(default)]
     workdir: Option<String>,
     #[serde(default)]
-    timeout_ms: Option<u64>,
+    yield_time_ms: Option<u64>,
+    #[serde(default)]
+    max_output_tokens: Option<usize>,
 }
 
 pub(crate) struct ExecCommandLocalTool {
@@ -55,10 +60,12 @@ impl LocalTool for ExecCommandLocalTool {
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
         let args: ExecCommandArgs = invocation.payload.parse_arguments()?;
-        let timeout_ms = args
-            .timeout_ms
+        let yield_time_ms = args
+            .yield_time_ms
             .unwrap_or(ctx.default_shell_timeout_ms)
             .max(1_000);
+        let max_output_tokens =
+            effective_max_output_tokens(args.max_output_tokens, ctx.max_tool_output_tokens);
         let command = args
             .command
             .as_deref()
@@ -78,6 +85,9 @@ impl LocalTool for ExecCommandLocalTool {
         {
             return Ok(rejection);
         }
+        if let Some(rejection) = reject_full_screen_interactive_command(command, &workdir) {
+            return Ok(rejection);
+        }
 
         self.sessions
             .start_session(
@@ -85,7 +95,8 @@ impl LocalTool for ExecCommandLocalTool {
                 command,
                 workdir,
                 matches!(ctx.permission_profile, PermissionProfile::FullAccess),
-                timeout_ms,
+                yield_time_ms,
+                max_output_tokens,
                 ctx,
             )
             .await
@@ -125,6 +136,20 @@ fn reject_workspace_file_edit_command(
     Some(reject_file_edit_via_exec_command(command, workdir, reason))
 }
 
+fn reject_full_screen_interactive_command(
+    command: &str,
+    workdir: &std::path::Path,
+) -> Option<ToolInvocationOutput> {
+    if !looks_like_full_screen_interactive_command(command) {
+        return None;
+    }
+    Some(reject_command_with_message(
+        command,
+        workdir,
+        "Full-screen interactive commands are not supported in exec_command. Use noninteractive flags or a plain command that writes output and exits.",
+    ))
+}
+
 fn looks_like_apply_patch_command(command: &str) -> bool {
     let normalized = command.trim().to_ascii_lowercase();
     normalized.starts_with("apply_patch ")
@@ -134,25 +159,87 @@ fn looks_like_apply_patch_command(command: &str) -> bool {
         || normalized.contains("; apply_patch ")
 }
 
+fn looks_like_full_screen_interactive_command(command: &str) -> bool {
+    let normalized = command.trim().to_ascii_lowercase();
+    let normalized = normalized
+        .trim_start_matches('&')
+        .trim_start_matches("call ")
+        .trim();
+    let mut parts = normalized
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '&' | '|'))
+        .filter(|part| !part.is_empty());
+    let Some(program) = parts.next() else {
+        return false;
+    };
+    let args = parts.collect::<Vec<_>>();
+    let program = program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_end_matches(".exe");
+    if matches!(
+        program,
+        "vi" | "vim"
+            | "nvim"
+            | "nano"
+            | "emacs"
+            | "less"
+            | "more"
+            | "man"
+            | "ssh"
+            | "ftp"
+            | "sftp"
+            | "top"
+            | "htop"
+            | "btop"
+            | "watch"
+            | "mysql"
+            | "psql"
+            | "sqlite3"
+    ) {
+        return true;
+    }
+
+    if matches!(
+        program,
+        "python" | "python3" | "node" | "pwsh" | "powershell" | "cmd"
+    ) {
+        return args.is_empty();
+    }
+
+    matches!(program, "bash" | "sh" | "zsh" | "fish") && args.is_empty()
+}
+
 fn reject_file_edit_via_exec_command(
     command: &str,
     workdir: &std::path::Path,
     reason: &str,
 ) -> ToolInvocationOutput {
-    let current_directory = workdir.display().to_string();
     let message = format!(
         "Use the dedicated file editing tool instead of exec_command for workspace file edits ({reason}). Prefer `apply_patch` for structured workspace file changes."
     );
+    reject_command_with_message(command, workdir, &message)
+}
+
+fn reject_command_with_message(
+    command: &str,
+    workdir: &std::path::Path,
+    message: &str,
+) -> ToolInvocationOutput {
+    let current_directory = workdir.display().to_string();
+    let (output, original_token_count) = truncate_output_to_tokens(&message, 1_000);
     let content = format_exec_result_content(CommandResultView {
-        kind: "edit",
         command,
         current_directory: &current_directory,
         session_id: None,
         status: CommandExecutionStatus::Failed,
         exit_code: None,
-        success: Some(false),
-        stdout: "",
-        stderr: &message,
+        duration_ms: 0,
+        output: &output,
+        max_output_tokens: 1_000,
+        original_token_count,
     });
     ToolInvocationOutput {
         content: content.clone(),
@@ -163,10 +250,10 @@ fn reject_file_edit_via_exec_command(
             status: CommandExecutionStatus::Failed,
             exit_code: None,
             success: Some(false),
-            stdout: Some(String::new()),
-            stderr: Some(message),
-            aggregated_output: Some(content),
+            output: Some(output),
             duration_ms: Some(0),
+            original_token_count: Some(original_token_count),
+            max_output_tokens: Some(1_000),
         }),
     }
 }
@@ -190,33 +277,14 @@ mod tests {
 
         assert!(properties.contains_key("command"));
         assert!(properties.contains_key("workdir"));
-        assert!(properties.contains_key("timeout_ms"));
+        assert!(properties.contains_key("yield_time_ms"));
+        assert!(properties.contains_key("max_output_tokens"));
         assert!(!properties.contains_key("session_id"));
         assert!(!properties.contains_key("stdin"));
         assert!(!properties.contains_key("start_new_session"));
         assert_eq!(
             parameters.get("additionalProperties"),
             Some(&serde_json::Value::Bool(false))
-        );
-    }
-
-    #[test]
-    fn command_access_summary_classifies_common_commands() {
-        assert_eq!(
-            classify_command("rg -n TODO src").summary("rg -n TODO src"),
-            "search"
-        );
-        assert_eq!(
-            classify_command("git ls-files crates").summary("git ls-files crates"),
-            "list files"
-        );
-        assert_eq!(
-            classify_command("git status").summary("git status"),
-            "inspect"
-        );
-        assert_eq!(
-            classify_command("Set-Content out.txt hi").summary("Set-Content out.txt hi"),
-            "action"
         );
     }
 
@@ -291,10 +359,10 @@ mod tests {
             .expect("exec command handled");
 
         match output.structured {
-            Some(StructuredToolResult::CommandExecution { status, stderr, .. }) => {
+            Some(StructuredToolResult::CommandExecution { status, output, .. }) => {
                 assert_eq!(status, CommandExecutionStatus::Failed);
                 assert!(
-                    stderr
+                    output
                         .unwrap_or_default()
                         .contains("Use the dedicated file editing tool instead")
                 );
@@ -319,13 +387,160 @@ mod tests {
             .expect("exec command handled");
 
         match output.structured {
-            Some(StructuredToolResult::CommandExecution { status, stderr, .. }) => {
+            Some(StructuredToolResult::CommandExecution { status, output, .. }) => {
                 assert_eq!(status, CommandExecutionStatus::Failed);
-                let stderr = stderr.unwrap_or_default();
-                assert!(stderr.contains("direct file write"));
-                assert!(stderr.contains("dedicated file editing tool"));
+                let output = output.unwrap_or_default();
+                assert!(output.contains("direct file write"));
+                assert!(output.contains("dedicated file editing tool"));
             }
             other => panic!("expected structured command rejection, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_command_rejects_full_screen_interactive_commands() {
+        let (tool, _) = ExecCommandLocalTool::shared_pair();
+        let ctx = test_context(PermissionProfile::WorkspaceWrite);
+
+        let output = tool
+            .invoke(command_invocation("vim Cargo.toml"), &ctx)
+            .await
+            .expect("exec command handled");
+
+        match output.structured {
+            Some(StructuredToolResult::CommandExecution { status, output, .. }) => {
+                assert_eq!(status, CommandExecutionStatus::Failed);
+                assert!(
+                    output
+                        .unwrap_or_default()
+                        .contains("Full-screen interactive commands are not supported")
+                );
+            }
+            other => panic!("expected structured command rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn full_screen_detection_allows_inline_interpreters() {
+        assert!(looks_like_full_screen_interactive_command("python"));
+        assert!(looks_like_full_screen_interactive_command("node"));
+        assert!(!looks_like_full_screen_interactive_command(
+            "python -c \"print('ok')\""
+        ));
+        assert!(!looks_like_full_screen_interactive_command(
+            "node -e \"console.log('ok')\""
+        ));
+    }
+
+    #[tokio::test]
+    async fn exec_command_respects_max_output_tokens() {
+        let (tool, _) = ExecCommandLocalTool::shared_pair();
+        let ctx = test_context(PermissionProfile::WorkspaceWrite);
+        let command = if cfg!(windows) {
+            "1..200 | ForEach-Object { 'abcdefabcdefabcdef' }"
+        } else {
+            "yes abcdefabcdefabcdef | head -n 200"
+        };
+
+        let output = tool
+            .invoke(
+                command_invocation_with_args(serde_json::json!({
+                    "command": command,
+                    "max_output_tokens": 20,
+                    "yield_time_ms": 5_000
+                })),
+                &ctx,
+            )
+            .await
+            .expect("exec command handled");
+
+        match output.structured {
+            Some(StructuredToolResult::CommandExecution {
+                output,
+                original_token_count,
+                max_output_tokens,
+                ..
+            }) => {
+                let output = output.expect("output should be recorded");
+                assert!(output.contains("tokens truncated"));
+                assert!(original_token_count.expect("token count") > 20);
+                assert_eq!(max_output_tokens, Some(20));
+            }
+            other => panic!("expected structured command result, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn noninteractive_commands_receive_closed_stdin() {
+        let (tool, _) = ExecCommandLocalTool::shared_pair();
+        let ctx = test_context(PermissionProfile::WorkspaceWrite);
+        let command = if cfg!(windows) {
+            "$line = [Console]::In.ReadLine(); if ($null -eq $line) { 'stdin closed' } else { \"stdin open: $line\" }"
+        } else {
+            "if read line; then echo \"stdin open: $line\"; else echo 'stdin closed'; fi"
+        };
+
+        let output = tool
+            .invoke(
+                command_invocation_with_args(serde_json::json!({
+                    "command": command,
+                    "yield_time_ms": 2_000
+                })),
+                &ctx,
+            )
+            .await
+            .expect("exec command handled");
+
+        match output.structured {
+            Some(StructuredToolResult::CommandExecution { status, output, .. }) => {
+                assert_eq!(status, CommandExecutionStatus::Completed);
+                assert!(
+                    output
+                        .expect("output should be recorded")
+                        .contains("stdin closed")
+                );
+            }
+            other => panic!("expected structured command result, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_command_clamps_requested_output_to_context_policy() {
+        let (tool, _) = ExecCommandLocalTool::shared_pair();
+        let mut ctx = test_context(PermissionProfile::WorkspaceWrite);
+        ctx.max_tool_output_tokens = 20;
+        let command = if cfg!(windows) {
+            "1..200 | ForEach-Object { 'abcdefabcdefabcdef' }"
+        } else {
+            "yes abcdefabcdefabcdef | head -n 200"
+        };
+
+        let output = tool
+            .invoke(
+                command_invocation_with_args(serde_json::json!({
+                    "command": command,
+                    "max_output_tokens": 70_000,
+                    "yield_time_ms": 5_000
+                })),
+                &ctx,
+            )
+            .await
+            .expect("exec command handled");
+
+        match output.structured {
+            Some(StructuredToolResult::CommandExecution {
+                output,
+                max_output_tokens,
+                ..
+            }) => {
+                assert_eq!(max_output_tokens, Some(20));
+                assert!(
+                    output
+                        .expect("output should be recorded")
+                        .contains("tokens truncated")
+                );
+            }
+            other => panic!("expected structured command result, got {other:?}"),
         }
     }
 
@@ -336,6 +551,7 @@ mod tests {
             conversation_store_dir: std::env::temp_dir(),
             permission_profile,
             default_shell_timeout_ms: 5_000,
+            max_tool_output_tokens: ToolExecutionContext::default_max_tool_output_tokens(),
             cancellation_token: CancellationToken::new(),
             discoverable_tools: Vec::new(),
             output_tx: None,
@@ -343,12 +559,14 @@ mod tests {
     }
 
     fn command_invocation(command: &str) -> LocalToolInvocation {
+        command_invocation_with_args(serde_json::json!({ "command": command }))
+    }
+
+    fn command_invocation_with_args(arguments: serde_json::Value) -> LocalToolInvocation {
         LocalToolInvocation {
             identity: agent_core::ToolIdentity::built_in("exec_command"),
             source: LocalToolSource::BuiltIn,
-            payload: LocalToolPayload::Function {
-                arguments: serde_json::json!({ "command": command }),
-            },
+            payload: LocalToolPayload::Function { arguments },
         }
     }
 }

@@ -15,20 +15,22 @@ impl ExecCommandTool {
             ToolUsageGuidance {
                 selection_priority: 15,
                 preferred_for: vec![
+                    "repository search with `rg` or `rg --files`",
+                    "targeted file inspection with platform shell commands",
                     "build, test, git, and runtime verification",
-                    "interactive command sessions",
+                    "long-running noninteractive commands that can be polled with write_stdin",
                 ],
                 avoid_for: vec![
                     "workspace file edits",
-                    "repository search when structured tools are available",
+                    "full-screen interactive programs such as editors, pagers, shells, REPLs, SSH, or TUI apps",
                 ],
-                follow_up_hint: Some("prefer `workdir` over inline `cd`; on Windows use PowerShell syntax"),
+                follow_up_hint: Some("prefer `workdir` over inline `cd`; use noninteractive flags; on Windows use PowerShell syntax"),
                 ..ToolUsageGuidance::default()
             },
             ToolSpec {
                 name: "exec_command".to_string(),
                 identity: ToolIdentity::built_in("exec_command"),
-                description: "Run a local command for build, test, git, and runtime verification. If the command is still running after timeout_ms, the runtime returns a session_id for follow-up write_stdin calls.".to_string(),
+                description: "Run a local noninteractive shell command for repository search, file inspection, build, test, git, and runtime verification. Use apply_patch for workspace file edits. Avoid full-screen interactive programs such as editors, pagers, shells, REPLs, SSH, or TUI apps. If the command is still running after yield_time_ms, the runtime returns a session_id for polling or simple stdin responses with write_stdin.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -40,10 +42,15 @@ impl ExecCommandTool {
                             "type": "string",
                             "description": "Working directory for the command. Prefer this over inline cd."
                         },
-                        "timeout_ms": {
+                        "yield_time_ms": {
                             "type": "integer",
                             "minimum": 1000,
                             "description": "Maximum time to wait for this invocation."
+                        },
+                        "max_output_tokens": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Maximum number of tokens to return. Excess output is truncated."
                         }
                     },
                     "required": ["command"],
@@ -72,17 +79,20 @@ impl WriteStdinTool {
             ToolUsageGuidance {
                 selection_priority: 9,
                 preferred_for: vec![
-                    "sending input to an existing command session",
+                    "sending a simple response to an existing command session",
                     "polling output from a still-running command session",
                 ],
-                avoid_for: vec!["starting new commands"],
-                follow_up_hint: Some("use only with a session_id returned by exec_command"),
+                avoid_for: vec![
+                    "starting new commands",
+                    "driving full-screen interactive programs, shells, editors, pagers, REPLs, SSH, or TUI apps",
+                ],
+                follow_up_hint: Some("use only with a session_id returned by exec_command; prefer empty chars for polling"),
                 ..ToolUsageGuidance::default()
             },
             ToolSpec {
                 name: "write_stdin".to_string(),
                 identity: ToolIdentity::built_in("write_stdin"),
-                description: "Write characters to an existing command session, or pass an empty string to poll for new output.".to_string(),
+                description: "Write a simple stdin response to an existing command session, or pass an empty string to poll for new output. Do not use this to drive full-screen interactive programs, shells, editors, pagers, REPLs, SSH, or TUI apps.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -94,10 +104,15 @@ impl WriteStdinTool {
                             "type": "string",
                             "description": "Characters to write to stdin. Use an empty string to poll for new output without writing."
                         },
-                        "timeout_ms": {
+                        "yield_time_ms": {
                             "type": "integer",
                             "minimum": 1000,
                             "description": "Maximum time to wait for this invocation."
+                        },
+                        "max_output_tokens": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Maximum number of tokens to return. Excess output is truncated."
                         }
                     },
                     "required": ["session_id", "chars"],

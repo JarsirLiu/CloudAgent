@@ -1,5 +1,6 @@
 use crate::ModelRetryStage;
 use crate::conversation::ResponseItem;
+use crate::output_truncation::DEFAULT_MAX_OUTPUT_TOKENS;
 use crate::tool::{ToolCall, ToolSpec};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -18,6 +19,13 @@ pub struct ModelRequest {
     pub messages: Vec<ResponseItem>,
     pub tools: Vec<ToolSpec>,
     pub temperature: f32,
+    pub tool_output_token_limit: usize,
+}
+
+impl ModelRequest {
+    pub fn default_tool_output_token_limit() -> usize {
+        DEFAULT_MAX_OUTPUT_TOKENS
+    }
 }
 
 #[derive(Clone, Debug)]

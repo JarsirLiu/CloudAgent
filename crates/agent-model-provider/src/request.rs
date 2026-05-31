@@ -1,5 +1,6 @@
 use agent_core::conversation::{AttachmentRef, InputItem, ResponseItem};
 use agent_core::model::ModelRequest;
+use agent_core::output_truncation::truncate_text_to_token_budget;
 use agent_core::tool::{ToolCall, ToolSpec};
 use anyhow::{Result, anyhow};
 use base64::Engine;
@@ -42,7 +43,14 @@ impl ProviderRequest {
     ) -> Result<Self> {
         let mut messages = Vec::with_capacity(request.messages.len());
         for item in &request.messages {
-            messages.push(ProviderMessage::from_response_item(item, supports_image_input).await?);
+            messages.push(
+                ProviderMessage::from_response_item(
+                    item,
+                    supports_image_input,
+                    request.tool_output_token_limit,
+                )
+                .await?,
+            );
         }
         downgrade_incomplete_reasoning_chain(&mut messages);
         Ok(Self {
@@ -81,7 +89,11 @@ impl ProviderMessage {
         Ok(normalized)
     }
 
-    async fn from_response_item(item: &ResponseItem, supports_image_input: bool) -> Result<Self> {
+    async fn from_response_item(
+        item: &ResponseItem,
+        supports_image_input: bool,
+        tool_output_token_limit: usize,
+    ) -> Result<Self> {
         Ok(match item {
             ResponseItem::System { content } => Self::System {
                 content: content.clone(),
@@ -106,7 +118,12 @@ impl ProviderMessage {
             } => Self::Tool {
                 tool_call_id: tool_call_id.clone(),
                 name: name.clone(),
-                content: content.clone(),
+                content: truncate_text_to_token_budget(
+                    content,
+                    tool_output_token_limit,
+                    Some("\n[tool output truncated before model request]\n"),
+                )
+                .text,
             },
         })
     }
@@ -189,10 +206,10 @@ mod tests {
                     status: CommandExecutionStatus::Completed,
                     exit_code: Some(0),
                     success: Some(true),
-                    stdout: Some("very large raw output".to_string()),
-                    stderr: Some(String::new()),
-                    aggregated_output: Some("very large raw output".to_string()),
+                    output: Some("very large raw output".to_string()),
                     duration_ms: Some(1),
+                    original_token_count: Some(1024),
+                    max_output_tokens: Some(10_000),
                 }),
             }],
             tools: vec![ToolSpec {
@@ -208,6 +225,7 @@ mod tests {
                 approval_reason: None,
             }],
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let provider_request = ProviderRequest::from_model_request(&request, true)
@@ -216,6 +234,62 @@ mod tests {
         match &provider_request.messages[0] {
             ProviderMessage::Tool { content, .. } => {
                 assert_eq!(content, "[rtk:generic]\nsummary");
+            }
+            _ => panic!("expected tool message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_request_truncates_large_tool_content_before_model_send() {
+        let large = "tool-output ".repeat(20_000);
+        let request = ModelRequest {
+            messages: vec![ResponseItem::Tool {
+                tool_call_id: "call-1".to_string(),
+                name: "exec_command".to_string(),
+                content: large.clone(),
+                structured: None,
+            }],
+            tools: Vec::new(),
+            temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
+        };
+
+        let provider_request = ProviderRequest::from_model_request(&request, true)
+            .await
+            .expect("provider request");
+
+        match &provider_request.messages[0] {
+            ProviderMessage::Tool { content, .. } => {
+                assert!(content.len() < large.len());
+                assert!(content.contains("tool output truncated before model request"));
+            }
+            _ => panic!("expected tool message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_request_uses_request_tool_output_limit() {
+        let large = "tool-output ".repeat(20_000);
+        let request = ModelRequest {
+            messages: vec![ResponseItem::Tool {
+                tool_call_id: "call-1".to_string(),
+                name: "exec_command".to_string(),
+                content: large.clone(),
+                structured: None,
+            }],
+            tools: Vec::new(),
+            temperature: 0.0,
+            tool_output_token_limit: 100,
+        };
+
+        let provider_request = ProviderRequest::from_model_request(&request, true)
+            .await
+            .expect("provider request");
+
+        match &provider_request.messages[0] {
+            ProviderMessage::Tool { content, .. } => {
+                assert!(content.len() < large.len());
+                assert!(content.contains("tool output truncated before model request"));
             }
             _ => panic!("expected tool message"),
         }
@@ -244,6 +318,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let provider_request = ProviderRequest::from_model_request(&request, true)
@@ -287,6 +362,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let provider_request = ProviderRequest::from_model_request(&request, false)
@@ -324,6 +400,7 @@ mod tests {
             ],
             tools: Vec::new(),
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let provider_request = ProviderRequest::from_model_request(&request, true)
@@ -355,6 +432,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
         let provider_request = ProviderRequest::from_model_request(&request, true)

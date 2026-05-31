@@ -35,12 +35,16 @@ fn build_main_chain_descriptors(
     options: ToolRegistryOptions,
 ) -> Vec<ToolDescriptor> {
     let mut descriptors = vec![
-        SearchWorkspaceTool::descriptor(),
-        ReadFileTool::descriptor(max_read_chars),
         ToolSearchTool::descriptor(),
         ExecCommandDescriptorTool::descriptor(),
         WriteStdinDescriptorTool::descriptor(),
     ];
+    if options.search_workspace_enabled {
+        descriptors.push(SearchWorkspaceTool::descriptor());
+    }
+    if options.read_file_enabled {
+        descriptors.push(ReadFileTool::descriptor(max_read_chars));
+    }
     if options.apply_patch_enabled {
         descriptors.push(ApplyPatchTool::descriptor());
     }
@@ -77,14 +81,18 @@ fn register_main_chain_tools(
     read_state: FileReadStateStore,
     options: ToolRegistryOptions,
 ) {
-    register(tools, SearchWorkspaceLocalTool::new());
-    register(
-        tools,
-        ReadFileLocalTool {
-            max_read_chars,
-            read_state: read_state.clone(),
-        },
-    );
+    if options.search_workspace_enabled {
+        register(tools, SearchWorkspaceLocalTool::new());
+    }
+    if options.read_file_enabled {
+        register(
+            tools,
+            ReadFileLocalTool {
+                max_read_chars,
+                read_state: read_state.clone(),
+            },
+        );
+    }
     register(tools, ToolSearchLocalTool);
     let (exec_command, write_stdin) = ExecCommandLocalTool::shared_pair();
     register(tools, exec_command);

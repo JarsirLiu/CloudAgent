@@ -3,7 +3,11 @@ use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
 
-pub(super) fn build_command_process(command_text: &str, workdir: &Path) -> Command {
+pub(super) fn build_command_process(
+    command_text: &str,
+    workdir: &Path,
+    pipe_stdin: bool,
+) -> Command {
     let mut command = if cfg!(windows) {
         let mut cmd = Command::new(preferred_windows_shell());
         cmd.arg("-NoLogo")
@@ -18,9 +22,25 @@ pub(super) fn build_command_process(command_text: &str, workdir: &Path) -> Comma
     };
     command
         .current_dir(workdir)
-        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if pipe_stdin {
+        command.stdin(Stdio::piped());
+    } else {
+        command.stdin(Stdio::null());
+    }
+    command.env("NO_COLOR", "1");
+    command.env("TERM", "dumb");
+    command.env("COLORTERM", "");
+    command.env("PAGER", "cat");
+    command.env("GIT_PAGER", "cat");
+    command.env("GH_PAGER", "cat");
+    command.env("MANPAGER", "cat");
+    command.env("EDITOR", "true");
+    command.env("VISUAL", "true");
+    command.env("CI", "1");
+    command.env("CLOUDAGENT_CI", "1");
+    command.env("GIT_TERMINAL_PROMPT", "0");
     command.kill_on_drop(true);
     configure_captured_command_process(&mut command);
     command

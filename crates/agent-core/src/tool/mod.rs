@@ -250,10 +250,10 @@ pub enum StructuredToolResult {
         status: CommandExecutionStatus,
         exit_code: Option<i32>,
         success: Option<bool>,
-        stdout: Option<String>,
-        stderr: Option<String>,
-        aggregated_output: Option<String>,
+        output: Option<String>,
         duration_ms: Option<u64>,
+        original_token_count: Option<usize>,
+        max_output_tokens: Option<usize>,
     },
     SearchWorkspace {
         session_id: String,

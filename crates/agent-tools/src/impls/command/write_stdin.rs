@@ -1,4 +1,5 @@
 use crate::impls::command::descriptor::WriteStdinTool;
+use crate::impls::command::output::effective_max_output_tokens;
 use crate::impls::command::session::ExecSessionStore;
 use crate::registry::shared::{LocalTool, LocalToolInvocation, ToolInvocationOutput};
 use agent_core::{ToolExecutionContext, ToolSpec};
@@ -12,7 +13,9 @@ struct WriteStdinArgs {
     session_id: String,
     chars: String,
     #[serde(default)]
-    timeout_ms: Option<u64>,
+    yield_time_ms: Option<u64>,
+    #[serde(default)]
+    max_output_tokens: Option<usize>,
 }
 
 pub(crate) struct WriteStdinLocalTool {
@@ -37,12 +40,20 @@ impl LocalTool for WriteStdinLocalTool {
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
         let args: WriteStdinArgs = invocation.payload.parse_arguments()?;
-        let timeout_ms = args
-            .timeout_ms
+        let yield_time_ms = args
+            .yield_time_ms
             .unwrap_or(ctx.default_shell_timeout_ms)
             .max(1_000);
+        let max_output_tokens =
+            effective_max_output_tokens(args.max_output_tokens, ctx.max_tool_output_tokens);
         self.sessions
-            .write_stdin(&args.session_id, &args.chars, timeout_ms, ctx)
+            .write_stdin(
+                &args.session_id,
+                &args.chars,
+                yield_time_ms,
+                max_output_tokens,
+                ctx,
+            )
             .await
     }
 }
@@ -61,7 +72,8 @@ mod tests {
 
         assert!(properties.contains_key("session_id"));
         assert!(properties.contains_key("chars"));
-        assert!(properties.contains_key("timeout_ms"));
+        assert!(properties.contains_key("yield_time_ms"));
+        assert!(properties.contains_key("max_output_tokens"));
         assert_eq!(
             parameters.get("additionalProperties"),
             Some(&serde_json::Value::Bool(false))

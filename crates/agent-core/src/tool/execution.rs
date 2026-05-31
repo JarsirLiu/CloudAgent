@@ -186,6 +186,7 @@ mod tests {
             conversation_store_dir: PathBuf::from("D:\\learn\\gifti\\cloudagent\\.cloudagent"),
             permission_profile: PermissionProfile::WorkspaceWrite,
             default_shell_timeout_ms: 30_000,
+            max_tool_output_tokens: ToolExecutionContext::default_max_tool_output_tokens(),
             cancellation_token: cancellation_token.clone(),
             discoverable_tools: Vec::new(),
             output_tx: None,

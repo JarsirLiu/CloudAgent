@@ -151,6 +151,9 @@ impl ActiveTurnState {
             } => {
                 self.ensure_turn(&turn_id);
                 let replay_cells = self.flush_live_tail_if_different(&item_id);
+                if matches!(kind, TurnItemKind::CommandExecution) {
+                    return self.snapshot_effects_with_replay(replay_cells);
+                }
                 self.live_item = Some(ActiveItemView::new(
                     item_id,
                     kind.clone(),

@@ -217,6 +217,7 @@ impl AgentHost {
             ],
             tools: Vec::new(),
             temperature: 0.2,
+            tool_output_token_limit: crate::ModelRequest::default_tool_output_token_limit(),
         };
         let model = self.model_snapshot();
         let response = model.complete(request).await?;

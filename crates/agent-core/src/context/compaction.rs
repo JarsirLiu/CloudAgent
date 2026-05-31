@@ -246,6 +246,7 @@ pub fn build_compaction_summary_request(
         ],
         tools: Vec::new(),
         temperature,
+        tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
     }
 }
 
@@ -853,10 +854,10 @@ mod tests {
                     status: CommandExecutionStatus::Completed,
                     exit_code: Some(0),
                     success: Some(true),
-                    stdout: Some("ok".to_string()),
-                    stderr: Some(String::new()),
-                    aggregated_output: Some("ok".to_string()),
+                    output: Some("ok".to_string()),
                     duration_ms: Some(1),
+                    original_token_count: Some(1),
+                    max_output_tokens: Some(10_000),
                 }),
             });
         }
@@ -991,10 +992,10 @@ mod tests {
                     status: CommandExecutionStatus::Completed,
                     exit_code: Some(0),
                     success: Some(true),
-                    stdout: Some("D:/learn/gifti/cloudagent".to_string()),
-                    stderr: Some(String::new()),
-                    aggregated_output: Some("D:/learn/gifti/cloudagent".to_string()),
+                    output: Some("D:/learn/gifti/cloudagent".to_string()),
                     duration_ms: Some(1),
+                    original_token_count: Some(8),
+                    max_output_tokens: Some(10_000),
                 }),
             },
             ResponseItem::User {
