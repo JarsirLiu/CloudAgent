@@ -73,20 +73,18 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[tokio::test]
-    async fn archive_active_conversation_switches_to_fallback_draft() {
+    async fn archive_active_conversation_switches_to_fallback_timestamp_id() {
         let state = Arc::new(Mutex::new(ServerState::new("default".to_string(), false)));
         {
             let mut guard = state.lock().await;
             guard.switch_active_conversation("session-a".to_string());
             guard.subscribe("session-a".to_string());
         }
-
-        let transition = apply_archive_transition(&state, "session-a", "draft-session").await;
+        let transition = apply_archive_transition(&state, "session-a", "20260531-180708").await;
         assert!(transition.switched_active);
-        assert_eq!(transition.active_session_id, "draft-session");
-
+        assert_eq!(transition.active_session_id, "20260531-180708");
         let guard = state.lock().await;
-        assert!(guard.is_subscribed("draft-session"));
+        assert!(guard.is_subscribed("20260531-180708"));
     }
 
     #[tokio::test]
@@ -98,7 +96,6 @@ mod tests {
             guard.subscribe("session-a".to_string());
             guard.subscribe("session-b".to_string());
         }
-
         let transition = apply_archive_transition(&state, "session-b", "default").await;
         assert!(!transition.switched_active);
         assert_eq!(transition.active_session_id, "session-a");
@@ -111,9 +108,8 @@ mod tests {
             let mut guard = state.lock().await;
             guard.subscribe("session-b".to_string());
         }
-
-        let transition = apply_archive_transition(&state, "session-b", "draft-session").await;
+        let transition = apply_archive_transition(&state, "session-b", "20260531-180708").await;
         assert!(!transition.switched_active);
-        assert_eq!(transition.active_session_id, "draft-session");
+        assert_eq!(transition.active_session_id, "20260531-180708");
     }
 }

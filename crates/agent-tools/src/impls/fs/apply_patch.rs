@@ -48,7 +48,10 @@ Example:
 
 Rules:
 - Use relative workspace paths only
+- Use `*** Add File` only for new files; use `*** Update File` for existing files
 - Include enough unchanged context for each hunk to apply safely
+- Preserve blank lines in unchanged context exactly; missing blank lines make hunks fail safely
+- Prefer small hunks around one logical edit over large cross-function replacements
 - Do not pass a standard git diff with `diff --git`, `---`, or `+++`
 "#;
 
@@ -114,12 +117,17 @@ impl LocalTool for ApplyPatchLocalTool {
         invocation: LocalToolInvocation,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
-        let args: ApplyPatchArgs = invocation.payload.parse_arguments()?;
-        let file_patches = parse_unified_patch(&args.patch)?;
+        let args: ApplyPatchArgs = invocation
+            .payload
+            .parse_arguments()
+            .map_err(format_apply_patch_failure)?;
+        let file_patches = parse_unified_patch(&args.patch).map_err(format_apply_patch_failure)?;
         if file_patches.is_empty() {
             anyhow::bail!(invalid_patch_message(&args.patch));
         }
-        let planned_changes = plan_file_changes(&ctx.workspace_root, file_patches).await?;
+        let planned_changes = plan_file_changes(&ctx.workspace_root, file_patches)
+            .await
+            .map_err(format_apply_patch_failure)?;
         let mut changed_files = BTreeSet::new();
         for planned_change in planned_changes {
             match planned_change {
@@ -162,6 +170,12 @@ impl LocalTool for ApplyPatchLocalTool {
     }
 }
 
+fn format_apply_patch_failure(err: anyhow::Error) -> anyhow::Error {
+    anyhow::anyhow!(
+        "apply_patch failed: {err:#}\nRecovery: reread the smallest relevant slice of each target file, then retry with one focused `*** Update File` hunk per logical edit. Do not retry the same hunk unchanged. Do not use `*** Add File` to replace an existing file."
+    )
+}
+
 #[derive(Debug)]
 enum PlannedFileChange {
     Write {
@@ -185,6 +199,12 @@ async fn plan_file_changes(
         match (file_patch.old_path.as_str(), file_patch.new_path.as_str()) {
             ("/dev/null", new_path) => {
                 let path = resolve_workspace_path(workspace_root, Some(new_path))?;
+                if path.exists() {
+                    anyhow::bail!(
+                        "refusing to add existing file {}; use `*** Update File:` with a focused hunk instead",
+                        path.display()
+                    );
+                }
                 ensure_not_directory(&path).await?;
                 let next = render_hunks_as_new_file(&file_patch.hunks)?;
                 planned_changes.push(PlannedFileChange::Write {
@@ -299,20 +319,28 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
         *current_move_path = None;
     };
 
-    let patch = patch.trim();
-    if !patch.starts_with("*** Begin Patch") {
+    let patch = strip_heredoc_markers(patch.trim());
+    let patch_lines = patch.lines().collect::<Vec<_>>();
+    if !patch_lines
+        .first()
+        .is_some_and(|line| line.trim() == "*** Begin Patch")
+    {
         anyhow::bail!(invalid_patch_message(patch));
     }
-    if !patch.ends_with("*** End Patch") {
+    if !patch_lines
+        .last()
+        .is_some_and(|line| line.trim() == "*** End Patch")
+    {
         anyhow::bail!("patch must end with `*** End Patch`");
     }
 
-    for line in patch.lines() {
-        if line == "*** Begin Patch" {
+    for line in patch_lines {
+        let marker = line.trim();
+        if marker == "*** Begin Patch" {
             in_patch_block = true;
             continue;
         }
-        if line == "*** End Patch" {
+        if marker == "*** End Patch" {
             flush_current(
                 &mut file_patches,
                 &mut current_old_path,
@@ -330,7 +358,8 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
         if line.starts_with("diff --git ") {
             continue;
         }
-        if let Some(path) = line.strip_prefix("*** Add File: ") {
+        let directive = line.trim_start();
+        if let Some(path) = directive.strip_prefix("*** Add File: ") {
             flush_current(
                 &mut file_patches,
                 &mut current_old_path,
@@ -343,7 +372,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             current_new_path = Some(path.trim().to_string());
             continue;
         }
-        if let Some(path) = line.strip_prefix("*** Delete File: ") {
+        if let Some(path) = directive.strip_prefix("*** Delete File: ") {
             flush_current(
                 &mut file_patches,
                 &mut current_old_path,
@@ -356,7 +385,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             current_new_path = Some("/dev/null".to_string());
             continue;
         }
-        if let Some(path) = line.strip_prefix("*** Update File: ") {
+        if let Some(path) = directive.strip_prefix("*** Update File: ") {
             flush_current(
                 &mut file_patches,
                 &mut current_old_path,
@@ -370,7 +399,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             current_new_path = Some(path);
             continue;
         }
-        if let Some(path) = line.strip_prefix("*** Move to: ") {
+        if let Some(path) = directive.strip_prefix("*** Move to: ") {
             let Some(old_path) = current_old_path.as_deref() else {
                 anyhow::bail!("move target found before update file");
             };
@@ -391,7 +420,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             *new_path = path;
             continue;
         }
-        if line.starts_with("@@") {
+        if directive.starts_with("@@") {
             if current_new_path.is_none() {
                 anyhow::bail!("hunk found before target file");
             }
@@ -399,7 +428,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
                 hunks.push(h);
             }
             current_hunk = Some(Hunk {
-                change_context: parse_change_context(line),
+                change_context: parse_change_context(directive),
                 is_end_of_file: false,
                 lines: Vec::new(),
             });
@@ -419,7 +448,7 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
             if line.starts_with('\\') {
                 continue;
             }
-            if line.trim() == "*** End of File" {
+            if marker == "*** End of File" {
                 hunk.is_end_of_file = true;
                 continue;
             }
@@ -440,6 +469,23 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
     );
     validate_file_patches(&file_patches)?;
     Ok(file_patches)
+}
+
+fn strip_heredoc_markers(patch: &str) -> &str {
+    let lines = patch.lines().collect::<Vec<_>>();
+    let Some(first) = lines.first().map(|line| line.trim()) else {
+        return patch;
+    };
+    let Some(last) = lines.last().map(|line| line.trim()) else {
+        return patch;
+    };
+    if matches!(first, "<<EOF" | "<<'EOF'" | "<<\"EOF\"") && last == "EOF" && lines.len() >= 4 {
+        let start = patch.find('\n').map(|index| index + 1).unwrap_or(0);
+        let end = patch.rfind('\n').unwrap_or(patch.len());
+        patch[start..end].trim()
+    } else {
+        patch
+    }
 }
 
 fn validate_file_patches(file_patches: &[FilePatch]) -> anyhow::Result<()> {
@@ -516,17 +562,12 @@ fn render_hunks_as_new_file(hunks: &[Hunk]) -> anyhow::Result<String> {
 }
 
 fn apply_hunks(original: &str, line_ending: LineEnding, hunks: &[Hunk]) -> anyhow::Result<String> {
-    let mut lines = original
-        .split('\n')
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    if lines.last().is_some_and(String::is_empty) {
-        lines.pop();
-    }
+    let lines = original.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+    let had_trailing_newline = original.ends_with('\n');
 
     let replacements = compute_replacements(&lines, hunks)?;
     let mut next_lines = apply_replacements(lines, &replacements);
-    if !next_lines.last().is_some_and(String::is_empty) {
+    if had_trailing_newline && !next_lines.last().is_some_and(String::is_empty) {
         next_lines.push(String::new());
     }
     Ok(next_lines.join(line_ending.as_str()))
@@ -601,7 +642,10 @@ fn compute_replacements(
         }
 
         let Some(start_index) = found else {
-            anyhow::bail!("Failed to find expected lines:\n{}", old_block.join("\n"));
+            anyhow::bail!(
+                "Failed to find expected lines:\n{}\nHint: reread the target file and copy the exact current lines, including indentation and blank lines. Prefer a smaller hunk if the surrounding code changed.",
+                old_block.join("\n")
+            );
         };
         replacements.push((start_index, pattern.len(), new_slice.to_vec()));
         line_index = start_index + pattern.len();
@@ -661,6 +705,7 @@ fn seek_sequence(
         lines_match_exact as fn(&[String], &[String], usize) -> bool,
         lines_match_trim_end,
         lines_match_trim,
+        lines_match_normalized,
     ] {
         for index in search_start..=lines.len().saturating_sub(pattern.len()) {
             if matcher(lines, pattern, index) {
@@ -692,6 +737,30 @@ fn lines_match_trim(lines: &[String], pattern: &[String], index: usize) -> bool 
         .all(|(offset, expected)| lines[index + offset].trim() == expected.trim())
 }
 
+fn lines_match_normalized(lines: &[String], pattern: &[String], index: usize) -> bool {
+    pattern.iter().enumerate().all(|(offset, expected)| {
+        normalize_common_text_differences(&lines[index + offset])
+            == normalize_common_text_differences(expected)
+    })
+}
+
+fn normalize_common_text_differences(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
+            | '\u{2212}' => '-',
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
+            '\u{00A0}' | '\u{2002}' | '\u{2003}' | '\u{2004}' | '\u{2005}' | '\u{2006}'
+            | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200A}' | '\u{202F}' | '\u{205F}'
+            | '\u{3000}' => ' ',
+            other => other,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -705,14 +774,70 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
-    async fn apply_patch_overwrites_existing_file_with_add_file() {
-        let base = test_workspace("apply_patch_overwrites_existing_file_with_add_file");
+    async fn apply_patch_refuses_add_file_for_existing_file() {
+        let base = test_workspace("apply_patch_refuses_add_file_for_existing_file");
         fs::create_dir_all(base.join("src"))
             .await
             .expect("create src");
         fs::write(base.join("src/lib.rs"), "old\n")
             .await
             .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Add File: src/lib.rs\n+new\n*** End Patch"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("existing file must use update hunks");
+
+        assert!(err.to_string().contains("refusing to add existing file"));
+        assert!(err.to_string().contains("Update File"));
+        assert!(err.to_string().contains("Recovery:"));
+        assert!(
+            err.to_string()
+                .contains("Do not retry the same hunk unchanged")
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_update_file_guides_exact_context_retry() {
+        let base = test_workspace("failed_update_file_guides_exact_context_retry");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(base.join("src/lib.rs"), "fn current() {}\n")
+            .await
+            .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        let err = tool
+            .invoke(
+                tool_invocation(serde_json::json!({
+                    "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-fn missing() {}\n+fn updated() {}\n*** End Patch"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("stale context must fail safely");
+
+        let message = err.to_string();
+        assert!(message.contains("Failed to find expected lines"));
+        assert!(message.contains("reread the smallest relevant slice"));
+        assert!(message.contains("Do not retry the same hunk unchanged"));
+    }
+
+    #[tokio::test]
+    async fn apply_patch_adds_new_file() {
+        let base = test_workspace("apply_patch_adds_new_file");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
 
         let tool = ApplyPatchLocalTool;
         let ctx = tool_context(&base);
@@ -1104,6 +1229,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn apply_patch_does_not_duplicate_cr_on_untouched_crlf_lines() {
+        let base = test_workspace("apply_patch_does_not_duplicate_cr_on_untouched_crlf_lines");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(
+            base.join("src/lib.rs"),
+            b"fn first() {\r\n    println!(\"same\");\r\n}\r\n\r\nfn second() {\r\n    println!(\"old\");\r\n}\r\n",
+        )
+        .await
+        .expect("write file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        tool.invoke(
+            tool_invocation(serde_json::json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-    println!(\"old\");\n+    println!(\"new\");\n*** End Patch"
+            })),
+            &ctx,
+        )
+        .await
+        .expect("apply patch");
+
+        let updated = fs::read(base.join("src/lib.rs"))
+            .await
+            .expect("read updated file");
+        assert!(!String::from_utf8_lossy(&updated).contains("\r\r\n"));
+        assert_eq!(
+            String::from_utf8(updated).expect("utf8"),
+            "fn first() {\r\n    println!(\"same\");\r\n}\r\n\r\nfn second() {\r\n    println!(\"new\");\r\n}\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_repairs_repeated_crlf_while_editing() {
+        let base = test_workspace("apply_patch_repairs_repeated_crlf_while_editing");
+        fs::create_dir_all(base.join("src"))
+            .await
+            .expect("create src");
+        fs::write(
+            base.join("src/lib.rs"),
+            b"fn first() {\r\r\n    println!(\"same\");\r\r\n}\r\r\nfn second() {\r\r\n    println!(\"old\");\r\r\n}\r\r\n",
+        )
+        .await
+        .expect("write malformed file");
+
+        let tool = ApplyPatchLocalTool;
+        let ctx = tool_context(&base);
+        tool.invoke(
+            tool_invocation(serde_json::json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-    println!(\"old\");\n+    println!(\"new\");\n*** End Patch"
+            })),
+            &ctx,
+        )
+        .await
+        .expect("apply patch");
+
+        let updated = fs::read(base.join("src/lib.rs"))
+            .await
+            .expect("read updated file");
+        assert_eq!(
+            String::from_utf8(updated).expect("utf8"),
+            "fn first() {\r\n    println!(\"same\");\r\n}\r\nfn second() {\r\n    println!(\"new\");\r\n}\r\n"
+        );
+    }
+
+    #[tokio::test]
     async fn apply_patch_preserves_utf8_bom() {
         let base = test_workspace("apply_patch_preserves_utf8_bom");
         fs::create_dir_all(base.join("src"))
@@ -1134,6 +1326,50 @@ mod tests {
             .await
             .expect("read updated file");
         assert!(updated.starts_with(&[0xEF, 0xBB, 0xBF]));
+    }
+
+    #[test]
+    fn parse_patch_accepts_padded_markers_and_heredoc_wrapper() {
+        let patch = "<<'EOF'\n *** Begin Patch \n*** Update File: src/lib.rs\n@@\n-old\n+new\n *** End Patch \nEOF";
+
+        let parsed = parse_unified_patch(patch).expect("parse patch");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].old_path, "src/lib.rs");
+    }
+
+    #[test]
+    fn missing_expected_lines_error_guides_exact_context_retry() {
+        let content = "before\n\nafter\n";
+        let hunk = Hunk {
+            change_context: None,
+            is_end_of_file: false,
+            lines: vec![" before".to_string(), "-after-missing".to_string()],
+        };
+
+        let err =
+            apply_single_hunk(content, LineEnding::Lf, &hunk).expect_err("hunk should fail safely");
+        let message = err.to_string();
+        assert!(message.contains("Failed to find expected lines"));
+        assert!(message.contains("including indentation and blank lines"));
+        assert!(message.contains("Prefer a smaller hunk"));
+    }
+
+    #[test]
+    fn apply_patch_matches_common_unicode_punctuation_variants() {
+        let content = "let title = \"smart quote\";\nlet range = \"a\u{2013}b\";\n";
+        let hunk = Hunk {
+            change_context: None,
+            is_end_of_file: false,
+            lines: vec![
+                "-let title = \"smart quote\";".to_string(),
+                "-let range = \"a-b\";".to_string(),
+                "+let title = \"updated\";".to_string(),
+            ],
+        };
+
+        let updated = apply_single_hunk(content, LineEnding::Lf, &hunk).expect("apply hunk");
+        assert_eq!(updated, "let title = \"updated\";\n");
     }
 
     fn test_workspace(name: &str) -> PathBuf {

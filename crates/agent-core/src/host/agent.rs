@@ -128,7 +128,7 @@ impl AgentHost {
         Uuid::now_v7().to_string()
     }
 
-    pub async fn create_draft_conversation(&self) -> Result<String> {
+    pub async fn create_conversation_with_timestamp_id(&self) -> Result<String> {
         let id = self.new_conversation_id();
         self.store.mark_active_conversation(&id).await?;
         Ok(id)
@@ -140,7 +140,7 @@ impl AgentHost {
         {
             return Ok(id);
         }
-        self.create_draft_conversation().await
+        self.create_conversation_with_timestamp_id().await
     }
 
     pub async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {

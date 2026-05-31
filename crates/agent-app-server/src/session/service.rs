@@ -251,7 +251,7 @@ pub(crate) async fn archive_conversation(
     conversation_id: String,
 ) -> Result<()> {
     runtime.archive_conversation(&conversation_id).await?;
-    let next_conversation_id = runtime.create_draft_conversation().await?;
+    let next_conversation_id = runtime.create_conversation_with_timestamp_id().await?;
     let transition =
         session_state::apply_archive_transition(state, &conversation_id, &next_conversation_id)
             .await;
@@ -338,7 +338,7 @@ pub(crate) async fn delete_conversation(
     };
     runtime.reset_conversation(&conversation_id).await?;
     if was_active {
-        let next_conversation_id = runtime.create_draft_conversation().await?;
+        let next_conversation_id = runtime.create_conversation_with_timestamp_id().await?;
         session_state::apply_active_conversation(state, next_conversation_id.clone()).await;
         session_state::persist_active_conversation(runtime, state, &next_conversation_id).await;
         publish_switched_conversation_state(runtime, event_tx, state, &next_conversation_id)

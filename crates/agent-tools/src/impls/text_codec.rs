@@ -55,36 +55,34 @@ impl TextDecodeFailure {
 
 pub(crate) fn decode_text_file(bytes: &[u8]) -> Result<DecodedTextFile, TextDecodeFailure> {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        let text = std::str::from_utf8(rest)
+        let raw_text = std::str::from_utf8(rest)
             .map_err(|_| TextDecodeFailure::InvalidUtf8)?
             .to_string();
-        validate_line_endings(&text)?;
+        let normalized = normalize_line_endings(raw_text)?;
         return Ok(DecodedTextFile {
-            line_ending: detect_line_ending(&text),
-            text,
+            line_ending: normalized.line_ending,
+            text: normalized.text,
             encoding: TextEncoding::Utf8Bom,
         });
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        let text = decode_utf16_bytes(rest, true)?;
-        validate_line_endings(&text)?;
+        let normalized = normalize_line_endings(decode_utf16_bytes(rest, true)?)?;
         return Ok(DecodedTextFile {
-            line_ending: detect_line_ending(&text),
-            text,
+            line_ending: normalized.line_ending,
+            text: normalized.text,
             encoding: TextEncoding::Utf16LeBom,
         });
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        let text = decode_utf16_bytes(rest, false)?;
-        validate_line_endings(&text)?;
+        let normalized = normalize_line_endings(decode_utf16_bytes(rest, false)?)?;
         return Ok(DecodedTextFile {
-            line_ending: detect_line_ending(&text),
-            text,
+            line_ending: normalized.line_ending,
+            text: normalized.text,
             encoding: TextEncoding::Utf16BeBom,
         });
     }
 
-    let text = std::str::from_utf8(bytes)
+    let raw_text = std::str::from_utf8(bytes)
         .map_err(|err| {
             if err.valid_up_to() == 0 {
                 TextDecodeFailure::UnsupportedEncoding
@@ -93,10 +91,10 @@ pub(crate) fn decode_text_file(bytes: &[u8]) -> Result<DecodedTextFile, TextDeco
             }
         })?
         .to_string();
-    validate_line_endings(&text)?;
+    let normalized = normalize_line_endings(raw_text)?;
     Ok(DecodedTextFile {
-        line_ending: detect_line_ending(&text),
-        text,
+        line_ending: normalized.line_ending,
+        text: normalized.text,
         encoding: TextEncoding::Utf8,
     })
 }
@@ -122,20 +120,38 @@ fn detect_line_ending(text: &str) -> LineEnding {
     }
 }
 
-fn validate_line_endings(text: &str) -> Result<(), TextDecodeFailure> {
-    let bytes = text.as_bytes();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        if bytes[index] != b'\r' {
-            index += 1;
+struct NormalizedLineEndings {
+    text: String,
+    line_ending: LineEnding,
+}
+
+fn normalize_line_endings(text: String) -> Result<NormalizedLineEndings, TextDecodeFailure> {
+    let original_line_ending = detect_line_ending(&text);
+    let mut normalized = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != '\r' {
+            normalized.push(ch);
             continue;
         }
-        if bytes.get(index + 1) != Some(&b'\n') {
+
+        while chars.peek() == Some(&'\r') {
+            chars.next();
+        }
+
+        if chars.peek() == Some(&'\n') {
+            chars.next();
+            normalized.push_str("\r\n");
+        } else {
             return Err(TextDecodeFailure::MalformedLineEndings);
         }
-        index += 2;
     }
-    Ok(())
+
+    Ok(NormalizedLineEndings {
+        line_ending: original_line_ending,
+        text: normalized,
+    })
 }
 
 fn decode_utf16_bytes(bytes: &[u8], little_endian: bool) -> Result<String, TextDecodeFailure> {
@@ -205,8 +221,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_malformed_line_endings() {
-        let err = decode_text_file(b"a\r\r\nb\n").expect_err("should reject");
+    fn normalizes_repeated_cr_before_lf() {
+        let decoded = decode_text_file(b"a\r\r\nb\r\n").expect("decode repeated crlf");
+        assert_eq!(decoded.text, "a\r\nb\r\n");
+        assert_eq!(decoded.line_ending, LineEnding::CrLf);
+    }
+
+    #[test]
+    fn rejects_isolated_carriage_returns() {
+        let err = decode_text_file(b"a\rb\n").expect_err("should reject");
         assert_eq!(err, TextDecodeFailure::MalformedLineEndings);
     }
 }
