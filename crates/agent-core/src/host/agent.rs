@@ -877,7 +877,7 @@ fn latest_budget_baseline_from_rollout_items(
     })
 }
 
-fn timestamp_conversation_id() -> String {
+pub fn timestamp_conversation_id() -> String {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();

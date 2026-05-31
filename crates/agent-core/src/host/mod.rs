@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use agent::AgentHost;
+pub use agent::{AgentHost, timestamp_conversation_id};
 
 #[derive(Clone, Debug)]
 pub struct AgentMetadata {

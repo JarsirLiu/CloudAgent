@@ -495,11 +495,7 @@ pub(crate) async fn handle_tui_input(
             app.bottom_pane.clear_session_picker();
             let trimmed = new_conversation_id.trim();
             let conversation_id = if trimmed.is_empty() {
-                let millis = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis();
-                format!("session-{millis}")
+                agent_core::host::timestamp_conversation_id()
             } else {
                 trimmed.to_string()
             };

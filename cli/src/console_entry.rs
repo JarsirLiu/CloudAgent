@@ -1,10 +1,10 @@
 use crate::local_node::{arg_value, build_local_node_bootstrap};
 use crate::{AppServerTarget, ConsoleBootstrap, ConsoleConfig, run_console};
+use agent_core::host::timestamp_conversation_id;
 use anyhow::{Result, bail};
 use config::AgentConfig;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub enum RequestedConsoleTarget {
     Public(AppServerTarget),
@@ -56,14 +56,7 @@ pub async fn resolve_initial_conversation_id(args: &[OsString]) -> Result<String
         return Ok(conversation_id);
     }
 
-    let generated = format!(
-        "draft-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|err| anyhow::anyhow!("system clock before unix epoch: {err}"))?
-            .as_millis()
-    );
-    Ok(generated)
+    Ok(timestamp_conversation_id())
 }
 
 pub fn internal_targets_enabled() -> bool {
