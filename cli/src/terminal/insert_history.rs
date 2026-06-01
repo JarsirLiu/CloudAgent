@@ -17,12 +17,12 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::terminal::color_compat::{TerminalCapabilities, adapt_bg, adapt_color};
 use crate::terminal::custom_terminal::Terminal;
-use crate::terminal::HistoryRenderMetrics;
+use crate::ui::chat_surface::TranscriptRenderMetrics;
 use crate::ui::widgets::history_cell::HistoryCell;
 
 pub(crate) fn prepare_history_lines(
     cells: Vec<HistoryCell>,
-    render_metrics: HistoryRenderMetrics,
+    render_metrics: TranscriptRenderMetrics,
     has_existing_history: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -45,7 +45,7 @@ pub(crate) fn prepare_history_lines(
 
 pub(crate) fn prepare_history_tail_lines(
     cells: Vec<HistoryCell>,
-    render_metrics: HistoryRenderMetrics,
+    render_metrics: TranscriptRenderMetrics,
     max_rows: usize,
 ) -> Vec<Line<'static>> {
     if max_rows == 0 || cells.is_empty() {
@@ -448,22 +448,22 @@ mod tests {
     use super::{
         prepare_history_lines, prepare_history_tail_lines, wrap_history_line, write_history_line,
     };
-    use crate::terminal::HistoryRenderMetrics;
     use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
+    use crate::ui::chat_surface::TranscriptRenderMetrics;
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
     use std::str;
 
-    fn metrics(width: usize) -> HistoryRenderMetrics {
-        HistoryRenderMetrics {
+    fn metrics(width: usize) -> TranscriptRenderMetrics {
+        TranscriptRenderMetrics {
             width,
             left_padding: 0,
         }
     }
 
-    fn padded_metrics(width: usize, left_padding: usize) -> HistoryRenderMetrics {
-        HistoryRenderMetrics {
+    fn padded_metrics(width: usize, left_padding: usize) -> TranscriptRenderMetrics {
+        TranscriptRenderMetrics {
             width,
             left_padding,
         }

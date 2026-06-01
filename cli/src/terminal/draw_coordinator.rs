@@ -91,7 +91,8 @@ mod tests {
     use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
     use crate::terminal::custom_terminal::Terminal;
     use crate::terminal::history_flush_queue::HistoryFlushQueue;
-    use crate::terminal::{HistoryRenderMetrics, PreparedHistoryProjection, PreparedHistoryUpdate};
+    use crate::terminal::{PreparedHistoryProjection, PreparedHistoryUpdate};
+    use crate::ui::chat_surface::TranscriptRenderMetrics;
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
     use ratatui::backend::{Backend, WindowSize};
     use ratatui::buffer::Cell;
@@ -210,8 +211,8 @@ mod tests {
         }
     }
 
-    fn metrics(width: usize) -> HistoryRenderMetrics {
-        HistoryRenderMetrics {
+    fn metrics(width: usize) -> TranscriptRenderMetrics {
+        TranscriptRenderMetrics {
             width,
             left_padding: 0,
         }

@@ -235,10 +235,24 @@ mod tests {
     use crate::app::core::transcript_owner::TranscriptOwner;
     use crate::terminal::{HistoryProjection, HistoryUpdate, PreparedHistoryUpdate};
     use crate::ui::widgets::history_cell::HistoryCell;
+    use agent_core::{InputItem, TranscriptItem, TurnItemKind};
     use ratatui::layout::Size;
 
     fn size(width: u16, height: u16) -> Size {
         Size { width, height }
+    }
+
+    fn local_input(text: &str) -> Vec<InputItem> {
+        vec![InputItem::Text {
+            text: text.to_string(),
+        }]
+    }
+
+    fn agent(id: &str, text: &str) -> TranscriptItem {
+        TranscriptItem::AgentMessage {
+            id: id.to_string(),
+            text: text.to_string(),
+        }
     }
 
     #[test]
@@ -420,13 +434,74 @@ mod tests {
     }
 
     #[test]
+    fn completed_stream_after_viewport_reflow_replays_final_suffix() {
+        let mut controller = TerminalProjectionController::default();
+        let mut transcript_owner = TranscriptOwner::default();
+        transcript_owner.start_local_user(local_input("hello"), false);
+        transcript_owner.bind_turn_id("turn-1".to_string(), false);
+        transcript_owner.start_item(
+            "turn-1".to_string(),
+            "a1".to_string(),
+            TurnItemKind::AssistantMessage,
+            None,
+            false,
+        );
+        transcript_owner.append_agent_delta(
+            "turn-1".to_string(),
+            "a1".to_string(),
+            "stable paragraph\n\nvisible tail".to_string(),
+            false,
+        );
+
+        let first = controller.build_plan(&mut transcript_owner, 12, size(80, 24), true);
+        assert!(matches!(first.history_update, HistoryUpdate::ReplayAll(_)));
+
+        let shrunk = controller.build_plan(&mut transcript_owner, 6, size(80, 24), true);
+        assert!(matches!(
+            shrunk.history_update,
+            HistoryUpdate::ReflowVisibleTail { .. }
+        ));
+
+        transcript_owner.complete_item(
+            "turn-1".to_string(),
+            "a1".to_string(),
+            agent(
+                "a1",
+                "stable paragraph\n\nvisible tail\nfinal line one\nfinal line two",
+            ),
+            false,
+        );
+        controller.on_stream_boundary();
+
+        let final_plan = controller.build_plan(&mut transcript_owner, 6, size(80, 24), true);
+        match final_plan.history_update {
+            HistoryUpdate::ReplayAll(cells) => {
+                let rendered = cells
+                    .into_iter()
+                    .map(|cell| cell.body().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(rendered.contains("visible tail"));
+                assert!(rendered.contains("final line one"));
+                assert!(rendered.contains("final line two"));
+            }
+            HistoryUpdate::AppendTail(_) => {
+                panic!("finalized stream suffix must replay canonical history")
+            }
+            HistoryUpdate::ReflowVisibleTail { .. } => {
+                panic!("finalized stream suffix must not remain a viewport-only repair")
+            }
+        }
+    }
+
+    #[test]
     fn reflow_policy_is_carried_to_draw_layer_without_rendering_lines() {
         let mut controller = TerminalProjectionController::default();
         controller.set_reflow_policy(ReflowPolicy { max_rows: Some(3) });
 
         let prepared = controller.prepare_projection(HistoryProjection {
             viewport_height: 5,
-            history_render_metrics: crate::terminal::HistoryRenderMetrics {
+            history_render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics {
                 width: 80,
                 left_padding: 4,
             },

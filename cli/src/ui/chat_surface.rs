@@ -22,6 +22,12 @@ pub(crate) struct TranscriptRenderMetrics {
     pub(crate) left_padding: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TranscriptSurfaceLayout {
+    content: Rect,
+    render_metrics: TranscriptRenderMetrics,
+}
+
 pub(crate) struct ChatSurface;
 
 pub(crate) struct ChatSurfaceLayout {
@@ -32,19 +38,7 @@ pub(crate) struct ChatSurfaceLayout {
 
 impl ChatSurface {
     pub(crate) fn history_render_metrics_for_area(area: Rect) -> TranscriptRenderMetrics {
-        let content = centered_column(area, MAX_CONTENT_WIDTH);
-        let side_margin = ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH / 2;
-        TranscriptRenderMetrics {
-            width: content
-                .width
-                .saturating_sub(ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH)
-                .max(MIN_RENDER_WIDTH) as usize,
-            left_padding: content.x.saturating_add(side_margin) as usize,
-        }
-    }
-
-    pub(crate) fn active_render_width_for_area(area: Rect) -> usize {
-        Self::history_render_metrics_for_area(area).width
+        transcript_surface_layout(area).render_metrics
     }
 
     pub(crate) fn render(app: &mut TuiApp, frame: &mut Frame) {
@@ -52,15 +46,15 @@ impl ChatSurface {
         let mode = app.current_mode();
         let shows_welcome = matches!(mode, FrontendMode::Idle) && should_show_welcome(app);
         let surface_area = viewport_surface_area(area, shows_welcome);
+        let surface_layout = transcript_surface_layout(surface_area);
         let status = app.bottom_pane.build_status_view_model(app);
-        let content = centered_column(surface_area, MAX_CONTENT_WIDTH);
-        let render_width = Self::active_render_width_for_area(surface_area);
-        let bottom_height = bottom_pane_height(app, content.width)
-            .min(content.height)
+        let render_width = surface_layout.render_metrics.width;
+        let bottom_height = bottom_pane_height(app, surface_layout.content.width)
+            .min(surface_layout.content.height)
             .max(1);
         let status_height = if status.live_banner.is_some() { 1 } else { 0 };
         let max_body_height = available_body_height(
-            content,
+            surface_layout.content,
             bottom_height,
             status_height,
             BODY_BOTTOM_GAP_HEIGHT,
@@ -68,7 +62,7 @@ impl ChatSurface {
         let surface_model = build_chat_surface_model(app, render_width, max_body_height);
         let layout = compute_layout(
             app,
-            surface_area,
+            surface_layout,
             surface_model.body_height,
             status.live_banner.is_some(),
             matches!(surface_model.body, ChatSurfaceBody::Welcome),
@@ -101,15 +95,15 @@ impl ChatSurface {
         let mode = app.current_mode();
         let shows_welcome = matches!(mode, FrontendMode::Idle) && should_show_welcome(app);
         let surface_area = viewport_surface_area(terminal_area, shows_welcome);
+        let surface_layout = transcript_surface_layout(surface_area);
         let status = app.bottom_pane.build_status_view_model(app);
-        let content = centered_column(surface_area, MAX_CONTENT_WIDTH);
-        let render_width = Self::active_render_width_for_area(surface_area);
-        let bottom_height = bottom_pane_height(app, content.width)
-            .min(content.height)
+        let render_width = surface_layout.render_metrics.width;
+        let bottom_height = bottom_pane_height(app, surface_layout.content.width)
+            .min(surface_layout.content.height)
             .max(1);
         let status_height = if status.live_banner.is_some() { 1 } else { 0 };
         let max_body_height = available_body_height(
-            content,
+            surface_layout.content,
             bottom_height,
             status_height,
             BODY_BOTTOM_GAP_HEIGHT,
@@ -117,7 +111,7 @@ impl ChatSurface {
         let surface_model = build_chat_surface_model(app, render_width, max_body_height);
         desired_stack_height(
             app,
-            surface_area,
+            surface_layout,
             surface_model.body_height,
             status.live_banner.is_some(),
             matches!(surface_model.body, ChatSurfaceBody::Welcome),
@@ -146,12 +140,12 @@ fn viewport_surface_area(area: Rect, is_welcome: bool) -> Rect {
 
 fn compute_layout(
     app: &TuiApp,
-    area: Rect,
+    surface_layout: TranscriptSurfaceLayout,
     body_height: u16,
     has_status_banner: bool,
     is_welcome: bool,
 ) -> ChatSurfaceLayout {
-    let content = centered_column(area, MAX_CONTENT_WIDTH);
+    let content = surface_layout.content;
     let bottom_height = bottom_pane_height(app, content.width)
         .min(content.height)
         .max(1);
@@ -223,12 +217,12 @@ fn compute_layout(
 
 fn desired_stack_height(
     app: &TuiApp,
-    area: Rect,
+    surface_layout: TranscriptSurfaceLayout,
     body_height: u16,
     has_status_banner: bool,
     is_welcome: bool,
 ) -> u16 {
-    let content = centered_column(area, MAX_CONTENT_WIDTH);
+    let content = surface_layout.content;
     let bottom_height = bottom_pane_height(app, content.width)
         .min(content.height)
         .max(1);
@@ -268,6 +262,21 @@ fn available_body_height(
         .saturating_add(gap_height)
         .min(content.height);
     content.height.saturating_sub(reserved_bottom)
+}
+
+fn transcript_surface_layout(area: Rect) -> TranscriptSurfaceLayout {
+    let content = centered_column(area, MAX_CONTENT_WIDTH);
+    let side_margin = ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH / 2;
+    TranscriptSurfaceLayout {
+        content,
+        render_metrics: TranscriptRenderMetrics {
+            width: content
+                .width
+                .saturating_sub(ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH)
+                .max(MIN_RENDER_WIDTH) as usize,
+            left_padding: content.x.saturating_add(side_margin) as usize,
+        },
+    }
 }
 
 fn render_body_area(app: &mut TuiApp, frame: &mut Frame, area: Rect, model: ChatSurfaceModel) {

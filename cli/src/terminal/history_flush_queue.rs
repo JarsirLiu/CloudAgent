@@ -1,6 +1,7 @@
 use ratatui::text::Line;
 
-use crate::terminal::{HistoryRenderMetrics, prepare_history_lines, prepare_history_tail_lines};
+use crate::terminal::{prepare_history_lines, prepare_history_tail_lines};
+use crate::ui::chat_surface::TranscriptRenderMetrics;
 use crate::ui::widgets::history_cell::HistoryCell;
 
 #[derive(Default)]
@@ -12,7 +13,7 @@ impl HistoryFlushQueue {
     pub(crate) fn replace_with_replay(
         &mut self,
         cells: Vec<HistoryCell>,
-        render_metrics: HistoryRenderMetrics,
+        render_metrics: TranscriptRenderMetrics,
         max_rows: Option<usize>,
     ) {
         self.pending_lines = if let Some(max_rows) = max_rows {
@@ -25,7 +26,7 @@ impl HistoryFlushQueue {
     pub(crate) fn append_tail(
         &mut self,
         cells: Vec<HistoryCell>,
-        render_metrics: HistoryRenderMetrics,
+        render_metrics: TranscriptRenderMetrics,
         has_visible_history: bool,
     ) {
         let has_history = has_visible_history || !self.pending_lines.is_empty();
@@ -45,11 +46,11 @@ impl HistoryFlushQueue {
 #[cfg(test)]
 mod tests {
     use super::HistoryFlushQueue;
-    use crate::terminal::HistoryRenderMetrics;
+    use crate::ui::chat_surface::TranscriptRenderMetrics;
     use crate::ui::widgets::history_cell::HistoryCell;
 
-    fn metrics(width: usize) -> HistoryRenderMetrics {
-        HistoryRenderMetrics {
+    fn metrics(width: usize) -> TranscriptRenderMetrics {
+        TranscriptRenderMetrics {
             width,
             left_padding: 0,
         }

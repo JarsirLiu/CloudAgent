@@ -1557,7 +1557,7 @@ fn completing_streamed_agent_message_only_commits_remaining_tail() {
 }
 
 #[test]
-fn completing_unflushed_stream_consolidates_pending_without_replay() {
+fn completing_unflushed_stream_consolidates_pending_and_requests_replay() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
@@ -1582,7 +1582,7 @@ fn completing_unflushed_stream_consolidates_pending_without_replay() {
         false,
     );
 
-    assert!(!owner.take_history_replay_requested());
+    assert!(owner.take_history_replay_requested());
     let pending = owner
         .pending_history_cells()
         .into_iter()
@@ -2032,9 +2032,8 @@ fn active_transcript_tail_ignores_trailing_blank_stream_rows() {
 #[test]
 fn history_projection_uses_same_wrap_width_as_active_transcript() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let metrics = ChatSurface::history_render_metrics_for_area(area);
 
-    assert_eq!(
-        ChatSurface::history_render_metrics_for_area(area).width,
-        ChatSurface::active_render_width_for_area(area)
-    );
+    assert_eq!(metrics.width, 116);
+    assert_eq!(metrics.left_padding, 2);
 }

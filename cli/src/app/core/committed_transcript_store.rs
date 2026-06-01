@@ -5,18 +5,6 @@ pub(crate) struct CommittedTranscriptStore {
     transcript: Transcript,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ProvisionalAgentMessageFootprint {
-    cell_count: usize,
-    body_len: usize,
-}
-
-impl ProvisionalAgentMessageFootprint {
-    pub(crate) fn rendered_beyond(self, pending: Self) -> bool {
-        self.cell_count > pending.cell_count || self.body_len > pending.body_len
-    }
-}
-
 impl CommittedTranscriptStore {
     pub(crate) fn clear(&mut self) {
         self.transcript = Transcript::default();
@@ -64,22 +52,6 @@ impl CommittedTranscriptStore {
         let insert_at = start.min(cells.len());
         cells.insert(insert_at, final_cell);
         true
-    }
-
-    pub(crate) fn provisional_agent_message_footprint(
-        &self,
-        item_id: &str,
-    ) -> ProvisionalAgentMessageFootprint {
-        self.transcript.cells().iter().fold(
-            ProvisionalAgentMessageFootprint::default(),
-            |mut footprint, cell| {
-                if is_provisional_agent_message_cell_for(cell, item_id) {
-                    footprint.cell_count += 1;
-                    footprint.body_len += cell.body().len();
-                }
-                footprint
-            },
-        )
     }
 
     fn append_cell(&mut self, cell: HistoryCell) {

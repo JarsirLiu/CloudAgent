@@ -1,9 +1,7 @@
 use crate::app::conversation::projection::{HistoryTurnCells, project_conversation_history};
 use crate::app::core::active_cell_controller::ActiveCellController;
 use crate::app::core::active_turn::ConsolidateAgentMessage;
-use crate::app::core::committed_transcript_store::{
-    CommittedTranscriptStore, ProvisionalAgentMessageFootprint,
-};
+use crate::app::core::committed_transcript_store::CommittedTranscriptStore;
 use crate::ui::widgets::history_cell::HistoryCell;
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind, TurnState};
@@ -25,15 +23,8 @@ enum ScrollbackReflow {
 }
 
 impl ScrollbackReflow {
-    fn for_consolidated_agent_message(
-        pending_replaced: bool,
-        committed_replaced: bool,
-        pending_footprint: ProvisionalAgentMessageFootprint,
-        committed_footprint: ProvisionalAgentMessageFootprint,
-    ) -> Self {
-        if committed_replaced
-            && (!pending_replaced || committed_footprint.rendered_beyond(pending_footprint))
-        {
+    fn for_consolidated_agent_message(committed_replaced: bool) -> Self {
+        if committed_replaced {
             Self::Required
         } else {
             Self::NotRequired
@@ -264,24 +255,12 @@ impl TranscriptOwner {
     }
 
     fn consolidate_agent_message(&mut self, message: ConsolidateAgentMessage) -> ScrollbackReflow {
-        let pending_footprint = self
-            .pending_store
-            .provisional_agent_message_footprint(&message.item_id);
-        let committed_footprint = self
-            .committed_store
-            .provisional_agent_message_footprint(&message.item_id);
-        let pending_replaced = self
-            .pending_store
+        self.pending_store
             .consolidate_agent_message(&message.item_id, message.cell.clone());
         let committed_replaced = self
             .committed_store
             .consolidate_agent_message(&message.item_id, message.cell);
 
-        ScrollbackReflow::for_consolidated_agent_message(
-            pending_replaced,
-            committed_replaced,
-            pending_footprint,
-            committed_footprint,
-        )
+        ScrollbackReflow::for_consolidated_agent_message(committed_replaced)
     }
 }
