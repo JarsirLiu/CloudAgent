@@ -60,7 +60,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                     push_code_line(line, &code_lang, &code_indent, width, &mut out);
                 }
                 code_indent.clear();
-                out.push(Line::raw(""));
             }
             Event::Start(Tag::Heading { level, .. }) => {
                 let prefix = current_prefix(quote_depth, &line_prefix);
@@ -102,7 +101,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                     Line::from(" ".repeat(display_width(&heading_prefix))),
                 );
                 current.clear();
-                out.push(Line::raw(""));
                 heading_prefix.clear();
                 in_heading = false;
                 style_stack.pop();
@@ -124,7 +122,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                     table_rows.push(std::mem::take(&mut table_row));
                 }
                 render_table(&table_rows, width, &mut out);
-                out.push(Line::raw(""));
                 table_rows.clear();
             }
             Event::Start(Tag::TableHead) => {}
@@ -174,14 +171,12 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 flush(&mut current, &mut out, width, &prefix);
                 quote_depth = quote_depth.saturating_sub(1);
                 style_stack.pop();
-                out.push(Line::raw(""));
             }
             Event::End(TagEnd::List(_)) => {
                 let prefix = current_prefix(quote_depth, &line_prefix);
                 flush(&mut current, &mut out, width, &prefix);
                 list_stack.pop();
                 line_prefix.clear();
-                out.push(Line::raw(""));
             }
             Event::Start(Tag::Item) => {
                 let prefix = current_prefix(quote_depth, &line_prefix);
@@ -287,9 +282,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                     current_prefix(quote_depth, &line_prefix)
                 };
                 flush(&mut current, &mut out, width, &prefix);
-                if should_insert_paragraph_separator(quote_depth, &line_prefix) {
-                    out.push(Line::raw(""));
-                }
             }
             Event::SoftBreak | Event::HardBreak => {
                 let prefix = if in_heading {
@@ -399,10 +391,6 @@ fn prepend_raw_prefix(mut line: Line<'static>, prefix: String) -> Line<'static> 
     spans.extend(line.spans);
     line.spans = spans;
     line
-}
-
-fn should_insert_paragraph_separator(quote_depth: usize, line_prefix: &str) -> bool {
-    quote_depth == 0 && line_prefix.is_empty()
 }
 
 pub(super) fn render_plaintext(input: &str, width: usize) -> Vec<Line<'static>> {
@@ -777,8 +765,24 @@ mod tests {
 
         assert_eq!(
             text,
-            "Intro\n\n    abcdefgh\n    ijklmnop\n    qrstuvwx\n    yz"
+            "Intro\n    abcdefgh\n    ijklmnop\n    qrstuvwx\n    yz"
         );
+    }
+
+    #[test]
+    fn paragraphs_render_compactly_without_blank_separator_rows() {
+        let rendered = render_markdown("First paragraph.\n\nSecond paragraph.", 80);
+        let text = joined(&rendered);
+
+        assert_eq!(text, "First paragraph.\nSecond paragraph.");
+    }
+
+    #[test]
+    fn block_boundaries_render_compactly_without_blank_separator_rows() {
+        let rendered = render_markdown("Intro\n\n- one\n- two\n\nNext", 80);
+        let text = joined(&rendered);
+
+        assert_eq!(text, "Intro\n- one\n- two\nNext");
     }
 
     #[test]
