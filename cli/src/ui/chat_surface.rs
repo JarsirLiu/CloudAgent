@@ -2,7 +2,6 @@ use crate::app::TuiApp;
 use crate::app::runtime::display::should_show_welcome;
 use crate::state::NoticeLevel;
 use crate::terminal::Frame;
-use crate::terminal::HistoryRenderMetrics;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, ChatSurfaceModel, build_chat_surface_model};
 use crate::ui::widgets::welcome::WelcomeScreen;
 use agent_protocol::FrontendMode;
@@ -17,6 +16,12 @@ const ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH: u16 = 4;
 const VIEWPORT_TOP_GUTTER_HEIGHT: u16 = 1;
 const BODY_BOTTOM_GAP_HEIGHT: u16 = 1;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TranscriptRenderMetrics {
+    pub(crate) width: usize,
+    pub(crate) left_padding: usize,
+}
+
 pub(crate) struct ChatSurface;
 
 pub(crate) struct ChatSurfaceLayout {
@@ -26,10 +31,10 @@ pub(crate) struct ChatSurfaceLayout {
 }
 
 impl ChatSurface {
-    pub(crate) fn history_render_metrics_for_area(area: Rect) -> HistoryRenderMetrics {
+    pub(crate) fn history_render_metrics_for_area(area: Rect) -> TranscriptRenderMetrics {
         let content = centered_column(area, MAX_CONTENT_WIDTH);
         let side_margin = ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH / 2;
-        HistoryRenderMetrics {
+        TranscriptRenderMetrics {
             width: content
                 .width
                 .saturating_sub(ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH)

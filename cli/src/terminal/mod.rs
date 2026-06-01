@@ -41,14 +41,8 @@ pub(crate) struct TerminalGuard {
 
 pub(crate) struct HistoryProjection {
     pub(crate) viewport_height: u16,
-    pub(crate) history_render_metrics: HistoryRenderMetrics,
+    pub(crate) history_render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics,
     pub(crate) history_update: HistoryUpdate,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct HistoryRenderMetrics {
-    pub(crate) width: usize,
-    pub(crate) left_padding: usize,
 }
 
 pub(crate) struct PreparedHistoryProjection {
@@ -68,16 +62,16 @@ pub(crate) enum HistoryUpdate {
 pub(crate) enum PreparedHistoryUpdate {
     ReplayAll {
         cells: Vec<HistoryCell>,
-        render_metrics: HistoryRenderMetrics,
+        render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics,
         max_rows: Option<usize>,
     },
     AppendTail {
         cells: Vec<HistoryCell>,
-        render_metrics: HistoryRenderMetrics,
+        render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics,
     },
     ReflowVisibleTail {
         cells: Vec<HistoryCell>,
-        render_metrics: HistoryRenderMetrics,
+        render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics,
         max_rows: usize,
     },
 }
