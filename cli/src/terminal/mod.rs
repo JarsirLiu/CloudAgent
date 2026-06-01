@@ -7,9 +7,7 @@ mod keyboard_modes;
 use anyhow::Result;
 use crossterm::Command;
 use crossterm::SynchronizedUpdate;
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -45,7 +43,6 @@ pub(crate) fn init() -> Result<TerminalGuard> {
             stdout,
             EnterAlternateScreen,
             EnableAlternateScroll,
-            EnableMouseCapture,
             EnableBracketedPaste
         )?;
         keyboard_modes::enable_keyboard_enhancement();
@@ -67,7 +64,6 @@ pub(crate) fn restore() -> Result<()> {
     let _ = execute!(
         io::stdout(),
         DisableBracketedPaste,
-        DisableMouseCapture,
         DisableAlternateScroll,
         LeaveAlternateScreen
     );

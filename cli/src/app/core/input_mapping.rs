@@ -199,6 +199,8 @@ impl TuiApp {
             return true;
         }
         matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+            || (self.bottom_pane.composer_is_empty()
+                && matches!(key.code, KeyCode::Up | KeyCode::Down))
     }
 }
 
@@ -249,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_transcript_scroll_does_not_capture_arrow_keys_from_composer() {
+    fn idle_transcript_scroll_captures_arrow_keys_only_when_composer_empty() {
         let mut app = test_app();
         app.push_live_cell(HistoryCell::agent(
             "assistant",
@@ -257,6 +259,14 @@ mod tests {
             HistoryFormat::Markdown,
         ));
 
+        assert!(
+            app.should_route_key_to_transcript_scroll(KeyEvent::new(
+                KeyCode::Up,
+                KeyModifiers::NONE,
+            ))
+        );
+        app.bottom_pane
+            .restore_submission(&agent_core::text_input_items("x"));
         assert!(
             !app.should_route_key_to_transcript_scroll(KeyEvent::new(
                 KeyCode::Up,
