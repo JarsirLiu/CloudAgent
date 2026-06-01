@@ -8,7 +8,6 @@ use crate::text_width::display_width;
 
 pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let input = normalize_markdown_indentation(input);
-    let input = input.replace('\\', "\\\\");
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
@@ -28,6 +27,8 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let mut in_heading = false;
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut table_row: Vec<String> = Vec::new();
+    let mut quote_depth = 0usize;
+    let mut link_stack: Vec<String> = Vec::new();
 
     let flush =
         |current: &mut Vec<Span<'static>>, out: &mut Vec<Line<'static>>, w: usize, prefix: &str| {
@@ -40,7 +41,8 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     for event in parser {
         match event {
             Event::Start(Tag::CodeBlock(kind)) => {
-                flush(&mut current, &mut out, width, &line_prefix);
+                let prefix = current_prefix(quote_depth, &line_prefix);
+                flush(&mut current, &mut out, width, &prefix);
                 in_code_block = true;
                 code_lang = match &kind {
                     CodeBlockKind::Fenced(lang) => lang.to_string(),
@@ -66,7 +68,8 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 out.push(Line::raw(""));
             }
             Event::Start(Tag::Heading { level, .. }) => {
-                flush(&mut current, &mut out, width, &line_prefix);
+                let prefix = current_prefix(quote_depth, &line_prefix);
+                flush(&mut current, &mut out, width, &prefix);
                 in_heading = true;
                 heading_prefix = match level {
                     pulldown_cmark::HeadingLevel::H1 => "# ".to_string(),
@@ -110,11 +113,13 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 style_stack.pop();
             }
             Event::Start(Tag::List(start)) => {
-                flush(&mut current, &mut out, width, &line_prefix);
+                let prefix = current_prefix(quote_depth, &line_prefix);
+                flush(&mut current, &mut out, width, &prefix);
                 list_stack.push(start);
             }
             Event::Start(Tag::Table(_)) => {
-                flush(&mut current, &mut out, width, &line_prefix);
+                let prefix = current_prefix(quote_depth, &line_prefix);
+                flush(&mut current, &mut out, width, &prefix);
                 table_rows.clear();
                 table_row.clear();
             }
@@ -158,48 +163,52 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 current.clear();
             }
             Event::Start(Tag::BlockQuote(_)) => {
-                flush(&mut current, &mut out, width, &line_prefix);
-                line_prefix = "│ ".to_string();
+                let prefix = current_prefix(quote_depth, &line_prefix);
+                flush(&mut current, &mut out, width, &prefix);
+                quote_depth = quote_depth.saturating_add(1);
                 style_stack.push(
                     style_stack
                         .last()
                         .copied()
                         .unwrap_or_default()
-                        .fg(Color::Rgb(150, 160, 190)),
+                        .fg(Color::Green),
                 );
             }
             Event::End(TagEnd::BlockQuote) => {
-                flush(&mut current, &mut out, width, &line_prefix);
-                line_prefix.clear();
+                let prefix = current_prefix(quote_depth, &line_prefix);
+                flush(&mut current, &mut out, width, &prefix);
+                quote_depth = quote_depth.saturating_sub(1);
                 style_stack.pop();
                 out.push(Line::raw(""));
             }
             Event::End(TagEnd::List(_)) => {
-                flush(&mut current, &mut out, width, &line_prefix);
+                let prefix = current_prefix(quote_depth, &line_prefix);
+                flush(&mut current, &mut out, width, &prefix);
                 list_stack.pop();
                 line_prefix.clear();
                 out.push(Line::raw(""));
             }
             Event::Start(Tag::Item) => {
-                flush(&mut current, &mut out, width, &line_prefix);
-                let indent = "  ".repeat(list_stack.len().saturating_sub(1));
+                let prefix = current_prefix(quote_depth, &line_prefix);
+                flush(&mut current, &mut out, width, &prefix);
+                let indent = "    ".repeat(list_stack.len().saturating_sub(1));
                 line_prefix = match list_stack.last_mut() {
                     Some(Some(number)) => {
                         let prefix = format!("{indent}{number}. ");
                         *number += 1;
                         prefix
                     }
-                    Some(None) => format!("{indent}• "),
-                    None => "• ".to_string(),
+                    Some(None) => format!("{indent}- "),
+                    None => "- ".to_string(),
                 };
             }
             Event::End(TagEnd::Item) => {
                 let prefix = if in_heading {
-                    heading_prefix.as_str()
+                    current_prefix(quote_depth, &heading_prefix)
                 } else {
-                    line_prefix.as_str()
+                    current_prefix(quote_depth, &line_prefix)
                 };
-                flush(&mut current, &mut out, width, prefix);
+                flush(&mut current, &mut out, width, &prefix);
                 line_prefix.clear();
             }
             Event::Start(Tag::Emphasis) => {
@@ -223,11 +232,26 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
             }
             Event::Code(text) => {
                 current.push(Span::styled(
-                    format!(" {text} "),
-                    Style::default()
-                        .fg(Color::Rgb(140, 220, 255))
-                        .bg(Color::Rgb(30, 35, 45)),
+                    text.to_string(),
+                    Style::default().fg(Color::Cyan),
                 ));
+            }
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                link_stack.push(dest_url.to_string());
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some(dest) = link_stack.pop()
+                    && !dest.is_empty()
+                {
+                    current.push(Span::raw(" ("));
+                    current.push(Span::styled(
+                        dest,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::UNDERLINED),
+                    ));
+                    current.push(Span::raw(")"));
+                }
             }
             Event::Start(Tag::Strikethrough) => {
                 style_stack.push(
@@ -255,30 +279,30 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
             }
             Event::Start(Tag::Paragraph) => {
                 let prefix = if in_heading {
-                    heading_prefix.as_str()
+                    current_prefix(quote_depth, &heading_prefix)
                 } else {
-                    line_prefix.as_str()
+                    current_prefix(quote_depth, &line_prefix)
                 };
-                flush(&mut current, &mut out, width, prefix);
+                flush(&mut current, &mut out, width, &prefix);
             }
             Event::End(TagEnd::Paragraph) => {
                 let prefix = if in_heading {
-                    heading_prefix.as_str()
+                    current_prefix(quote_depth, &heading_prefix)
                 } else {
-                    line_prefix.as_str()
+                    current_prefix(quote_depth, &line_prefix)
                 };
-                flush(&mut current, &mut out, width, prefix);
+                flush(&mut current, &mut out, width, &prefix);
                 out.push(Line::raw(""));
             }
             Event::SoftBreak | Event::HardBreak => {
                 let prefix = if in_heading {
-                    heading_prefix.as_str()
+                    current_prefix(quote_depth, &heading_prefix)
                 } else {
-                    line_prefix.as_str()
+                    current_prefix(quote_depth, &line_prefix)
                 };
-                flush(&mut current, &mut out, width, prefix);
+                flush(&mut current, &mut out, width, &prefix);
             }
-            Event::Rule => out.push(Line::from("─".repeat(width.max(3)))),
+            Event::Rule => out.push(Line::from("———")),
             Event::Html(text) => current.push(Span::styled(
                 text.to_string(),
                 Style::default().fg(Color::Rgb(140, 150, 170)),
@@ -294,10 +318,90 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     if !current.is_empty() {
         push_wrapped_spans(&mut current, &mut out, width, "");
     }
+    out = repair_source_list_indents(out, &input);
     while out.last().is_some_and(|line| line.spans.is_empty()) {
         out.pop();
     }
     out
+}
+
+fn current_prefix(quote_depth: usize, line_prefix: &str) -> String {
+    let mut prefix = "> ".repeat(quote_depth);
+    prefix.push_str(line_prefix);
+    prefix
+}
+
+fn repair_source_list_indents(lines: Vec<Line<'static>>, source: &str) -> Vec<Line<'static>> {
+    let mut pending = source
+        .lines()
+        .filter_map(source_list_indent_repair)
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return lines;
+    }
+
+    lines
+        .into_iter()
+        .map(|line| {
+            let rendered = line_text(&line);
+            let Some(index) = pending
+                .iter()
+                .position(|repair| repair.rendered == rendered)
+            else {
+                return line;
+            };
+            let repair = pending.remove(index);
+            prepend_raw_prefix(line, repair.prefix)
+        })
+        .collect()
+}
+
+struct ListIndentRepair {
+    rendered: String,
+    prefix: String,
+}
+
+fn source_list_indent_repair(line: &str) -> Option<ListIndentRepair> {
+    let leading_spaces = line.chars().take_while(|ch| *ch == ' ').count();
+    if leading_spaces == 0 {
+        return None;
+    }
+
+    let trimmed = &line[leading_spaces..];
+    if !looks_like_list_marker(trimmed) {
+        return None;
+    }
+
+    Some(ListIndentRepair {
+        rendered: trimmed.to_string(),
+        prefix: " ".repeat(leading_spaces),
+    })
+}
+
+fn looks_like_list_marker(trimmed: &str) -> bool {
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
+        return true;
+    }
+
+    let Some((number, rest)) = trimmed.split_once(". ") else {
+        return false;
+    };
+    !number.is_empty() && number.chars().all(|ch| ch.is_ascii_digit()) && !rest.is_empty()
+}
+
+fn line_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>()
+}
+
+fn prepend_raw_prefix(mut line: Line<'static>, prefix: String) -> Line<'static> {
+    let mut spans = Vec::with_capacity(line.spans.len() + 1);
+    spans.push(Span::raw(prefix));
+    spans.extend(line.spans);
+    line.spans = spans;
+    line
 }
 
 pub(super) fn render_plaintext(input: &str, width: usize) -> Vec<Line<'static>> {
@@ -611,5 +715,84 @@ mod tests {
             .collect::<String>();
 
         assert_eq!(text, "plain");
+    }
+
+    #[test]
+    fn renders_codex_style_common_markdown_blocks() {
+        let input = concat!(
+            "Intro with `code`, [docs](https://example.com), and escaped \\*literal\\*.\n",
+            "\n",
+            "> quoted\n",
+            "> - item\n",
+            "\n",
+            "- outer\n",
+            "    - inner\n",
+            "- [x] done\n",
+            "- [ ] todo\n",
+            "\n",
+            "---\n",
+            "\n",
+            "1. one\n",
+            "2. two",
+        );
+        let rendered = render_markdown(input, 80);
+        let text = joined(&rendered);
+
+        assert!(
+            text.contains("Intro with code, docs (https://example.com), and escaped *literal*.")
+        );
+        assert!(text.contains("> quoted"));
+        assert!(text.contains("> - item"));
+        assert!(text.contains("- outer"));
+        assert!(text.contains("    - inner"), "{text}");
+        assert!(text.contains("- [x] done"));
+        assert!(text.contains("- [ ] todo"));
+        assert!(text.contains("———"));
+        assert!(text.contains("1. one"));
+        assert!(text.contains("2. two"));
+    }
+
+    #[test]
+    fn inline_code_uses_text_only_without_background_padding() {
+        let rendered = render_markdown("Use `cargo test` now.", 80);
+        let line = rendered.first().expect("line");
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert_eq!(text, "Use cargo test now.");
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.style.fg == Some(Color::Cyan)),
+            "{line:?}"
+        );
+        assert!(line.spans.iter().all(|span| span.style.bg.is_none()));
+    }
+
+    #[test]
+    fn source_list_indent_repair_preserves_nested_marker_columns() {
+        let repaired = super::repair_source_list_indents(
+            vec![ratatui::text::Line::from("- inner")],
+            "    - inner",
+        );
+
+        assert_eq!(joined(&repaired), "    - inner");
+    }
+
+    #[test]
+    fn nested_list_source_indent_survives_render_markdown() {
+        let rendered = render_markdown("- outer\n    - inner", 80);
+        assert_eq!(joined(&rendered), "- outer\n    - inner");
+    }
+
+    #[test]
+    fn nested_list_source_indent_repair_works_with_surrounding_markdown() {
+        let source = "Intro\n\n- outer\n    - inner\n\n---";
+        let repaired =
+            super::repair_source_list_indents(vec![ratatui::text::Line::from("- inner")], source);
+        assert_eq!(joined(&repaired), "    - inner");
     }
 }

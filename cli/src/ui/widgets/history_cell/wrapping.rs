@@ -1,6 +1,7 @@
 use ratatui::text::Line;
 use ratatui::text::Span;
 use textwrap::Options;
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct WrapOptions<'a> {
@@ -99,6 +100,22 @@ pub(super) fn word_wrap_spans<'a>(
 ) -> Vec<Line<'static>> {
     if spans.is_empty() {
         return Vec::new();
+    }
+
+    let initial_indent = line_to_static(&options.initial_indent);
+    let total_width = initial_indent.width()
+        + spans
+            .iter()
+            .map(|span| span.content.as_ref().width())
+            .sum::<usize>();
+    if total_width <= options.width {
+        let mut line_spans = initial_indent.spans;
+        line_spans.extend(
+            spans
+                .iter()
+                .map(|span| Span::styled(span.content.to_string(), span.style)),
+        );
+        return vec![Line::from(line_spans).style(initial_indent.style)];
     }
 
     let style = spans.first().map(|span| span.style).unwrap_or_default();
