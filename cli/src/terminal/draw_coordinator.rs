@@ -446,4 +446,54 @@ mod tests {
         assert!(output.contains("middle message"));
         assert!(queue.pending_lines().is_empty());
     }
+
+    #[test]
+    fn viewport_expand_repaints_visible_history_tail_after_clear() {
+        let backend = RecordingBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend, test_capabilities()).expect("terminal");
+        let mut queue = HistoryFlushQueue::default();
+        let history = vec![
+            HistoryCell::user("oldest message"),
+            HistoryCell::agent("cloudagent", "middle message", HistoryFormat::Markdown),
+            HistoryCell::agent(
+                "cloudagent",
+                "latest visible tail\nfinal line one\nfinal line two",
+                HistoryFormat::Markdown,
+            ),
+        ];
+
+        DrawCoordinator::new(&mut terminal, &mut queue)
+            .draw_frame(
+                projection_with_height(
+                    4,
+                    PreparedHistoryUpdate::ReplayAll {
+                        cells: history.clone(),
+                        render_metrics: metrics(100),
+                        max_rows: None,
+                    },
+                ),
+                |_frame| {},
+            )
+            .expect("initial replay succeeds");
+
+        DrawCoordinator::new(&mut terminal, &mut queue)
+            .draw_frame(
+                projection_with_height(
+                    10,
+                    PreparedHistoryUpdate::ReflowVisibleTail {
+                        cells: history,
+                        render_metrics: metrics(100),
+                        max_rows: 8,
+                    },
+                ),
+                |_frame| {},
+            )
+            .expect("viewport expand repair succeeds");
+
+        let output = terminal.backend().output();
+        assert!(output.contains("latest visible tail"));
+        assert!(output.contains("final line one"));
+        assert!(output.contains("final line two"));
+        assert!(queue.pending_lines().is_empty());
+    }
 }

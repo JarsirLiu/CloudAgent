@@ -221,7 +221,7 @@ impl TranscriptReflowState {
         replaying_all: bool,
     ) -> Option<usize> {
         let previous = self.last_viewport_height.replace(viewport_height);
-        if replaying_all || previous.is_none_or(|previous| viewport_height >= previous) {
+        if replaying_all || previous.is_none_or(|previous| viewport_height == previous) {
             return None;
         }
         let history_capacity = terminal_size.height.saturating_sub(viewport_height) as usize;
@@ -309,20 +309,26 @@ mod tests {
     }
 
     #[test]
-    fn viewport_expand_does_not_replay_or_repair_history() {
+    fn viewport_expand_repairs_visible_history_tail_without_replay() {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
+        transcript_owner.queue_history_cells_for_test(vec![
+            HistoryCell::user("oldest message"),
+            HistoryCell::user("middle message"),
+            HistoryCell::user("latest message"),
+        ]);
 
         let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false);
         assert!(matches!(first.history_update, HistoryUpdate::ReplayAll(_)));
 
         let second = controller.build_plan(&mut transcript_owner, 11, size(80, 24), false);
         match second.history_update {
-            HistoryUpdate::AppendTail(cells) => assert!(cells.is_empty()),
-            HistoryUpdate::ReplayAll(_) => panic!("viewport-only layout changes must not replay"),
-            HistoryUpdate::ReflowVisibleTail { .. } => {
-                panic!("viewport expand must not reflow visible tail")
+            HistoryUpdate::ReflowVisibleTail { cells, max_rows } => {
+                assert_eq!(cells.len(), 3);
+                assert_eq!(max_rows, 13);
             }
+            HistoryUpdate::ReplayAll(_) => panic!("viewport-only layout changes must not replay"),
+            HistoryUpdate::AppendTail(_) => panic!("viewport expand should reflow visible tail"),
         }
     }
 
