@@ -36,20 +36,15 @@ impl AgentStreamController {
         (!live_source.is_empty()).then(|| self.agent_cell(live_source, self.emitted_any))
     }
 
-    pub(crate) fn finish_with_final_text(mut self, final_text: Option<&str>) -> AgentStreamFinish {
+    pub(crate) fn finish(mut self) -> AgentStreamFinish {
         let mut stable_cells = Vec::new();
-        let final_text = final_text.filter(|text| !text.is_empty());
-        let source = match final_text {
-            Some(text) if text.len() > self.source.len() && text.starts_with(&self.source) => text,
-            _ => &self.source,
-        };
 
-        if self.stable_source_len < source.len() {
+        if self.stable_source_len < self.source.len() {
             stable_cells.push(self.agent_cell(
-                source[self.stable_source_len..].to_string(),
+                self.source[self.stable_source_len..].to_string(),
                 self.emitted_any,
             ));
-            self.stable_source_len = source.len();
+            self.stable_source_len = self.source.len();
             self.emitted_any = true;
         }
         AgentStreamFinish {
@@ -180,7 +175,7 @@ mod tests {
             Some("| a | b |\n| - | - |\n| 1 | 2 |\n")
         );
 
-        let finish = stream.finish_with_final_text(None);
+        let finish = stream.finish();
         assert_eq!(
             bodies(finish.stable_cells),
             vec!["| a | b |\n| - | - |\n| 1 | 2 |\n"]
@@ -200,7 +195,7 @@ mod tests {
             Some("```rust\nfn main() {\nprintln!(\"hi\");\n}\n```\n")
         );
 
-        let finish = stream.finish_with_final_text(None);
+        let finish = stream.finish();
         assert_eq!(
             bodies(finish.stable_cells),
             vec!["```rust\nfn main() {\nprintln!(\"hi\");\n}\n```\n"]

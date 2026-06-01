@@ -386,7 +386,7 @@ fn completed_agent_message_consolidates_after_item_boundary() {
     owner.complete_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent("a1", "visible prefix and final suffix"),
+        agent("a1", "visible prefix and final text"),
         false,
     );
 
@@ -397,7 +397,7 @@ fn completed_agent_message_consolidates_after_item_boundary() {
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>()
         .join("");
-    assert_eq!(committed, "hellovisible prefix and final suffix");
+    assert_eq!(committed, "hellovisible prefix and final text");
 }
 
 #[test]
@@ -1255,6 +1255,65 @@ fn in_progress_command_completion_keeps_status_until_final_completion() {
 }
 
 #[test]
+fn completed_streamed_agent_item_survives_turn_completion() {
+    let mut app = test_app();
+    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+    app.bottom_pane.on_turn_started();
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::BindActiveTurn("turn-1".to_string()),
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::StartActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            kind: TurnItemKind::AssistantMessage,
+            title: None,
+        },
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::AppendActiveAgentDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            delta: "visible during stream\n\n".to_string(),
+        },
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::CompleteActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "assistant:1".to_string(),
+            item: agent(
+                "assistant:1",
+                "visible during stream\n\nfinal line one\nfinal line two",
+            ),
+        },
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::TurnDispatch(
+            crate::state::reducer::TurnDispatch::Completed,
+        ),
+    );
+
+    let committed = app
+        .transcript_owner
+        .committed_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(committed.contains("visible during stream"));
+    assert!(committed.contains("final line one"));
+    assert!(committed.contains("final line two"));
+    assert!(app.transcript_owner.active_cell().is_none());
+}
+
+#[test]
 fn generic_live_notice_does_not_keep_mode_running() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -1592,7 +1651,7 @@ fn completing_unflushed_stream_consolidates_pending_and_requests_replay() {
 }
 
 #[test]
-fn completing_partially_flushed_stream_requests_replay_for_final_reflow() {
+fn completing_partially_flushed_stream_requests_replay_for_source_backed_reflow() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
@@ -1622,7 +1681,7 @@ fn completing_partially_flushed_stream_requests_replay_for_final_reflow() {
         "a1".to_string(),
         agent(
             "a1",
-            "first stable\n\nsecond stable\n\nlive tail\nfinal suffix",
+            "first stable\n\nsecond stable\n\nlive tail\nfinal text",
         ),
         false,
     );
@@ -1637,13 +1696,13 @@ fn completing_partially_flushed_stream_requests_replay_for_final_reflow() {
         committed,
         vec![
             "hello".to_string(),
-            "first stable\n\nsecond stable\n\nlive tail\nfinal suffix".to_string()
+            "first stable\n\nsecond stable\n\nlive tail\nfinal text".to_string()
         ]
     );
 }
 
 #[test]
-fn completing_streamed_agent_message_repairs_missing_final_suffix() {
+fn completing_streamed_agent_message_commits_source_backed_text() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
@@ -1664,7 +1723,7 @@ fn completing_streamed_agent_message_repairs_missing_final_suffix() {
     owner.complete_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent("a1", "visible prefix and final suffix"),
+        agent("a1", "visible prefix and final text"),
         false,
     );
 
@@ -1674,7 +1733,7 @@ fn completing_streamed_agent_message_repairs_missing_final_suffix() {
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>()
         .join("");
-    assert_eq!(rendered, "hellovisible prefix and final suffix");
+    assert_eq!(rendered, "hellovisible prefix and final text");
 }
 
 #[test]

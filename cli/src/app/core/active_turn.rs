@@ -208,8 +208,7 @@ impl ActiveTurnState {
                     self.last_copyable_output = Some(text);
                 }
                 if matches!(item, TranscriptItem::AgentMessage { .. }) {
-                    let streamed =
-                        self.take_finished_agent_stream(&item_id, completed_agent_text(&item));
+                    let streamed = self.take_finished_agent_stream(&item_id);
                     let should_consolidate_stream = streamed
                         .as_ref()
                         .is_some_and(|streamed| streamed.emitted_any)
@@ -240,8 +239,7 @@ impl ActiveTurnState {
                     || self.should_replace_live_tool_placeholder(&item)
                 {
                     if matches!(item, TranscriptItem::AgentMessage { .. })
-                        && let Some(streamed) =
-                            self.take_finished_agent_stream(&item_id, completed_agent_text(&item))
+                        && let Some(streamed) = self.take_finished_agent_stream(&item_id)
                     {
                         if streamed.emitted_any {
                             replay_cells.extend(streamed.stable_cells);
@@ -367,17 +365,13 @@ impl ActiveTurnState {
         stream.push_delta(delta)
     }
 
-    fn take_finished_agent_stream(
-        &mut self,
-        item_id: &str,
-        final_text: Option<&str>,
-    ) -> Option<AgentStreamFinish> {
+    fn take_finished_agent_stream(&mut self, item_id: &str) -> Option<AgentStreamFinish> {
         let stream = self.agent_stream.take()?;
         if stream.item_id() != item_id {
             self.agent_stream = Some(stream);
             return None;
         }
-        Some(stream.finish_with_final_text(final_text))
+        Some(stream.finish())
     }
 
     fn flush_live_tail_if_different(&mut self, item_id: &str) -> Vec<HistoryCell> {
@@ -458,14 +452,6 @@ impl ActiveTurnState {
 fn copyable_output(item: &TranscriptItem) -> Option<String> {
     if let TranscriptItem::AgentMessage { text, .. } = item {
         (!text.trim().is_empty()).then(|| text.clone())
-    } else {
-        None
-    }
-}
-
-fn completed_agent_text(item: &TranscriptItem) -> Option<&str> {
-    if let TranscriptItem::AgentMessage { text, .. } = item {
-        Some(text)
     } else {
         None
     }

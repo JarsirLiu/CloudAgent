@@ -383,13 +383,6 @@ impl ConversationNotificationProjector {
                 let lifecycle_error = self.validate_active_lifecycle(&turn_id, &item_id, &call_id);
                 let lifecycle = self.remove_active_item(&item_id);
                 self.observe_item_completed(&turn_id, &item_id, &item, rollout_index);
-                if matches!(
-                    item,
-                    agent_core::TranscriptItem::AgentMessage { .. }
-                        | agent_core::TranscriptItem::Reasoning { .. }
-                ) {
-                    return lifecycle_error.into_iter().collect();
-                }
                 let mut notifications = Vec::new();
                 if let Some(error) = lifecycle_error {
                     notifications.push(error);
@@ -1471,7 +1464,15 @@ mod tests {
         });
         let flushed = projector.finish_turn(TurnState::Completed);
 
-        assert!(completed.is_empty());
+        assert!(matches!(
+            completed.as_slice(),
+            [AppServerNotification::ItemCompleted { item, .. }]
+                if matches!(
+                    item,
+                    TranscriptItem::AgentMessage { id, text }
+                        if id == "assistant:1" && text == "done"
+                )
+        ));
         assert!(terminal.is_empty());
         assert_eq!(flushed.len(), 2);
         assert!(
@@ -1482,7 +1483,7 @@ mod tests {
     }
 
     #[test]
-    fn assistant_item_completed_is_not_projected_directly() {
+    fn assistant_item_completed_projects_final_source() {
         let mut projector = ConversationNotificationProjector::new("default");
 
         projector.project_turn_event(&EventMsg::ItemStarted {
@@ -1502,7 +1503,64 @@ mod tests {
             },
         });
 
-        assert!(completed.is_empty());
+        assert!(matches!(
+            completed.as_slice(),
+            [AppServerNotification::ItemCompleted {
+                conversation_id,
+                turn_id,
+                call_id,
+                item,
+            }] if conversation_id == "default"
+                && turn_id == "turn-1"
+                && call_id.is_none()
+                && matches!(
+                    item,
+                    TranscriptItem::AgentMessage { id, text }
+                        if id == "assistant:1" && text == "done"
+                )
+        ));
+    }
+
+    #[test]
+    fn reasoning_item_completed_projects_final_source() {
+        let mut projector = ConversationNotificationProjector::new("default");
+
+        projector.project_turn_event(&EventMsg::ItemStarted {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            kind: TurnItemKind::Reasoning,
+            title: Some("thinking".to_string()),
+        });
+        let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
+            turn_id: "turn-1".to_string(),
+            item_id: "reasoning:1".to_string(),
+            call_id: None,
+            item: TranscriptItem::Reasoning {
+                id: "reasoning:1".to_string(),
+                title: "thinking".to_string(),
+                text: "final reasoning".to_string(),
+            },
+        });
+
+        assert!(matches!(
+            completed.as_slice(),
+            [AppServerNotification::ItemCompleted {
+                conversation_id,
+                turn_id,
+                call_id,
+                item,
+            }] if conversation_id == "default"
+                && turn_id == "turn-1"
+                && call_id.is_none()
+                && matches!(
+                    item,
+                    TranscriptItem::Reasoning { id, title, text }
+                        if id == "reasoning:1"
+                            && title == "thinking"
+                            && text == "final reasoning"
+                )
+        ));
     }
 
     #[test]

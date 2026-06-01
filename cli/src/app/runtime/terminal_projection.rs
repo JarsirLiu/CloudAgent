@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_stream_after_viewport_reflow_replays_final_suffix() {
+    fn completed_stream_after_viewport_reflow_replays_source_backed_history() {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
         transcript_owner.start_local_user(local_input("hello"), false);
@@ -492,10 +492,10 @@ mod tests {
                 assert!(rendered.contains("final line two"));
             }
             HistoryUpdate::AppendTail(_) => {
-                panic!("finalized stream suffix must replay canonical history")
+                panic!("completed stream must replay canonical history")
             }
             HistoryUpdate::ReflowVisibleTail { .. } => {
-                panic!("finalized stream suffix must not remain a viewport-only repair")
+                panic!("completed stream must not remain a viewport-only reflow")
             }
         }
     }

@@ -237,7 +237,7 @@ mod tests {
             projection(PreparedHistoryUpdate::AppendTail {
                 cells: vec![HistoryCell::agent(
                     "cloudagent",
-                    "visible prefix and final suffix",
+                    "visible prefix and final text",
                     HistoryFormat::Markdown,
                 )],
                 render_metrics: metrics(80),
@@ -263,7 +263,7 @@ mod tests {
             .expect("retry draw succeeds");
 
         let output = terminal.backend().output();
-        assert!(output.contains("visible prefix and final suffix"));
+        assert!(output.contains("visible prefix and final text"));
         assert!(output.contains("next message"));
         assert!(queue.pending_lines().is_empty());
     }
