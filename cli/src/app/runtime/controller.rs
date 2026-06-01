@@ -8,6 +8,7 @@ use crate::terminal::{FrameRequester, UiEvent};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
 use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
+use crossterm::event::{KeyCode, KeyEvent};
 use std::path::PathBuf;
 
 pub(crate) struct RuntimeController;
@@ -41,6 +42,15 @@ impl RuntimeController {
         let outcome = match event {
             UiEvent::Key(key) => {
                 pause_welcome_animation_for_input(app);
+                if should_request_older_history_page(key)
+                    && crate::app::conversation::actions::load_older_history_page_if_available(
+                        app, client,
+                    )
+                    .await?
+                {
+                    frame_requester.schedule_frame();
+                    return Ok(RuntimeControl::Continue);
+                }
                 if let Some(input) = app.handle_key(key)
                     && handle_tui_input(app, client, input).await?
                 {
@@ -76,6 +86,10 @@ impl RuntimeController {
         };
         Ok(outcome)
     }
+}
+
+fn should_request_older_history_page(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::PageUp | KeyCode::Home)
 }
 
 fn handle_paste_event<F>(app: &mut TuiApp, text: &str, paste_image: F)

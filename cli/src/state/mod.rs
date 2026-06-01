@@ -19,6 +19,8 @@ pub enum NoticeLevel {
 #[derive(Clone, Debug)]
 pub struct RunState {
     pub history_snapshot: Option<Vec<ConversationTurn>>,
+    pub history_has_more: bool,
+    pub history_next_before_turn_id: Option<String>,
     pub last_turn_usage: Option<ModelUsage>,
     pub total_turn_usage: Option<ModelUsage>,
     pub model_context_window: Option<u64>,
@@ -47,6 +49,8 @@ impl RunState {
     pub fn new(_connection_label: &str) -> Self {
         Self {
             history_snapshot: None,
+            history_has_more: false,
+            history_next_before_turn_id: None,
             last_turn_usage: None,
             total_turn_usage: None,
             model_context_window: None,

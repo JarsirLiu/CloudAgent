@@ -10,6 +10,7 @@ use std::io::{self, IsTerminal as _};
 use tokio::time::{Duration, timeout};
 
 const STARTUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const INITIAL_HISTORY_PAGE_LIMIT: usize = 80;
 
 pub async fn run_console(config: ConsoleConfig) -> Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
@@ -45,7 +46,11 @@ async fn load_initial_history(
 ) -> Result<()> {
     let response = timeout(
         STARTUP_REQUEST_TIMEOUT,
-        client.request_conversation_history_typed(conversation_id),
+        client.request_conversation_history_page_typed(
+            conversation_id,
+            None,
+            INITIAL_HISTORY_PAGE_LIMIT,
+        ),
     )
     .await
     .map_err(|_| {
@@ -55,7 +60,11 @@ async fn load_initial_history(
     })??;
     crate::app::conversation::actions::execute_server_action(
         app,
-        ServerAction::ReplaceHistory(response.turns),
+        ServerAction::ReplaceHistoryPage {
+            turns: response.turns,
+            has_more: response.has_more,
+            next_before_turn_id: response.next_before_turn_id,
+        },
     );
     let status = timeout(
         STARTUP_REQUEST_TIMEOUT,

@@ -90,6 +90,16 @@ pub(crate) enum ServerAction {
     ClearServerRequestStatus,
     ClearLastToolName,
     ReplaceHistory(Vec<ConversationTurn>),
+    ReplaceHistoryPage {
+        turns: Vec<ConversationTurn>,
+        has_more: bool,
+        next_before_turn_id: Option<String>,
+    },
+    PrependHistoryPage {
+        turns: Vec<ConversationTurn>,
+        has_more: bool,
+        next_before_turn_id: Option<String>,
+    },
     UpsertTurnSnapshot(ConversationTurn),
     BindActiveTurn(TurnId),
     StartActiveTurnItem {
@@ -152,6 +162,18 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             AppServerNotification::ConversationHistory { turns, .. } => {
                 actions.push(ServerAction::ReplaceHistory(turns.clone()));
+            }
+            AppServerNotification::ConversationHistoryPage {
+                turns,
+                has_more,
+                next_before_turn_id,
+                ..
+            } => {
+                actions.push(ServerAction::ReplaceHistoryPage {
+                    turns: turns.clone(),
+                    has_more: *has_more,
+                    next_before_turn_id: next_before_turn_id.clone(),
+                });
             }
             AppServerNotification::TurnSnapshot { turn, .. } => {
                 actions.push(ServerAction::UpsertTurnSnapshot(turn.clone()));
@@ -476,6 +498,36 @@ mod tests {
                 action,
                 ServerAction::ReplaceHistory(turns)
                     if turns.len() == 1 && turns[0].id == "turn-1"
+            )
+        }));
+    }
+
+    #[test]
+    fn conversation_history_page_action_preserves_paging_metadata() {
+        let message =
+            AppServerMessage::Notification(AppServerNotification::ConversationHistoryPage {
+                conversation_id: "default".to_string(),
+                turns: vec![ConversationTurn {
+                    id: "turn-2".to_string(),
+                    state: TurnState::Completed,
+                    items: Vec::new(),
+                    rollout_start_index: 0,
+                    rollout_end_index: 1,
+                }],
+                has_more: true,
+                next_before_turn_id: Some("turn-2".to_string()),
+            });
+
+        let reduced = apply_server_message(&message);
+
+        assert!(reduced.actions.iter().any(|action| {
+            matches!(
+                action,
+                ServerAction::ReplaceHistoryPage {
+                    turns,
+                    has_more: true,
+                    next_before_turn_id: Some(before),
+                } if turns.len() == 1 && turns[0].id == "turn-2" && before == "turn-2"
             )
         }));
     }

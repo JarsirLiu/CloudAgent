@@ -17,8 +17,13 @@ use agent_core::{ServerRequestDecision, ServerRequestDecisionKind};
 use agent_protocol::{AppClientCommand, UserTurnInput};
 use anyhow::Result;
 use config::AgentConfig;
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::fs;
+use tokio::time::{Duration, timeout};
+
+const HISTORY_PAGE_LIMIT: usize = 80;
+const HISTORY_PAGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn show_local_notice(app: &mut TuiApp, level: NoticeLevel, message: impl Into<String>) {
     app.bottom_pane.show_transient_notice(level, message.into());
@@ -643,6 +648,60 @@ pub(crate) async fn handle_tui_input(
     Ok(false)
 }
 
+pub(crate) async fn load_older_history_page_if_available(
+    app: &mut TuiApp,
+    client: &AppServerClient,
+) -> Result<bool> {
+    if app.current_mode() != agent_protocol::FrontendMode::Idle || !app.run_state.history_has_more {
+        return Ok(false);
+    }
+    if !app.bottom_pane.composer_is_empty() {
+        return Ok(false);
+    }
+
+    let Some(before_turn_id) = app.run_state.history_next_before_turn_id.clone() else {
+        return Ok(false);
+    };
+
+    app.run_state.history_has_more = false;
+    let response = match timeout(
+        HISTORY_PAGE_REQUEST_TIMEOUT,
+        client.request_conversation_history_page_typed(
+            &app.conversation_id,
+            Some(before_turn_id),
+            HISTORY_PAGE_LIMIT,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(response)) => response,
+        Ok(Err(err)) => {
+            app.run_state.history_has_more = true;
+            show_local_notice(
+                app,
+                NoticeLevel::Warn,
+                format!("Failed to load older history: {err}"),
+            );
+            return Ok(false);
+        }
+        Err(_) => {
+            app.run_state.history_has_more = true;
+            show_local_notice(app, NoticeLevel::Warn, "Timed out loading older history");
+            return Ok(false);
+        }
+    };
+
+    execute_server_action(
+        app,
+        ServerAction::PrependHistoryPage {
+            turns: response.turns,
+            has_more: response.has_more,
+            next_before_turn_id: response.next_before_turn_id,
+        },
+    );
+    Ok(true)
+}
+
 fn decision_label(decision: &ServerRequestDecisionKind) -> &'static str {
     match decision {
         ServerRequestDecisionKind::Accept => "approved",
@@ -708,6 +767,29 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         }
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
+            app.run_state.history_has_more = false;
+            app.run_state.history_next_before_turn_id = None;
+            conversation_facade::rebuild_transcript_from_history(app);
+        }
+        ServerAction::ReplaceHistoryPage {
+            turns,
+            has_more,
+            next_before_turn_id,
+        } => {
+            app.run_state.history_snapshot = Some(turns);
+            app.run_state.history_has_more = has_more;
+            app.run_state.history_next_before_turn_id = next_before_turn_id;
+            conversation_facade::rebuild_transcript_from_history(app);
+        }
+        ServerAction::PrependHistoryPage {
+            turns,
+            has_more,
+            next_before_turn_id,
+        } => {
+            let existing = app.run_state.history_snapshot.take().unwrap_or_default();
+            app.run_state.history_snapshot = Some(prepend_turn_page(turns, existing));
+            app.run_state.history_has_more = has_more;
+            app.run_state.history_next_before_turn_id = next_before_turn_id;
             conversation_facade::rebuild_transcript_from_history(app);
         }
         ServerAction::UpsertTurnSnapshot(turn) => {
@@ -816,6 +898,20 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     }
 }
 
+fn prepend_turn_page(
+    older_turns: Vec<agent_core::ConversationTurn>,
+    existing_turns: Vec<agent_core::ConversationTurn>,
+) -> Vec<agent_core::ConversationTurn> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::with_capacity(older_turns.len() + existing_turns.len());
+    for turn in older_turns.into_iter().chain(existing_turns) {
+        if seen.insert(turn.id.clone()) {
+            merged.push(turn);
+        }
+    }
+    merged
+}
+
 fn persist_cli_settings(app: &TuiApp) -> Result<()> {
     save_cli_settings(
         &app.conversation_store_dir,
@@ -841,4 +937,31 @@ fn save_user_llm_config(api_key: &str, base_url: &str, model: &str) -> Result<()
     );
     fs::write(path, body)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepend_turn_page;
+    use agent_core::{ConversationTurn, TurnState};
+
+    fn turn(id: &str) -> ConversationTurn {
+        ConversationTurn {
+            id: id.to_string(),
+            state: TurnState::Completed,
+            items: Vec::new(),
+            rollout_start_index: 0,
+            rollout_end_index: 0,
+        }
+    }
+
+    #[test]
+    fn prepend_turn_page_keeps_old_to_new_order_and_deduplicates_boundary() {
+        let merged = prepend_turn_page(
+            vec![turn("turn-1"), turn("turn-2")],
+            vec![turn("turn-2"), turn("turn-3")],
+        );
+        let ids = merged.into_iter().map(|turn| turn.id).collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["turn-1", "turn-2", "turn-3"]);
+    }
 }
