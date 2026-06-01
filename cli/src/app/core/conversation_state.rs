@@ -35,6 +35,7 @@ impl TuiApp {
             welcome_animation_pause_ticks: 0,
             workspace_root,
             conversation_store_dir,
+            conversation_history_turn_limit: Some(30),
         }
     }
 

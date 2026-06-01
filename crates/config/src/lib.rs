@@ -92,6 +92,7 @@ pub struct CliConfig {
     pub pre_llm_filter_enabled: bool,
     pub permission_mode: String,
     pub terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows,
+    pub conversation_history_turn_limit: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +187,7 @@ struct PartialCliConfig {
     pre_llm_filter_enabled: Option<bool>,
     permission_mode: Option<String>,
     terminal_resize_reflow_max_rows: Option<usize>,
+    conversation_history_turn_limit: Option<usize>,
 }
 
 impl AgentConfig {
@@ -290,6 +292,7 @@ impl AgentConfig {
                 pre_llm_filter_enabled: false,
                 permission_mode: "WorkspaceWrite".to_string(),
                 terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows::Auto,
+                conversation_history_turn_limit: Some(30),
             },
             workspace_root,
         }
@@ -501,6 +504,10 @@ impl AgentConfig {
                     TerminalResizeReflowMaxRows::Limit(value)
                 };
             }
+            if let Some(value) = cli.conversation_history_turn_limit {
+                self.cli.conversation_history_turn_limit =
+                    if value == 0 { None } else { Some(value) };
+            }
         }
     }
 
@@ -700,6 +707,12 @@ impl AgentConfig {
             } else {
                 TerminalResizeReflowMaxRows::Limit(parsed)
             };
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_CONVERSATION_HISTORY_TURN_LIMIT")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.cli.conversation_history_turn_limit =
+                if parsed == 0 { None } else { Some(parsed) };
         }
         if !conversation_store_overridden {
             self.runtime.conversation_store_dir = self.runtime.data_root_dir.join("conversations");
@@ -926,6 +939,30 @@ mod tests {
             config.cli.terminal_resize_reflow_max_rows,
             TerminalResizeReflowMaxRows::Disabled
         );
+    }
+
+    #[test]
+    fn cli_conversation_history_turn_limit_can_be_configured_or_full() {
+        let mut config = AgentConfig::defaults(PathBuf::from("."));
+        assert_eq!(config.cli.conversation_history_turn_limit, Some(30));
+
+        config.apply_partial(PartialAgentConfig {
+            cli: Some(PartialCliConfig {
+                conversation_history_turn_limit: Some(120),
+                ..PartialCliConfig::default()
+            }),
+            ..PartialAgentConfig::default()
+        });
+        assert_eq!(config.cli.conversation_history_turn_limit, Some(120));
+
+        config.apply_partial(PartialAgentConfig {
+            cli: Some(PartialCliConfig {
+                conversation_history_turn_limit: Some(0),
+                ..PartialCliConfig::default()
+            }),
+            ..PartialAgentConfig::default()
+        });
+        assert_eq!(config.cli.conversation_history_turn_limit, None);
     }
 
     #[test]

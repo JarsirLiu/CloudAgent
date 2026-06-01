@@ -21,12 +21,18 @@ async fn main() -> Result<()> {
         config.cli.permission_mode = settings.permission_mode;
     }
     let terminal_resize_reflow_max_rows = config.cli.terminal_resize_reflow_max_rows;
+    let conversation_history_turn_limit = config.cli.conversation_history_turn_limit;
     let runtime = build_agent_host(config)?;
 
     match args.get(1).map(String::as_str) {
         Some("console") => {
             runtime.run_startup_retention_cleanup().await;
-            run_console_mode(runtime, terminal_resize_reflow_max_rows).await?;
+            run_console_mode(
+                runtime,
+                terminal_resize_reflow_max_rows,
+                conversation_history_turn_limit,
+            )
+            .await?;
             return Ok(());
         }
         Some("app-server-stdio") => {
@@ -46,6 +52,7 @@ async fn main() -> Result<()> {
 async fn run_console_mode(
     runtime: Arc<AgentHost>,
     terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows,
+    conversation_history_turn_limit: Option<usize>,
 ) -> Result<()> {
     let conversation_id = runtime.ensure_active_conversation().await?;
     let workspace_root = std::env::current_dir()?;
@@ -56,6 +63,7 @@ async fn run_console_mode(
         initial_filter_enabled: runtime.cli_pre_llm_filter_enabled(),
         initial_permission_mode: runtime.cli_permission_mode().to_string(),
         terminal_resize_reflow_max_rows,
+        conversation_history_turn_limit,
         auto_approve: true,
         auto_approve_reason: Some("auto-approved in local daemon console".to_string()),
         target_label: "embedded".to_string(),

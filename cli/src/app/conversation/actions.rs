@@ -22,7 +22,6 @@ use std::fmt::Display;
 use std::fs;
 use tokio::time::{Duration, timeout};
 
-const HISTORY_PAGE_LIMIT: usize = 80;
 const HISTORY_PAGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn show_local_notice(app: &mut TuiApp, level: NoticeLevel, message: impl Into<String>) {
@@ -658,6 +657,9 @@ pub(crate) async fn load_older_history_page_if_available(
     if !app.bottom_pane.composer_is_empty() {
         return Ok(false);
     }
+    let Some(limit) = app.conversation_history_turn_limit else {
+        return Ok(false);
+    };
 
     let Some(before_turn_id) = app.run_state.history_next_before_turn_id.clone() else {
         return Ok(false);
@@ -669,7 +671,7 @@ pub(crate) async fn load_older_history_page_if_available(
         client.request_conversation_history_page_typed(
             &app.conversation_id,
             Some(before_turn_id),
-            HISTORY_PAGE_LIMIT,
+            limit,
         ),
     )
     .await

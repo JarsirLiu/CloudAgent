@@ -6,7 +6,8 @@ const SCHEMA_V1: i32 = 1;
 const SCHEMA_V2: i32 = 2;
 const SCHEMA_V3: i32 = 3;
 const SCHEMA_V4: i32 = 4;
-const LATEST_SCHEMA_VERSION: i32 = SCHEMA_V4;
+const SCHEMA_V5: i32 = 5;
+const LATEST_SCHEMA_VERSION: i32 = SCHEMA_V5;
 
 #[derive(Clone, Debug)]
 pub struct SessionIndexRow {
@@ -15,6 +16,12 @@ pub struct SessionIndexRow {
     pub message_count: usize,
     pub updated_at_ms: u64,
     pub archived: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnIndexRow {
+    pub turn_id: String,
+    pub start_offset: u64,
 }
 
 fn open(db_path: &Path) -> Result<Connection> {
@@ -98,6 +105,23 @@ CREATE INDEX IF NOT EXISTS idx_approval_grants_conversation
         )?;
         conn.pragma_update(None, "user_version", SCHEMA_V4)?;
         current_version = SCHEMA_V4;
+    }
+
+    if current_version < SCHEMA_V5 {
+        conn.execute_batch(
+            r#"
+CREATE TABLE IF NOT EXISTS conversation_turn_index(
+  conversation_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  start_offset INTEGER NOT NULL,
+  PRIMARY KEY(conversation_id, turn_id)
+);
+CREATE INDEX IF NOT EXISTS idx_turn_index_conversation_offset
+  ON conversation_turn_index(conversation_id, start_offset);
+"#,
+        )?;
+        conn.pragma_update(None, "user_version", SCHEMA_V5)?;
+        current_version = SCHEMA_V5;
     }
 
     if current_version > LATEST_SCHEMA_VERSION {
@@ -261,7 +285,121 @@ pub fn delete_session(db_path: &Path, conversation_id: &str) -> Result<()> {
         "DELETE FROM approval_grants WHERE conversation_id=?1",
         params![conversation_id],
     )?;
+    conn.execute(
+        "DELETE FROM conversation_turn_index WHERE conversation_id=?1",
+        params![conversation_id],
+    )?;
     Ok(())
+}
+
+pub fn replace_turn_index(
+    db_path: &Path,
+    conversation_id: &str,
+    rows: &[TurnIndexRow],
+) -> Result<()> {
+    let mut conn = open(db_path)?;
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM conversation_turn_index WHERE conversation_id=?1",
+        params![conversation_id],
+    )?;
+    {
+        let mut stmt = tx.prepare(
+            r#"INSERT INTO conversation_turn_index(conversation_id, turn_id, start_offset)
+VALUES(?1, ?2, ?3)
+ON CONFLICT(conversation_id, turn_id) DO UPDATE SET start_offset=excluded.start_offset"#,
+        )?;
+        for row in rows {
+            stmt.execute(params![
+                conversation_id,
+                &row.turn_id,
+                row.start_offset as i64
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn append_turn_index_rows(
+    db_path: &Path,
+    conversation_id: &str,
+    rows: &[TurnIndexRow],
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut conn = open(db_path)?;
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            r#"INSERT INTO conversation_turn_index(conversation_id, turn_id, start_offset)
+VALUES(?1, ?2, ?3)
+ON CONFLICT(conversation_id, turn_id) DO UPDATE SET start_offset=excluded.start_offset"#,
+        )?;
+        for row in rows {
+            stmt.execute(params![
+                conversation_id,
+                &row.turn_id,
+                row.start_offset as i64
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn turn_start_offset(
+    db_path: &Path,
+    conversation_id: &str,
+    turn_id: &str,
+) -> Result<Option<u64>> {
+    let conn = open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT start_offset FROM conversation_turn_index WHERE conversation_id=?1 AND turn_id=?2",
+    )?;
+    let mut rows = stmt.query(params![conversation_id, turn_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(row.get::<_, i64>(0)? as u64))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn turn_index_page_before_offset(
+    db_path: &Path,
+    conversation_id: &str,
+    before_offset: Option<u64>,
+    limit: usize,
+) -> Result<Vec<TurnIndexRow>> {
+    let conn = open(db_path)?;
+    let page_limit = limit.max(1) as i64;
+    let mut out = Vec::new();
+    if let Some(before_offset) = before_offset {
+        let mut stmt = conn.prepare(
+            "SELECT turn_id, start_offset FROM conversation_turn_index WHERE conversation_id=?1 AND start_offset < ?2 ORDER BY start_offset DESC LIMIT ?3",
+        )?;
+        let mut rows = stmt.query(params![conversation_id, before_offset as i64, page_limit])?;
+        while let Some(row) = rows.next()? {
+            out.push(TurnIndexRow {
+                turn_id: row.get(0)?,
+                start_offset: row.get::<_, i64>(1)? as u64,
+            });
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT turn_id, start_offset FROM conversation_turn_index WHERE conversation_id=?1 ORDER BY start_offset DESC LIMIT ?2",
+        )?;
+        let mut rows = stmt.query(params![conversation_id, page_limit])?;
+        while let Some(row) = rows.next()? {
+            out.push(TurnIndexRow {
+                turn_id: row.get(0)?,
+                start_offset: row.get::<_, i64>(1)? as u64,
+            });
+        }
+    }
+    out.reverse();
+    Ok(out)
 }
 
 pub fn has_approval_grant(

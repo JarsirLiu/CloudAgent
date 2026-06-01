@@ -25,7 +25,7 @@ use crate::{
     ModelProviderSettings, PermissionProfile, RegularTurnSettings, ReloadableChatModel,
     ResponseItem, build_turns_from_rollout_items, complete_model_request,
     complete_model_request_streaming, input_items_attachment_count, input_items_preview_text,
-    paginate_turns, visible_message_count,
+    visible_message_count,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -261,8 +261,18 @@ impl AgentHost {
         before_turn_id: Option<&str>,
         limit: usize,
     ) -> Result<(Vec<ConversationTurn>, bool, Option<String>)> {
-        let turns = self.build_turns_from_rollout(conversation_id).await?;
-        Ok(paginate_turns(turns, before_turn_id, limit))
+        self.rollout_recorder.flush().await?;
+        let page = self
+            .store
+            .load_rollout_items_page(conversation_id, before_turn_id, limit)
+            .await?;
+        let turns = build_turns_from_rollout_items(&page.items);
+        let next_before_turn_id = if page.has_more {
+            turns.first().map(|turn| turn.id.clone())
+        } else {
+            None
+        };
+        Ok((turns, page.has_more, next_before_turn_id))
     }
 
     pub async fn conversation_snapshot(&self, conversation_id: &str) -> Result<ConversationState> {

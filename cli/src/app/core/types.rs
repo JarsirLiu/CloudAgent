@@ -18,6 +18,7 @@ pub struct ConsoleConfig {
     pub initial_filter_enabled: bool,
     pub initial_permission_mode: String,
     pub terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows,
+    pub conversation_history_turn_limit: Option<usize>,
     pub auto_approve: bool,
     pub auto_approve_reason: Option<String>,
     pub target_label: String,
@@ -66,4 +67,5 @@ pub(crate) struct TuiApp {
     pub(crate) welcome_animation_pause_ticks: u8,
     pub(crate) workspace_root: PathBuf,
     pub(crate) conversation_store_dir: PathBuf,
+    pub(crate) conversation_history_turn_limit: Option<usize>,
 }

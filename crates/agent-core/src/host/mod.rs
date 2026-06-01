@@ -86,8 +86,19 @@ pub trait ConversationStoreBackend: Send + Sync {
     async fn load_active_conversation(&self) -> Result<Option<String>>;
     async fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()>;
     async fn load_rollout_items(&self, conversation_id: &str) -> Result<Vec<RolloutItem>>;
+    async fn load_rollout_items_page(
+        &self,
+        conversation_id: &str,
+        before_turn_id: Option<&str>,
+        limit: usize,
+    ) -> Result<RolloutItemsPage>;
     async fn prune_archived_conversations_if_needed(&self) -> Result<()>;
     fn root(&self) -> &Path;
+}
+
+pub struct RolloutItemsPage {
+    pub items: Vec<RolloutItem>,
+    pub has_more: bool,
 }
 
 #[async_trait]

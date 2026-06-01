@@ -106,6 +106,7 @@ pub async fn run_console_surface(
     let initial_filter_enabled = config.cli.pre_llm_filter_enabled;
     let initial_permission_mode = config.cli.permission_mode.clone();
     let terminal_resize_reflow_max_rows = config.cli.terminal_resize_reflow_max_rows;
+    let conversation_history_turn_limit = config.cli.conversation_history_turn_limit;
     let conversation_id = resolve_initial_conversation_id(args).await?;
     let runtime = if matches!(requested_target, RequestedConsoleTarget::Embedded) {
         let runtime = runtime_builder(config)?;
@@ -124,6 +125,7 @@ pub async fn run_console_surface(
         initial_filter_enabled,
         initial_permission_mode,
         terminal_resize_reflow_max_rows,
+        conversation_history_turn_limit,
         auto_approve: false,
         auto_approve_reason: None,
         target_label,

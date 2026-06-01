@@ -10,7 +10,6 @@ use std::io::{self, IsTerminal as _};
 use tokio::time::{Duration, timeout};
 
 const STARTUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const INITIAL_HISTORY_PAGE_LIMIT: usize = 80;
 
 pub async fn run_console(config: ConsoleConfig) -> Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
@@ -30,6 +29,7 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         config.initial_filter_enabled,
         config.initial_permission_mode.clone(),
     );
+    app.conversation_history_turn_limit = config.conversation_history_turn_limit;
     app.terminal_projection.set_reflow_policy(ReflowPolicy {
         max_rows: resize_reflow_max_rows(config.terminal_resize_reflow_max_rows),
     });
@@ -44,28 +44,41 @@ async fn load_initial_history(
     app: &mut TuiApp,
     conversation_id: &str,
 ) -> Result<()> {
-    let response = timeout(
-        STARTUP_REQUEST_TIMEOUT,
-        client.request_conversation_history_page_typed(
-            conversation_id,
-            None,
-            INITIAL_HISTORY_PAGE_LIMIT,
-        ),
-    )
-    .await
-    .map_err(|_| {
-        anyhow!(
-            "timed out loading conversation history for `{conversation_id}`; the local node could not get a healthy worker response. restart `node` and retry"
+    if let Some(limit) = app.conversation_history_turn_limit {
+        let response = timeout(
+            STARTUP_REQUEST_TIMEOUT,
+            client.request_conversation_history_page_typed(conversation_id, None, limit),
         )
-    })??;
-    crate::app::conversation::actions::execute_server_action(
-        app,
-        ServerAction::ReplaceHistoryPage {
-            turns: response.turns,
-            has_more: response.has_more,
-            next_before_turn_id: response.next_before_turn_id,
-        },
-    );
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "timed out loading conversation history for `{conversation_id}`; the local node could not get a healthy worker response. restart `node` and retry"
+            )
+        })??;
+        crate::app::conversation::actions::execute_server_action(
+            app,
+            ServerAction::ReplaceHistoryPage {
+                turns: response.turns,
+                has_more: response.has_more,
+                next_before_turn_id: response.next_before_turn_id,
+            },
+        );
+    } else {
+        let response = timeout(
+            STARTUP_REQUEST_TIMEOUT,
+            client.request_conversation_history_typed(conversation_id),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "timed out loading conversation history for `{conversation_id}`; the local node could not get a healthy worker response. restart `node` and retry"
+            )
+        })??;
+        crate::app::conversation::actions::execute_server_action(
+            app,
+            ServerAction::ReplaceHistory(response.turns),
+        );
+    }
     let status = timeout(
         STARTUP_REQUEST_TIMEOUT,
         client.request_conversation_status_typed(conversation_id),
