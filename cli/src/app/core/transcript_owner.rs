@@ -2,6 +2,7 @@ use crate::app::conversation::projection::{HistoryTurnCells, project_conversatio
 use crate::app::core::active_cell_controller::ActiveCellController;
 use crate::app::core::active_turn::ConsolidateAgentMessage;
 use crate::app::core::committed_transcript_store::CommittedTranscriptStore;
+use crate::ui::transcript_render_cache::TranscriptRenderCacheKey;
 use crate::ui::widgets::history_cell::HistoryCell;
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind, TurnState};
@@ -10,19 +11,15 @@ use std::collections::HashSet;
 #[derive(Default)]
 pub(crate) struct TranscriptOwner {
     committed_store: CommittedTranscriptStore,
-    pending_store: CommittedTranscriptStore,
     active_cell_controller: ActiveCellController,
     emitted_turn_ids: HashSet<String>,
-    history_replay_requested: bool,
 }
 
 impl TranscriptOwner {
     pub(crate) fn clear(&mut self) {
         self.committed_store.clear();
-        self.pending_store.clear();
         self.active_cell_controller.clear();
         self.emitted_turn_ids.clear();
-        self.history_replay_requested = false;
     }
 
     pub(crate) fn push_live_cell(&mut self, cell: HistoryCell) {
@@ -51,6 +48,14 @@ impl TranscriptOwner {
         !self.live_is_empty() || !self.committed_store.is_empty()
     }
 
+    pub(crate) fn render_cache_key(&self, width: usize) -> TranscriptRenderCacheKey {
+        TranscriptRenderCacheKey {
+            committed_revision: self.committed_store.revision(),
+            active_revision: self.active_cell_controller.revision(),
+            width,
+        }
+    }
+
     pub(crate) fn set_expand_details(&mut self, expand_details: bool) {
         self.active_cell_controller
             .set_expand_details(expand_details);
@@ -74,20 +79,23 @@ impl TranscriptOwner {
     }
 
     #[cfg(test)]
-    pub(crate) fn queue_history_cells_for_test(&mut self, cells: Vec<HistoryCell>) {
-        self.queue_history_cells(cells);
-    }
-
     pub(crate) fn committed_history_cells(&self) -> Vec<HistoryCell> {
         self.committed_store.cells()
     }
 
-    pub(crate) fn mark_committed_history_replayed(&mut self) {
-        self.pending_store.clear();
+    #[cfg(test)]
+    pub(crate) fn pending_history_cells(&self) -> Vec<HistoryCell> {
+        self.committed_store.cells()
     }
 
-    pub(crate) fn take_history_replay_requested(&mut self) -> bool {
-        std::mem::take(&mut self.history_replay_requested)
+    pub(crate) fn transcript_cells_for_render(&self) -> Vec<HistoryCell> {
+        let mut cells = self.committed_store.cells();
+        if let Some(active_cell) = self.active_cell() {
+            if !active_cell.body().trim().is_empty() {
+                cells.push(active_cell.clone());
+            }
+        }
+        cells
     }
 
     pub(crate) fn rebuild_from_history_snapshot(
@@ -201,33 +209,12 @@ impl TranscriptOwner {
         self.apply_active_turn_effects(effects);
     }
 
-    #[cfg(test)]
-    pub(crate) fn pending_history_cells(&self) -> Vec<HistoryCell> {
-        self.pending_store.cells()
-    }
-
-    pub(crate) fn drain_pending_history_cells(&mut self) -> Vec<HistoryCell> {
-        let cells = self
-            .pending_store
-            .cells()
-            .into_iter()
-            .filter(|cell| !cell.body().trim().is_empty())
-            .collect::<Vec<_>>();
-        self.pending_store.clear();
-        cells
-    }
-
     pub(crate) fn active_turn_id(&self) -> Option<&str> {
         self.active_cell_controller.active_turn_id()
     }
 
     fn queue_history_cells(&mut self, cells: Vec<HistoryCell>) {
-        self.committed_store.append_cells(cells.clone());
-        self.pending_store.append_cells(cells);
-    }
-
-    fn queue_terminal_tail_cells(&mut self, cells: Vec<HistoryCell>) {
-        self.pending_store.append_cells(cells);
+        self.committed_store.append_cells(cells);
     }
 
     fn apply_active_turn_effects(
@@ -235,7 +222,6 @@ impl TranscriptOwner {
         effects: crate::app::core::active_cell_controller::AppliedActiveTurnEffects,
     ) {
         self.queue_history_cells(effects.replay_cells);
-        self.queue_terminal_tail_cells(effects.terminal_tail_cells);
         if let Some(message) = effects.consolidate_agent_message {
             self.consolidate_agent_message(message);
         }

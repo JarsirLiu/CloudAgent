@@ -12,11 +12,11 @@ pub(crate) struct ActiveCellController {
     live_transcript: Transcript,
     active_turn: ActiveTurnState,
     last_copyable_output: Option<String>,
+    revision: u64,
 }
 
 pub(crate) struct AppliedActiveTurnEffects {
     pub(crate) replay_cells: Vec<HistoryCell>,
-    pub(crate) terminal_tail_cells: Vec<HistoryCell>,
     pub(crate) consolidate_agent_message: Option<ConsolidateAgentMessage>,
 }
 
@@ -25,10 +25,12 @@ impl ActiveCellController {
         self.live_transcript = Transcript::default();
         let _ = self.active_turn.clear();
         self.last_copyable_output = None;
+        self.bump_revision();
     }
 
     pub(crate) fn replace_notice_cell(&mut self, cell: HistoryCell) {
         self.live_transcript.replace_cells(vec![cell]);
+        self.bump_revision();
     }
 
     pub(crate) fn replace_live_cells(&mut self, cells: Vec<HistoryCell>, expand_details: bool) {
@@ -47,6 +49,7 @@ impl ActiveCellController {
         }
         self.live_transcript.replace_cells(cells);
         self.live_transcript.set_tool_cells_expanded(expand_details);
+        self.bump_revision();
     }
 
     #[cfg(test)]
@@ -64,6 +67,7 @@ impl ActiveCellController {
 
     pub(crate) fn set_expand_details(&mut self, expand_details: bool) {
         self.live_transcript.set_tool_cells_expanded(expand_details);
+        self.bump_revision();
     }
 
     pub(crate) fn last_copyable_output(&self) -> Option<&str> {
@@ -240,11 +244,19 @@ impl ActiveCellController {
     ) -> AppliedActiveTurnEffects {
         self.replace_live_cells(effects.active_cell.into_iter().collect(), expand_details);
         self.last_copyable_output = effects.last_copyable_output;
+        self.bump_revision();
         AppliedActiveTurnEffects {
             replay_cells: effects.replay_cells,
-            terminal_tail_cells: effects.terminal_tail_cells,
             consolidate_agent_message: effects.consolidate_agent_message,
         }
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
     }
 }
 

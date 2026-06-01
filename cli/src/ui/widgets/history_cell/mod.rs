@@ -9,6 +9,8 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 use wrapping::{WrapOptions, word_wrap_text};
 
+use crate::text_width::display_width;
+
 pub(crate) use render::{
     RenderContext, humanize_tool_label, render_active_item_placeholder, render_history_entry,
 };
@@ -624,30 +626,27 @@ impl Transcript {
 
 fn render_user(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     let inner = width.saturating_sub(2).max(8);
+    let style = user_message_style();
+    let text_style = style
+        .fg(Color::Rgb(220, 220, 235))
+        .add_modifier(Modifier::BOLD);
     word_wrap_text(cell.body(), WrapOptions::new(inner))
         .into_iter()
         .enumerate()
         .map(|(line_index, line)| {
             let mut spans = Vec::with_capacity(line.spans.len() + 1);
             spans.push(if line_index == 0 {
-                Span::styled("› ", Style::default().fg(Color::Rgb(140, 150, 170)))
+                Span::styled("› ", style.fg(Color::Rgb(140, 150, 170)))
             } else {
                 Span::raw("  ")
             });
             spans.extend(
                 line.spans
                     .into_iter()
-                    .map(|span| {
-                        Span::styled(
-                            span.content.into_owned(),
-                            Style::default()
-                                .fg(Color::Rgb(220, 220, 235))
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    })
+                    .map(|span| Span::styled(span.content.into_owned(), text_style))
                     .collect::<Vec<_>>(),
             );
-            Line::from(spans)
+            apply_full_width_style(Line::from(spans), style, width)
         })
         .collect()
 }
@@ -976,6 +975,29 @@ fn render_tool(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         HistoryContent::ToolGroup(group) => render_tool_group(cell, group, width),
         _ => render_tool_like(cell, width, Color::Rgb(120, 170, 255), "•"),
     }
+}
+
+fn apply_full_width_style(mut line: Line<'static>, style: Style, width: usize) -> Line<'static> {
+    let padding = width.saturating_sub(line_display_width(&line));
+    if padding > 0 {
+        line.spans.push(Span::styled(" ".repeat(padding), style));
+    }
+    line.style = line.style.patch(style);
+    for span in &mut line.spans {
+        span.style = span.style.patch(style);
+    }
+    line
+}
+
+fn line_display_width(line: &Line<'_>) -> usize {
+    line.spans
+        .iter()
+        .map(|span| display_width(span.content.as_ref()))
+        .sum()
+}
+
+fn user_message_style() -> Style {
+    Style::default().bg(Color::Rgb(26, 34, 50))
 }
 
 fn render_tool_group(
@@ -1422,7 +1444,10 @@ fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone, tool_aggregation};
+    use super::{
+        ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone, line_display_width,
+        tool_aggregation, user_message_style,
+    };
 
     fn joined(cell: &HistoryCell, width: usize) -> String {
         cell.to_lines_with_mode(width)
@@ -1579,10 +1604,28 @@ mod tests {
                     .iter()
                     .map(|span| span.content.as_ref())
                     .collect::<String>()
+                    .trim_end()
+                    .to_string()
             })
             .collect::<Vec<_>>();
 
         assert_eq!(plain, vec!["› first line", "  second line", "  third line"]);
+    }
+
+    #[test]
+    fn user_cells_apply_full_width_background() {
+        let cell = HistoryCell::user("hello");
+
+        let rendered = cell.to_lines_with_mode(24);
+        let line = rendered.first().expect("user cell should render a line");
+
+        assert_eq!(line.style.bg, user_message_style().bg);
+        assert_eq!(line_display_width(line), 24);
+        assert!(
+            line.spans
+                .iter()
+                .all(|span| span.style.bg == user_message_style().bg)
+        );
     }
 
     #[test]

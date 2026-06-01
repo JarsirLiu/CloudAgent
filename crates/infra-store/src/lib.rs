@@ -13,9 +13,10 @@ use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 pub mod memory_repo;
+mod rollout_log;
 pub mod rollout_recorder;
 mod session_index;
 
@@ -562,9 +563,9 @@ impl JsonConversationStore {
     }
 
     async fn rebuild_turn_index_from_path(&self, path: &Path, conversation_id: &str) -> Result<()> {
-        let file = match fs::File::open(path).await {
-            Ok(file) => file,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+        let text = match self.read_rollout_log_text(path).await? {
+            Some(text) => text,
+            None => {
                 session_index::replace_turn_index(
                     &session_index::db_path(&self.root),
                     conversation_id,
@@ -572,43 +573,19 @@ impl JsonConversationStore {
                 )?;
                 return Ok(());
             }
-            Err(err) => {
-                return Err(err).with_context(|| format!("failed to read {}", path.display()));
-            }
         };
 
-        let mut lines = BufReader::new(file).lines();
-        let mut line_no = 0usize;
-        let mut next_offset = 0u64;
-        let mut rows = Vec::new();
-        while let Some(line) = lines
-            .next_line()
-            .await
-            .with_context(|| format!("failed to read {}", path.display()))?
-        {
-            line_no += 1;
-            let line_start_offset = next_offset;
-            next_offset = next_offset
-                .saturating_add(line.as_bytes().len() as u64)
-                .saturating_add(1);
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let item = serde_json::from_str::<RolloutItem>(line).with_context(|| {
-                format!(
-                    "failed to parse rollout file {} at line {}",
-                    path.display(),
-                    line_no
-                )
-            })?;
-            if let Some(turn_id) = rollout_turn_start_id(&item) {
-                rows.push(session_index::TurnIndexRow {
+        let parsed_lines = rollout_log::parse_lines_with_offsets(path, &text)?;
+        let rows = parsed_lines
+            .into_iter()
+            .filter_map(|line| {
+                rollout_turn_start_id(&line.item).map(|turn_id| session_index::TurnIndexRow {
                     turn_id: turn_id.to_string(),
-                    start_offset: line_start_offset,
-                });
-            }
-        }
+                    start_offset: line.start_offset,
+                })
+            })
+            .collect::<Vec<_>>();
+
         session_index::replace_turn_index(
             &session_index::db_path(&self.root),
             conversation_id,
@@ -623,45 +600,25 @@ impl JsonConversationStore {
         before_turn_id: Option<&str>,
         limit: usize,
     ) -> Result<RolloutItemsPage> {
-        let file = match fs::File::open(path).await {
-            Ok(file) => file,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+        let text = match self.read_rollout_log_text(path).await? {
+            Some(text) => text,
+            None => {
                 return Ok(RolloutItemsPage {
                     items: Vec::new(),
                     has_more: false,
                 });
             }
-            Err(err) => {
-                return Err(err).with_context(|| format!("failed to read {}", path.display()));
-            }
         };
 
         let page_limit = limit.max(1);
-        let mut lines = BufReader::new(file).lines();
-        let mut line_no = 0usize;
+        let parsed_lines = rollout_log::parse_lines_with_offsets(path, &text)?;
         let mut saw_explicit_turn = false;
         let mut legacy_items = Vec::new();
         let mut current_turn: Option<RolloutTurnChunk> = None;
         let mut window: VecDeque<RolloutTurnChunk> = VecDeque::new();
 
-        while let Some(line) = lines
-            .next_line()
-            .await
-            .with_context(|| format!("failed to read {}", path.display()))?
-        {
-            line_no += 1;
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let item = serde_json::from_str::<RolloutItem>(line).with_context(|| {
-                format!(
-                    "failed to parse rollout file {} at line {}",
-                    path.display(),
-                    line_no
-                )
-            })?;
-
+        for line in parsed_lines {
+            let item = line.item;
             if let Some(turn_id) = rollout_turn_start_id(&item) {
                 if before_turn_id.is_some_and(|before| before == turn_id) {
                     break;
@@ -708,27 +665,7 @@ impl JsonConversationStore {
     }
 
     fn parse_rollout_log_text(&self, path: &Path, text: &str) -> Result<Vec<RolloutItem>> {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut items = Vec::new();
-        for (line_no, line) in text.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let item = serde_json::from_str::<RolloutItem>(line).with_context(|| {
-                format!(
-                    "failed to parse rollout file {} at line {}",
-                    path.display(),
-                    line_no + 1
-                )
-            })?;
-            items.push(item);
-        }
-        Ok(items)
+        rollout_log::parse_items(path, text)
     }
 
     async fn delete_file_if_exists(&self, path: &Path) -> Result<()> {
@@ -1078,6 +1015,126 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["turn-1", "turn-2", "turn-3", "turn-4"]
         );
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn load_rollout_items_ignores_truncated_tail_record() {
+        let root = unique_temp_path("cloudagent-storage-truncated-tail");
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "truncated-tail";
+        fs::create_dir_all(&root).await.expect("create root");
+
+        let complete = serde_json::to_string(&RolloutItem::from(EventMsg::TurnStarted {
+            turn_id: "turn-1".to_string(),
+            conversation_id: conversation_id.to_string(),
+            user_input: agent_core::text_input_items("message 1"),
+        }))
+        .expect("serialize complete rollout item");
+        fs::write(
+            store.rollout_path(conversation_id),
+            format!("{complete}\n{{\"type\":\"response_item\""),
+        )
+        .await
+        .expect("write truncated rollout");
+
+        let items = store
+            .load_rollout_items(conversation_id)
+            .await
+            .expect("load rollout with truncated tail");
+
+        assert_eq!(items.len(), 1);
+        assert!(matches!(
+            &items[0],
+            RolloutItem::EventMsg {
+                event: EventMsg::TurnStarted { turn_id, .. },
+            } if turn_id == "turn-1"
+        ));
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn load_rollout_items_rejects_malformed_middle_record() {
+        let root = unique_temp_path("cloudagent-storage-bad-middle");
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "bad-middle";
+        fs::create_dir_all(&root).await.expect("create root");
+
+        let first = serde_json::to_string(&RolloutItem::from(EventMsg::TurnStarted {
+            turn_id: "turn-1".to_string(),
+            conversation_id: conversation_id.to_string(),
+            user_input: agent_core::text_input_items("message 1"),
+        }))
+        .expect("serialize first item");
+        let second = serde_json::to_string(&RolloutItem::from(EventMsg::TurnCompleted {
+            turn_id: "turn-1".to_string(),
+        }))
+        .expect("serialize second item");
+        fs::write(
+            store.rollout_path(conversation_id),
+            format!("{first}\n{{\"type\":\"response_item\"\n{second}\n"),
+        )
+        .await
+        .expect("write malformed middle rollout");
+
+        let err = store
+            .load_rollout_items(conversation_id)
+            .await
+            .expect_err("middle corruption should fail");
+
+        assert!(
+            err.to_string().contains("failed to parse rollout file"),
+            "unexpected error: {err:?}"
+        );
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn load_rollout_items_page_rebuild_ignores_truncated_tail_record() {
+        let root = unique_temp_path("cloudagent-storage-page-truncated-tail");
+        let store = JsonConversationStore::new(&root);
+        let conversation_id = "paged-truncated-tail";
+        fs::create_dir_all(&root).await.expect("create root");
+
+        let mut lines = Vec::new();
+        for index in 1..=3 {
+            let turn_id = format!("turn-{index}");
+            lines.push(
+                serde_json::to_string(&RolloutItem::from(EventMsg::TurnStarted {
+                    turn_id: turn_id.clone(),
+                    conversation_id: conversation_id.to_string(),
+                    user_input: agent_core::text_input_items(format!("message {index}")),
+                }))
+                .expect("serialize turn start"),
+            );
+            lines.push(
+                serde_json::to_string(&RolloutItem::from(EventMsg::TurnCompleted { turn_id }))
+                    .expect("serialize turn completed"),
+            );
+        }
+        fs::write(
+            store.rollout_path(conversation_id),
+            format!("{}\n{{\"type\":\"event_msg\"", lines.join("\n")),
+        )
+        .await
+        .expect("write truncated page rollout");
+
+        let page = store
+            .load_rollout_items_page(conversation_id, None, 2)
+            .await
+            .expect("load latest page with truncated tail");
+        let turns = agent_core::build_turns_from_rollout_items(&page.items);
+        assert_eq!(
+            turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["turn-2", "turn-3"]
+        );
+        assert!(page.has_more);
 
         let _ = fs::remove_dir_all(root).await;
     }

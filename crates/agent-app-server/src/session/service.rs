@@ -1,7 +1,10 @@
 use crate::app::notification::send_notification;
 use crate::routing::command_router::{ServerState, merge_active_turn};
 use crate::session::state as session_state;
-use agent_core::{AgentHost, ConversationStatus, InputItem, input_items_preview_text};
+use agent_core::{
+    AgentHost, ConversationStatus, ConversationTurn, InputItem, TranscriptItem, TurnState,
+    input_items_preview_text,
+};
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
     ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
@@ -87,6 +90,7 @@ pub(crate) async fn request_conversation_history(
         None => None,
     };
     let mut turns = runtime.build_turns_from_rollout(&conversation_id).await?;
+    recover_inactive_running_turns(&mut turns, active_turn.as_ref());
     merge_active_turn(&mut turns, active_turn);
     send_notification(
         event_tx,
@@ -114,6 +118,7 @@ pub(crate) async fn read_conversation_history(
         None => None,
     };
     let mut turns = runtime.build_turns_from_rollout(&conversation_id).await?;
+    recover_inactive_running_turns(&mut turns, active_turn.as_ref());
     merge_active_turn(&mut turns, active_turn);
     Ok(ConversationHistoryResponse { turns })
 }
@@ -158,6 +163,9 @@ pub(crate) async fn request_conversation_history_page(
     let (turns, has_more, next_before_turn_id) = runtime
         .build_turns_page_from_rollout(&conversation_id, before_turn_id.as_deref(), limit)
         .await?;
+    let mut turns = turns;
+    let active_turn = active_turn_snapshot(state, &conversation_id).await;
+    recover_inactive_running_turns(&mut turns, active_turn.as_ref());
     send_notification(
         event_tx,
         state,
@@ -174,7 +182,7 @@ pub(crate) async fn request_conversation_history_page(
 
 pub(crate) async fn read_conversation_history_page(
     runtime: &Arc<AgentHost>,
-    _state: &Arc<Mutex<ServerState>>,
+    state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
     before_turn_id: Option<String>,
     limit: usize,
@@ -182,6 +190,9 @@ pub(crate) async fn read_conversation_history_page(
     let (turns, has_more, next_before_turn_id) = runtime
         .build_turns_page_from_rollout(&conversation_id, before_turn_id.as_deref(), limit)
         .await?;
+    let mut turns = turns;
+    let active_turn = active_turn_snapshot(state, &conversation_id).await;
+    recover_inactive_running_turns(&mut turns, active_turn.as_ref());
     Ok(ConversationHistoryPageResponse {
         turns,
         has_more,
@@ -210,6 +221,41 @@ pub(crate) async fn replay_frontend_state(
     )
     .await;
     Ok(())
+}
+
+async fn active_turn_snapshot(
+    state: &Arc<Mutex<ServerState>>,
+    conversation_id: &str,
+) -> Option<ConversationTurn> {
+    let active_listener = {
+        let state = state.lock().await;
+        state.active_listener(conversation_id)
+    };
+    match active_listener {
+        Some(listener) => listener.active_turn_snapshot().await,
+        None => None,
+    }
+}
+
+fn recover_inactive_running_turns(
+    turns: &mut [ConversationTurn],
+    active_turn: Option<&ConversationTurn>,
+) {
+    let active_turn_id = active_turn.map(|turn| turn.id.as_str());
+    for turn in turns {
+        if turn.state != TurnState::Running || active_turn_id == Some(turn.id.as_str()) {
+            continue;
+        }
+        turn.state = TurnState::Cancelled;
+        let notice_id = format!("turn_interrupted:{}", turn.id);
+        if turn.items.iter().any(|item| item.id() == notice_id) {
+            continue;
+        }
+        turn.items.push(TranscriptItem::SystemMessage {
+            id: notice_id,
+            text: "Previous process exited before this turn completed.".to_string(),
+        });
+    }
 }
 
 pub(crate) async fn create_conversation(
@@ -563,7 +609,9 @@ async fn publish_switched_conversation_state(
         },
     )
     .await;
-    let turns = runtime.build_turns_from_rollout(conversation_id).await?;
+    let mut turns = runtime.build_turns_from_rollout(conversation_id).await?;
+    let active_turn = active_turn_snapshot(state, conversation_id).await;
+    recover_inactive_running_turns(&mut turns, active_turn.as_ref());
     send_notification(
         event_tx,
         state,
@@ -574,4 +622,54 @@ async fn publish_switched_conversation_state(
     )
     .await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recover_inactive_running_turns;
+    use agent_core::{ConversationTurn, TranscriptItem, TurnState};
+
+    fn turn(id: &str, state: TurnState) -> ConversationTurn {
+        ConversationTurn {
+            id: id.to_string(),
+            state,
+            items: vec![TranscriptItem::AgentMessage {
+                id: format!("assistant:{id}"),
+                text: "partial".to_string(),
+            }],
+            rollout_start_index: 0,
+            rollout_end_index: 0,
+        }
+    }
+
+    #[test]
+    fn recovery_marks_orphaned_running_turn_interrupted() {
+        let mut turns = vec![turn("turn-1", TurnState::Running)];
+
+        recover_inactive_running_turns(&mut turns, None);
+
+        assert_eq!(turns[0].state, TurnState::Cancelled);
+        assert!(turns[0].items.iter().any(|item| matches!(
+            item,
+            TranscriptItem::SystemMessage { id, text }
+                if id == "turn_interrupted:turn-1"
+                    && text.contains("Previous process exited")
+        )));
+    }
+
+    #[test]
+    fn recovery_preserves_current_active_running_turn() {
+        let active_turn = turn("turn-1", TurnState::Running);
+        let mut turns = vec![active_turn.clone()];
+
+        recover_inactive_running_turns(&mut turns, Some(&active_turn));
+
+        assert_eq!(turns[0].state, TurnState::Running);
+        assert!(
+            !turns[0]
+                .items
+                .iter()
+                .any(|item| item.id() == "turn_interrupted:turn-1")
+        );
+    }
 }

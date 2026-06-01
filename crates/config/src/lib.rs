@@ -91,16 +91,7 @@ pub struct McpServerConfig {
 pub struct CliConfig {
     pub pre_llm_filter_enabled: bool,
     pub permission_mode: String,
-    pub terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows,
     pub conversation_history_turn_limit: Option<usize>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TerminalResizeReflowMaxRows {
-    #[default]
-    Auto,
-    Disabled,
-    Limit(usize),
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -186,7 +177,6 @@ struct PartialMcpServerConfig {
 struct PartialCliConfig {
     pre_llm_filter_enabled: Option<bool>,
     permission_mode: Option<String>,
-    terminal_resize_reflow_max_rows: Option<usize>,
     conversation_history_turn_limit: Option<usize>,
 }
 
@@ -291,7 +281,6 @@ impl AgentConfig {
             cli: CliConfig {
                 pre_llm_filter_enabled: false,
                 permission_mode: "WorkspaceWrite".to_string(),
-                terminal_resize_reflow_max_rows: TerminalResizeReflowMaxRows::Auto,
                 conversation_history_turn_limit: Some(30),
             },
             workspace_root,
@@ -497,13 +486,6 @@ impl AgentConfig {
             {
                 self.cli.permission_mode = canonical.to_string();
             }
-            if let Some(value) = cli.terminal_resize_reflow_max_rows {
-                self.cli.terminal_resize_reflow_max_rows = if value == 0 {
-                    TerminalResizeReflowMaxRows::Disabled
-                } else {
-                    TerminalResizeReflowMaxRows::Limit(value)
-                };
-            }
             if let Some(value) = cli.conversation_history_turn_limit {
                 self.cli.conversation_history_turn_limit =
                     if value == 0 { None } else { Some(value) };
@@ -699,15 +681,6 @@ impl AgentConfig {
         {
             self.runtime.tool_output_token_limit = parsed.max(1);
         }
-        if let Ok(value) = env::var("CLOUDAGENT_TERMINAL_RESIZE_REFLOW_MAX_ROWS")
-            && let Ok(parsed) = value.parse::<usize>()
-        {
-            self.cli.terminal_resize_reflow_max_rows = if parsed == 0 {
-                TerminalResizeReflowMaxRows::Disabled
-            } else {
-                TerminalResizeReflowMaxRows::Limit(parsed)
-            };
-        }
         if let Ok(value) = env::var("CLOUDAGENT_CONVERSATION_HISTORY_TURN_LIMIT")
             && let Ok(parsed) = value.parse::<usize>()
         {
@@ -879,8 +852,7 @@ fn default_system_prompt() -> String {
 mod tests {
     use super::{
         AgentConfig, InputModality, PartialAgentConfig, PartialCliConfig, PartialToolConfig,
-        TerminalResizeReflowMaxRows, config_search_paths_with_home, normalize_input_modalities,
-        parse_input_modalities,
+        config_search_paths_with_home, normalize_input_modalities, parse_input_modalities,
     };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -901,44 +873,6 @@ mod tests {
         let got = parse_input_modalities("image");
 
         assert_eq!(got, vec![InputModality::Text, InputModality::Image]);
-    }
-
-    #[test]
-    fn cli_resize_reflow_cap_defaults_to_auto() {
-        let config = AgentConfig::defaults(PathBuf::from("."));
-
-        assert_eq!(
-            config.cli.terminal_resize_reflow_max_rows,
-            TerminalResizeReflowMaxRows::Auto
-        );
-    }
-
-    #[test]
-    fn cli_resize_reflow_cap_can_be_configured_or_disabled() {
-        let mut config = AgentConfig::defaults(PathBuf::from("."));
-        config.apply_partial(PartialAgentConfig {
-            cli: Some(PartialCliConfig {
-                terminal_resize_reflow_max_rows: Some(500),
-                ..PartialCliConfig::default()
-            }),
-            ..PartialAgentConfig::default()
-        });
-        assert_eq!(
-            config.cli.terminal_resize_reflow_max_rows,
-            TerminalResizeReflowMaxRows::Limit(500)
-        );
-
-        config.apply_partial(PartialAgentConfig {
-            cli: Some(PartialCliConfig {
-                terminal_resize_reflow_max_rows: Some(0),
-                ..PartialCliConfig::default()
-            }),
-            ..PartialAgentConfig::default()
-        });
-        assert_eq!(
-            config.cli.terminal_resize_reflow_max_rows,
-            TerminalResizeReflowMaxRows::Disabled
-        );
     }
 
     #[test]

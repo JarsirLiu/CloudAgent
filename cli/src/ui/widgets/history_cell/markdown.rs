@@ -287,7 +287,9 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                     current_prefix(quote_depth, &line_prefix)
                 };
                 flush(&mut current, &mut out, width, &prefix);
-                out.push(Line::raw(""));
+                if should_insert_paragraph_separator(quote_depth, &line_prefix) {
+                    out.push(Line::raw(""));
+                }
             }
             Event::SoftBreak | Event::HardBreak => {
                 let prefix = if in_heading {
@@ -397,6 +399,10 @@ fn prepend_raw_prefix(mut line: Line<'static>, prefix: String) -> Line<'static> 
     spans.extend(line.spans);
     line.spans = spans;
     line
+}
+
+fn should_insert_paragraph_separator(quote_depth: usize, line_prefix: &str) -> bool {
+    quote_depth == 0 && line_prefix.is_empty()
 }
 
 pub(super) fn render_plaintext(input: &str, width: usize) -> Vec<Line<'static>> {

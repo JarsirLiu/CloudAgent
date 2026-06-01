@@ -43,6 +43,7 @@ impl RuntimeController {
             UiEvent::Key(key) => {
                 pause_welcome_animation_for_input(app);
                 if should_request_older_history_page(key)
+                    && app.transcript_scroll.is_at_top()
                     && crate::app::conversation::actions::load_older_history_page_if_available(
                         app, client,
                     )
@@ -68,8 +69,13 @@ impl RuntimeController {
                 frame_requester.schedule_frame();
                 RuntimeControl::Continue
             }
+            UiEvent::Mouse(mouse) => {
+                if app.transcript_scroll.handle_mouse(mouse) {
+                    frame_requester.schedule_frame();
+                }
+                RuntimeControl::Continue
+            }
             UiEvent::Resize => {
-                app.terminal_projection.request_history_replay();
                 frame_requester.schedule_frame();
                 RuntimeControl::Continue
             }

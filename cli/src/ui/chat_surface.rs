@@ -37,7 +37,8 @@ pub(crate) struct ChatSurfaceLayout {
 }
 
 impl ChatSurface {
-    pub(crate) fn history_render_metrics_for_area(area: Rect) -> TranscriptRenderMetrics {
+    #[cfg(test)]
+    pub(crate) fn transcript_render_metrics_for_area(area: Rect) -> TranscriptRenderMetrics {
         transcript_surface_layout(area).render_metrics
     }
 
@@ -282,8 +283,8 @@ fn transcript_surface_layout(area: Rect) -> TranscriptSurfaceLayout {
 fn render_body_area(app: &mut TuiApp, frame: &mut Frame, area: Rect, model: ChatSurfaceModel) {
     match model.body {
         ChatSurfaceBody::Welcome => render_welcome(app, frame, area),
-        ChatSurfaceBody::ActiveCell(active_cell) => {
-            render_active_cell(app, frame, area, active_cell.lines)
+        ChatSurfaceBody::Transcript(transcript) => {
+            render_transcript(app, frame, area, transcript.lines, transcript.rendered_rows)
         }
     }
 }
@@ -314,7 +315,13 @@ fn render_status_area(
     );
 }
 
-fn render_active_cell(app: &mut TuiApp, frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
+fn render_transcript(
+    app: &mut TuiApp,
+    frame: &mut Frame,
+    area: Rect,
+    lines: Vec<Line<'static>>,
+    rendered_rows: usize,
+) {
     if area.height == 0 || area.width == 0 || lines.is_empty() {
         return;
     }
@@ -326,9 +333,8 @@ fn render_active_cell(app: &mut TuiApp, frame: &mut Frame, area: Rect, lines: Ve
         return;
     }
     let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
-    let rendered_rows = paragraph.line_count(inner.width);
     let scroll_top = app
-        .active_transcript_scroll
+        .transcript_scroll
         .top_row_for_render(rendered_rows, inner.height as usize);
     frame.render_widget(Clear, inner);
     frame.render_widget(paragraph.scroll((scroll_top, 0)), inner);

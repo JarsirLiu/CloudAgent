@@ -2,85 +2,52 @@ mod color_compat;
 pub mod custom_terminal;
 mod draw_coordinator;
 pub mod events;
-pub(crate) mod history_flush_queue;
-mod insert_history;
 mod keyboard_modes;
-mod resize_reflow_cap;
 
 use anyhow::Result;
+use crossterm::Command;
 use crossterm::SynchronizedUpdate;
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::backend::CrosstermBackend;
+use std::fmt;
 use std::io::{self, stdout};
 use std::panic;
 use std::sync::Once;
-
-use crate::ui::widgets::history_cell::HistoryCell;
 
 use color_compat::TerminalCapabilities;
 pub use color_compat::apply_color_cli_preference;
 pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
-use history_flush_queue::HistoryFlushQueue;
-pub(crate) use insert_history::{
-    insert_history_lines_raw, prepare_history_lines, prepare_history_tail_lines,
-    repaint_history_tail_raw,
-};
-pub(crate) use resize_reflow_cap::resize_reflow_max_rows;
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 
 pub(crate) struct TerminalGuard {
     pub(crate) terminal: custom_terminal::Terminal<CrosstermBackend<io::Stdout>>,
     capabilities: TerminalCapabilities,
-    history_flush_queue: HistoryFlushQueue,
-}
-
-pub(crate) struct HistoryProjection {
-    pub(crate) viewport_height: u16,
-    pub(crate) history_render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics,
-    pub(crate) history_update: HistoryUpdate,
 }
 
 pub(crate) struct PreparedHistoryProjection {
     pub(crate) viewport_height: u16,
-    pub(crate) history_update: PreparedHistoryUpdate,
-}
-
-pub(crate) enum HistoryUpdate {
-    ReplayAll(Vec<HistoryCell>),
-    AppendTail(Vec<HistoryCell>),
-    ReflowVisibleTail {
-        cells: Vec<HistoryCell>,
-        max_rows: usize,
-    },
-}
-
-pub(crate) enum PreparedHistoryUpdate {
-    ReplayAll {
-        cells: Vec<HistoryCell>,
-        render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics,
-        max_rows: Option<usize>,
-    },
-    AppendTail {
-        cells: Vec<HistoryCell>,
-        render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics,
-    },
-    ReflowVisibleTail {
-        cells: Vec<HistoryCell>,
-        render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics,
-        max_rows: usize,
-    },
 }
 
 pub(crate) fn init() -> Result<TerminalGuard> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     let init_result = (|| -> Result<TerminalGuard> {
-        execute!(stdout, EnableBracketedPaste)?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableAlternateScroll,
+            EnableMouseCapture,
+            EnableBracketedPaste
+        )?;
         keyboard_modes::enable_keyboard_enhancement();
         let backend = CrosstermBackend::new(io::stdout());
         let capabilities = TerminalCapabilities::detect();
@@ -88,7 +55,6 @@ pub(crate) fn init() -> Result<TerminalGuard> {
         Ok(TerminalGuard {
             terminal,
             capabilities,
-            history_flush_queue: HistoryFlushQueue::default(),
         })
     })();
     if init_result.is_err() {
@@ -98,10 +64,58 @@ pub(crate) fn init() -> Result<TerminalGuard> {
 }
 
 pub(crate) fn restore() -> Result<()> {
-    let _ = execute!(io::stdout(), DisableBracketedPaste);
+    let _ = execute!(
+        io::stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        DisableAlternateScroll,
+        LeaveAlternateScreen
+    );
     keyboard_modes::restore_keyboard_enhancement_stack();
     disable_raw_mode()?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnableAlternateScroll;
+
+impl Command for EnableAlternateScroll {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        write!(f, "\x1b[?1007h")
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> io::Result<()> {
+        Err(io::Error::other(
+            "EnableAlternateScroll requires ANSI execution",
+        ))
+    }
+
+    #[cfg(windows)]
+    fn is_ansi_code_supported(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DisableAlternateScroll;
+
+impl Command for DisableAlternateScroll {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        write!(f, "\x1b[?1007l")
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> io::Result<()> {
+        Err(io::Error::other(
+            "DisableAlternateScroll requires ANSI execution",
+        ))
+    }
+
+    #[cfg(windows)]
+    fn is_ansi_code_supported(&self) -> bool {
+        true
+    }
 }
 
 pub fn install_panic_hook() {
@@ -127,14 +141,12 @@ impl TerminalGuard {
     ) -> Result<()> {
         if self.capabilities.supports_synchronized_update {
             stdout().sync_update(|_| {
-                let mut coordinator =
-                    DrawCoordinator::new(&mut self.terminal, &mut self.history_flush_queue);
+                let mut coordinator = DrawCoordinator::new(&mut self.terminal);
                 coordinator.draw_frame(projection, render)?;
                 Ok::<(), anyhow::Error>(())
             })??;
         } else {
-            let mut coordinator =
-                DrawCoordinator::new(&mut self.terminal, &mut self.history_flush_queue);
+            let mut coordinator = DrawCoordinator::new(&mut self.terminal);
             coordinator.draw_frame(projection, render)?;
         }
         Ok(())

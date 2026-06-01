@@ -3,11 +3,13 @@ use crate::ui::widgets::history_cell::{HistoryCell, Transcript, tool_aggregation
 #[derive(Default)]
 pub(crate) struct CommittedTranscriptStore {
     transcript: Transcript,
+    revision: u64,
 }
 
 impl CommittedTranscriptStore {
     pub(crate) fn clear(&mut self) {
         self.transcript = Transcript::default();
+        self.bump_revision();
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -51,6 +53,7 @@ impl CommittedTranscriptStore {
         }
         let insert_at = start.min(cells.len());
         cells.insert(insert_at, final_cell);
+        self.bump_revision();
         true
     }
 
@@ -60,14 +63,17 @@ impl CommittedTranscriptStore {
         if let Some(last) = self.transcript.cells_mut().last_mut()
             && tool_aggregation::coalesce_agent_stream(last, &cell)
         {
+            self.bump_revision();
             return;
         }
         if let Some(last) = self.transcript.cells_mut().last_mut()
             && tool_aggregation::coalesce_tool_like(last, &cell, true)
         {
+            self.bump_revision();
             return;
         }
         self.transcript.push(cell);
+        self.bump_revision();
     }
 
     fn agent_message_stream_start(&self, item_id: &str) -> Option<usize> {
@@ -95,6 +101,14 @@ impl CommittedTranscriptStore {
             })
             .unwrap_or(false);
         cell.set_stream_continuation(is_agent_message && previous_was_agent_message);
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
     }
 }
 

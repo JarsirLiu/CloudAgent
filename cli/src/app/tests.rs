@@ -382,7 +382,6 @@ fn completed_agent_message_consolidates_after_item_boundary() {
         false,
     );
 
-    let _rendered_partial = owner.drain_pending_history_cells();
     owner.complete_item(
         "turn-1".to_string(),
         "a1".to_string(),
@@ -390,7 +389,6 @@ fn completed_agent_message_consolidates_after_item_boundary() {
         false,
     );
 
-    assert!(!owner.take_history_replay_requested());
     let committed = owner
         .committed_history_cells()
         .into_iter()
@@ -438,7 +436,6 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
         false,
     );
 
-    let _rendered_partial = owner.drain_pending_history_cells();
     owner.complete_item(
         "turn-1".to_string(),
         "a1".to_string(),
@@ -446,7 +443,6 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
         false,
     );
 
-    assert!(!owner.take_history_replay_requested());
     let committed = owner
         .committed_history_cells()
         .into_iter()
@@ -766,7 +762,7 @@ fn chat_surface_model_renders_streaming_visible_tail() {
     );
 
     let model = build_chat_surface_model(&mut app, 80, 12);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
 
@@ -811,7 +807,7 @@ fn streaming_reasoning_stays_fully_visible_until_completion() {
     );
 
     let model = build_chat_surface_model(&mut app, 80, 40);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
 
@@ -860,7 +856,7 @@ fn live_reasoning_tail_shows_latest_lines_without_history_collapse() {
     );
 
     let model = build_chat_surface_model(&mut app, 80, 8);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
     let rendered = active
@@ -897,7 +893,7 @@ fn chat_surface_model_renders_placeholder_before_first_delta() {
     );
 
     let model = build_chat_surface_model(&mut app, 80, 12);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
 
@@ -914,7 +910,7 @@ fn chat_surface_model_renders_placeholder_before_first_delta() {
 }
 
 #[test]
-fn committed_history_without_active_cell_does_not_allocate_active_body_lines() {
+fn committed_history_without_active_cell_renders_in_transcript_body() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -927,16 +923,21 @@ fn committed_history_without_active_cell_does_not_allocate_active_body_lines() {
         .start_local_user(local_input("hello"), false);
 
     let model = build_chat_surface_model(&mut app, 80, 20);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
 
-    assert!(active.lines.is_empty(), "lines: {:?}", active.lines);
-    assert_eq!(model.body_height, 0);
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    assert!(rendered.iter().any(|line| line.contains("hello")));
+    assert_eq!(model.body_height, 1);
 }
 
 #[test]
-fn committed_history_without_active_cell_keeps_viewport_compact() {
+fn committed_history_without_active_cell_counts_transcript_height() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -955,7 +956,7 @@ fn committed_history_without_active_cell_keeps_viewport_compact() {
         .desired_height(app.current_mode(), 120)
         .max(1);
 
-    assert_eq!(desired, bottom_only.saturating_add(2));
+    assert_eq!(desired, bottom_only.saturating_add(3));
 }
 
 #[test]
@@ -1015,7 +1016,7 @@ fn welcome_stays_visible_while_composer_has_draft_text() {
 }
 
 #[test]
-fn reset_local_view_requests_history_replay() {
+fn reset_local_view_clears_app_owned_transcript() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -1028,22 +1029,7 @@ fn reset_local_view_requests_history_replay() {
         .start_local_user(local_input("hello"), false);
     app.reset_local_view();
 
-    let plan = app.terminal_projection.build_plan(
-        &mut app.transcript_owner,
-        5,
-        ratatui::layout::Size {
-            width: 80,
-            height: 24,
-        },
-        false,
-    );
-    match plan.history_update {
-        crate::terminal::HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
-        crate::terminal::HistoryUpdate::AppendTail(_) => panic!("expected replay-all after reset"),
-        crate::terminal::HistoryUpdate::ReflowVisibleTail { .. } => {
-            panic!("expected replay-all after reset")
-        }
-    }
+    assert!(!app.transcript_owner.has_transcript_content());
 }
 
 #[test]
@@ -1314,16 +1300,9 @@ fn completed_streamed_agent_item_survives_turn_completion() {
 }
 
 #[test]
-fn completed_streamed_agent_item_appends_tail_without_replay() {
+fn completed_streamed_agent_item_consolidates_canonical_transcript() {
     let mut owner = TranscriptOwner::default();
-    let mut projection =
-        crate::app::runtime::terminal_projection::TerminalProjectionController::default();
-    let size = ratatui::layout::Size {
-        width: 80,
-        height: 24,
-    };
 
-    let _ = projection.build_plan(&mut owner, 5, size, false);
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
     owner.start_item(
@@ -1340,7 +1319,6 @@ fn completed_streamed_agent_item_appends_tail_without_replay() {
         false,
     );
 
-    let _ = projection.build_plan(&mut owner, 5, size, true);
     owner.complete_item(
         "turn-1".to_string(),
         "assistant:1".to_string(),
@@ -1348,27 +1326,17 @@ fn completed_streamed_agent_item_appends_tail_without_replay() {
         false,
     );
     owner.complete_turn("turn-1".to_string(), false);
-    projection.on_stream_boundary();
 
-    match projection
-        .build_plan(&mut owner, 5, size, false)
-        .history_update
-    {
-        crate::terminal::HistoryUpdate::AppendTail(cells) => {
-            let body = cells
-                .into_iter()
-                .map(|cell| cell.body().to_string())
-                .collect::<Vec<_>>()
-                .join("");
-            assert_eq!(body, "live tail\nfinal line");
-        }
-        crate::terminal::HistoryUpdate::ReplayAll(_) => {
-            panic!("ordinary stream completion must not rebuild scrollback")
-        }
-        crate::terminal::HistoryUpdate::ReflowVisibleTail { .. } => {
-            panic!("ordinary stream completion should append the live tail")
-        }
-    }
+    let body = owner
+        .committed_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(body.contains("stable paragraph"));
+    assert!(body.contains("live tail"));
+    assert!(body.contains("final line"));
+    assert!(owner.active_cell().is_none());
 }
 
 #[test]
@@ -1674,7 +1642,7 @@ fn completing_streamed_agent_message_only_commits_remaining_tail() {
 }
 
 #[test]
-fn completing_unflushed_stream_keeps_scrollback_append_only() {
+fn completing_unflushed_stream_keeps_canonical_transcript() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
@@ -1699,17 +1667,16 @@ fn completing_unflushed_stream_keeps_scrollback_append_only() {
         false,
     );
 
-    assert!(!owner.take_history_replay_requested());
-    let pending = owner
-        .pending_history_cells()
+    let committed = owner
+        .committed_history_cells()
         .into_iter()
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(pending, vec!["hello", "stable line\n\nlive tail"]);
+    assert_eq!(committed, vec!["hello", "stable line\n\nlive tail"]);
 }
 
 #[test]
-fn completing_partially_flushed_stream_consolidates_source_without_replay() {
+fn completing_partially_streamed_message_consolidates_source() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
@@ -1726,7 +1693,6 @@ fn completing_partially_flushed_stream_consolidates_source_without_replay() {
         "first stable\n\n".to_string(),
         false,
     );
-    let _flushed = owner.drain_pending_history_cells();
     owner.append_agent_delta(
         "turn-1".to_string(),
         "a1".to_string(),
@@ -1744,7 +1710,6 @@ fn completing_partially_flushed_stream_consolidates_source_without_replay() {
         false,
     );
 
-    assert!(!owner.take_history_replay_requested());
     let committed = owner
         .committed_history_cells()
         .into_iter()
@@ -1810,7 +1775,7 @@ fn active_reasoning_transcript_matches_reasoning_card_ui() {
     ));
 
     let model = build_chat_surface_model(&mut app, 80, 20);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
     let rendered = active
@@ -1843,7 +1808,7 @@ fn active_notice_transcript_does_not_render_history_rails() {
     ));
 
     let model = build_chat_surface_model(&mut app, 80, 20);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
     let rendered = active
@@ -1989,7 +1954,7 @@ fn active_transcript_tail_keeps_latest_reasoning_visible() {
     ));
 
     let model = build_chat_surface_model(&mut app, 24, 4);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
     let rendered = active
@@ -2023,14 +1988,14 @@ fn active_transcript_manual_scroll_is_preserved_across_new_content() {
     ));
 
     let initial = build_chat_surface_model(&mut app, 80, 4);
-    let ChatSurfaceBody::ActiveCell(initial_active) = initial.body else {
+    let ChatSurfaceBody::Transcript(initial_active) = initial.body else {
         panic!("expected active cell body");
     };
     assert_eq!(initial_active.lines.len(), 10);
-    assert_eq!(app.active_transcript_scroll.top_row_for_render(10, 4), 6);
+    assert_eq!(app.transcript_scroll.top_row_for_render(10, 4), 6);
 
     assert!(
-        app.active_transcript_scroll
+        app.transcript_scroll
             .handle_key(crossterm::event::KeyEvent::new(
                 crossterm::event::KeyCode::PageUp,
                 crossterm::event::KeyModifiers::NONE,
@@ -2038,11 +2003,11 @@ fn active_transcript_manual_scroll_is_preserved_across_new_content() {
     );
 
     let scrolled = build_chat_surface_model(&mut app, 80, 4);
-    let ChatSurfaceBody::ActiveCell(scrolled_active) = scrolled.body else {
+    let ChatSurfaceBody::Transcript(scrolled_active) = scrolled.body else {
         panic!("expected active cell body");
     };
     assert_eq!(scrolled_active.lines.len(), 10);
-    assert_eq!(app.active_transcript_scroll.top_row_for_render(10, 4), 3);
+    assert_eq!(app.transcript_scroll.top_row_for_render(10, 4), 3);
 
     app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
         "assistant",
@@ -2054,11 +2019,11 @@ fn active_transcript_manual_scroll_is_preserved_across_new_content() {
     ));
 
     let updated = build_chat_surface_model(&mut app, 80, 4);
-    let ChatSurfaceBody::ActiveCell(updated_active) = updated.body else {
+    let ChatSurfaceBody::Transcript(updated_active) = updated.body else {
         panic!("expected active cell body");
     };
     assert_eq!(updated_active.lines.len(), 14);
-    assert_eq!(app.active_transcript_scroll.top_row_for_render(14, 4), 3);
+    assert_eq!(app.transcript_scroll.top_row_for_render(14, 4), 3);
 }
 
 #[test]
@@ -2080,7 +2045,7 @@ fn active_body_height_tracks_wrapped_physical_rows_during_streaming() {
     ));
 
     let model = build_chat_surface_model(&mut app, 28, 20);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
 
@@ -2106,7 +2071,7 @@ fn active_body_height_does_not_add_phantom_margin_rows() {
     ));
 
     let model = build_chat_surface_model(&mut app, 80, 20);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
 
@@ -2132,7 +2097,7 @@ fn active_transcript_tail_ignores_trailing_blank_stream_rows() {
     ));
 
     let model = build_chat_surface_model(&mut app, 80, 2);
-    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+    let ChatSurfaceBody::Transcript(active) = model.body else {
         panic!("expected active cell body");
     };
 
@@ -2143,13 +2108,13 @@ fn active_transcript_tail_ignores_trailing_blank_stream_rows() {
         .collect::<Vec<_>>();
     assert_eq!(model.body_height, 3);
     assert_eq!(rendered.last().map(|line| line.trim()), Some("line 2"));
-    assert_eq!(app.active_transcript_scroll.top_row_for_render(3, 2), 1);
+    assert_eq!(app.transcript_scroll.top_row_for_render(3, 2), 1);
 }
 
 #[test]
-fn history_projection_uses_same_wrap_width_as_active_transcript() {
+fn transcript_surface_uses_centered_width_metrics() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 30);
-    let metrics = ChatSurface::history_render_metrics_for_area(area);
+    let metrics = ChatSurface::transcript_render_metrics_for_area(area);
 
     assert_eq!(metrics.width, 116);
     assert_eq!(metrics.left_padding, 2);

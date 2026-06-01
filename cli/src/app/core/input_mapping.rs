@@ -10,9 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl TuiApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<ParsedInput> {
-        if self.current_mode() != agent_protocol::FrontendMode::Idle
-            && self.transcript_owner.active_turn_id().is_some()
-            && self.active_transcript_scroll.handle_key(key)
+        if self.should_route_key_to_transcript_scroll(key) && self.transcript_scroll.handle_key(key)
         {
             return None;
         }
@@ -192,6 +190,16 @@ impl TuiApp {
             }),
         }
     }
+
+    fn should_route_key_to_transcript_scroll(&self, key: KeyEvent) -> bool {
+        if !self.transcript_owner.has_transcript_content() {
+            return false;
+        }
+        if self.current_mode() != agent_protocol::FrontendMode::Idle {
+            return true;
+        }
+        matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+    }
 }
 
 fn matches_ctrl_char(key: KeyEvent, ch: char) -> bool {
@@ -225,6 +233,7 @@ mod tests {
     use super::handle_ctrl_v_image_paste;
     use super::matches_image_paste_shortcut;
     use crate::app::TuiApp;
+    use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::path::PathBuf;
 
@@ -237,6 +246,64 @@ mod tests {
             false,
             "WorkspaceWrite".to_string(),
         )
+    }
+
+    #[test]
+    fn idle_transcript_scroll_does_not_capture_arrow_keys_from_composer() {
+        let mut app = test_app();
+        app.push_live_cell(HistoryCell::agent(
+            "assistant",
+            "visible transcript",
+            HistoryFormat::Markdown,
+        ));
+
+        assert!(
+            !app.should_route_key_to_transcript_scroll(KeyEvent::new(
+                KeyCode::Up,
+                KeyModifiers::NONE,
+            ))
+        );
+        assert!(app.should_route_key_to_transcript_scroll(KeyEvent::new(
+            KeyCode::PageUp,
+            KeyModifiers::NONE,
+        )));
+        assert!(!app.should_route_key_to_transcript_scroll(KeyEvent::new(
+            KeyCode::Home,
+            KeyModifiers::NONE,
+        )));
+        assert!(!app.should_route_key_to_transcript_scroll(KeyEvent::new(
+            KeyCode::End,
+            KeyModifiers::NONE,
+        )));
+    }
+
+    #[test]
+    fn running_transcript_scroll_can_capture_arrow_keys() {
+        let mut app = test_app();
+        app.push_live_cell(HistoryCell::agent(
+            "assistant",
+            "visible transcript",
+            HistoryFormat::Markdown,
+        ));
+        app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+
+        assert!(
+            app.should_route_key_to_transcript_scroll(KeyEvent::new(
+                KeyCode::Up,
+                KeyModifiers::NONE,
+            ))
+        );
+    }
+
+    #[test]
+    fn ctrl_d_does_not_exit_while_turn_is_running() {
+        let mut app = test_app();
+        app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+
+        let parsed = app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+
+        assert!(parsed.is_none());
+        assert!(!app.run_state.should_exit);
     }
 
     #[test]

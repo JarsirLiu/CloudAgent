@@ -47,7 +47,6 @@ pub(crate) struct ActiveTurnEffects {
     pub(crate) active_cell: Option<HistoryCell>,
     pub(crate) last_copyable_output: Option<String>,
     pub(crate) replay_cells: Vec<HistoryCell>,
-    pub(crate) terminal_tail_cells: Vec<HistoryCell>,
     pub(crate) consolidate_agent_message: Option<ConsolidateAgentMessage>,
 }
 
@@ -139,7 +138,6 @@ impl ActiveTurnState {
                     replay_cells: vec![HistoryCell::user(input_items_to_plain_text(
                         self.pending_local_user_input.as_deref().unwrap_or_default(),
                     ))],
-                    terminal_tail_cells: Vec::new(),
                     consolidate_agent_message: None,
                 }
             }
@@ -227,9 +225,6 @@ impl ActiveTurnState {
                         self.replayed_item_ids.insert(item_id.clone());
                         let mut effects = self.snapshot_effects_with_replay(replay_cells);
                         if should_consolidate_stream {
-                            if let Some(streamed) = streamed {
-                                effects.terminal_tail_cells.extend(streamed.stable_cells);
-                            }
                             effects.consolidate_agent_message =
                                 Some(ConsolidateAgentMessage { item_id, cell });
                         } else {
@@ -291,7 +286,6 @@ impl ActiveTurnState {
                     active_cell: None,
                     last_copyable_output,
                     replay_cells,
-                    terminal_tail_cells: Vec::new(),
                     consolidate_agent_message: None,
                 }
             }
@@ -456,7 +450,6 @@ impl ActiveTurnState {
                 .or_else(|| self.live_item.as_ref().map(ActiveItemView::to_cell)),
             last_copyable_output: self.last_copyable_output.clone(),
             replay_cells,
-            terminal_tail_cells: Vec::new(),
             consolidate_agent_message: None,
         }
     }

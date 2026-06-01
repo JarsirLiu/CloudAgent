@@ -1,8 +1,6 @@
 use crate::app::core::types::{ConsoleConfig, TuiApp};
 use crate::app::runtime::r#loop as runtime_loop;
-use crate::app::runtime::terminal_projection::ReflowPolicy;
 use crate::state::reducer::ServerAction;
-use crate::terminal::resize_reflow_max_rows;
 use crate::transport::client::create_client;
 use agent_app_server_client::AppServerClient;
 use anyhow::{Result, anyhow};
@@ -30,9 +28,6 @@ async fn run_tui_console(config: ConsoleConfig) -> Result<()> {
         config.initial_permission_mode.clone(),
     );
     app.conversation_history_turn_limit = config.conversation_history_turn_limit;
-    app.terminal_projection.set_reflow_policy(ReflowPolicy {
-        max_rows: resize_reflow_max_rows(config.terminal_resize_reflow_max_rows),
-    });
     load_initial_history(&client, &mut app, &conversation_id).await?;
     load_initial_skills(&client, &mut app).await?;
     runtime_loop::run_tui_event_loop(&mut app, &mut client).await?;

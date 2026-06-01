@@ -8,7 +8,6 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
     let history_snapshot = app.run_state.history_snapshot.clone().unwrap_or_default();
     app.transcript_owner
         .rebuild_from_history_snapshot(&history_snapshot, app.run_state.expand_tool_details);
-    app.terminal_projection.request_history_replay();
 }
 
 pub(crate) fn upsert_turn_snapshot(app: &mut TuiApp, turn: ConversationTurn) {

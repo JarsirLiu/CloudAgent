@@ -50,7 +50,6 @@ where
     pub(crate) viewport_area: Rect,
     last_known_screen_size: Size,
     pub(crate) last_known_cursor_pos: Position,
-    visible_history_rows: u16,
     capabilities: TerminalCapabilities,
 }
 
@@ -72,13 +71,8 @@ where
             viewport_area: Rect::new(0, cursor_pos.y, 0, 0),
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
-            visible_history_rows: 0,
             capabilities,
         })
-    }
-
-    pub(crate) const fn backend(&self) -> &B {
-        &self.backend
     }
 
     pub(crate) fn backend_mut(&mut self) -> &mut B {
@@ -93,7 +87,6 @@ where
         self.current_buffer_mut().resize(area);
         self.previous_buffer_mut().resize(area);
         self.viewport_area = area;
-        self.visible_history_rows = self.visible_history_rows.min(area.top());
     }
 
     pub(crate) fn resize(&mut self, screen_size: Size) {
@@ -169,41 +162,6 @@ where
         self.previous_buffer_mut().reset();
         std::io::Write::flush(&mut self.backend)?;
         Ok(())
-    }
-
-    pub(crate) fn clear_scrollback_and_visible_screen_ansi(&mut self) -> io::Result<()> {
-        queue!(
-            self.backend,
-            SetAttribute(Attribute::Reset),
-            SetForegroundColor(CrosstermColor::Reset),
-            SetBackgroundColor(CrosstermColor::Reset),
-            Print("\x1b[r"),
-            Print("\x1b[H"),
-            Clear(CrosstermClearType::All),
-            Print("\x1b[3J"),
-            MoveTo(0, 0)
-        )?;
-        self.previous_buffer_mut().reset();
-        self.current_buffer_mut().reset();
-        self.visible_history_rows = 0;
-        self.viewport_area = Rect::ZERO;
-        std::io::Write::flush(&mut self.backend)?;
-        Ok(())
-    }
-
-    pub(crate) fn note_history_rows_inserted(&mut self, inserted_rows: u16) {
-        self.visible_history_rows = self
-            .visible_history_rows
-            .saturating_add(inserted_rows)
-            .min(self.viewport_area.top());
-    }
-
-    pub(crate) fn visible_history_rows(&self) -> u16 {
-        self.visible_history_rows
-    }
-
-    pub(crate) fn capabilities(&self) -> TerminalCapabilities {
-        self.capabilities
     }
 
     fn swap_buffers(&mut self) {

@@ -1,7 +1,7 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ActiveTranscriptScrollIntent {
+pub(crate) enum TranscriptScrollIntent {
     LineUp,
     LineDown,
     PageUp,
@@ -11,14 +11,14 @@ pub(crate) enum ActiveTranscriptScrollIntent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ActiveTranscriptScroll {
+pub(crate) struct TranscriptScroll {
     top_row: usize,
     follow_tail: bool,
     content_rows: usize,
     viewport_rows: usize,
 }
 
-impl ActiveTranscriptScroll {
+impl TranscriptScroll {
     pub(crate) fn reset(&mut self) {
         *self = Self {
             follow_tail: true,
@@ -48,7 +48,18 @@ impl ActiveTranscriptScroll {
         self.apply_intent(intent)
     }
 
-    fn apply_intent(&mut self, intent: ActiveTranscriptScrollIntent) -> bool {
+    pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent) -> bool {
+        let Some(intent) = intent_from_mouse(mouse) else {
+            return false;
+        };
+        self.apply_intent(intent)
+    }
+
+    pub(crate) fn is_at_top(&self) -> bool {
+        self.top_row == 0
+    }
+
+    fn apply_intent(&mut self, intent: TranscriptScrollIntent) -> bool {
         if self.content_rows <= self.viewport_rows {
             self.follow_tail = true;
             self.top_row = 0;
@@ -57,15 +68,15 @@ impl ActiveTranscriptScroll {
 
         let page = self.viewport_rows.saturating_sub(1).max(1);
         match intent {
-            ActiveTranscriptScrollIntent::LineUp => self.scroll_up(1),
-            ActiveTranscriptScrollIntent::LineDown => self.scroll_down(1),
-            ActiveTranscriptScrollIntent::PageUp => self.scroll_up(page),
-            ActiveTranscriptScrollIntent::PageDown => self.scroll_down(page),
-            ActiveTranscriptScrollIntent::Top => {
+            TranscriptScrollIntent::LineUp => self.scroll_up(1),
+            TranscriptScrollIntent::LineDown => self.scroll_down(1),
+            TranscriptScrollIntent::PageUp => self.scroll_up(page),
+            TranscriptScrollIntent::PageDown => self.scroll_down(page),
+            TranscriptScrollIntent::Top => {
                 self.follow_tail = false;
                 self.top_row = 0;
             }
-            ActiveTranscriptScrollIntent::Bottom => {
+            TranscriptScrollIntent::Bottom => {
                 self.follow_tail = true;
                 self.top_row = self.max_top();
             }
@@ -89,7 +100,7 @@ impl ActiveTranscriptScroll {
     }
 }
 
-impl Default for ActiveTranscriptScroll {
+impl Default for TranscriptScroll {
     fn default() -> Self {
         Self {
             top_row: 0,
@@ -100,27 +111,29 @@ impl Default for ActiveTranscriptScroll {
     }
 }
 
-impl Default for ActiveTranscriptScrollIntent {
-    fn default() -> Self {
-        Self::Bottom
+fn intent_from_key(key: KeyEvent) -> Option<TranscriptScrollIntent> {
+    match key.code {
+        KeyCode::Up => Some(TranscriptScrollIntent::LineUp),
+        KeyCode::Down => Some(TranscriptScrollIntent::LineDown),
+        KeyCode::PageUp => Some(TranscriptScrollIntent::PageUp),
+        KeyCode::PageDown => Some(TranscriptScrollIntent::PageDown),
+        KeyCode::Home => Some(TranscriptScrollIntent::Top),
+        KeyCode::End => Some(TranscriptScrollIntent::Bottom),
+        _ => None,
     }
 }
 
-fn intent_from_key(key: KeyEvent) -> Option<ActiveTranscriptScrollIntent> {
-    match key.code {
-        KeyCode::Up => Some(ActiveTranscriptScrollIntent::LineUp),
-        KeyCode::Down => Some(ActiveTranscriptScrollIntent::LineDown),
-        KeyCode::PageUp => Some(ActiveTranscriptScrollIntent::PageUp),
-        KeyCode::PageDown => Some(ActiveTranscriptScrollIntent::PageDown),
-        KeyCode::Home => Some(ActiveTranscriptScrollIntent::Top),
-        KeyCode::End => Some(ActiveTranscriptScrollIntent::Bottom),
+fn intent_from_mouse(mouse: MouseEvent) -> Option<TranscriptScrollIntent> {
+    match mouse.kind {
+        MouseEventKind::ScrollUp => Some(TranscriptScrollIntent::LineUp),
+        MouseEventKind::ScrollDown => Some(TranscriptScrollIntent::LineDown),
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ActiveTranscriptScroll;
+    use super::TranscriptScroll;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -129,7 +142,7 @@ mod tests {
 
     #[test]
     fn follows_tail_by_default_as_content_grows() {
-        let mut scroll = ActiveTranscriptScroll::default();
+        let mut scroll = TranscriptScroll::default();
 
         assert_eq!(scroll.top_row_for_render(20, 5), 15);
         assert_eq!(scroll.top_row_for_render(25, 5), 20);
@@ -137,7 +150,7 @@ mod tests {
 
     #[test]
     fn manual_scroll_keeps_position_when_content_grows() {
-        let mut scroll = ActiveTranscriptScroll::default();
+        let mut scroll = TranscriptScroll::default();
         assert_eq!(scroll.top_row_for_render(20, 5), 15);
 
         assert!(scroll.handle_key(key(KeyCode::PageUp)));
@@ -147,7 +160,7 @@ mod tests {
 
     #[test]
     fn end_restores_tail_following() {
-        let mut scroll = ActiveTranscriptScroll::default();
+        let mut scroll = TranscriptScroll::default();
         assert_eq!(scroll.top_row_for_render(20, 5), 15);
         assert!(scroll.handle_key(key(KeyCode::PageUp)));
         assert_eq!(scroll.top_row_for_render(30, 5), 11);
