@@ -57,12 +57,7 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
             Event::End(TagEnd::CodeBlock) => {
                 in_code_block = false;
                 for line in code_buf.lines() {
-                    let mut spans = Vec::new();
-                    if !code_indent.is_empty() {
-                        spans.push(Span::raw(code_indent.clone()));
-                    }
-                    spans.extend(highlight_code_line(line, &code_lang));
-                    out.push(Line::from(spans));
+                    push_code_line(line, &code_lang, &code_indent, width, &mut out);
                 }
                 code_indent.clear();
                 out.push(Line::raw(""));
@@ -602,6 +597,58 @@ fn push_wrapped_spans_with_prefix(
     out.extend(wrapped);
 }
 
+fn push_code_line(
+    line: &str,
+    lang: &str,
+    indent: &str,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    let indent_width = display_width(indent);
+    let content_width = width.saturating_sub(indent_width).max(8);
+    let wrapped = wrap_code_segments(line, content_width);
+    let lines = if wrapped.is_empty() {
+        vec![String::new()]
+    } else {
+        wrapped
+    };
+
+    for segment in lines {
+        let mut spans = Vec::new();
+        if !indent.is_empty() {
+            spans.push(Span::raw(indent.to_string()));
+        }
+        spans.extend(highlight_code_line(&segment, lang));
+        out.push(Line::from(spans));
+    }
+}
+
+fn wrap_code_segments(line: &str, width: usize) -> Vec<String> {
+    if line.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    let width = width.max(1);
+
+    for grapheme in UnicodeSegmentation::graphemes(line, true) {
+        let grapheme_width = display_width(grapheme);
+        if current_width > 0 && current_width.saturating_add(grapheme_width) > width {
+            out.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push_str(grapheme);
+        current_width = current_width.saturating_add(grapheme_width);
+    }
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
 fn highlight_code_line(line: &str, _lang: &str) -> Vec<Span<'static>> {
     vec![Span::styled(
         line.to_string(),
@@ -715,6 +762,25 @@ mod tests {
             .collect::<String>();
 
         assert_eq!(text, "plain");
+    }
+
+    #[test]
+    fn code_blocks_wrap_inside_markdown_width_and_keep_indent() {
+        let rendered = render_markdown("Intro\n\n    abcdefghijklmnopqrstuvwxyz", 12);
+        let text = joined(&rendered);
+
+        assert_eq!(
+            text,
+            "Intro\n\n    abcdefgh\n    ijklmnop\n    qrstuvwx\n    yz"
+        );
+    }
+
+    #[test]
+    fn fenced_code_blocks_wrap_without_terminal_hard_wrap() {
+        let rendered = render_markdown("```text\nabcdefghijklmnop\n```", 10);
+        let text = joined(&rendered);
+
+        assert_eq!(text, "abcdefghij\nklmnop");
     }
 
     #[test]

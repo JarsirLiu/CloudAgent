@@ -132,7 +132,7 @@ impl TerminalProjectionController {
             HistoryUpdate::ReplayAll(cells) => PreparedHistoryUpdate::ReplayAll {
                 cells,
                 render_metrics: history_render_metrics,
-                max_rows: self.reflow_policy.max_rows,
+                max_rows: self.reflow.replay_all_row_cap(self.reflow_policy),
             },
             HistoryUpdate::AppendTail(cells) => PreparedHistoryUpdate::AppendTail {
                 cells,
@@ -227,13 +227,20 @@ impl TranscriptReflowState {
         let history_capacity = terminal_size.height.saturating_sub(viewport_height) as usize;
         (history_capacity > 0).then_some(history_capacity)
     }
+
+    fn replay_all_row_cap(&self, policy: ReflowPolicy) -> Option<usize> {
+        match self.last_replay_reason {
+            ReplayReason::Metrics => policy.max_rows,
+            ReplayReason::Explicit | ReplayReason::None => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ReflowPolicy, TerminalProjectionController};
     use crate::app::core::transcript_owner::TranscriptOwner;
-    use crate::terminal::{HistoryProjection, HistoryUpdate, PreparedHistoryUpdate};
+    use crate::terminal::{HistoryUpdate, PreparedHistoryUpdate};
     use crate::ui::widgets::history_cell::HistoryCell;
     use agent_core::{InputItem, TranscriptItem, TurnItemKind};
     use ratatui::layout::Size;
@@ -501,22 +508,19 @@ mod tests {
     }
 
     #[test]
-    fn reflow_policy_is_carried_to_draw_layer_without_rendering_lines() {
+    fn explicit_replay_is_not_capped_by_resize_reflow_policy() {
         let mut controller = TerminalProjectionController::default();
+        let mut transcript_owner = TranscriptOwner::default();
         controller.set_reflow_policy(ReflowPolicy { max_rows: Some(3) });
+        controller.request_history_replay();
+        transcript_owner.queue_history_cells_for_test(vec![
+            HistoryCell::user("oldest message"),
+            HistoryCell::user("middle message"),
+            HistoryCell::user("latest message"),
+        ]);
 
-        let prepared = controller.prepare_projection(HistoryProjection {
-            viewport_height: 5,
-            history_render_metrics: crate::ui::chat_surface::TranscriptRenderMetrics {
-                width: 80,
-                left_padding: 4,
-            },
-            history_update: HistoryUpdate::ReplayAll(vec![
-                HistoryCell::user("oldest message"),
-                HistoryCell::user("middle message"),
-                HistoryCell::user("latest message"),
-            ]),
-        });
+        let projection = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false);
+        let prepared = controller.prepare_projection(projection);
 
         match prepared.history_update {
             PreparedHistoryUpdate::ReplayAll {
@@ -525,8 +529,30 @@ mod tests {
                 max_rows,
             } => {
                 assert_eq!(cells.len(), 3);
-                assert_eq!(render_metrics.width, 80);
-                assert_eq!(render_metrics.left_padding, 4);
+                assert_eq!(render_metrics.width, 76);
+                assert_eq!(max_rows, None);
+            }
+            PreparedHistoryUpdate::AppendTail { .. } => panic!("expected replay-all path"),
+            PreparedHistoryUpdate::ReflowVisibleTail { .. } => panic!("expected replay-all path"),
+        }
+    }
+
+    #[test]
+    fn metrics_replay_is_capped_by_resize_reflow_policy() {
+        let mut controller = TerminalProjectionController::default();
+        let mut transcript_owner = TranscriptOwner::default();
+        controller.set_reflow_policy(ReflowPolicy { max_rows: Some(3) });
+        transcript_owner.queue_history_cells_for_test(vec![
+            HistoryCell::user("oldest message"),
+            HistoryCell::user("middle message"),
+            HistoryCell::user("latest message"),
+        ]);
+
+        let projection = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false);
+        let prepared = controller.prepare_projection(projection);
+
+        match prepared.history_update {
+            PreparedHistoryUpdate::ReplayAll { max_rows, .. } => {
                 assert_eq!(max_rows, Some(3));
             }
             PreparedHistoryUpdate::AppendTail { .. } => panic!("expected replay-all path"),
