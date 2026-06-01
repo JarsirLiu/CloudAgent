@@ -1103,6 +1103,7 @@ fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
         SlashCommand::Filter => ComposerIntent::Filter(args.trim().to_string()),
         SlashCommand::Permissions => ComposerIntent::Permissions(args.trim().to_string()),
         SlashCommand::Config => ComposerIntent::Config,
+        SlashCommand::Reasoning => ComposerIntent::Reasoning(String::new()),
         SlashCommand::Skill => ComposerIntent::Skill(args.trim().to_string()),
         SlashCommand::Skills => ComposerIntent::Skills,
         SlashCommand::Gateway => ComposerIntent::Gateway,

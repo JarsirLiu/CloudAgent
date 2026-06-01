@@ -477,6 +477,7 @@ dependencies = [
  "tempfile",
  "textwrap",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",

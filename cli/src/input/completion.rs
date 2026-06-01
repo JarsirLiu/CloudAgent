@@ -366,6 +366,18 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_command_is_in_completion_results() {
+        let mut state = CompletionState::default();
+        state.sync_from_input("/re", 3, &[]);
+        let names = state
+            .suggestions()
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"/reasoning"));
+    }
+
+    #[test]
     fn detects_skill_mentions_at_cursor() {
         let mut state = CompletionState::default();
         state.sync_from_input("please use $rep", "please use $rep".len(), &sample_skills());

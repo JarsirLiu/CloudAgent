@@ -96,6 +96,7 @@ impl OpenAiCompatibleModel {
             tool_choice: "auto".to_string(),
             parallel_tool_calls: true,
             temperature: provider_request.temperature,
+            reasoning_effort: provider_request.reasoning_effort,
             stream: Some(true),
             stream_options: Some(ChatCompletionStreamOptions {
                 include_usage: true,
@@ -185,6 +186,7 @@ impl ChatModel for OpenAiCompatibleModel {
             tool_choice: "auto".to_string(),
             parallel_tool_calls: true,
             temperature: provider_request.temperature,
+            reasoning_effort: provider_request.reasoning_effort,
             stream: None,
             stream_options: None,
         };
@@ -518,6 +520,7 @@ mod tests {
             model: "test-model".to_string(),
             input_modalities: default_input_modalities(),
             temperature: 0.0,
+            reasoning_effort: "medium".to_string(),
             request_max_retries: 0,
             stream_max_retries: 0,
             stream_idle_timeout_ms: 1_000,
@@ -530,6 +533,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
@@ -608,6 +612,7 @@ mod tests {
             model: "test-model".to_string(),
             input_modalities: default_input_modalities(),
             temperature: 0.0,
+            reasoning_effort: "medium".to_string(),
             request_max_retries: 0,
             stream_max_retries: 0,
             stream_idle_timeout_ms: 1_000,
@@ -620,6 +625,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
@@ -640,4 +646,5 @@ mod tests {
 
         server.join().expect("server thread");
     }
+
 }

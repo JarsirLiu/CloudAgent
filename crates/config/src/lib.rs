@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use shared::{MemoryConfig, MemoryMode};
 use std::collections::BTreeMap;
 use std::env;
+use std::fmt;
+use std::str::FromStr;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -14,6 +16,38 @@ pub enum InputModality {
 
 pub fn default_input_modalities() -> Vec<InputModality> {
     vec![InputModality::Text, InputModality::Image]
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        })
+    }
+}
+
+impl FromStr for ReasoningEffort {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            _ => Err(format!("invalid model_reasoning_effort: {s}")),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,6 +67,8 @@ pub struct LlmConfig {
     #[serde(default = "default_input_modalities")]
     pub input_modalities: Vec<InputModality>,
     pub temperature: f32,
+    #[serde(default)]
+    pub model_reasoning_effort: ReasoningEffort,
     pub request_max_retries: u64,
     pub stream_max_retries: u64,
     pub stream_idle_timeout_ms: u64,
@@ -109,6 +145,7 @@ struct PartialLlmConfig {
     model: Option<String>,
     input_modalities: Option<Vec<InputModality>>,
     temperature: Option<f32>,
+    model_reasoning_effort: Option<ReasoningEffort>,
     request_max_retries: Option<u64>,
     stream_max_retries: Option<u64>,
     stream_idle_timeout_ms: Option<u64>,
@@ -268,6 +305,7 @@ impl AgentConfig {
                 model: "gpt-5.4".to_string(),
                 input_modalities: default_input_modalities(),
                 temperature: 0.2,
+                model_reasoning_effort: ReasoningEffort::Medium,
                 request_max_retries: 0,
                 stream_max_retries: 0,
                 stream_idle_timeout_ms: 30_000,
@@ -305,6 +343,9 @@ impl AgentConfig {
             }
             if let Some(value) = llm.temperature {
                 self.llm.temperature = value;
+            }
+            if let Some(value) = llm.model_reasoning_effort {
+                self.llm.model_reasoning_effort = value;
             }
             if let Some(value) = llm.request_max_retries {
                 self.llm.request_max_retries = value;
@@ -512,6 +553,11 @@ impl AgentConfig {
             && let Ok(parsed) = value.parse::<f32>()
         {
             self.llm.temperature = parsed;
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_LLM_MODEL_REASONING_EFFORT")
+            && let Ok(parsed) = value.parse::<ReasoningEffort>()
+        {
+            self.llm.model_reasoning_effort = parsed;
         }
         if let Ok(value) = env::var("CLOUDAGENT_LLM_REQUEST_MAX_RETRIES")
             && let Ok(parsed) = value.parse::<u64>()
@@ -834,33 +880,29 @@ fn absolutize_path(workspace_root: &Path, value: PathBuf) -> PathBuf {
 
 fn default_system_prompt() -> String {
     [
-        "You are CloudAgent, a collaborative coding and operations assistant working in the user's workspace.",
-        "## General",
-        "Understand the user's request and relevant context before making changes.",
-        "Use tools when they help you inspect, edit, run, or verify work.",
-        "Do not use tools for their own sake.",
-        "## Behavior",
-        "Be a collaborator, not an autonomous agent.",
-        "If the user is asking, analyzing, or reviewing, prioritize explanation, analysis, and suggestions.",
-        "If the user has not explicitly asked for code changes, do not change code.",
-        "## Tool Use",
-        "Before or between tool calls, briefly say why you are using the tool and what you are trying to confirm.",
-        "After a tool call, briefly say what you learned or what you will do next.",
-        "Do not spend many tool calls in a row without user-facing progress updates.",
-        "Do not fabricate tool results, claim verification before tools finish, or present speculation as fact.",
-        "## Progress Updates",
-        "User-facing text should be brief, direct, and natural.",
-        "For longer tasks, provide short progress updates between tool calls; keep each update to 1-2 sentences.",
-        "## Editing Constraints",
-        "Keep code changes minimal, consistent with the codebase, and scoped to the request.",
-        "Only modify files directly related to the current request.",
-        "Leave unrelated uncommitted changes alone.",
-        "Do not overwrite or revert user changes unless explicitly asked.",
-        "When committing, include only files changed for the current request.",
-        "Create commits only when the user asks.",
-        "## Final Replies",
-        "Final replies should be concise and natural, like a short update to a teammate.",
-        "Say what changed, what was done, and any necessary next step, without unnecessary detail.",
+        "你是 CloudAgent，一个在用户工作区内工作的协作型编码与运维助手。",
+        "## 通用",
+        "先理解用户需求和相关上下文，再动手。",
+        "需要检查、修改、运行或验证时，使用工具。",
+        "不要空谈将要做什么；要么行动，要么给出答案。",
+        "## 协作",
+        "你的定位是协作者，不是自治代理。",
+        "用户在询问、分析或评审时，优先解释和判断。",
+        "用户没有明确要求改代码时，不要改代码。",
+        "## 工具",
+        "需要工具时，直接调用工具。",
+        "不要只发送意图、计划或进展。",
+        "工具返回后，继续完成任务或给出答案。",
+        "## 修改",
+        "你可能处在有未提交改动的工作区。",
+        "不要回滚、覆盖或改写不是你做的改动。",
+        "只修改当前请求直接相关的文件。",
+        "如果相关文件已有用户改动，先理解并配合它。",
+        "如果无关文件有改动，忽略它。",
+        "只有用户要求时才提交，提交时只包含当前请求的改动。",
+        "## 回复",
+        "简洁、自然，像同事之间的短更新。",
+        "说明结果、已完成的事和必要的下一步，不写长报告。",
     ]
     .join(" ")
 }
@@ -871,6 +913,7 @@ mod tests {
         AgentConfig, InputModality, PartialAgentConfig, PartialCliConfig, PartialToolConfig,
         config_search_paths_with_home, normalize_input_modalities, parse_input_modalities,
     };
+    use crate::ReasoningEffort;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -985,6 +1028,35 @@ mod tests {
         assert_eq!(config.llm.base_url, "https://user.example/v1");
         assert_eq!(config.llm.api_key, "user-key");
         assert_eq!(config.llm.model, "user-model");
+        assert_eq!(config.llm.model_reasoning_effort, ReasoningEffort::Medium);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn user_config_can_override_reasoning_effort() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cloudagent-config-test-{unique}"));
+        let workspace = root.join("workspace");
+        let home = root.join("home");
+        let user_config = home.join(".cloudagent").join("config.toml");
+        std::fs::create_dir_all(user_config.parent().expect("user config parent"))
+            .expect("create user config dir");
+        std::fs::write(
+            &user_config,
+            "[llm]\nbase_url = \"https://user.example/v1\"\napi_key = \"user-key\"\nmodel = \"user-model\"\nmodel_reasoning_effort = \"high\"\n",
+        )
+        .expect("write user config");
+        let config = AgentConfig::load_from_paths(
+            workspace.clone(),
+            config_search_paths_with_home(&workspace, Some(home)),
+        )
+        .expect("load config");
+
+        assert_eq!(config.llm.model_reasoning_effort, ReasoningEffort::High);
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -379,6 +379,7 @@ mod tests {
                 approval_reason: None,
             }],
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
@@ -395,6 +396,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 

@@ -32,6 +32,7 @@ pub(crate) enum UiInputEvent {
         base_url: String,
         model: String,
     },
+    LocalReasoning(String),
     LocalSkillInsert(String),
     LocalSkillsOpen,
     LocalGatewayOpen,

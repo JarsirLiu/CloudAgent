@@ -14,4 +14,5 @@ base_url = "https://api.openai.com/v1"
 api_key = "replace-with-your-api-key"
 model = "gpt-4.1-mini"
 temperature = 0.2
+model_reasoning_effort = "medium"
 system_prompt = "You are CloudAgent running inside Feishu. Give concise, practical answers in Chinese unless the user asks otherwise."

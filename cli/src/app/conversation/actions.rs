@@ -16,7 +16,8 @@ use agent_app_server_client::AppServerClient;
 use agent_core::{ServerRequestDecision, ServerRequestDecisionKind};
 use agent_protocol::{AppClientCommand, UserTurnInput};
 use anyhow::Result;
-use config::AgentConfig;
+use config::{AgentConfig, ReasoningEffort};
+use serde::Serialize;
 use std::collections::HashSet;
 use std::fmt::Display;
 use std::fs;
@@ -158,7 +159,7 @@ pub(crate) async fn handle_tui_input(
                 );
                 return Ok(false);
             }
-            save_user_llm_config(&api_key, &base_url, &model)?;
+            save_user_llm_config_default(&api_key, &base_url, &model)?;
             if let Err(err) = client.send_command(AppClientCommand::ReloadLlmConfig {
                 api_key: api_key.clone(),
                 base_url: base_url.clone(),
@@ -170,6 +171,45 @@ pub(crate) async fn handle_tui_input(
                 app,
                 NoticeLevel::Info,
                 "Saved API Key / Base URL / Model to ~/.cloudagent/config.toml.",
+            );
+            return Ok(false);
+        }
+        ParsedInput::LocalReasoning(effort) => {
+            if effort.trim().is_empty() {
+                let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
+                app.bottom_pane
+                    .set_reasoning_picker(cfg.llm.model_reasoning_effort);
+                return Ok(false);
+            }
+            let effort = match effort.trim().parse::<ReasoningEffort>() {
+                Ok(effort) => effort,
+                Err(_) => {
+                    show_local_notice(
+                        app,
+                        NoticeLevel::Warn,
+                        "Reasoning effort must be one of: low, medium, high.",
+                    );
+                    return Ok(false);
+                }
+            };
+            let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
+            save_user_llm_config(
+                &cfg.llm.api_key,
+                &cfg.llm.base_url,
+                &cfg.llm.model,
+                effort,
+            )?;
+            if let Err(err) = client.send_command(AppClientCommand::ReloadLlmConfig {
+                api_key: cfg.llm.api_key.clone(),
+                base_url: cfg.llm.base_url.clone(),
+                model: cfg.llm.model.clone(),
+            }) {
+                tracing::warn!("failed to reload LLM config after reasoning update: {err}");
+            }
+            show_local_notice(
+                app,
+                NoticeLevel::Info,
+                format!("Reasoning effort set to `{effort}`. Default is medium."),
             );
             return Ok(false);
         }
@@ -922,21 +962,49 @@ fn persist_cli_settings(app: &TuiApp) -> Result<()> {
     )
 }
 
-fn save_user_llm_config(api_key: &str, base_url: &str, model: &str) -> Result<()> {
+fn save_user_llm_config_default(api_key: &str, base_url: &str, model: &str) -> Result<()> {
+    save_user_llm_config(api_key, base_url, model, ReasoningEffort::Medium)
+}
+
+fn save_user_llm_config(
+    api_key: &str,
+    base_url: &str,
+    model: &str,
+    reasoning_effort: ReasoningEffort,
+) -> Result<()> {
+    let path = reasoning_effort_config_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let body = toml::to_string(&UserConfigFile {
+        llm: UserLlmConfig {
+            api_key,
+            base_url,
+            model,
+            model_reasoning_effort: reasoning_effort,
+        },
+    })?;
+    fs::write(path, body)?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct UserConfigFile<'a> {
+    llm: UserLlmConfig<'a>,
+}
+
+#[derive(Serialize)]
+struct UserLlmConfig<'a> {
+    api_key: &'a str,
+    base_url: &'a str,
+    model: &'a str,
+    model_reasoning_effort: ReasoningEffort,
+}
+fn reasoning_effort_config_path() -> Result<std::path::PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or_else(|| anyhow::anyhow!("Cannot find user home directory"))?;
-    let config_dir = std::path::PathBuf::from(home).join(".cloudagent");
-    fs::create_dir_all(&config_dir)?;
-    let path = config_dir.join("config.toml");
-    let body = format!(
-        "[llm]\napi_key = \"{}\"\nbase_url = \"{}\"\nmodel = \"{}\"\n",
-        api_key.replace('"', "\\\""),
-        base_url.replace('"', "\\\""),
-        model.replace('"', "\\\"")
-    );
-    fs::write(path, body)?;
-    Ok(())
+    Ok(std::path::PathBuf::from(home).join(".cloudagent").join("config.toml"))
 }
 
 #[cfg(test)]

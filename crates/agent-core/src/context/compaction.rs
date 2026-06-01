@@ -246,6 +246,7 @@ pub fn build_compaction_summary_request(
         ],
         tools: Vec::new(),
         temperature,
+        reasoning_effort: None,
         tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
     }
 }

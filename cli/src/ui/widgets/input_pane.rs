@@ -7,6 +7,7 @@ use crate::ui::widgets::filter_picker::FilterPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
 use crate::ui::widgets::gateway_panel::{GatewayPanel, WeixinLoginSessionView};
 use crate::ui::widgets::permissions_picker::PermissionsPicker;
+use crate::ui::widgets::reasoning_picker::ReasoningPicker;
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
@@ -16,6 +17,7 @@ use agent_core::InputItem;
 use agent_core::ServerRequestDecisionKind;
 use agent_core::SkillMetadata;
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
+use config::ReasoningEffort;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -437,6 +439,12 @@ impl InputPane {
         self.view_stack.clear();
         self.view_stack
             .push(Box::new(PermissionsPicker::new(current)));
+    }
+
+    pub fn set_reasoning_picker(&mut self, current: ReasoningEffort) {
+        self.view_stack.clear();
+        self.view_stack
+            .push(Box::new(ReasoningPicker::new(current)));
     }
 
     pub fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {

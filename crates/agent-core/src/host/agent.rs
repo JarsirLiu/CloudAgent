@@ -218,6 +218,7 @@ impl AgentHost {
             ],
             tools: Vec::new(),
             temperature: 0.2,
+            reasoning_effort: None,
             tool_output_token_limit: crate::ModelRequest::default_tool_output_token_limit(),
         };
         let model = self.model_snapshot();

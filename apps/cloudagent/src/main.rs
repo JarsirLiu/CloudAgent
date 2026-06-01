@@ -70,6 +70,7 @@ base_url = "https://api.openai.com/v1"
 api_key = "replace-with-your-api-key"
 model = "gpt-4.1-mini"
 temperature = 0.2
+# model_reasoning_effort = "medium"
 "#;
     fs::write(&path, template)?;
     eprintln!("created default config: {}", path.display());

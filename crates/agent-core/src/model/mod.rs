@@ -19,6 +19,7 @@ pub struct ModelRequest {
     pub messages: Vec<ResponseItem>,
     pub tools: Vec<ToolSpec>,
     pub temperature: f32,
+    pub reasoning_effort: Option<String>,
     pub tool_output_token_limit: usize,
 }
 

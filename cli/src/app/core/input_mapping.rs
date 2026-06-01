@@ -159,6 +159,9 @@ impl TuiApp {
                 base_url,
                 model,
             }),
+            InputPaneAction::Composer(ComposerIntent::Reasoning(effort)) => {
+                Some(ParsedInput::LocalReasoning(effort))
+            }
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
             InputPaneAction::Composer(ComposerIntent::CopyText(text)) => {
                 Some(ParsedInput::LocalCopyText(text))

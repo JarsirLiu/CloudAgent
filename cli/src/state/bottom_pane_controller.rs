@@ -13,6 +13,7 @@ use agent_core::InputItem;
 use agent_core::SkillMetadata;
 use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
+use config::ReasoningEffort;
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use std::path::PathBuf;
@@ -246,6 +247,10 @@ impl BottomPaneController {
 
     pub(crate) fn set_permissions_picker(&mut self, current: &str) {
         self.input_pane.set_permissions_picker(current);
+    }
+
+    pub(crate) fn set_reasoning_picker(&mut self, current: ReasoningEffort) {
+        self.input_pane.set_reasoning_picker(current);
     }
 
     pub(crate) fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {

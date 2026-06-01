@@ -14,6 +14,8 @@ pub(super) struct ChatCompletionRequest {
     pub parallel_tool_calls: bool,
     pub temperature: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<ChatCompletionStreamOptions>,

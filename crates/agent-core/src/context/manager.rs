@@ -123,6 +123,7 @@ impl ContextManager {
             messages: context.into_messages(),
             tools,
             temperature,
+            reasoning_effort: None,
             tool_output_token_limit: DEFAULT_MAX_OUTPUT_TOKENS,
         }
     }
@@ -140,6 +141,7 @@ impl ContextManager {
             messages: context.into_messages(),
             tools,
             temperature,
+            reasoning_effort: None,
             tool_output_token_limit: DEFAULT_MAX_OUTPUT_TOKENS,
         }
     }
@@ -154,6 +156,7 @@ impl ContextManager {
             messages: context.into_messages(),
             tools,
             temperature,
+            reasoning_effort: None,
             tool_output_token_limit: DEFAULT_MAX_OUTPUT_TOKENS,
         }
     }
@@ -186,6 +189,7 @@ impl ContextManager {
             messages,
             tools,
             temperature,
+            reasoning_effort: None,
             tool_output_token_limit: DEFAULT_MAX_OUTPUT_TOKENS,
         }
     }

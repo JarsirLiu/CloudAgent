@@ -14,6 +14,7 @@ pub(crate) struct ProviderRequest {
     pub messages: Vec<ProviderMessage>,
     pub tools: Vec<ToolSpec>,
     pub temperature: f32,
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +58,7 @@ impl ProviderRequest {
             messages,
             tools: request.tools.clone(),
             temperature: request.temperature,
+            reasoning_effort: request.reasoning_effort.clone(),
         })
     }
 }
@@ -225,6 +227,7 @@ mod tests {
                 approval_reason: None,
             }],
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
@@ -251,6 +254,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
@@ -279,6 +283,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: 100,
         };
 
@@ -318,6 +323,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
@@ -362,6 +368,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
@@ -400,6 +407,7 @@ mod tests {
             ],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
@@ -432,6 +440,7 @@ mod tests {
             }],
             tools: Vec::new(),
             temperature: 0.0,
+            reasoning_effort: None,
             tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
         };
 
