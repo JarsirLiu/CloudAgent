@@ -70,6 +70,9 @@ impl TerminalProjectionController {
         let visible_tail_reflow_rows =
             self.reflow
                 .visible_tail_reflow_rows(viewport_height, terminal_size, should_replay);
+        if has_active_stream && visible_tail_reflow_rows.is_some() {
+            self.reflow.mark_reflowed_during_stream();
+        }
 
         let history_update = if should_replay {
             let committed = transcript_owner.committed_history_cells();
@@ -177,6 +180,10 @@ impl TranscriptReflowState {
             self.replay_requested_during_stream = false;
             self.pending_replay_reason = ReplayReason::Metrics;
         }
+    }
+
+    fn mark_reflowed_during_stream(&mut self) {
+        self.replay_requested_during_stream = true;
     }
 
     fn begin_frame(&mut self, terminal_size: Size, has_active_stream: bool) -> bool {
@@ -375,6 +382,40 @@ mod tests {
             }
             HistoryUpdate::AppendTail(_) => panic!("viewport shrink should reflow visible tail"),
             HistoryUpdate::ReplayAll(_) => panic!("viewport shrink should reflow, not replay all"),
+        }
+    }
+
+    #[test]
+    fn viewport_reflow_during_stream_repairs_at_stream_boundary() {
+        let mut controller = TerminalProjectionController::default();
+        let mut transcript_owner = TranscriptOwner::default();
+        transcript_owner.queue_history_cells_for_test(vec![
+            HistoryCell::user("oldest message"),
+            HistoryCell::user("middle message"),
+            HistoryCell::user("latest message"),
+        ]);
+
+        let first = controller.build_plan(&mut transcript_owner, 12, size(80, 24), true);
+        assert!(matches!(first.history_update, HistoryUpdate::ReplayAll(_)));
+
+        let shrunk = controller.build_plan(&mut transcript_owner, 6, size(80, 24), true);
+        match shrunk.history_update {
+            HistoryUpdate::ReflowVisibleTail { cells, max_rows } => {
+                assert_eq!(cells.len(), 3);
+                assert_eq!(max_rows, 18);
+            }
+            HistoryUpdate::AppendTail(_) => panic!("stream viewport shrink should reflow tail"),
+            HistoryUpdate::ReplayAll(_) => panic!("stream viewport shrink should not replay all"),
+        }
+
+        controller.on_stream_boundary();
+        let repaired = controller.build_plan(&mut transcript_owner, 6, size(80, 24), false);
+        match repaired.history_update {
+            HistoryUpdate::ReplayAll(cells) => assert_eq!(cells.len(), 3),
+            HistoryUpdate::AppendTail(_) => panic!("expected stream-boundary replay after reflow"),
+            HistoryUpdate::ReflowVisibleTail { .. } => {
+                panic!("stream-boundary repair should replay canonical history")
+            }
         }
     }
 
