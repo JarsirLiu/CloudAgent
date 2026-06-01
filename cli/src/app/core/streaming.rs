@@ -97,73 +97,39 @@ pub(crate) struct AgentStreamFinish {
 }
 
 fn stable_source_boundary(source: &str) -> usize {
-    let complete_end = last_complete_line_end(source);
-    if complete_end == 0 {
-        return 0;
-    }
-    let complete = &source[..complete_end];
-    let table_holdback = table_holdback_start(complete);
-    let pending_header = pending_table_header_start(complete);
-    table_holdback.or(pending_header).unwrap_or(complete_end)
-}
+    let mut boundary = 0usize;
+    let mut in_fenced_code_block = false;
 
-fn last_complete_line_end(source: &str) -> usize {
-    source.rfind('\n').map(|index| index + 1).unwrap_or(0)
-}
-
-fn table_holdback_start(source: &str) -> Option<usize> {
-    let lines = line_ranges(source);
-    for pair in lines.windows(2) {
-        let header = &source[pair[0].0..pair[0].1];
-        let delimiter = &source[pair[1].0..pair[1].1];
-        if looks_like_table_header(header) && looks_like_table_delimiter(delimiter) {
-            return Some(pair[0].0);
+    for (start, end) in complete_line_ranges(source) {
+        let line = &source[start..end];
+        let trimmed = line.trim_end_matches('\n');
+        if is_fenced_code_line(trimmed) {
+            in_fenced_code_block = !in_fenced_code_block;
+            continue;
+        }
+        if !in_fenced_code_block && trimmed.trim().is_empty() {
+            boundary = end;
         }
     }
-    None
+
+    boundary
 }
 
-fn pending_table_header_start(source: &str) -> Option<usize> {
-    let lines = line_ranges(source);
-    let &(start, end) = lines.last()?;
-    let line = &source[start..end];
-    looks_like_table_header(line).then_some(start)
-}
-
-fn line_ranges(source: &str) -> Vec<(usize, usize)> {
+fn complete_line_ranges(source: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut start = 0usize;
     for (index, ch) in source.char_indices() {
         if ch == '\n' {
-            ranges.push((start, index));
+            ranges.push((start, index + ch.len_utf8()));
             start = index + ch.len_utf8();
         }
-    }
-    if start < source.len() {
-        ranges.push((start, source.len()));
     }
     ranges
 }
 
-fn looks_like_table_header(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.contains('|')
-        && trimmed
-            .split('|')
-            .filter(|cell| !cell.trim().is_empty())
-            .count()
-            >= 2
-}
-
-fn looks_like_table_delimiter(line: &str) -> bool {
-    let trimmed = line.trim().trim_matches('|').trim();
-    if trimmed.is_empty() || !trimmed.contains('-') {
-        return false;
-    }
-    trimmed.split('|').all(|cell| {
-        let cell = cell.trim();
-        !cell.is_empty() && cell.chars().all(|ch| matches!(ch, '-' | ':' | ' '))
-    })
+fn is_fenced_code_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
 }
 
 #[cfg(test)]
@@ -180,9 +146,9 @@ mod tests {
     #[test]
     fn commits_complete_non_table_lines_and_keeps_tail_live() {
         let mut stream = AgentStreamController::new("a1");
-        let output = stream.push_delta("stable line\nlive tail");
+        let output = stream.push_delta("stable line\n\nlive tail");
 
-        assert_eq!(bodies(output.stable_cells), vec!["stable line\n"]);
+        assert_eq!(bodies(output.stable_cells), vec!["stable line\n\n"]);
         assert_eq!(
             output.live_cell.as_ref().map(|cell| cell.body()),
             Some("live tail")
@@ -190,24 +156,24 @@ mod tests {
     }
 
     #[test]
-    fn holds_pending_table_header_out_of_stable_history() {
+    fn keeps_incomplete_markdown_block_live_without_blank_line() {
         let mut stream = AgentStreamController::new("a1");
         let output = stream.push_delta("intro\n| a | b |\n");
 
-        assert_eq!(bodies(output.stable_cells), vec!["intro\n"]);
+        assert!(output.stable_cells.is_empty());
         assert_eq!(
             output.live_cell.as_ref().map(|cell| cell.body()),
-            Some("| a | b |\n")
+            Some("intro\n| a | b |\n")
         );
     }
 
     #[test]
-    fn holds_confirmed_table_until_finalize() {
+    fn commits_previous_block_before_next_blank_line() {
         let mut stream = AgentStreamController::new("a1");
-        let first = stream.push_delta("intro\n| a | b |\n");
+        let first = stream.push_delta("intro\n\n| a | b |\n");
         let second = stream.push_delta("| - | - |\n| 1 | 2 |\n");
 
-        assert_eq!(bodies(first.stable_cells), vec!["intro\n"]);
+        assert_eq!(bodies(first.stable_cells), vec!["intro\n\n"]);
         assert!(second.stable_cells.is_empty());
         assert_eq!(
             second.live_cell.as_ref().map(|cell| cell.body()),
@@ -222,13 +188,22 @@ mod tests {
     }
 
     #[test]
-    fn releases_pipe_line_when_next_line_is_not_table_delimiter() {
+    fn keeps_fenced_code_block_live_until_completion() {
         let mut stream = AgentStreamController::new("a1");
-        let first = stream.push_delta("a | b\n");
-        let second = stream.push_delta("plain next\n");
+        let first = stream.push_delta("intro\n\n```rust\nfn main() {\n");
+        let second = stream.push_delta("println!(\"hi\");\n}\n```\n");
 
-        assert!(first.stable_cells.is_empty());
-        assert_eq!(bodies(second.stable_cells), vec!["a | b\nplain next\n"]);
-        assert!(second.live_cell.is_none());
+        assert_eq!(bodies(first.stable_cells), vec!["intro\n\n"]);
+        assert!(second.stable_cells.is_empty());
+        assert_eq!(
+            second.live_cell.as_ref().map(|cell| cell.body()),
+            Some("```rust\nfn main() {\nprintln!(\"hi\");\n}\n```\n")
+        );
+
+        let finish = stream.finish_with_final_text(None);
+        assert_eq!(
+            bodies(finish.stable_cells),
+            vec!["```rust\nfn main() {\nprintln!(\"hi\");\n}\n```\n"]
+        );
     }
 }

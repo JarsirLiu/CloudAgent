@@ -12,7 +12,6 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 const MAX_CONTENT_WIDTH: u16 = 140;
 const MIN_RENDER_WIDTH: u16 = 40;
-const HISTORY_CHROME_WIDTH: u16 = 6;
 const ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH: u16 = 4;
 const VIEWPORT_TOP_GUTTER_HEIGHT: u16 = 1;
 const BODY_BOTTOM_GAP_HEIGHT: u16 = 1;
@@ -27,11 +26,7 @@ pub(crate) struct ChatSurfaceLayout {
 
 impl ChatSurface {
     pub(crate) fn render_width_for_area(area: Rect) -> usize {
-        let content = centered_column(area, MAX_CONTENT_WIDTH);
-        content
-            .width
-            .saturating_sub(HISTORY_CHROME_WIDTH)
-            .max(MIN_RENDER_WIDTH) as usize
+        Self::active_render_width_for_area(area)
     }
 
     pub(crate) fn active_render_width_for_area(area: Rect) -> usize {

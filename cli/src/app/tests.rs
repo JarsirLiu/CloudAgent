@@ -415,7 +415,7 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
     owner.append_agent_delta(
         "turn-1".to_string(),
         "a1".to_string(),
-        "first stable\n".to_string(),
+        "first stable\n\n".to_string(),
         false,
     );
     owner.start_item(
@@ -434,7 +434,7 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
     owner.append_agent_delta(
         "turn-1".to_string(),
         "a1".to_string(),
-        "second stable\n".to_string(),
+        "second stable\n\n".to_string(),
         false,
     );
 
@@ -442,7 +442,7 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
     owner.complete_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent("a1", "first stable\nsecond stable\nfinal tail"),
+        agent("a1", "first stable\n\nsecond stable\n\nfinal tail"),
         false,
     );
 
@@ -456,7 +456,7 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
         committed,
         vec![
             "hello".to_string(),
-            "first stable\nsecond stable\nfinal tail".to_string(),
+            "first stable\n\nsecond stable\n\nfinal tail".to_string(),
             "ran 1 inspect command".to_string(),
         ]
     );
@@ -1493,7 +1493,7 @@ fn agent_stream_commits_complete_lines_and_keeps_tail_live() {
     owner.append_agent_delta(
         "turn-1".to_string(),
         "a1".to_string(),
-        "stable line\nlive tail".to_string(),
+        "stable line\n\nlive tail".to_string(),
         false,
     );
 
@@ -1528,14 +1528,14 @@ fn completing_streamed_agent_message_only_commits_remaining_tail() {
     owner.append_agent_delta(
         "turn-1".to_string(),
         "a1".to_string(),
-        "stable line\nlive tail".to_string(),
+        "stable line\n\nlive tail".to_string(),
         false,
     );
 
     owner.complete_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent("a1", "stable line\nlive tail"),
+        agent("a1", "stable line\n\nlive tail"),
         false,
     );
 
@@ -1571,14 +1571,14 @@ fn completing_unflushed_stream_consolidates_pending_without_replay() {
     owner.append_agent_delta(
         "turn-1".to_string(),
         "a1".to_string(),
-        "stable line\nlive tail".to_string(),
+        "stable line\n\nlive tail".to_string(),
         false,
     );
 
     owner.complete_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent("a1", "stable line\nlive tail"),
+        agent("a1", "stable line\n\nlive tail"),
         false,
     );
 
@@ -1588,7 +1588,7 @@ fn completing_unflushed_stream_consolidates_pending_without_replay() {
         .into_iter()
         .map(|cell| cell.body().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(pending, vec!["hello", "stable line\nlive tail"]);
+    assert_eq!(pending, vec!["hello", "stable line\n\nlive tail"]);
 }
 
 #[test]
@@ -1606,21 +1606,24 @@ fn completing_partially_flushed_stream_requests_replay_for_final_reflow() {
     owner.append_agent_delta(
         "turn-1".to_string(),
         "a1".to_string(),
-        "first stable\n".to_string(),
+        "first stable\n\n".to_string(),
         false,
     );
     let _flushed = owner.drain_pending_history_cells();
     owner.append_agent_delta(
         "turn-1".to_string(),
         "a1".to_string(),
-        "second stable\nlive tail".to_string(),
+        "second stable\n\nlive tail".to_string(),
         false,
     );
 
     owner.complete_item(
         "turn-1".to_string(),
         "a1".to_string(),
-        agent("a1", "first stable\nsecond stable\nlive tail\nfinal suffix"),
+        agent(
+            "a1",
+            "first stable\n\nsecond stable\n\nlive tail\nfinal suffix",
+        ),
         false,
     );
 
@@ -1634,7 +1637,7 @@ fn completing_partially_flushed_stream_requests_replay_for_final_reflow() {
         committed,
         vec![
             "hello".to_string(),
-            "first stable\nsecond stable\nlive tail\nfinal suffix".to_string()
+            "first stable\n\nsecond stable\n\nlive tail\nfinal suffix".to_string()
         ]
     );
 }
@@ -2024,4 +2027,14 @@ fn active_transcript_tail_ignores_trailing_blank_stream_rows() {
     assert_eq!(model.body_height, 3);
     assert_eq!(rendered.last().map(|line| line.trim()), Some("line 2"));
     assert_eq!(app.active_transcript_scroll.top_row_for_render(3, 2), 1);
+}
+
+#[test]
+fn history_projection_uses_same_wrap_width_as_active_transcript() {
+    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+
+    assert_eq!(
+        ChatSurface::render_width_for_area(area),
+        ChatSurface::active_render_width_for_area(area)
+    );
 }
