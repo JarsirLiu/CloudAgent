@@ -4,8 +4,8 @@ use shared::{MemoryConfig, MemoryMode};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
-use std::str::FromStr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

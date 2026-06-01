@@ -12,8 +12,15 @@ pub struct ReasoningPicker {
 
 impl ReasoningPicker {
     pub fn new(current: ReasoningEffort) -> Self {
-        let options = [ReasoningEffort::Low, ReasoningEffort::Medium, ReasoningEffort::High];
-        let selected = options.iter().position(|option| *option == current).unwrap_or(1);
+        let options = [
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+        ];
+        let selected = options
+            .iter()
+            .position(|option| *option == current)
+            .unwrap_or(1);
         Self { selected, options }
     }
 }

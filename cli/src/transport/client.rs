@@ -41,12 +41,11 @@ pub async fn create_local_node_client(
     args: &[std::ffi::OsString],
     expected_data_root_dir: &Path,
 ) -> Result<AppServerClient> {
-    if launches_node_via_cargo(program, args) {
-        if let Ok(client) = connect_local_node_once(address).await {
-            let client =
-                verify_local_node_data_root(client, address, expected_data_root_dir).await?;
-            stop_existing_development_node(client, address).await?;
-        }
+    if launches_node_via_cargo(program, args)
+        && let Ok(client) = connect_local_node_once(address).await
+    {
+        let client = verify_local_node_data_root(client, address, expected_data_root_dir).await?;
+        stop_existing_development_node(client, address).await?;
     }
 
     match connect_local_node_once(address).await {

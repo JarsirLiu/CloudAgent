@@ -253,7 +253,7 @@ impl JsonConversationStore {
             let line_start_offset = next_offset;
             let line = serde_json::to_string(item)?;
             next_offset = next_offset
-                .saturating_add(line.as_bytes().len() as u64)
+                .saturating_add(line.len() as u64)
                 .saturating_add(1);
             if let Some(turn_id) = rollout_turn_start_id(item) {
                 turn_index_rows.push(session_index::TurnIndexRow {

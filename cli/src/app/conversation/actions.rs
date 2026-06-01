@@ -193,12 +193,7 @@ pub(crate) async fn handle_tui_input(
                 }
             };
             let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
-            save_user_llm_config(
-                &cfg.llm.api_key,
-                &cfg.llm.base_url,
-                &cfg.llm.model,
-                effort,
-            )?;
+            save_user_llm_config(&cfg.llm.api_key, &cfg.llm.base_url, &cfg.llm.model, effort)?;
             if let Err(err) = client.send_command(AppClientCommand::ReloadLlmConfig {
                 api_key: cfg.llm.api_key.clone(),
                 base_url: cfg.llm.base_url.clone(),
@@ -1004,7 +999,9 @@ fn reasoning_effort_config_path() -> Result<std::path::PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or_else(|| anyhow::anyhow!("Cannot find user home directory"))?;
-    Ok(std::path::PathBuf::from(home).join(".cloudagent").join("config.toml"))
+    Ok(std::path::PathBuf::from(home)
+        .join(".cloudagent")
+        .join("config.toml"))
 }
 
 #[cfg(test)]

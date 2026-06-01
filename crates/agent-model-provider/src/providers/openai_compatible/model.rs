@@ -520,7 +520,7 @@ mod tests {
             model: "test-model".to_string(),
             input_modalities: default_input_modalities(),
             temperature: 0.0,
-            reasoning_effort: "medium".to_string(),
+            model_reasoning_effort: config::ReasoningEffort::Medium,
             request_max_retries: 0,
             stream_max_retries: 0,
             stream_idle_timeout_ms: 1_000,
@@ -612,7 +612,7 @@ mod tests {
             model: "test-model".to_string(),
             input_modalities: default_input_modalities(),
             temperature: 0.0,
-            reasoning_effort: "medium".to_string(),
+            model_reasoning_effort: config::ReasoningEffort::Medium,
             request_max_retries: 0,
             stream_max_retries: 0,
             stream_idle_timeout_ms: 1_000,
@@ -646,5 +646,4 @@ mod tests {
 
         server.join().expect("server thread");
     }
-
 }

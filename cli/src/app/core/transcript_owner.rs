@@ -90,10 +90,10 @@ impl TranscriptOwner {
 
     pub(crate) fn transcript_cells_for_render(&self) -> Vec<HistoryCell> {
         let mut cells = self.committed_store.cells();
-        if let Some(active_cell) = self.active_cell() {
-            if !active_cell.body().trim().is_empty() {
-                cells.push(active_cell.clone());
-            }
+        if let Some(active_cell) = self.active_cell()
+            && !active_cell.body().trim().is_empty()
+        {
+            cells.push(active_cell.clone());
         }
         cells
     }

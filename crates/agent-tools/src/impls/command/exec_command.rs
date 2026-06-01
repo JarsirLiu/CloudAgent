@@ -229,7 +229,7 @@ fn reject_command_with_message(
     message: &str,
 ) -> ToolInvocationOutput {
     let current_directory = workdir.display().to_string();
-    let (output, original_token_count) = truncate_output_to_tokens(&message, 1_000);
+    let (output, original_token_count) = truncate_output_to_tokens(message, 1_000);
     let content = format_exec_result_content(CommandResultView {
         command,
         current_directory: &current_directory,

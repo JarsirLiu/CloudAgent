@@ -21,7 +21,7 @@ pub(crate) fn parse_lines_with_offsets(path: &Path, text: &str) -> Result<Vec<Pa
     for segment in text.split_inclusive('\n') {
         line_no += 1;
         let line_start_offset = offset;
-        offset = offset.saturating_add(segment.as_bytes().len() as u64);
+        offset = offset.saturating_add(segment.len() as u64);
         let is_final_unterminated = final_line_may_be_truncated && offset as usize == text.len();
         if let Some(item) = parse_line(path, line_no, segment, is_final_unterminated)? {
             lines.push(ParsedRolloutLine {

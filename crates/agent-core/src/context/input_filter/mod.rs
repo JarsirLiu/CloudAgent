@@ -220,22 +220,22 @@ fn filter_command_execution_output(
         return merged.to_string();
     }
     if cmd.starts_with("git ") {
-        return wrap_summary("git", &filter_git_output(&cmd, &merged), &merged);
+        return wrap_summary("git", &filter_git_output(&cmd, merged), merged);
     }
     if cmd.contains("cargo test") || cmd.contains("cargo build") {
-        return wrap_summary("cargo", &filter_rust_build_test_output(&merged), &merged);
+        return wrap_summary("cargo", &filter_rust_build_test_output(merged), merged);
     }
     if cmd.contains("pytest") || cmd.contains("npm test") || cmd.contains("pnpm test") {
-        return wrap_summary("test", &filter_test_output(&merged), &merged);
+        return wrap_summary("test", &filter_test_output(merged), merged);
     }
     if cmd.contains("npm install") || cmd.contains("pnpm install") || cmd.contains("cargo install")
     {
-        return wrap_summary("install", &filter_install_output(&merged), &merged);
+        return wrap_summary("install", &filter_install_output(merged), merged);
     }
     if success == Some(false) {
-        return wrap_summary("fallback", &filter_failure_tail(&merged), &merged);
+        return wrap_summary("fallback", &filter_failure_tail(merged), merged);
     }
-    wrap_summary("generic", &filter_tool_output(&merged), &merged)
+    wrap_summary("generic", &filter_tool_output(merged), merged)
 }
 
 fn should_passthrough(cmd: &str) -> bool {

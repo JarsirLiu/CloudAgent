@@ -233,11 +233,11 @@ async fn apply_one_planned_change(
                     return Err(err.into());
                 }
             }
-            if let Some(source_path) = remove_source {
-                if let Err(err) = fs::remove_file(&source_path).await {
-                    delta.mark_inexact();
-                    return Err(err.into());
-                }
+            if let Some(source_path) = remove_source
+                && let Err(err) = fs::remove_file(&source_path).await
+            {
+                delta.mark_inexact();
+                return Err(err.into());
             }
             Ok(())
         }
@@ -394,15 +394,15 @@ fn parse_unified_patch(patch: &str) -> anyhow::Result<Vec<FilePatch>> {
 
     let patch = strip_heredoc_markers(patch.trim());
     let patch_lines = patch.lines().collect::<Vec<_>>();
-    if !patch_lines
+    if patch_lines
         .first()
-        .is_some_and(|line| line.trim() == "*** Begin Patch")
+        .is_none_or(|line| line.trim() != "*** Begin Patch")
     {
         anyhow::bail!(invalid_patch_message(patch));
     }
-    if !patch_lines
+    if patch_lines
         .last()
-        .is_some_and(|line| line.trim() == "*** End Patch")
+        .is_none_or(|line| line.trim() != "*** End Patch")
     {
         anyhow::bail!("patch must end with `*** End Patch`");
     }

@@ -291,7 +291,7 @@ fn is_empty_stdin_poll_result(
             status,
             CommandExecutionStatus::Failed | CommandExecutionStatus::Declined
         )
-        && detail.map_or(true, |value| value.trim().is_empty())
+        && detail.is_none_or(|value| value.trim().is_empty())
 }
 
 fn render_exploration_command(

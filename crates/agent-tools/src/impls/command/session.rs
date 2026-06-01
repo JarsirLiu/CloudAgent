@@ -29,6 +29,7 @@ impl ExecSessionStore {
         Self::default()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn start_session(
         &self,
         conversation_id: &str,
@@ -373,7 +374,7 @@ async fn terminate_child_tree_by_pid(pid: u32) -> Result<()> {
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .status();
         let _ = status;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(windows))]
     {
