@@ -4,11 +4,15 @@ use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 pub(crate) enum TranscriptScrollIntent {
     LineUp,
     LineDown,
+    WheelUp,
+    WheelDown,
     PageUp,
     PageDown,
     Top,
     Bottom,
 }
+
+const MOUSE_WHEEL_ROWS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TranscriptScroll {
@@ -70,6 +74,8 @@ impl TranscriptScroll {
         match intent {
             TranscriptScrollIntent::LineUp => self.scroll_up(1),
             TranscriptScrollIntent::LineDown => self.scroll_down(1),
+            TranscriptScrollIntent::WheelUp => self.scroll_up(MOUSE_WHEEL_ROWS),
+            TranscriptScrollIntent::WheelDown => self.scroll_down(MOUSE_WHEEL_ROWS),
             TranscriptScrollIntent::PageUp => self.scroll_up(page),
             TranscriptScrollIntent::PageDown => self.scroll_down(page),
             TranscriptScrollIntent::Top => {
@@ -125,8 +131,8 @@ fn intent_from_key(key: KeyEvent) -> Option<TranscriptScrollIntent> {
 
 fn intent_from_mouse(mouse: MouseEvent) -> Option<TranscriptScrollIntent> {
     match mouse.kind {
-        MouseEventKind::ScrollUp => Some(TranscriptScrollIntent::LineUp),
-        MouseEventKind::ScrollDown => Some(TranscriptScrollIntent::LineDown),
+        MouseEventKind::ScrollUp => Some(TranscriptScrollIntent::WheelUp),
+        MouseEventKind::ScrollDown => Some(TranscriptScrollIntent::WheelDown),
         _ => None,
     }
 }
@@ -134,10 +140,21 @@ fn intent_from_mouse(mouse: MouseEvent) -> Option<TranscriptScrollIntent> {
 #[cfg(test)]
 mod tests {
     use super::TranscriptScroll;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn mouse(kind: MouseEventKind) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     #[test]
@@ -168,5 +185,26 @@ mod tests {
         assert!(scroll.handle_key(key(KeyCode::End)));
         assert_eq!(scroll.top_row_for_render(30, 5), 25);
         assert_eq!(scroll.top_row_for_render(35, 5), 30);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_multiple_rows_per_tick() {
+        let mut scroll = TranscriptScroll::default();
+        assert_eq!(scroll.top_row_for_render(50, 10), 40);
+
+        assert!(scroll.handle_mouse(mouse(MouseEventKind::ScrollUp)));
+        assert_eq!(scroll.top_row_for_render(50, 10), 36);
+
+        assert!(scroll.handle_mouse(mouse(MouseEventKind::ScrollDown)));
+        assert_eq!(scroll.top_row_for_render(50, 10), 40);
+    }
+
+    #[test]
+    fn non_wheel_mouse_events_do_not_scroll_transcript() {
+        let mut scroll = TranscriptScroll::default();
+        assert_eq!(scroll.top_row_for_render(50, 10), 40);
+
+        assert!(!scroll.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left))));
+        assert_eq!(scroll.top_row_for_render(50, 10), 40);
     }
 }
