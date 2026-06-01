@@ -16,6 +16,7 @@ pub(crate) struct ActiveCellController {
 
 pub(crate) struct AppliedActiveTurnEffects {
     pub(crate) replay_cells: Vec<HistoryCell>,
+    pub(crate) terminal_tail_cells: Vec<HistoryCell>,
     pub(crate) consolidate_agent_message: Option<ConsolidateAgentMessage>,
 }
 
@@ -241,6 +242,7 @@ impl ActiveCellController {
         self.last_copyable_output = effects.last_copyable_output;
         AppliedActiveTurnEffects {
             replay_cells: effects.replay_cells,
+            terminal_tail_cells: effects.terminal_tail_cells,
             consolidate_agent_message: effects.consolidate_agent_message,
         }
     }

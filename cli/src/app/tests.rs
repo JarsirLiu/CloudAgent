@@ -446,7 +446,7 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
         false,
     );
 
-    assert!(owner.take_history_replay_requested());
+    assert!(!owner.take_history_replay_requested());
     let committed = owner
         .committed_history_cells()
         .into_iter()
@@ -1314,6 +1314,64 @@ fn completed_streamed_agent_item_survives_turn_completion() {
 }
 
 #[test]
+fn completed_streamed_agent_item_appends_tail_without_replay() {
+    let mut owner = TranscriptOwner::default();
+    let mut projection =
+        crate::app::runtime::terminal_projection::TerminalProjectionController::default();
+    let size = ratatui::layout::Size {
+        width: 80,
+        height: 24,
+    };
+
+    let _ = projection.build_plan(&mut owner, 5, size, false);
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "assistant:1".to_string(),
+        TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "assistant:1".to_string(),
+        "stable paragraph\n\nlive tail".to_string(),
+        false,
+    );
+
+    let _ = projection.build_plan(&mut owner, 5, size, true);
+    owner.complete_item(
+        "turn-1".to_string(),
+        "assistant:1".to_string(),
+        agent("assistant:1", "stable paragraph\n\nlive tail\nfinal line"),
+        false,
+    );
+    owner.complete_turn("turn-1".to_string(), false);
+    projection.on_stream_boundary();
+
+    match projection
+        .build_plan(&mut owner, 5, size, false)
+        .history_update
+    {
+        crate::terminal::HistoryUpdate::AppendTail(cells) => {
+            let body = cells
+                .into_iter()
+                .map(|cell| cell.body().to_string())
+                .collect::<Vec<_>>()
+                .join("");
+            assert_eq!(body, "live tail\nfinal line");
+        }
+        crate::terminal::HistoryUpdate::ReplayAll(_) => {
+            panic!("ordinary stream completion must not rebuild scrollback")
+        }
+        crate::terminal::HistoryUpdate::ReflowVisibleTail { .. } => {
+            panic!("ordinary stream completion should append the live tail")
+        }
+    }
+}
+
+#[test]
 fn generic_live_notice_does_not_keep_mode_running() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -1616,7 +1674,7 @@ fn completing_streamed_agent_message_only_commits_remaining_tail() {
 }
 
 #[test]
-fn completing_unflushed_stream_consolidates_pending_and_requests_replay() {
+fn completing_unflushed_stream_keeps_scrollback_append_only() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
@@ -1641,7 +1699,7 @@ fn completing_unflushed_stream_consolidates_pending_and_requests_replay() {
         false,
     );
 
-    assert!(owner.take_history_replay_requested());
+    assert!(!owner.take_history_replay_requested());
     let pending = owner
         .pending_history_cells()
         .into_iter()
@@ -1651,7 +1709,7 @@ fn completing_unflushed_stream_consolidates_pending_and_requests_replay() {
 }
 
 #[test]
-fn completing_partially_flushed_stream_requests_replay_for_source_backed_reflow() {
+fn completing_partially_flushed_stream_consolidates_source_without_replay() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
@@ -1686,7 +1744,7 @@ fn completing_partially_flushed_stream_requests_replay_for_source_backed_reflow(
         false,
     );
 
-    assert!(owner.take_history_replay_requested());
+    assert!(!owner.take_history_replay_requested());
     let committed = owner
         .committed_history_cells()
         .into_iter()

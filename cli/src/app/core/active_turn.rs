@@ -47,6 +47,7 @@ pub(crate) struct ActiveTurnEffects {
     pub(crate) active_cell: Option<HistoryCell>,
     pub(crate) last_copyable_output: Option<String>,
     pub(crate) replay_cells: Vec<HistoryCell>,
+    pub(crate) terminal_tail_cells: Vec<HistoryCell>,
     pub(crate) consolidate_agent_message: Option<ConsolidateAgentMessage>,
 }
 
@@ -138,6 +139,7 @@ impl ActiveTurnState {
                     replay_cells: vec![HistoryCell::user(input_items_to_plain_text(
                         self.pending_local_user_input.as_deref().unwrap_or_default(),
                     ))],
+                    terminal_tail_cells: Vec::new(),
                     consolidate_agent_message: None,
                 }
             }
@@ -208,7 +210,8 @@ impl ActiveTurnState {
                     self.last_copyable_output = Some(text);
                 }
                 if matches!(item, TranscriptItem::AgentMessage { .. }) {
-                    let streamed = self.take_finished_agent_stream(&item_id);
+                    let streamed =
+                        self.take_finished_agent_stream(&item_id, completed_agent_text(&item));
                     let should_consolidate_stream = streamed
                         .as_ref()
                         .is_some_and(|streamed| streamed.emitted_any)
@@ -224,6 +227,9 @@ impl ActiveTurnState {
                         self.replayed_item_ids.insert(item_id.clone());
                         let mut effects = self.snapshot_effects_with_replay(replay_cells);
                         if should_consolidate_stream {
+                            if let Some(streamed) = streamed {
+                                effects.terminal_tail_cells.extend(streamed.stable_cells);
+                            }
                             effects.consolidate_agent_message =
                                 Some(ConsolidateAgentMessage { item_id, cell });
                         } else {
@@ -239,7 +245,8 @@ impl ActiveTurnState {
                     || self.should_replace_live_tool_placeholder(&item)
                 {
                     if matches!(item, TranscriptItem::AgentMessage { .. })
-                        && let Some(streamed) = self.take_finished_agent_stream(&item_id)
+                        && let Some(streamed) =
+                            self.take_finished_agent_stream(&item_id, completed_agent_text(&item))
                     {
                         if streamed.emitted_any {
                             replay_cells.extend(streamed.stable_cells);
@@ -284,6 +291,7 @@ impl ActiveTurnState {
                     active_cell: None,
                     last_copyable_output,
                     replay_cells,
+                    terminal_tail_cells: Vec::new(),
                     consolidate_agent_message: None,
                 }
             }
@@ -365,13 +373,17 @@ impl ActiveTurnState {
         stream.push_delta(delta)
     }
 
-    fn take_finished_agent_stream(&mut self, item_id: &str) -> Option<AgentStreamFinish> {
+    fn take_finished_agent_stream(
+        &mut self,
+        item_id: &str,
+        final_text: Option<&str>,
+    ) -> Option<AgentStreamFinish> {
         let stream = self.agent_stream.take()?;
         if stream.item_id() != item_id {
             self.agent_stream = Some(stream);
             return None;
         }
-        Some(stream.finish())
+        Some(stream.finish_with_final_source(final_text))
     }
 
     fn flush_live_tail_if_different(&mut self, item_id: &str) -> Vec<HistoryCell> {
@@ -444,6 +456,7 @@ impl ActiveTurnState {
                 .or_else(|| self.live_item.as_ref().map(ActiveItemView::to_cell)),
             last_copyable_output: self.last_copyable_output.clone(),
             replay_cells,
+            terminal_tail_cells: Vec::new(),
             consolidate_agent_message: None,
         }
     }
@@ -452,6 +465,14 @@ impl ActiveTurnState {
 fn copyable_output(item: &TranscriptItem) -> Option<String> {
     if let TranscriptItem::AgentMessage { text, .. } = item {
         (!text.trim().is_empty()).then(|| text.clone())
+    } else {
+        None
+    }
+}
+
+fn completed_agent_text(item: &TranscriptItem) -> Option<&str> {
+    if let TranscriptItem::AgentMessage { text, .. } = item {
+        Some(text)
     } else {
         None
     }

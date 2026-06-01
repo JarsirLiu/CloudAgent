@@ -16,22 +16,6 @@ pub(crate) struct TranscriptOwner {
     history_replay_requested: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ScrollbackReflow {
-    NotRequired,
-    Required,
-}
-
-impl ScrollbackReflow {
-    fn for_consolidated_agent_message(committed_replaced: bool) -> Self {
-        if committed_replaced {
-            Self::Required
-        } else {
-            Self::NotRequired
-        }
-    }
-}
-
 impl TranscriptOwner {
     pub(crate) fn clear(&mut self) {
         self.committed_store.clear();
@@ -242,25 +226,23 @@ impl TranscriptOwner {
         self.pending_store.append_cells(cells);
     }
 
+    fn queue_terminal_tail_cells(&mut self, cells: Vec<HistoryCell>) {
+        self.pending_store.append_cells(cells);
+    }
+
     fn apply_active_turn_effects(
         &mut self,
         effects: crate::app::core::active_cell_controller::AppliedActiveTurnEffects,
     ) {
         self.queue_history_cells(effects.replay_cells);
-        if let Some(message) = effects.consolidate_agent_message
-            && self.consolidate_agent_message(message) == ScrollbackReflow::Required
-        {
-            self.history_replay_requested = true;
+        self.queue_terminal_tail_cells(effects.terminal_tail_cells);
+        if let Some(message) = effects.consolidate_agent_message {
+            self.consolidate_agent_message(message);
         }
     }
 
-    fn consolidate_agent_message(&mut self, message: ConsolidateAgentMessage) -> ScrollbackReflow {
-        self.pending_store
-            .consolidate_agent_message(&message.item_id, message.cell.clone());
-        let committed_replaced = self
-            .committed_store
+    fn consolidate_agent_message(&mut self, message: ConsolidateAgentMessage) {
+        self.committed_store
             .consolidate_agent_message(&message.item_id, message.cell);
-
-        ScrollbackReflow::for_consolidated_agent_message(committed_replaced)
     }
 }
