@@ -17,18 +17,19 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::terminal::color_compat::{TerminalCapabilities, adapt_bg, adapt_color};
 use crate::terminal::custom_terminal::Terminal;
+use crate::terminal::HistoryRenderMetrics;
 use crate::ui::widgets::history_cell::HistoryCell;
 
 pub(crate) fn prepare_history_lines(
     cells: Vec<HistoryCell>,
-    render_width: usize,
+    render_metrics: HistoryRenderMetrics,
     has_existing_history: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut has_emitted_history = has_existing_history;
 
     for cell in cells {
-        let mut display = cell.to_lines_with_mode(render_width);
+        let mut display = cell.to_lines_with_mode(render_metrics.width);
         if display.is_empty() {
             continue;
         }
@@ -39,12 +40,12 @@ pub(crate) fn prepare_history_lines(
         has_emitted_history = true;
     }
 
-    lines
+    apply_left_padding(lines, render_metrics.left_padding)
 }
 
 pub(crate) fn prepare_history_tail_lines(
     cells: Vec<HistoryCell>,
-    render_width: usize,
+    render_metrics: HistoryRenderMetrics,
     max_rows: usize,
 ) -> Vec<Line<'static>> {
     if max_rows == 0 || cells.is_empty() {
@@ -56,7 +57,7 @@ pub(crate) fn prepare_history_tail_lines(
     let mut has_newer_selected_cell = false;
 
     for (index, cell) in cells.iter().enumerate().rev() {
-        let display_rows = cell.to_lines_with_mode(render_width).len();
+        let display_rows = cell.to_lines_with_mode(render_metrics.width).len();
         if display_rows == 0 {
             continue;
         }
@@ -77,11 +78,30 @@ pub(crate) fn prepare_history_tail_lines(
     }
 
     let selected = cells.into_iter().skip(start).collect();
-    let mut lines = prepare_history_lines(selected, render_width, false);
+    let mut lines = prepare_history_lines(selected, render_metrics, false);
     if lines.len() > max_rows {
         lines.drain(0..lines.len() - max_rows);
     }
     lines
+}
+
+fn apply_left_padding(lines: Vec<Line<'static>>, left_padding: usize) -> Vec<Line<'static>> {
+    if left_padding == 0 {
+        return lines;
+    }
+    let padding = " ".repeat(left_padding);
+    lines
+        .into_iter()
+        .map(|line| {
+            if line.spans.is_empty() {
+                return line;
+            }
+            let mut spans = Vec::with_capacity(line.spans.len() + 1);
+            spans.push(Span::raw(padding.clone()));
+            spans.extend(line.spans);
+            Line::from(spans).style(line.style)
+        })
+        .collect()
 }
 
 pub(crate) fn insert_history_lines_raw<B>(
@@ -428,11 +448,26 @@ mod tests {
     use super::{
         prepare_history_lines, prepare_history_tail_lines, wrap_history_line, write_history_line,
     };
+    use crate::terminal::HistoryRenderMetrics;
     use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
     use std::str;
+
+    fn metrics(width: usize) -> HistoryRenderMetrics {
+        HistoryRenderMetrics {
+            width,
+            left_padding: 0,
+        }
+    }
+
+    fn padded_metrics(width: usize, left_padding: usize) -> HistoryRenderMetrics {
+        HistoryRenderMetrics {
+            width,
+            left_padding,
+        }
+    }
 
     #[test]
     fn wraps_long_history_line_before_terminal_insert() {
@@ -471,7 +506,7 @@ mod tests {
         let mut second = HistoryCell::info("Run command", "rg cli", HistoryTone::Control);
         second.set_stream_continuation(true);
 
-        let lines = prepare_history_lines(vec![first, second], 80, false);
+        let lines = prepare_history_lines(vec![first, second], metrics(80), false);
         let rendered = lines
             .iter()
             .map(|line| {
@@ -490,7 +525,7 @@ mod tests {
         let first = HistoryCell::user("hello");
         let second = HistoryCell::reasoning("Reasoning", "thinking");
 
-        let lines = prepare_history_lines(vec![first, second], 80, false);
+        let lines = prepare_history_lines(vec![first, second], metrics(80), false);
         let rendered = lines
             .iter()
             .map(|line| {
@@ -505,6 +540,31 @@ mod tests {
     }
 
     #[test]
+    fn history_lines_apply_left_padding_without_padding_blank_separators() {
+        let lines = prepare_history_lines(
+            vec![
+                HistoryCell::user("hello"),
+                HistoryCell::agent("assistant", "world", HistoryFormat::PlainText),
+            ],
+            padded_metrics(80, 6),
+            false,
+        );
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered.first().map(String::as_str), Some("      › hello"));
+        assert!(rendered.iter().any(|line| line.is_empty()));
+        assert!(rendered.iter().any(|line| line == "        world"));
+    }
+
+    #[test]
     fn tail_history_lines_are_capped_to_latest_rows() {
         let lines = prepare_history_tail_lines(
             vec![
@@ -512,7 +572,7 @@ mod tests {
                 HistoryCell::user("middle message"),
                 HistoryCell::user("latest message"),
             ],
-            80,
+            metrics(80),
             3,
         );
         let rendered = lines
@@ -543,7 +603,7 @@ mod tests {
                 HistoryCell::agent("assistant", "first chunk", HistoryFormat::PlainText),
                 continuation,
             ],
-            80,
+            metrics(80),
             3,
         );
         let rendered = lines

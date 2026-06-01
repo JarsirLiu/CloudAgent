@@ -91,7 +91,7 @@ impl TerminalProjectionController {
 
         HistoryProjection {
             viewport_height,
-            history_render_width: ChatSurface::render_width_for_area(Rect::new(
+            history_render_metrics: ChatSurface::history_render_metrics_for_area(Rect::new(
                 0,
                 0,
                 terminal_size.width,
@@ -124,24 +124,24 @@ impl TerminalProjectionController {
     fn prepare_projection(&self, projection: HistoryProjection) -> PreparedHistoryProjection {
         let HistoryProjection {
             viewport_height,
-            history_render_width,
+            history_render_metrics,
             history_update,
         } = projection;
 
         let history_update = match history_update {
             HistoryUpdate::ReplayAll(cells) => PreparedHistoryUpdate::ReplayAll {
                 cells,
-                render_width: history_render_width,
+                render_metrics: history_render_metrics,
                 max_rows: self.reflow_policy.max_rows,
             },
             HistoryUpdate::AppendTail(cells) => PreparedHistoryUpdate::AppendTail {
                 cells,
-                render_width: history_render_width,
+                render_metrics: history_render_metrics,
             },
             HistoryUpdate::ReflowVisibleTail { cells, max_rows } => {
                 PreparedHistoryUpdate::ReflowVisibleTail {
                     cells,
-                    render_width: history_render_width,
+                    render_metrics: history_render_metrics,
                     max_rows,
                 }
             }
@@ -426,7 +426,10 @@ mod tests {
 
         let prepared = controller.prepare_projection(HistoryProjection {
             viewport_height: 5,
-            history_render_width: 80,
+            history_render_metrics: crate::terminal::HistoryRenderMetrics {
+                width: 80,
+                left_padding: 4,
+            },
             history_update: HistoryUpdate::ReplayAll(vec![
                 HistoryCell::user("oldest message"),
                 HistoryCell::user("middle message"),
@@ -437,11 +440,12 @@ mod tests {
         match prepared.history_update {
             PreparedHistoryUpdate::ReplayAll {
                 cells,
-                render_width,
+                render_metrics,
                 max_rows,
             } => {
                 assert_eq!(cells.len(), 3);
-                assert_eq!(render_width, 80);
+                assert_eq!(render_metrics.width, 80);
+                assert_eq!(render_metrics.left_padding, 4);
                 assert_eq!(max_rows, Some(3));
             }
             PreparedHistoryUpdate::AppendTail { .. } => panic!("expected replay-all path"),

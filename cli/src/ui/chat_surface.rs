@@ -2,6 +2,7 @@ use crate::app::TuiApp;
 use crate::app::runtime::display::should_show_welcome;
 use crate::state::NoticeLevel;
 use crate::terminal::Frame;
+use crate::terminal::HistoryRenderMetrics;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, ChatSurfaceModel, build_chat_surface_model};
 use crate::ui::widgets::welcome::WelcomeScreen;
 use agent_protocol::FrontendMode;
@@ -25,16 +26,20 @@ pub(crate) struct ChatSurfaceLayout {
 }
 
 impl ChatSurface {
-    pub(crate) fn render_width_for_area(area: Rect) -> usize {
-        Self::active_render_width_for_area(area)
+    pub(crate) fn history_render_metrics_for_area(area: Rect) -> HistoryRenderMetrics {
+        let content = centered_column(area, MAX_CONTENT_WIDTH);
+        let side_margin = ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH / 2;
+        HistoryRenderMetrics {
+            width: content
+                .width
+                .saturating_sub(ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH)
+                .max(MIN_RENDER_WIDTH) as usize,
+            left_padding: content.x.saturating_add(side_margin) as usize,
+        }
     }
 
     pub(crate) fn active_render_width_for_area(area: Rect) -> usize {
-        let content = centered_column(area, MAX_CONTENT_WIDTH);
-        content
-            .width
-            .saturating_sub(ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH)
-            .max(MIN_RENDER_WIDTH) as usize
+        Self::history_render_metrics_for_area(area).width
     }
 
     pub(crate) fn render(app: &mut TuiApp, frame: &mut Frame) {

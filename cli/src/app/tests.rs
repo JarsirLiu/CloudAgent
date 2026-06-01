@@ -2034,7 +2034,7 @@ fn history_projection_uses_same_wrap_width_as_active_transcript() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 30);
 
     assert_eq!(
-        ChatSurface::render_width_for_area(area),
+        ChatSurface::history_render_metrics_for_area(area).width,
         ChatSurface::active_render_width_for_area(area)
     );
 }

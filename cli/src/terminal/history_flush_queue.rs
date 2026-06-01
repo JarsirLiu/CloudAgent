@@ -1,6 +1,6 @@
 use ratatui::text::Line;
 
-use crate::terminal::{prepare_history_lines, prepare_history_tail_lines};
+use crate::terminal::{HistoryRenderMetrics, prepare_history_lines, prepare_history_tail_lines};
 use crate::ui::widgets::history_cell::HistoryCell;
 
 #[derive(Default)]
@@ -12,25 +12,25 @@ impl HistoryFlushQueue {
     pub(crate) fn replace_with_replay(
         &mut self,
         cells: Vec<HistoryCell>,
-        render_width: usize,
+        render_metrics: HistoryRenderMetrics,
         max_rows: Option<usize>,
     ) {
         self.pending_lines = if let Some(max_rows) = max_rows {
-            prepare_history_tail_lines(cells, render_width, max_rows)
+            prepare_history_tail_lines(cells, render_metrics, max_rows)
         } else {
-            prepare_history_lines(cells, render_width, false)
+            prepare_history_lines(cells, render_metrics, false)
         };
     }
 
     pub(crate) fn append_tail(
         &mut self,
         cells: Vec<HistoryCell>,
-        render_width: usize,
+        render_metrics: HistoryRenderMetrics,
         has_visible_history: bool,
     ) {
         let has_history = has_visible_history || !self.pending_lines.is_empty();
         self.pending_lines
-            .extend(prepare_history_lines(cells, render_width, has_history));
+            .extend(prepare_history_lines(cells, render_metrics, has_history));
     }
 
     pub(crate) fn pending_lines(&self) -> Vec<Line<'static>> {
@@ -45,7 +45,15 @@ impl HistoryFlushQueue {
 #[cfg(test)]
 mod tests {
     use super::HistoryFlushQueue;
+    use crate::terminal::HistoryRenderMetrics;
     use crate::ui::widgets::history_cell::HistoryCell;
+
+    fn metrics(width: usize) -> HistoryRenderMetrics {
+        HistoryRenderMetrics {
+            width,
+            left_padding: 0,
+        }
+    }
 
     fn plain(lines: Vec<ratatui::text::Line<'static>>) -> Vec<String> {
         lines
@@ -63,8 +71,8 @@ mod tests {
     fn append_tail_keeps_pending_lines_until_marked_flushed() {
         let mut queue = HistoryFlushQueue::default();
 
-        queue.append_tail(vec![HistoryCell::user("first")], 80, false);
-        queue.append_tail(vec![HistoryCell::user("second")], 80, false);
+        queue.append_tail(vec![HistoryCell::user("first")], metrics(80), false);
+        queue.append_tail(vec![HistoryCell::user("second")], metrics(80), false);
 
         let lines = plain(queue.pending_lines());
         assert_eq!(lines, vec!["› first", "", "› second"]);
@@ -77,8 +85,8 @@ mod tests {
     fn replay_replaces_pending_append_lines() {
         let mut queue = HistoryFlushQueue::default();
 
-        queue.append_tail(vec![HistoryCell::user("stale")], 80, false);
-        queue.replace_with_replay(vec![HistoryCell::user("canonical")], 80, None);
+        queue.append_tail(vec![HistoryCell::user("stale")], metrics(80), false);
+        queue.replace_with_replay(vec![HistoryCell::user("canonical")], metrics(80), None);
 
         let lines = plain(queue.pending_lines());
         assert_eq!(lines, vec!["› canonical"]);
@@ -94,7 +102,7 @@ mod tests {
                 HistoryCell::user("middle message"),
                 HistoryCell::user("latest message"),
             ],
-            80,
+            metrics(80),
             Some(3),
         );
 

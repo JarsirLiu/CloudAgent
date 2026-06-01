@@ -45,11 +45,11 @@ where
         match history_update {
             PreparedHistoryUpdate::ReplayAll {
                 cells,
-                render_width,
+                render_metrics,
                 max_rows,
             } => {
                 self.history_flush_queue
-                    .replace_with_replay(cells, render_width, max_rows);
+                    .replace_with_replay(cells, render_metrics, max_rows);
                 self.terminal.clear_scrollback_and_visible_screen_ansi()?;
                 self.terminal.ensure_viewport_height(viewport_height)?;
                 insert_history_lines_raw(self.terminal, self.history_flush_queue.pending_lines())?;
@@ -57,11 +57,11 @@ where
             }
             PreparedHistoryUpdate::AppendTail {
                 cells,
-                render_width,
+                render_metrics,
             } => {
                 self.history_flush_queue.append_tail(
                     cells,
-                    render_width,
+                    render_metrics,
                     self.terminal.visible_history_rows() > 0,
                 );
                 self.terminal.ensure_viewport_height(viewport_height)?;
@@ -70,11 +70,11 @@ where
             }
             PreparedHistoryUpdate::ReflowVisibleTail {
                 cells,
-                render_width,
+                render_metrics,
                 max_rows,
             } => {
                 self.history_flush_queue
-                    .replace_with_replay(cells, render_width, Some(max_rows));
+                    .replace_with_replay(cells, render_metrics, Some(max_rows));
                 self.terminal.ensure_viewport_height(viewport_height)?;
                 repaint_history_tail_raw(self.terminal, self.history_flush_queue.pending_lines())?;
                 self.history_flush_queue.mark_flushed();
@@ -91,7 +91,7 @@ mod tests {
     use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
     use crate::terminal::custom_terminal::Terminal;
     use crate::terminal::history_flush_queue::HistoryFlushQueue;
-    use crate::terminal::{PreparedHistoryProjection, PreparedHistoryUpdate};
+    use crate::terminal::{HistoryRenderMetrics, PreparedHistoryProjection, PreparedHistoryUpdate};
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryTone};
     use ratatui::backend::{Backend, WindowSize};
     use ratatui::buffer::Cell;
@@ -210,6 +210,13 @@ mod tests {
         }
     }
 
+    fn metrics(width: usize) -> HistoryRenderMetrics {
+        HistoryRenderMetrics {
+            width,
+            left_padding: 0,
+        }
+    }
+
     fn test_capabilities() -> TerminalCapabilities {
         TerminalCapabilities {
             color_depth: ColorDepth::NoColor,
@@ -232,7 +239,7 @@ mod tests {
                     "visible prefix and final suffix",
                     HistoryFormat::Markdown,
                 )],
-                render_width: 80,
+                render_metrics: metrics(80),
             }),
             |_frame| {},
         );
@@ -248,7 +255,7 @@ mod tests {
                         "next message",
                         HistoryFormat::Markdown,
                     )],
-                    render_width: 80,
+                    render_metrics: metrics(80),
                 }),
                 |_frame| {},
             )
@@ -275,7 +282,7 @@ mod tests {
                         Some("running @ D:/learn/gifti/cloudagent".to_string()),
                         HistoryTone::Control,
                     )],
-                    render_width: 100,
+                    render_metrics: metrics(100),
                 }),
                 |_frame| {},
             )
@@ -289,7 +296,7 @@ mod tests {
                         "已改成真实生效的时间戳命名。\n\n最后一句不能丢。",
                         HistoryFormat::Markdown,
                     )],
-                    render_width: 100,
+                    render_metrics: metrics(100),
                 }),
                 |_frame| {},
             )
@@ -324,7 +331,7 @@ mod tests {
                     6,
                     PreparedHistoryUpdate::AppendTail {
                         cells: vec![command_cell.clone()],
-                        render_width: 100,
+                        render_metrics: metrics(100),
                     },
                 ),
                 |_frame| {},
@@ -348,7 +355,7 @@ mod tests {
                     6,
                     PreparedHistoryUpdate::AppendTail {
                         cells: vec![stream_head, stream_tail],
-                        render_width: 100,
+                        render_metrics: metrics(100),
                     },
                 ),
                 |_frame| {},
@@ -371,7 +378,7 @@ mod tests {
                     5,
                     PreparedHistoryUpdate::ReplayAll {
                         cells: vec![command_cell, final_agent],
-                        render_width: 88,
+                        render_metrics: metrics(88),
                         max_rows: None,
                     },
                 ),
@@ -409,7 +416,7 @@ mod tests {
                     8,
                     PreparedHistoryUpdate::ReplayAll {
                         cells: history.clone(),
-                        render_width: 100,
+                        render_metrics: metrics(100),
                         max_rows: None,
                     },
                 ),
@@ -423,7 +430,7 @@ mod tests {
                     4,
                     PreparedHistoryUpdate::ReflowVisibleTail {
                         cells: history,
-                        render_width: 100,
+                        render_metrics: metrics(100),
                         max_rows: 14,
                     },
                 ),
