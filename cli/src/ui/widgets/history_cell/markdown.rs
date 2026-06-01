@@ -20,6 +20,7 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let mut style_stack: Vec<Style> = vec![Style::default().fg(Color::Rgb(200, 200, 210))];
     let mut in_code_block = false;
     let mut code_lang = String::new();
+    let mut code_indent = String::new();
     let mut code_buf = String::new();
     let mut list_stack: Vec<Option<u64>> = Vec::new();
     let mut line_prefix = String::new();
@@ -45,24 +46,23 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                     CodeBlockKind::Fenced(lang) => lang.to_string(),
                     _ => String::new(),
                 };
+                code_indent = match &kind {
+                    CodeBlockKind::Fenced(_) => String::new(),
+                    CodeBlockKind::Indented => "    ".to_string(),
+                };
                 code_buf.clear();
             }
             Event::End(TagEnd::CodeBlock) => {
                 in_code_block = false;
                 for line in code_buf.lines() {
-                    let mut spans = vec![Span::raw("  ")];
-                    spans.extend(highlight_code_line(line, &code_lang));
-                    let vis = display_width(
-                        &spans
-                            .iter()
-                            .map(|span| span.content.as_ref())
-                            .collect::<String>(),
-                    );
-                    if vis < width {
-                        spans.push(Span::raw(" ".repeat(width - vis)));
+                    let mut spans = Vec::new();
+                    if !code_indent.is_empty() {
+                        spans.push(Span::raw(code_indent.clone()));
                     }
-                    out.push(Line::from(spans).style(Style::default().bg(Color::Rgb(25, 28, 35))));
+                    spans.extend(highlight_code_line(line, &code_lang));
+                    out.push(Line::from(spans));
                 }
+                code_indent.clear();
                 out.push(Line::raw(""));
             }
             Event::Start(Tag::Heading { level, .. }) => {
@@ -513,6 +513,7 @@ fn grapheme_len(value: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{render_markdown, render_plaintext};
+    use ratatui::style::Color;
     use ratatui::style::Modifier;
 
     fn joined(lines: &[ratatui::text::Line<'static>]) -> String {
@@ -578,5 +579,37 @@ mod tests {
         assert!(heading.spans[0].style.add_modifier.contains(Modifier::BOLD));
         assert_eq!(heading.spans[1].content.as_ref(), "Summary");
         assert!(heading.spans[1].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn fenced_code_blocks_do_not_fill_the_line_background() {
+        let rendered = render_markdown("```text\nlet value = 1;\n```", 80);
+        let code = rendered.first().expect("code line");
+        let text = code
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert_eq!(text, "let value = 1;");
+        assert_eq!(code.style.bg, None);
+        assert!(
+            code.spans
+                .iter()
+                .all(|span| span.style.bg != Some(Color::Rgb(25, 28, 35)))
+        );
+    }
+
+    #[test]
+    fn fenced_code_blocks_without_language_are_not_indented_as_indented_code() {
+        let rendered = render_markdown("```\nplain\n```", 80);
+        let code = rendered.first().expect("code line");
+        let text = code
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert_eq!(text, "plain");
     }
 }
