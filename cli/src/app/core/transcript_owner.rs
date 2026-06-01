@@ -1,6 +1,9 @@
 use crate::app::conversation::projection::{HistoryTurnCells, project_conversation_history};
 use crate::app::core::active_cell_controller::ActiveCellController;
-use crate::app::core::committed_transcript_store::CommittedTranscriptStore;
+use crate::app::core::active_turn::ConsolidateAgentMessage;
+use crate::app::core::committed_transcript_store::{
+    CommittedTranscriptStore, ProvisionalAgentMessageFootprint,
+};
 use crate::ui::widgets::history_cell::HistoryCell;
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind, TurnState};
@@ -9,15 +12,42 @@ use std::collections::HashSet;
 #[derive(Default)]
 pub(crate) struct TranscriptOwner {
     committed_store: CommittedTranscriptStore,
+    pending_store: CommittedTranscriptStore,
     active_cell_controller: ActiveCellController,
     emitted_turn_ids: HashSet<String>,
+    history_replay_requested: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScrollbackReflow {
+    NotRequired,
+    Required,
+}
+
+impl ScrollbackReflow {
+    fn for_consolidated_agent_message(
+        pending_replaced: bool,
+        committed_replaced: bool,
+        pending_footprint: ProvisionalAgentMessageFootprint,
+        committed_footprint: ProvisionalAgentMessageFootprint,
+    ) -> Self {
+        if committed_replaced
+            && (!pending_replaced || committed_footprint.rendered_beyond(pending_footprint))
+        {
+            Self::Required
+        } else {
+            Self::NotRequired
+        }
+    }
 }
 
 impl TranscriptOwner {
     pub(crate) fn clear(&mut self) {
         self.committed_store.clear();
+        self.pending_store.clear();
         self.active_cell_controller.clear();
         self.emitted_turn_ids.clear();
+        self.history_replay_requested = false;
     }
 
     pub(crate) fn push_live_cell(&mut self, cell: HistoryCell) {
@@ -78,7 +108,11 @@ impl TranscriptOwner {
     }
 
     pub(crate) fn mark_committed_history_replayed(&mut self) {
-        self.committed_store.mark_replayed();
+        self.pending_store.clear();
+    }
+
+    pub(crate) fn take_history_replay_requested(&mut self) -> bool {
+        std::mem::take(&mut self.history_replay_requested)
     }
 
     pub(crate) fn rebuild_from_history_snapshot(
@@ -109,24 +143,24 @@ impl TranscriptOwner {
     }
 
     pub(crate) fn clear_active_turn(&mut self, expand_details: bool) {
-        let replay_cells = self
+        let effects = self
             .active_cell_controller
             .clear_active_turn(expand_details);
-        self.queue_history_cells(replay_cells);
+        self.apply_active_turn_effects(effects);
     }
 
     pub(crate) fn start_local_user(&mut self, user_input: Vec<InputItem>, expand_details: bool) {
-        let replay_cells = self
+        let effects = self
             .active_cell_controller
             .start_local_user(user_input, expand_details);
-        self.queue_history_cells(replay_cells);
+        self.apply_active_turn_effects(effects);
     }
 
     pub(crate) fn bind_turn_id(&mut self, turn_id: TurnId, expand_details: bool) {
-        let replay_cells = self
+        let effects = self
             .active_cell_controller
             .bind_turn_id(turn_id, expand_details);
-        self.queue_history_cells(replay_cells);
+        self.apply_active_turn_effects(effects);
     }
 
     pub(crate) fn start_item(
@@ -137,10 +171,10 @@ impl TranscriptOwner {
         title: Option<String>,
         expand_details: bool,
     ) {
-        let replay_cells =
+        let effects =
             self.active_cell_controller
                 .start_item(turn_id, item_id, kind, title, expand_details);
-        self.queue_history_cells(replay_cells);
+        self.apply_active_turn_effects(effects);
     }
 
     pub(crate) fn append_agent_delta(
@@ -150,10 +184,10 @@ impl TranscriptOwner {
         delta: String,
         expand_details: bool,
     ) {
-        let replay_cells =
+        let effects =
             self.active_cell_controller
                 .append_agent_delta(turn_id, item_id, delta, expand_details);
-        self.queue_history_cells(replay_cells);
+        self.apply_active_turn_effects(effects);
     }
 
     pub(crate) fn append_reasoning_delta(
@@ -163,13 +197,13 @@ impl TranscriptOwner {
         delta: String,
         expand_details: bool,
     ) {
-        let replay_cells = self.active_cell_controller.append_reasoning_delta(
+        let effects = self.active_cell_controller.append_reasoning_delta(
             turn_id,
             item_id,
             delta,
             expand_details,
         );
-        self.queue_history_cells(replay_cells);
+        self.apply_active_turn_effects(effects);
     }
 
     pub(crate) fn complete_item(
@@ -179,26 +213,33 @@ impl TranscriptOwner {
         item: TranscriptItem,
         expand_details: bool,
     ) {
-        let replay_cells =
+        let effects =
             self.active_cell_controller
                 .complete_item(turn_id, item_id, item, expand_details);
-        self.queue_history_cells(replay_cells);
+        self.apply_active_turn_effects(effects);
     }
 
     pub(crate) fn complete_turn(&mut self, turn_id: TurnId, expand_details: bool) {
-        let replay_cells = self
+        let effects = self
             .active_cell_controller
             .complete_turn(turn_id, expand_details);
-        self.queue_history_cells(replay_cells);
+        self.apply_active_turn_effects(effects);
     }
 
     #[cfg(test)]
     pub(crate) fn pending_history_cells(&self) -> Vec<HistoryCell> {
-        self.committed_store.pending_cells()
+        self.pending_store.cells()
     }
 
     pub(crate) fn drain_pending_history_cells(&mut self) -> Vec<HistoryCell> {
-        self.committed_store.drain_unrendered_tail()
+        let cells = self
+            .pending_store
+            .cells()
+            .into_iter()
+            .filter(|cell| !cell.body().trim().is_empty())
+            .collect::<Vec<_>>();
+        self.pending_store.clear();
+        cells
     }
 
     pub(crate) fn active_turn_id(&self) -> Option<&str> {
@@ -206,6 +247,41 @@ impl TranscriptOwner {
     }
 
     fn queue_history_cells(&mut self, cells: Vec<HistoryCell>) {
-        self.committed_store.append_cells(cells);
+        self.committed_store.append_cells(cells.clone());
+        self.pending_store.append_cells(cells);
+    }
+
+    fn apply_active_turn_effects(
+        &mut self,
+        effects: crate::app::core::active_cell_controller::AppliedActiveTurnEffects,
+    ) {
+        self.queue_history_cells(effects.replay_cells);
+        if let Some(message) = effects.consolidate_agent_message
+            && self.consolidate_agent_message(message) == ScrollbackReflow::Required
+        {
+            self.history_replay_requested = true;
+        }
+    }
+
+    fn consolidate_agent_message(&mut self, message: ConsolidateAgentMessage) -> ScrollbackReflow {
+        let pending_footprint = self
+            .pending_store
+            .provisional_agent_message_footprint(&message.item_id);
+        let committed_footprint = self
+            .committed_store
+            .provisional_agent_message_footprint(&message.item_id);
+        let pending_replaced = self
+            .pending_store
+            .consolidate_agent_message(&message.item_id, message.cell.clone());
+        let committed_replaced = self
+            .committed_store
+            .consolidate_agent_message(&message.item_id, message.cell);
+
+        ScrollbackReflow::for_consolidated_agent_message(
+            pending_replaced,
+            committed_replaced,
+            pending_footprint,
+            committed_footprint,
+        )
     }
 }

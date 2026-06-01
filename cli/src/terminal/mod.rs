@@ -2,6 +2,7 @@ mod color_compat;
 pub mod custom_terminal;
 mod draw_coordinator;
 pub mod events;
+pub(crate) mod history_flush_queue;
 mod insert_history;
 mod keyboard_modes;
 mod resize_reflow_cap;
@@ -12,7 +13,6 @@ use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
-use ratatui::text::Line;
 use std::io::{self, stdout};
 use std::panic;
 use std::sync::Once;
@@ -24,9 +24,10 @@ pub use color_compat::apply_color_cli_preference;
 pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
+use history_flush_queue::HistoryFlushQueue;
 pub(crate) use insert_history::{
     insert_history_lines_raw, prepare_history_lines, prepare_history_tail_lines,
-    repaint_visible_history_tail,
+    repaint_history_tail_raw,
 };
 pub(crate) use resize_reflow_cap::resize_reflow_max_rows;
 
@@ -35,34 +36,44 @@ static INSTALL_PANIC_HOOK: Once = Once::new();
 pub(crate) struct TerminalGuard {
     pub(crate) terminal: custom_terminal::Terminal<CrosstermBackend<io::Stdout>>,
     capabilities: TerminalCapabilities,
+    history_flush_queue: HistoryFlushQueue,
 }
 
 pub(crate) struct HistoryProjection {
     pub(crate) viewport_height: u16,
     pub(crate) history_render_width: usize,
     pub(crate) history_update: HistoryUpdate,
-    pub(crate) history_repair: Option<HistoryRepair>,
 }
 
 pub(crate) struct PreparedHistoryProjection {
     pub(crate) viewport_height: u16,
     pub(crate) history_update: PreparedHistoryUpdate,
-    pub(crate) history_repair_tail: Vec<Line<'static>>,
-}
-
-pub(crate) struct HistoryRepair {
-    pub(crate) cells: Vec<HistoryCell>,
-    pub(crate) max_rows: usize,
 }
 
 pub(crate) enum HistoryUpdate {
     ReplayAll(Vec<HistoryCell>),
     AppendTail(Vec<HistoryCell>),
+    ReflowVisibleTail {
+        cells: Vec<HistoryCell>,
+        max_rows: usize,
+    },
 }
 
 pub(crate) enum PreparedHistoryUpdate {
-    ReplayAll(Vec<Line<'static>>),
-    AppendTail(Vec<Line<'static>>),
+    ReplayAll {
+        cells: Vec<HistoryCell>,
+        render_width: usize,
+        max_rows: Option<usize>,
+    },
+    AppendTail {
+        cells: Vec<HistoryCell>,
+        render_width: usize,
+    },
+    ReflowVisibleTail {
+        cells: Vec<HistoryCell>,
+        render_width: usize,
+        max_rows: usize,
+    },
 }
 
 pub(crate) fn init() -> Result<TerminalGuard> {
@@ -77,6 +88,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
         Ok(TerminalGuard {
             terminal,
             capabilities,
+            history_flush_queue: HistoryFlushQueue::default(),
         })
     })();
     if init_result.is_err() {
@@ -115,12 +127,14 @@ impl TerminalGuard {
     ) -> Result<()> {
         if self.capabilities.supports_synchronized_update {
             stdout().sync_update(|_| {
-                let mut coordinator = DrawCoordinator::new(&mut self.terminal);
+                let mut coordinator =
+                    DrawCoordinator::new(&mut self.terminal, &mut self.history_flush_queue);
                 coordinator.draw_frame(projection, render)?;
                 Ok::<(), anyhow::Error>(())
             })??;
         } else {
-            let mut coordinator = DrawCoordinator::new(&mut self.terminal);
+            let mut coordinator =
+                DrawCoordinator::new(&mut self.terminal, &mut self.history_flush_queue);
             coordinator.draw_frame(projection, render)?;
         }
         Ok(())

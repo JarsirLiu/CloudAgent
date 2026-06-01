@@ -1,13 +1,10 @@
 use crate::app::TuiApp;
 use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::terminal::HistoryProjection;
-use crate::terminal::HistoryRepair;
 use crate::terminal::HistoryUpdate;
 use crate::terminal::PreparedHistoryProjection;
 use crate::terminal::PreparedHistoryUpdate;
 use crate::terminal::TerminalGuard;
-use crate::terminal::prepare_history_lines;
-use crate::terminal::prepare_history_tail_lines;
 use crate::ui::chat_surface::ChatSurface;
 use anyhow::Result;
 use ratatui::layout::{Rect, Size};
@@ -16,7 +13,6 @@ use ratatui::layout::{Rect, Size};
 pub(crate) struct TerminalProjectionController {
     reflow: TranscriptReflowState,
     reflow_policy: ReflowPolicy,
-    last_viewport_height: Option<u16>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,6 +28,7 @@ struct TranscriptReflowState {
     last_replay_reason: ReplayReason,
     last_observed_terminal_size: Option<Size>,
     last_replayed_terminal_size: Option<Size>,
+    last_viewport_height: Option<u16>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -65,30 +62,28 @@ impl TerminalProjectionController {
         viewport_height: u16,
         terminal_size: Size,
         has_active_stream: bool,
-        _history_capacity_rows: u16,
     ) -> HistoryProjection {
-        let viewport_shrank = self
-            .last_viewport_height
-            .is_some_and(|previous| viewport_height < previous);
-        self.last_viewport_height = Some(viewport_height);
+        let transcript_requested_replay = transcript_owner.take_history_replay_requested();
+        let should_replay = self.reflow.begin_frame(terminal_size, has_active_stream)
+            || transcript_requested_replay;
 
-        let should_replay = self.reflow.begin_frame(terminal_size, has_active_stream);
+        let visible_tail_reflow_rows =
+            self.reflow
+                .visible_tail_reflow_rows(viewport_height, terminal_size, should_replay);
 
         let history_update = if should_replay {
             let committed = transcript_owner.committed_history_cells();
             transcript_owner.mark_committed_history_replayed();
             HistoryUpdate::ReplayAll(committed)
+        } else if let Some(max_rows) = visible_tail_reflow_rows {
+            let committed = transcript_owner.committed_history_cells();
+            transcript_owner.mark_committed_history_replayed();
+            HistoryUpdate::ReflowVisibleTail {
+                cells: committed,
+                max_rows,
+            }
         } else {
             HistoryUpdate::AppendTail(transcript_owner.drain_pending_history_cells())
-        };
-        let history_capacity_rows = terminal_size.height.saturating_sub(viewport_height) as usize;
-        let history_repair = if !should_replay && viewport_shrank && history_capacity_rows > 0 {
-            Some(HistoryRepair {
-                cells: transcript_owner.committed_history_cells(),
-                max_rows: history_capacity_rows,
-            })
-        } else {
-            None
         };
 
         HistoryProjection {
@@ -100,7 +95,6 @@ impl TerminalProjectionController {
                 terminal_size.height.max(1),
             )),
             history_update,
-            history_repair,
         }
     }
 
@@ -112,55 +106,47 @@ impl TerminalProjectionController {
         let size = terminal.terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
         let viewport_height = ChatSurface::desired_viewport_height(app, area);
-        let history_capacity_rows = area.height.saturating_sub(viewport_height);
         let has_active_stream = app.transcript_owner.active_turn_id().is_some();
         let plan = self.build_plan(
             &mut app.transcript_owner,
             viewport_height,
             size,
             has_active_stream,
-            history_capacity_rows,
         );
-        let prepared = self.prepare_projection(plan, terminal.terminal.visible_history_rows() > 0);
+        let prepared = self.prepare_projection(plan);
         terminal.draw_projection(prepared, |frame| app.render(frame))?;
         Ok(())
     }
 
-    fn prepare_projection(
-        &self,
-        projection: HistoryProjection,
-        has_existing_history: bool,
-    ) -> PreparedHistoryProjection {
+    fn prepare_projection(&self, projection: HistoryProjection) -> PreparedHistoryProjection {
         let HistoryProjection {
             viewport_height,
             history_render_width,
             history_update,
-            history_repair,
         } = projection;
 
         let history_update = match history_update {
-            HistoryUpdate::ReplayAll(cells) => {
-                let lines = if let Some(max_rows) = self.reflow_policy.max_rows {
-                    prepare_history_tail_lines(cells, history_render_width, max_rows)
-                } else {
-                    prepare_history_lines(cells, history_render_width, false)
-                };
-                PreparedHistoryUpdate::ReplayAll(lines)
+            HistoryUpdate::ReplayAll(cells) => PreparedHistoryUpdate::ReplayAll {
+                cells,
+                render_width: history_render_width,
+                max_rows: self.reflow_policy.max_rows,
+            },
+            HistoryUpdate::AppendTail(cells) => PreparedHistoryUpdate::AppendTail {
+                cells,
+                render_width: history_render_width,
+            },
+            HistoryUpdate::ReflowVisibleTail { cells, max_rows } => {
+                PreparedHistoryUpdate::ReflowVisibleTail {
+                    cells,
+                    render_width: history_render_width,
+                    max_rows,
+                }
             }
-            HistoryUpdate::AppendTail(cells) => PreparedHistoryUpdate::AppendTail(
-                prepare_history_lines(cells, history_render_width, has_existing_history),
-            ),
         };
-        let history_repair_tail = history_repair
-            .map(|repair| {
-                prepare_history_tail_lines(repair.cells, history_render_width, repair.max_rows)
-            })
-            .unwrap_or_default();
 
         PreparedHistoryProjection {
             viewport_height,
             history_update,
-            history_repair_tail,
         }
     }
 }
@@ -220,13 +206,27 @@ impl TranscriptReflowState {
             false
         }
     }
+
+    fn visible_tail_reflow_rows(
+        &mut self,
+        viewport_height: u16,
+        terminal_size: Size,
+        replaying_all: bool,
+    ) -> Option<usize> {
+        let previous = self.last_viewport_height.replace(viewport_height);
+        if replaying_all || previous.is_none_or(|previous| viewport_height >= previous) {
+            return None;
+        }
+        let history_capacity = terminal_size.height.saturating_sub(viewport_height) as usize;
+        (history_capacity > 0).then_some(history_capacity)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ReflowPolicy, TerminalProjectionController};
     use crate::app::core::transcript_owner::TranscriptOwner;
-    use crate::terminal::{HistoryProjection, HistoryRepair, HistoryUpdate, PreparedHistoryUpdate};
+    use crate::terminal::{HistoryProjection, HistoryUpdate, PreparedHistoryUpdate};
     use crate::ui::widgets::history_cell::HistoryCell;
     use ratatui::layout::Size;
 
@@ -240,11 +240,12 @@ mod tests {
         let mut transcript_owner = TranscriptOwner::default();
         controller.request_history_replay();
 
-        let plan = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false, 0);
+        let plan = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false);
 
         match plan.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
+            HistoryUpdate::ReflowVisibleTail { .. } => panic!("expected replay-all path"),
         }
     }
 
@@ -253,16 +254,18 @@ mod tests {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
-        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false, 0);
+        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false);
         match first.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
+            HistoryUpdate::ReflowVisibleTail { .. } => panic!("expected replay-all path"),
         }
 
-        let second = controller.build_plan(&mut transcript_owner, 5, size(100, 24), false, 0);
+        let second = controller.build_plan(&mut transcript_owner, 5, size(100, 24), false);
         match second.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
+            HistoryUpdate::ReflowVisibleTail { .. } => panic!("expected replay-all path"),
         }
     }
 
@@ -271,28 +274,34 @@ mod tests {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
-        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false, 0);
+        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false);
         assert!(matches!(first.history_update, HistoryUpdate::ReplayAll(_)));
 
-        let second = controller.build_plan(&mut transcript_owner, 5, size(80, 30), false, 4);
+        let second = controller.build_plan(&mut transcript_owner, 5, size(80, 30), false);
         match second.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected replay after metrics changed"),
+            HistoryUpdate::ReflowVisibleTail { .. } => {
+                panic!("expected replay after metrics changed")
+            }
         }
     }
 
     #[test]
-    fn viewport_height_change_does_not_replay_history() {
+    fn viewport_expand_does_not_replay_or_repair_history() {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
-        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false, 0);
+        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false);
         assert!(matches!(first.history_update, HistoryUpdate::ReplayAll(_)));
 
-        let second = controller.build_plan(&mut transcript_owner, 11, size(80, 24), false, 0);
+        let second = controller.build_plan(&mut transcript_owner, 11, size(80, 24), false);
         match second.history_update {
             HistoryUpdate::AppendTail(cells) => assert!(cells.is_empty()),
             HistoryUpdate::ReplayAll(_) => panic!("viewport-only layout changes must not replay"),
+            HistoryUpdate::ReflowVisibleTail { .. } => {
+                panic!("viewport expand must not reflow visible tail")
+            }
         }
     }
 
@@ -301,20 +310,24 @@ mod tests {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
-        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), true, 0);
+        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), true);
         assert!(matches!(first.history_update, HistoryUpdate::ReplayAll(_)));
 
-        let resized = controller.build_plan(&mut transcript_owner, 5, size(100, 24), true, 0);
+        let resized = controller.build_plan(&mut transcript_owner, 5, size(100, 24), true);
         match resized.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("streaming resize should replay now"),
+            HistoryUpdate::ReflowVisibleTail { .. } => panic!("streaming resize should replay now"),
         }
 
         controller.on_stream_boundary();
-        let repaired = controller.build_plan(&mut transcript_owner, 5, size(100, 24), false, 0);
+        let repaired = controller.build_plan(&mut transcript_owner, 5, size(100, 24), false);
         match repaired.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("expected final repair after stream boundary"),
+            HistoryUpdate::ReflowVisibleTail { .. } => {
+                panic!("expected final repair after stream boundary")
+            }
         }
     }
 
@@ -323,17 +336,21 @@ mod tests {
         let mut controller = TerminalProjectionController::default();
         let mut transcript_owner = TranscriptOwner::default();
 
-        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), true, 0);
+        let first = controller.build_plan(&mut transcript_owner, 5, size(80, 24), true);
         match first.history_update {
             HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
             HistoryUpdate::AppendTail(_) => panic!("first frame still establishes scrollback"),
+            HistoryUpdate::ReflowVisibleTail { .. } => {
+                panic!("first frame still establishes scrollback")
+            }
         }
 
         controller.on_stream_boundary();
-        let second = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false, 0);
+        let second = controller.build_plan(&mut transcript_owner, 5, size(80, 24), false);
         match second.history_update {
             HistoryUpdate::AppendTail(cells) => assert!(cells.is_empty()),
             HistoryUpdate::ReplayAll(_) => panic!("no resize happened during stream"),
+            HistoryUpdate::ReflowVisibleTail { .. } => panic!("no resize happened during stream"),
         }
     }
 
@@ -347,95 +364,47 @@ mod tests {
             HistoryCell::user("latest message"),
         ]);
 
-        let first = controller.build_plan(&mut transcript_owner, 12, size(80, 24), false, 0);
+        let first = controller.build_plan(&mut transcript_owner, 12, size(80, 24), false);
         assert!(matches!(first.history_update, HistoryUpdate::ReplayAll(_)));
-        assert!(first.history_repair.is_none());
 
-        let second = controller.build_plan(&mut transcript_owner, 6, size(80, 24), false, 0);
+        let second = controller.build_plan(&mut transcript_owner, 6, size(80, 24), false);
         match second.history_update {
-            HistoryUpdate::AppendTail(cells) => assert!(cells.is_empty()),
-            HistoryUpdate::ReplayAll(_) => panic!("viewport shrink should repair, not replay"),
+            HistoryUpdate::ReflowVisibleTail { cells, max_rows } => {
+                assert_eq!(cells.len(), 3);
+                assert_eq!(max_rows, 18);
+            }
+            HistoryUpdate::AppendTail(_) => panic!("viewport shrink should reflow visible tail"),
+            HistoryUpdate::ReplayAll(_) => panic!("viewport shrink should reflow, not replay all"),
         }
-        let repair = second.history_repair.expect("expected tail repair");
-        assert_eq!(repair.max_rows, 18);
-        assert_eq!(repair.cells.len(), 3);
     }
 
     #[test]
-    fn reflow_policy_caps_prepared_replay_lines_without_changing_plan() {
+    fn reflow_policy_is_carried_to_draw_layer_without_rendering_lines() {
         let mut controller = TerminalProjectionController::default();
         controller.set_reflow_policy(ReflowPolicy { max_rows: Some(3) });
 
-        let prepared = controller.prepare_projection(
-            HistoryProjection {
-                viewport_height: 5,
-                history_render_width: 80,
-                history_update: HistoryUpdate::ReplayAll(vec![
-                    HistoryCell::user("oldest message"),
-                    HistoryCell::user("middle message"),
-                    HistoryCell::user("latest message"),
-                ]),
-                history_repair: None,
-            },
-            false,
-        );
+        let prepared = controller.prepare_projection(HistoryProjection {
+            viewport_height: 5,
+            history_render_width: 80,
+            history_update: HistoryUpdate::ReplayAll(vec![
+                HistoryCell::user("oldest message"),
+                HistoryCell::user("middle message"),
+                HistoryCell::user("latest message"),
+            ]),
+        });
 
         match prepared.history_update {
-            PreparedHistoryUpdate::ReplayAll(lines) => {
-                let rendered = lines
-                    .iter()
-                    .map(|line| {
-                        line.spans
-                            .iter()
-                            .map(|span| span.content.as_ref())
-                            .collect::<String>()
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                assert!(lines.len() <= 3);
-                assert!(rendered.contains("latest message"));
-                assert!(!rendered.contains("oldest message"));
+            PreparedHistoryUpdate::ReplayAll {
+                cells,
+                render_width,
+                max_rows,
+            } => {
+                assert_eq!(cells.len(), 3);
+                assert_eq!(render_width, 80);
+                assert_eq!(max_rows, Some(3));
             }
-            PreparedHistoryUpdate::AppendTail(_) => panic!("expected replay-all path"),
+            PreparedHistoryUpdate::AppendTail { .. } => panic!("expected replay-all path"),
+            PreparedHistoryUpdate::ReflowVisibleTail { .. } => panic!("expected replay-all path"),
         }
-    }
-
-    #[test]
-    fn prepare_projection_caps_history_repair_tail() {
-        let controller = TerminalProjectionController::default();
-
-        let prepared = controller.prepare_projection(
-            HistoryProjection {
-                viewport_height: 5,
-                history_render_width: 80,
-                history_update: HistoryUpdate::AppendTail(Vec::new()),
-                history_repair: Some(HistoryRepair {
-                    cells: vec![
-                        HistoryCell::user("oldest message"),
-                        HistoryCell::user("middle message"),
-                        HistoryCell::user("latest message"),
-                    ],
-                    max_rows: 3,
-                }),
-            },
-            true,
-        );
-
-        let rendered = prepared
-            .history_repair_tail
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(prepared.history_repair_tail.len() <= 3);
-        assert!(rendered.contains("latest message"));
-        assert!(!rendered.contains("oldest message"));
     }
 }

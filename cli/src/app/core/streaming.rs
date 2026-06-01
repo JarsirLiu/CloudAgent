@@ -31,14 +31,25 @@ impl AgentStreamController {
         self.project()
     }
 
-    pub(crate) fn finish(mut self) -> AgentStreamFinish {
+    pub(crate) fn current_live_cell(&self) -> Option<HistoryCell> {
+        let live_source = self.source[self.stable_source_len..].to_string();
+        (!live_source.is_empty()).then(|| self.agent_cell(live_source, self.emitted_any))
+    }
+
+    pub(crate) fn finish_with_final_text(mut self, final_text: Option<&str>) -> AgentStreamFinish {
         let mut stable_cells = Vec::new();
-        if self.stable_source_len < self.source.len() {
+        let final_text = final_text.filter(|text| !text.is_empty());
+        let source = match final_text {
+            Some(text) if text.len() > self.source.len() && text.starts_with(&self.source) => text,
+            _ => &self.source,
+        };
+
+        if self.stable_source_len < source.len() {
             stable_cells.push(self.agent_cell(
-                self.source[self.stable_source_len..].to_string(),
+                source[self.stable_source_len..].to_string(),
                 self.emitted_any,
             ));
-            self.stable_source_len = self.source.len();
+            self.stable_source_len = source.len();
             self.emitted_any = true;
         }
         AgentStreamFinish {
@@ -66,6 +77,8 @@ impl AgentStreamController {
             live_cell: (!live_source.is_empty()).then(|| {
                 HistoryCell::agent("", live_source, HistoryFormat::Markdown)
                     .with_stream_continuation(self.emitted_any)
+                    .with_provisional_stream(true)
+                    .with_stream_item_id(self.item_id.clone())
             }),
         }
     }
@@ -73,6 +86,8 @@ impl AgentStreamController {
     fn agent_cell(&self, source: String, continuation: bool) -> HistoryCell {
         HistoryCell::agent("", source, HistoryFormat::Markdown)
             .with_stream_continuation(continuation)
+            .with_provisional_stream(true)
+            .with_stream_item_id(self.item_id.clone())
     }
 }
 
@@ -199,7 +214,7 @@ mod tests {
             Some("| a | b |\n| - | - |\n| 1 | 2 |\n")
         );
 
-        let finish = stream.finish();
+        let finish = stream.finish_with_final_text(None);
         assert_eq!(
             bodies(finish.stable_cells),
             vec!["| a | b |\n| - | - |\n| 1 | 2 |\n"]

@@ -10,7 +10,6 @@ pub(crate) enum ChatSurfaceBody {
 
 pub(crate) struct ActiveCellSurface {
     pub(crate) lines: Vec<Line<'static>>,
-    pub(crate) scroll_top: u16,
 }
 
 pub(crate) struct ChatSurfaceModel {
@@ -31,11 +30,8 @@ pub(crate) fn build_chat_surface_model(
     } else {
         let lines = transcript_lines_for_width(app, render_width);
         let body_height = transcript_container_height(&lines, render_width);
-        let scroll_top = app
-            .active_transcript_scroll
-            .top_row_for_render(body_height as usize, max_body_height);
         ChatSurfaceModel {
-            body: ChatSurfaceBody::ActiveCell(ActiveCellSurface { lines, scroll_top }),
+            body: ChatSurfaceBody::ActiveCell(ActiveCellSurface { lines }),
             body_height,
         }
     }
@@ -57,11 +53,21 @@ fn transcript_lines(active_cell: Option<&HistoryCell>, render_width: usize) -> V
     if let Some(cell) = active_cell {
         push_cell_lines(&mut lines, cell, render_width);
     }
+    trim_trailing_blank_lines(&mut lines);
     lines
 }
 
 fn push_cell_lines(lines: &mut Vec<Line<'static>>, cell: &HistoryCell, render_width: usize) {
     if !cell.body().trim().is_empty() {
         lines.extend(cell.to_live_transcript_lines(render_width));
+    }
+}
+
+fn trim_trailing_blank_lines(lines: &mut Vec<Line<'static>>) {
+    while lines
+        .last()
+        .is_some_and(|line| line.to_string().trim().is_empty())
+    {
+        lines.pop();
     }
 }

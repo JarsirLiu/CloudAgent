@@ -160,17 +160,12 @@ where
         draw_updates(&mut self.backend, updates.into_iter(), self.capabilities)
     }
 
-    pub(crate) fn clear_rows(&mut self, start_y: u16, end_y_exclusive: u16) -> io::Result<()> {
-        if start_y >= end_y_exclusive {
-            return Ok(());
-        }
-        for y in start_y..end_y_exclusive {
-            queue!(
-                self.backend,
-                MoveTo(0, y),
-                Clear(CrosstermClearType::UntilNewLine)
-            )?;
-        }
+    pub(crate) fn clear_after_position(&mut self, position: Position) -> io::Result<()> {
+        queue!(
+            self.backend,
+            MoveTo(position.x, position.y),
+            Clear(CrosstermClearType::FromCursorDown)
+        )?;
         self.previous_buffer_mut().reset();
         std::io::Write::flush(&mut self.backend)?;
         Ok(())
@@ -238,7 +233,6 @@ where
     pub(crate) fn ensure_viewport_height(&mut self, height: u16) -> Result<()> {
         let size = self.size()?;
         let terminal_height_shrank = size.height < self.last_known_screen_size.height;
-        let terminal_height_grew = size.height > self.last_known_screen_size.height;
         let viewport_was_bottom_aligned =
             self.viewport_area.bottom() == self.last_known_screen_size.height;
         let previous = self.viewport_area;
@@ -248,10 +242,7 @@ where
 
         self.resize(size);
 
-        if previous == Rect::ZERO
-            || previous.height == 0
-            || (area.height != previous.height && viewport_was_bottom_aligned)
-        {
+        if previous == Rect::ZERO || previous.height == 0 {
             area.y = size.height.saturating_sub(area.height);
         }
 
@@ -261,13 +252,14 @@ where
                 self.scroll_region_up(0..area.top(), scroll_by)?;
             }
             area.y = size.height - area.height;
-        } else if terminal_height_grew && viewport_was_bottom_aligned {
+        } else if viewport_was_bottom_aligned {
             area.y = size.height.saturating_sub(area.height);
         }
 
         if area != previous {
+            let clear_position = Position::new(0, previous.y.min(area.y));
             self.set_viewport_area(area);
-            self.clear_rows(previous.y.min(area.y), size.height)?;
+            self.clear_after_position(clear_position)?;
         }
         Ok(())
     }
@@ -508,12 +500,92 @@ fn queue_modifier_diff<W: Write>(writer: &mut W, from: Modifier, to: Modifier) -
 
 #[cfg(test)]
 mod tests {
-    use super::{DrawCommand, diff_buffers, draw_updates};
+    use super::{DrawCommand, Terminal, diff_buffers, draw_updates};
     use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
+    use ratatui::backend::{Backend, WindowSize};
     use ratatui::buffer::Buffer;
-    use ratatui::layout::Rect;
+    use ratatui::buffer::Cell;
+    use ratatui::layout::{Position, Rect, Size};
     use ratatui::style::Color;
+    use std::io;
+    use std::io::Write;
     use std::str;
+
+    #[derive(Debug)]
+    struct TestBackend {
+        size: Size,
+        cursor: Position,
+        bytes: Vec<u8>,
+    }
+
+    impl TestBackend {
+        fn new(width: u16, height: u16) -> Self {
+            Self {
+                size: Size { width, height },
+                cursor: Position {
+                    x: 0,
+                    y: height.saturating_sub(1),
+                },
+                bytes: Vec::new(),
+            }
+        }
+    }
+
+    impl Write for TestBackend {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Backend for TestBackend {
+        fn draw<'a, I>(&mut self, _content: I) -> io::Result<()>
+        where
+            I: Iterator<Item = (u16, u16, &'a Cell)>,
+        {
+            Ok(())
+        }
+
+        fn hide_cursor(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn show_cursor(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn get_cursor_position(&mut self) -> io::Result<Position> {
+            Ok(self.cursor)
+        }
+
+        fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> io::Result<()> {
+            self.cursor = position.into();
+            Ok(())
+        }
+
+        fn clear(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn size(&self) -> io::Result<Size> {
+            Ok(self.size)
+        }
+
+        fn window_size(&mut self) -> io::Result<WindowSize> {
+            Ok(WindowSize {
+                columns_rows: self.size,
+                pixels: self.size,
+            })
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Write::flush(self)
+        }
+    }
 
     #[test]
     fn diff_buffers_clears_fully_blank_row_from_first_column() {
@@ -554,5 +626,25 @@ mod tests {
 
         let output = str::from_utf8(&bytes).unwrap();
         assert!(!output.contains("38;2;"));
+    }
+
+    #[test]
+    fn bottom_aligned_viewport_stays_bottom_aligned_when_height_shrinks() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(
+            backend,
+            TerminalCapabilities {
+                color_depth: ColorDepth::NoColor,
+                supports_synchronized_update: false,
+                background_tone: BackgroundTone::Unknown,
+            },
+        )
+        .expect("terminal");
+
+        terminal.ensure_viewport_height(12).expect("initial height");
+        assert_eq!(terminal.viewport_area, Rect::new(0, 18, 100, 12));
+
+        terminal.ensure_viewport_height(6).expect("shrunk height");
+        assert_eq!(terminal.viewport_area, Rect::new(0, 24, 100, 6));
     }
 }

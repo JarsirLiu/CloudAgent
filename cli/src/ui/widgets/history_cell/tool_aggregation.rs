@@ -10,6 +10,9 @@ pub(crate) fn coalesce_agent_stream(prev: &mut HistoryCell, next: &HistoryCell) 
     if prev.format() != next.format() || !next.is_stream_continuation() {
         return false;
     }
+    if prev.is_provisional_stream() != next.is_provisional_stream() {
+        return false;
+    }
 
     prev.append_body(next.body());
     true

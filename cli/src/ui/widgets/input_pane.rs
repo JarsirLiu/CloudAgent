@@ -18,7 +18,6 @@ use agent_core::SkillMetadata;
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
@@ -541,14 +540,7 @@ impl InputPane {
             input_lines.push(hint_line(mode, inner_width, hint_meta));
         }
         let cursor_position = Some(self.composer.cursor_position(layout.composer_area, mode));
-        let height = compute_desired_height(
-            composer.height,
-            if layout.completion_area.is_some() {
-                completion_lines.len()
-            } else {
-                0
-            },
-        );
+        let height = compute_desired_height(composer.height, completion_lines.len());
 
         InputPaneSnapshot {
             layout,
@@ -574,14 +566,23 @@ fn compute_input_layout(
             0
         });
     let input_height = input_content_height.saturating_add(INPUT_BLOCK_CHROME_HEIGHT);
-    let [input_area, completion_area] = if completion_line_count == 0 {
-        [area, Rect::default()]
+    let (input_area, completion_area) = if completion_line_count == 0 {
+        (area, None)
     } else {
-        Layout::vertical([
-            Constraint::Length(input_height.min(area.height)),
-            Constraint::Min((completion_line_count as u16).saturating_add(1)),
-        ])
-        .areas(area)
+        let requested = (completion_line_count as u16).saturating_add(1);
+        let input_height = input_height.min(area.height);
+        let completion_height = requested.min(area.height.saturating_sub(input_height));
+        let input_area = Rect {
+            height: input_height,
+            ..area
+        };
+        let completion_area = (completion_height > 0).then_some(Rect {
+            x: area.x,
+            y: area.y.saturating_add(input_height),
+            width: area.width,
+            height: completion_height,
+        });
+        (input_area, completion_area)
     };
 
     let composer_area = Rect {
@@ -598,7 +599,7 @@ fn compute_input_layout(
     InputPaneLayout {
         input_area,
         composer_area,
-        completion_area: (completion_line_count > 0).then_some(completion_area),
+        completion_area,
     }
 }
 
@@ -777,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_composer_stays_compact_and_completion_gets_menu_space() {
+    fn completion_popup_is_part_of_input_pane_height() {
         let mut pane = InputPane::new();
         let before = pane.desired_height(FrontendMode::Idle, 100);
         assert_eq!(before, 6);
@@ -793,6 +794,38 @@ mod tests {
         assert!(after > before);
         let (lines, _) = pane.render_lines_for_test(FrontendMode::Idle, "Idle", "test", 100);
         assert!(!lines.is_empty());
+    }
+
+    #[test]
+    fn completion_popup_area_stays_inside_input_pane() {
+        let mut pane = InputPane::new();
+        let _ = pane.handle_key(KeyEvent {
+            code: KeyCode::Char('/'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+
+        let height = pane.desired_height(FrontendMode::Idle, 100);
+        let snapshot = pane.build_snapshot(
+            Rect::new(0, 10, 100, height),
+            FrontendMode::Idle,
+            None,
+            "",
+            None,
+            "",
+            "",
+            98,
+        );
+        let completion_area = snapshot
+            .layout
+            .completion_area
+            .expect("completion popup should render");
+
+        assert_eq!(snapshot.layout.input_area.y, 10);
+        assert!(completion_area.y >= 10);
+        assert!(completion_area.bottom() <= 10 + height);
+        assert_eq!(snapshot.height, height);
     }
 
     #[test]

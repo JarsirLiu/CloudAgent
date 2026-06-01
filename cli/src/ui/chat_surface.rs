@@ -8,7 +8,7 @@ use agent_protocol::FrontendMode;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 const MAX_CONTENT_WIDTH: u16 = 140;
 const MIN_RENDER_WIDTH: u16 = 40;
@@ -265,11 +265,11 @@ fn available_body_height(
     content.height.saturating_sub(reserved_bottom)
 }
 
-fn render_body_area(app: &TuiApp, frame: &mut Frame, area: Rect, model: ChatSurfaceModel) {
+fn render_body_area(app: &mut TuiApp, frame: &mut Frame, area: Rect, model: ChatSurfaceModel) {
     match model.body {
         ChatSurfaceBody::Welcome => render_welcome(app, frame, area),
         ChatSurfaceBody::ActiveCell(active_cell) => {
-            render_active_cell(frame, area, active_cell.lines, active_cell.scroll_top)
+            render_active_cell(app, frame, area, active_cell.lines)
         }
     }
 }
@@ -300,7 +300,7 @@ fn render_status_area(
     );
 }
 
-fn render_active_cell(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>, scroll_top: u16) {
+fn render_active_cell(app: &mut TuiApp, frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
     if area.height == 0 || area.width == 0 || lines.is_empty() {
         return;
     }
@@ -312,6 +312,11 @@ fn render_active_cell(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>, 
         return;
     }
     let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+    let rendered_rows = paragraph.line_count(inner.width);
+    let scroll_top = app
+        .active_transcript_scroll
+        .top_row_for_render(rendered_rows, inner.height as usize);
+    frame.render_widget(Clear, inner);
     frame.render_widget(paragraph.scroll((scroll_top, 0)), inner);
 }
 

@@ -144,6 +144,8 @@ struct HistoryCellView {
     expanded: bool,
     repeat_count: usize,
     stream_continuation: bool,
+    provisional_stream: bool,
+    stream_item_id: Option<String>,
 }
 
 impl Default for HistoryCellView {
@@ -152,6 +154,8 @@ impl Default for HistoryCellView {
             expanded: false,
             repeat_count: 1,
             stream_continuation: false,
+            provisional_stream: false,
+            stream_item_id: None,
         }
     }
 }
@@ -375,6 +379,28 @@ impl HistoryCell {
 
     pub fn with_stream_continuation(mut self, is_stream_continuation: bool) -> Self {
         self.view.stream_continuation = is_stream_continuation;
+        self
+    }
+
+    pub fn is_provisional_stream(&self) -> bool {
+        self.view.provisional_stream
+    }
+
+    pub fn set_provisional_stream(&mut self, provisional_stream: bool) {
+        self.view.provisional_stream = provisional_stream;
+    }
+
+    pub fn with_provisional_stream(mut self, provisional_stream: bool) -> Self {
+        self.view.provisional_stream = provisional_stream;
+        self
+    }
+
+    pub fn stream_item_id(&self) -> Option<&str> {
+        self.view.stream_item_id.as_deref()
+    }
+
+    pub fn with_stream_item_id(mut self, item_id: impl Into<String>) -> Self {
+        self.view.stream_item_id = Some(item_id.into());
         self
     }
 
@@ -626,65 +652,34 @@ fn render_user(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn render_prefixed_agent_lines(
-    md_lines: Vec<Line<'static>>,
-    first_prefix: Span<'static>,
-    continuation_prefix: Span<'static>,
-) -> Vec<Line<'static>> {
-    md_lines
-        .into_iter()
-        .enumerate()
-        .map(|(i, line)| {
-            let mut spans = vec![if i == 0 {
-                first_prefix.clone()
-            } else {
-                continuation_prefix.clone()
-            }];
-            spans.extend(line.spans);
-            Line::from(spans)
-        })
-        .collect()
-}
-
 fn render_agent(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let inner = width.saturating_sub(6).max(8);
-    let md_lines = match cell.format() {
+    let inner = width.saturating_sub(2).max(8);
+    let lines = match cell.format() {
         HistoryFormat::Markdown => markdown::render_markdown(cell.body(), inner),
         HistoryFormat::PlainText => markdown::render_plaintext(cell.body(), inner),
     };
-    let mut out = Vec::new();
-    for (i, line) in md_lines.into_iter().enumerate() {
-        let prefix = if i == 0 {
-            Span::styled(" ● ", Style::default().fg(Color::Rgb(100, 180, 255)))
-        } else {
-            Span::raw("   ")
-        };
-        let mut spans = vec![prefix];
-        if i == 0 && !cell.label().is_empty() {
-            spans.push(Span::styled(
-                format!("{}  ", cell.label()),
-                Style::default()
-                    .fg(Color::Rgb(120, 150, 190))
-                    .add_modifier(Modifier::DIM),
-            ));
-        }
-        spans.extend(line.spans);
-        out.push(Line::from(spans));
-    }
-    out
+    indent_agent_lines(lines)
 }
 
 fn render_agent_transcript(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     let inner = width.saturating_sub(2).max(8);
-    let md_lines = match cell.format() {
+    let lines = match cell.format() {
         HistoryFormat::Markdown => markdown::render_markdown(cell.body(), inner),
         HistoryFormat::PlainText => markdown::render_plaintext(cell.body(), inner),
     };
-    render_prefixed_agent_lines(
-        md_lines,
-        Span::styled("• ", Style::default().fg(Color::Rgb(100, 180, 255))),
-        Span::raw("  "),
-    )
+    indent_agent_lines(lines)
+}
+
+fn indent_agent_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut spans = Vec::with_capacity(line.spans.len() + 1);
+            spans.push(Span::raw("  "));
+            spans.extend(line.spans);
+            Line::from(spans).style(line.style)
+        })
+        .collect()
 }
 
 fn render_reasoning(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -1442,6 +1437,19 @@ mod tests {
             .join("\n")
     }
 
+    fn joined_lines(lines: Vec<ratatui::text::Line<'static>>) -> String {
+        lines
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .into_iter()
+                    .map(|span| span.content.into_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn agent_cells_render_markdown_tables() {
         let cell = HistoryCell::agent(
@@ -1455,6 +1463,44 @@ mod tests {
         assert!(rendered.contains("根因"));
         assert!(rendered.contains(" | "));
         assert!(rendered.contains("budget"));
+    }
+
+    #[test]
+    fn agent_cells_render_without_shell_bullet_prefix() {
+        let cell = HistoryCell::agent(
+            "cloudagent",
+            "### 也就是说\n\n逻辑已经改对了。\n\n1. 查锁\n2. 重跑",
+            HistoryFormat::Markdown,
+        );
+
+        let rendered = joined(&cell, 100);
+        let transcript = joined_lines(cell.to_transcript_lines(100));
+
+        assert!(rendered.starts_with("  ### 也就是说"));
+        assert!(transcript.starts_with("  ### 也就是说"));
+        assert!(!rendered.contains("●"));
+        assert!(!rendered.contains("• ###"));
+        assert!(!rendered.contains("• 逻辑"));
+        assert!(!transcript.contains("• ###"));
+        assert!(!transcript.contains("• 逻辑"));
+    }
+
+    #[test]
+    fn agent_cells_keep_codex_style_left_padding_without_bullet() {
+        let cell = HistoryCell::agent("cloudagent", "正文\n第二行", HistoryFormat::Markdown);
+
+        let plain = cell
+            .to_lines_with_mode(80)
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .into_iter()
+                    .map(|span| span.content.into_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(plain, vec!["  正文", "  第二行"]);
     }
 
     #[test]

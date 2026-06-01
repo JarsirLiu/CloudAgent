@@ -3,13 +3,23 @@ use crate::ui::widgets::history_cell::{HistoryCell, Transcript, tool_aggregation
 #[derive(Default)]
 pub(crate) struct CommittedTranscriptStore {
     transcript: Transcript,
-    rendered_len: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ProvisionalAgentMessageFootprint {
+    cell_count: usize,
+    body_len: usize,
+}
+
+impl ProvisionalAgentMessageFootprint {
+    pub(crate) fn rendered_beyond(self, pending: Self) -> bool {
+        self.cell_count > pending.cell_count || self.body_len > pending.body_len
+    }
 }
 
 impl CommittedTranscriptStore {
     pub(crate) fn clear(&mut self) {
         self.transcript = Transcript::default();
-        self.rendered_len = 0;
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -30,25 +40,46 @@ impl CommittedTranscriptStore {
         }
     }
 
-    pub(crate) fn mark_replayed(&mut self) {
-        self.rendered_len = self.transcript.cells().len();
-    }
+    pub(crate) fn consolidate_agent_message(
+        &mut self,
+        item_id: &str,
+        final_cell: HistoryCell,
+    ) -> bool {
+        let Some(start) = self.agent_message_stream_start(item_id) else {
+            self.append_cell(final_cell);
+            return false;
+        };
 
-    #[cfg(test)]
-    pub(crate) fn pending_cells(&self) -> Vec<HistoryCell> {
-        self.transcript.cells()[self.rendered_len..].to_vec()
-    }
-
-    pub(crate) fn drain_unrendered_tail(&mut self) -> Vec<HistoryCell> {
-        let all_cells = self.transcript.cells();
-        let start = self.rendered_len.min(all_cells.len());
-        let cells = all_cells[start..]
+        let cells = self.transcript.cells_mut();
+        let mut remove_indices = cells
             .iter()
-            .filter(|cell| !cell.body().trim().is_empty())
-            .cloned()
+            .enumerate()
+            .filter_map(|(index, cell)| {
+                is_provisional_agent_message_cell_for(cell, item_id).then_some(index)
+            })
             .collect::<Vec<_>>();
-        self.rendered_len = all_cells.len();
-        cells
+        for index in remove_indices.drain(..).rev() {
+            cells.remove(index);
+        }
+        let insert_at = start.min(cells.len());
+        cells.insert(insert_at, final_cell);
+        true
+    }
+
+    pub(crate) fn provisional_agent_message_footprint(
+        &self,
+        item_id: &str,
+    ) -> ProvisionalAgentMessageFootprint {
+        self.transcript.cells().iter().fold(
+            ProvisionalAgentMessageFootprint::default(),
+            |mut footprint, cell| {
+                if is_provisional_agent_message_cell_for(cell, item_id) {
+                    footprint.cell_count += 1;
+                    footprint.body_len += cell.body().len();
+                }
+                footprint
+            },
+        )
     }
 
     fn append_cell(&mut self, cell: HistoryCell) {
@@ -65,6 +96,13 @@ impl CommittedTranscriptStore {
             return;
         }
         self.transcript.push(cell);
+    }
+
+    fn agent_message_stream_start(&self, item_id: &str) -> Option<usize> {
+        self.transcript
+            .cells()
+            .iter()
+            .position(|cell| is_provisional_agent_message_cell_for(cell, item_id))
     }
 
     fn apply_append_policy(&mut self, cell: &mut HistoryCell) {
@@ -86,4 +124,11 @@ impl CommittedTranscriptStore {
             .unwrap_or(false);
         cell.set_stream_continuation(is_agent_message && previous_was_agent_message);
     }
+}
+
+fn is_provisional_agent_message_cell_for(cell: &HistoryCell, item_id: &str) -> bool {
+    cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
+        && cell.kind() == crate::ui::widgets::history_cell::HistoryKind::Message
+        && cell.is_provisional_stream()
+        && cell.stream_item_id() == Some(item_id)
 }

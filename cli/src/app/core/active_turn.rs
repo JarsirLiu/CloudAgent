@@ -47,6 +47,13 @@ pub(crate) struct ActiveTurnEffects {
     pub(crate) active_cell: Option<HistoryCell>,
     pub(crate) last_copyable_output: Option<String>,
     pub(crate) replay_cells: Vec<HistoryCell>,
+    pub(crate) consolidate_agent_message: Option<ConsolidateAgentMessage>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConsolidateAgentMessage {
+    pub(crate) item_id: String,
+    pub(crate) cell: HistoryCell,
 }
 
 #[derive(Default)]
@@ -131,6 +138,7 @@ impl ActiveTurnState {
                     replay_cells: vec![HistoryCell::user(input_items_to_plain_text(
                         self.pending_local_user_input.as_deref().unwrap_or_default(),
                     ))],
+                    consolidate_agent_message: None,
                 }
             }
             ActiveTurnAction::BindTurnId { turn_id } => {
@@ -164,9 +172,6 @@ impl ActiveTurnState {
                 let mut replay_cells = self.ensure_agent_stream_tail(&item_id);
                 let output = self.push_agent_stream_delta(&item_id, &delta);
                 replay_cells.extend(output.stable_cells);
-                self.live_item = output.live_cell.map(|cell| {
-                    ActiveItemView::new(item_id.clone(), TurnItemKind::AssistantMessage, cell)
-                });
                 self.last_copyable_output = Some(format!(
                     "{}{}",
                     self.last_copyable_output.as_deref().unwrap_or(""),
@@ -202,6 +207,32 @@ impl ActiveTurnState {
                 if let Some(text) = copyable_output(&item) {
                     self.last_copyable_output = Some(text);
                 }
+                if matches!(item, TranscriptItem::AgentMessage { .. }) {
+                    let streamed =
+                        self.take_finished_agent_stream(&item_id, completed_agent_text(&item));
+                    let should_consolidate_stream = streamed
+                        .as_ref()
+                        .is_some_and(|streamed| streamed.emitted_any)
+                        || self.replayed_item_ids.contains(&item_id);
+                    if self
+                        .live_item
+                        .as_ref()
+                        .is_some_and(|live_item| live_item.item_id == item_id)
+                    {
+                        self.live_item = None;
+                    }
+                    if !cell.is_empty() {
+                        self.replayed_item_ids.insert(item_id.clone());
+                        let mut effects = self.snapshot_effects_with_replay(replay_cells);
+                        if should_consolidate_stream {
+                            effects.consolidate_agent_message =
+                                Some(ConsolidateAgentMessage { item_id, cell });
+                        } else {
+                            effects.replay_cells.push(cell);
+                        }
+                        return effects;
+                    }
+                }
                 if self
                     .live_item
                     .as_ref()
@@ -209,7 +240,8 @@ impl ActiveTurnState {
                     || self.should_replace_live_tool_placeholder(&item)
                 {
                     if matches!(item, TranscriptItem::AgentMessage { .. })
-                        && let Some(streamed) = self.take_finished_agent_stream(&item_id)
+                        && let Some(streamed) =
+                            self.take_finished_agent_stream(&item_id, completed_agent_text(&item))
                     {
                         if streamed.emitted_any {
                             replay_cells.extend(streamed.stable_cells);
@@ -254,6 +286,7 @@ impl ActiveTurnState {
                     active_cell: None,
                     last_copyable_output,
                     replay_cells,
+                    consolidate_agent_message: None,
                 }
             }
         }
@@ -308,7 +341,11 @@ impl ActiveTurnState {
         {
             self.agent_stream = Some(AgentStreamController::new(item_id));
         }
-        if self.live_item.as_ref().map(|item| item.item_id.as_str()) != Some(item_id) {
+        if self.live_item.as_ref().is_some_and(|item| {
+            item.item_id == item_id && item.kind == TurnItemKind::AssistantMessage
+        }) {
+            self.live_item = None;
+        } else if self.live_item.as_ref().map(|item| item.item_id.as_str()) != Some(item_id) {
             self.live_item = None;
         }
         replay_cells
@@ -330,13 +367,17 @@ impl ActiveTurnState {
         stream.push_delta(delta)
     }
 
-    fn take_finished_agent_stream(&mut self, item_id: &str) -> Option<AgentStreamFinish> {
+    fn take_finished_agent_stream(
+        &mut self,
+        item_id: &str,
+        final_text: Option<&str>,
+    ) -> Option<AgentStreamFinish> {
         let stream = self.agent_stream.take()?;
         if stream.item_id() != item_id {
             self.agent_stream = Some(stream);
             return None;
         }
-        Some(stream.finish())
+        Some(stream.finish_with_final_text(final_text))
     }
 
     fn flush_live_tail_if_different(&mut self, item_id: &str) -> Vec<HistoryCell> {
@@ -402,9 +443,14 @@ impl ActiveTurnState {
 
     fn snapshot_effects_with_replay(&self, replay_cells: Vec<HistoryCell>) -> ActiveTurnEffects {
         ActiveTurnEffects {
-            active_cell: self.live_item.as_ref().map(ActiveItemView::to_cell),
+            active_cell: self
+                .agent_stream
+                .as_ref()
+                .and_then(AgentStreamController::current_live_cell)
+                .or_else(|| self.live_item.as_ref().map(ActiveItemView::to_cell)),
             last_copyable_output: self.last_copyable_output.clone(),
             replay_cells,
+            consolidate_agent_message: None,
         }
     }
 }
@@ -412,6 +458,14 @@ impl ActiveTurnState {
 fn copyable_output(item: &TranscriptItem) -> Option<String> {
     if let TranscriptItem::AgentMessage { text, .. } = item {
         (!text.trim().is_empty()).then(|| text.clone())
+    } else {
+        None
+    }
+}
+
+fn completed_agent_text(item: &TranscriptItem) -> Option<&str> {
+    if let TranscriptItem::AgentMessage { text, .. } = item {
+        Some(text)
     } else {
         None
     }

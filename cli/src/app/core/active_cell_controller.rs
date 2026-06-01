@@ -1,4 +1,6 @@
-use crate::app::core::active_turn::{ActiveTurnAction, ActiveTurnEffects, ActiveTurnState};
+use crate::app::core::active_turn::{
+    ActiveTurnAction, ActiveTurnEffects, ActiveTurnState, ConsolidateAgentMessage,
+};
 use crate::ui::widgets::history_cell::{
     HistoryCell, HistoryTone, RenderContext, Transcript, render_history_entry,
 };
@@ -10,6 +12,11 @@ pub(crate) struct ActiveCellController {
     live_transcript: Transcript,
     active_turn: ActiveTurnState,
     last_copyable_output: Option<String>,
+}
+
+pub(crate) struct AppliedActiveTurnEffects {
+    pub(crate) replay_cells: Vec<HistoryCell>,
+    pub(crate) consolidate_agent_message: Option<ConsolidateAgentMessage>,
 }
 
 impl ActiveCellController {
@@ -70,7 +77,7 @@ impl ActiveCellController {
         self.active_turn.turn_id()
     }
 
-    pub(crate) fn clear_active_turn(&mut self, expand_details: bool) -> Vec<HistoryCell> {
+    pub(crate) fn clear_active_turn(&mut self, expand_details: bool) -> AppliedActiveTurnEffects {
         self.apply_active_turn(ActiveTurnAction::Clear, expand_details)
     }
 
@@ -78,7 +85,7 @@ impl ActiveCellController {
         &mut self,
         user_input: Vec<InputItem>,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         self.apply_active_turn(
             ActiveTurnAction::StartLocalUser { user_input },
             expand_details,
@@ -89,7 +96,7 @@ impl ActiveCellController {
         &mut self,
         turn_id: TurnId,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         self.apply_active_turn(ActiveTurnAction::BindTurnId { turn_id }, expand_details)
     }
 
@@ -100,7 +107,7 @@ impl ActiveCellController {
         kind: TurnItemKind,
         title: Option<String>,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         self.apply_active_turn(
             ActiveTurnAction::StartItem {
                 turn_id,
@@ -118,7 +125,7 @@ impl ActiveCellController {
         item_id: String,
         delta: String,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         self.apply_active_turn(
             ActiveTurnAction::AppendAgentDelta {
                 turn_id,
@@ -135,7 +142,7 @@ impl ActiveCellController {
         item_id: String,
         delta: String,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         self.apply_active_turn(
             ActiveTurnAction::AppendReasoningDelta {
                 turn_id,
@@ -152,7 +159,7 @@ impl ActiveCellController {
         item_id: String,
         item: TranscriptItem,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         self.apply_active_turn(
             ActiveTurnAction::CompleteItem {
                 turn_id,
@@ -167,7 +174,7 @@ impl ActiveCellController {
         &mut self,
         turn_id: TurnId,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         self.apply_active_turn(ActiveTurnAction::CompleteTurn { turn_id }, expand_details)
     }
 
@@ -220,7 +227,7 @@ impl ActiveCellController {
         &mut self,
         action: ActiveTurnAction,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         let effects = self.active_turn.apply(action);
         self.apply_active_turn_effects(effects, expand_details)
     }
@@ -229,10 +236,13 @@ impl ActiveCellController {
         &mut self,
         effects: ActiveTurnEffects,
         expand_details: bool,
-    ) -> Vec<HistoryCell> {
+    ) -> AppliedActiveTurnEffects {
         self.replace_live_cells(effects.active_cell.into_iter().collect(), expand_details);
         self.last_copyable_output = effects.last_copyable_output;
-        effects.replay_cells
+        AppliedActiveTurnEffects {
+            replay_cells: effects.replay_cells,
+            consolidate_agent_message: effects.consolidate_agent_message,
+        }
     }
 }
 

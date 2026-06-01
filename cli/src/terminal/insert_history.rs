@@ -166,7 +166,7 @@ where
     Ok(())
 }
 
-pub(crate) fn repaint_visible_history_tail<B>(
+pub(crate) fn repaint_history_tail_raw<B>(
     terminal: &mut Terminal<B>,
     lines: Vec<Line<'static>>,
 ) -> Result<()>
@@ -178,8 +178,6 @@ where
     }
 
     let area = terminal.viewport_area;
-    let last_cursor_pos = terminal.last_known_cursor_pos;
-    let capabilities = terminal.capabilities();
     let wrap_width = area.width.max(1) as usize;
     let mut lines = wrap_history_lines(lines, wrap_width);
     let max_rows = area.top() as usize;
@@ -191,11 +189,14 @@ where
     }
 
     let start_y = area.top().saturating_sub(lines.len() as u16);
+    let last_cursor_pos = terminal.last_known_cursor_pos;
+    let capabilities = terminal.capabilities();
     let writer = terminal.backend_mut();
-    queue!(writer, ResetScrollRegion)?;
-    for (offset, line) in lines.iter().enumerate() {
-        let y = start_y.saturating_add(offset as u16);
-        queue!(writer, MoveTo(0, y))?;
+    for y in 0..area.top() {
+        queue!(writer, MoveTo(0, y), Clear(ClearType::UntilNewLine))?;
+    }
+    for (index, line) in lines.iter().enumerate() {
+        queue!(writer, MoveTo(0, start_y + index as u16))?;
         write_history_line(writer, line, wrap_width, capabilities)?;
     }
     queue!(writer, MoveTo(last_cursor_pos.x, last_cursor_pos.y))?;

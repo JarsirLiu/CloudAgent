@@ -357,6 +357,138 @@ fn completing_older_item_does_not_flush_current_live_item() {
 }
 
 #[test]
+fn completed_agent_message_consolidates_after_item_boundary() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "visible prefix".to_string(),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        TurnItemKind::CommandExecution,
+        Some("rg esc".to_string()),
+        false,
+    );
+
+    let _rendered_partial = owner.drain_pending_history_cells();
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent("a1", "visible prefix and final suffix"),
+        false,
+    );
+
+    assert!(!owner.take_history_replay_requested());
+    let committed = owner
+        .committed_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>()
+        .join("");
+    assert_eq!(committed, "hellovisible prefix and final suffix");
+}
+
+#[test]
+fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "first stable\n".to_string(),
+        false,
+    );
+    owner.start_item(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        TurnItemKind::CommandExecution,
+        Some("rg esc".to_string()),
+        false,
+    );
+    owner.complete_item(
+        "turn-1".to_string(),
+        "c1".to_string(),
+        command("c1", "rg esc"),
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "second stable\n".to_string(),
+        false,
+    );
+
+    let _rendered_partial = owner.drain_pending_history_cells();
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent("a1", "first stable\nsecond stable\nfinal tail"),
+        false,
+    );
+
+    assert!(owner.take_history_replay_requested());
+    let committed = owner
+        .committed_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        committed,
+        vec![
+            "hello".to_string(),
+            "first stable\nsecond stable\nfinal tail".to_string(),
+            "ran 1 inspect command".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn completed_agent_message_without_stream_appends_instead_of_replacing_previous_agent() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent("a1", "first answer"),
+        false,
+    );
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a2".to_string(),
+        agent("a2", "second answer"),
+        false,
+    );
+
+    let committed = owner
+        .committed_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(committed, vec!["hello", "first answersecond answer"]);
+}
+
+#[test]
 fn runtime_non_agent_cells_do_not_become_stream_continuations() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
@@ -827,6 +959,45 @@ fn committed_history_without_active_cell_keeps_viewport_compact() {
 }
 
 #[test]
+fn slash_completion_expands_bottom_pane_as_single_layout_region() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+        "cloudagent",
+        "streaming response stays stable while the command list is open",
+        crate::ui::widgets::history_cell::HistoryFormat::Markdown,
+    ));
+
+    let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let before = ChatSurface::desired_viewport_height(&mut app, terminal_area);
+    let bottom_height_before = app
+        .bottom_pane
+        .desired_height(app.current_mode(), terminal_area.width);
+
+    let _ = app.bottom_pane.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('/'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+
+    let after = ChatSurface::desired_viewport_height(&mut app, terminal_area);
+    let bottom_height_after = app
+        .bottom_pane
+        .desired_height(app.current_mode(), terminal_area.width);
+
+    assert!(bottom_height_after > bottom_height_before);
+    assert_eq!(
+        after,
+        before.saturating_add(bottom_height_after - bottom_height_before)
+    );
+}
+
+#[test]
 fn welcome_stays_visible_while_composer_has_draft_text() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -865,11 +1036,13 @@ fn reset_local_view_requests_history_replay() {
             height: 24,
         },
         false,
-        0,
     );
     match plan.history_update {
         crate::terminal::HistoryUpdate::ReplayAll(cells) => assert!(cells.is_empty()),
         crate::terminal::HistoryUpdate::AppendTail(_) => panic!("expected replay-all after reset"),
+        crate::terminal::HistoryUpdate::ReflowVisibleTail { .. } => {
+            panic!("expected replay-all after reset")
+        }
     }
 }
 
@@ -1384,6 +1557,124 @@ fn completing_streamed_agent_message_only_commits_remaining_tail() {
 }
 
 #[test]
+fn completing_unflushed_stream_consolidates_pending_without_replay() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "stable line\nlive tail".to_string(),
+        false,
+    );
+
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent("a1", "stable line\nlive tail"),
+        false,
+    );
+
+    assert!(!owner.take_history_replay_requested());
+    let pending = owner
+        .pending_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(pending, vec!["hello", "stable line\nlive tail"]);
+}
+
+#[test]
+fn completing_partially_flushed_stream_requests_replay_for_final_reflow() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "first stable\n".to_string(),
+        false,
+    );
+    let _flushed = owner.drain_pending_history_cells();
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "second stable\nlive tail".to_string(),
+        false,
+    );
+
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent("a1", "first stable\nsecond stable\nlive tail\nfinal suffix"),
+        false,
+    );
+
+    assert!(owner.take_history_replay_requested());
+    let committed = owner
+        .committed_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        committed,
+        vec![
+            "hello".to_string(),
+            "first stable\nsecond stable\nlive tail\nfinal suffix".to_string()
+        ]
+    );
+}
+
+#[test]
+fn completing_streamed_agent_message_repairs_missing_final_suffix() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("hello"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner.start_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        TurnItemKind::AssistantMessage,
+        None,
+        false,
+    );
+    owner.append_agent_delta(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        "visible prefix".to_string(),
+        false,
+    );
+
+    owner.complete_item(
+        "turn-1".to_string(),
+        "a1".to_string(),
+        agent("a1", "visible prefix and final suffix"),
+        false,
+    );
+
+    let rendered = owner
+        .pending_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>()
+        .join("");
+    assert_eq!(rendered, "hellovisible prefix and final suffix");
+}
+
+#[test]
 fn active_reasoning_transcript_matches_reasoning_card_ui() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -1615,7 +1906,8 @@ fn active_transcript_manual_scroll_is_preserved_across_new_content() {
     let ChatSurfaceBody::ActiveCell(initial_active) = initial.body else {
         panic!("expected active cell body");
     };
-    assert_eq!(initial_active.scroll_top, 6);
+    assert_eq!(initial_active.lines.len(), 10);
+    assert_eq!(app.active_transcript_scroll.top_row_for_render(10, 4), 6);
 
     assert!(
         app.active_transcript_scroll
@@ -1629,7 +1921,8 @@ fn active_transcript_manual_scroll_is_preserved_across_new_content() {
     let ChatSurfaceBody::ActiveCell(scrolled_active) = scrolled.body else {
         panic!("expected active cell body");
     };
-    assert_eq!(scrolled_active.scroll_top, 3);
+    assert_eq!(scrolled_active.lines.len(), 10);
+    assert_eq!(app.active_transcript_scroll.top_row_for_render(10, 4), 3);
 
     app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
         "assistant",
@@ -1644,7 +1937,8 @@ fn active_transcript_manual_scroll_is_preserved_across_new_content() {
     let ChatSurfaceBody::ActiveCell(updated_active) = updated.body else {
         panic!("expected active cell body");
     };
-    assert_eq!(updated_active.scroll_top, 3);
+    assert_eq!(updated_active.lines.len(), 14);
+    assert_eq!(app.active_transcript_scroll.top_row_for_render(14, 4), 3);
 }
 
 #[test]
@@ -1698,4 +1992,36 @@ fn active_body_height_does_not_add_phantom_margin_rows() {
 
     assert_eq!(active.lines.len(), 1);
     assert_eq!(model.body_height, 1);
+}
+
+#[test]
+fn active_transcript_tail_ignores_trailing_blank_stream_rows() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+        "assistant",
+        "line 0\nline 1\nline 2\n\n\n".to_string(),
+        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+    ));
+
+    let model = build_chat_surface_model(&mut app, 80, 2);
+    let ChatSurfaceBody::ActiveCell(active) = model.body else {
+        panic!("expected active cell body");
+    };
+
+    let rendered = active
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(model.body_height, 3);
+    assert_eq!(rendered.last().map(|line| line.trim()), Some("line 2"));
+    assert_eq!(app.active_transcript_scroll.top_row_for_render(3, 2), 1);
 }
