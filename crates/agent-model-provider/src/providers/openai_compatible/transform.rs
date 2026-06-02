@@ -464,8 +464,14 @@ mod tests {
         );
 
         assert_eq!(call.identity.source, ToolSource::Mcp);
-        assert_eq!(call.identity.namespace.as_deref(), Some("codex_apps__gmail"));
-        assert_eq!(call.identity.wire_name, "mcp__codex_apps__gmail___search_emails");
+        assert_eq!(
+            call.identity.namespace.as_deref(),
+            Some("codex_apps__gmail")
+        );
+        assert_eq!(
+            call.identity.wire_name,
+            "mcp__codex_apps__gmail___search_emails"
+        );
         assert_eq!(call.name, "search_emails");
     }
 
@@ -515,6 +521,9 @@ mod tests {
 
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].name, "tool_search");
-        assert_eq!(parsed.tool_calls[0].arguments, json!({"query":"gmail","limit":5}));
+        assert_eq!(
+            parsed.tool_calls[0].arguments,
+            json!({"query":"gmail","limit":5})
+        );
     }
 }
