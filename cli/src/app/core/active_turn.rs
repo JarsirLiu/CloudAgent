@@ -311,17 +311,11 @@ impl ActiveTurnState {
 
     fn ensure_live_tail(&mut self, item_id: &str, placeholder: HistoryCell) -> Vec<HistoryCell> {
         let replay_cells = self.flush_live_tail_if_different(item_id);
-        if !self
+        if self
             .live_item
             .as_ref()
-            .is_some_and(|live_item| live_item.item_id == item_id)
+            .is_none_or(|live_item| live_item.item_id != item_id)
         {
-            self.live_item = Some(ActiveItemView::new(
-                item_id,
-                TurnItemKind::ToolResult,
-                placeholder,
-            ));
-        } else if self.live_item.is_none() {
             self.live_item = Some(ActiveItemView::new(
                 item_id,
                 TurnItemKind::ToolResult,
@@ -343,9 +337,8 @@ impl ActiveTurnState {
         }
         if self.live_item.as_ref().is_some_and(|item| {
             item.item_id == item_id && item.kind == TurnItemKind::AssistantMessage
-        }) {
-            self.live_item = None;
-        } else if self.live_item.as_ref().map(|item| item.item_id.as_str()) != Some(item_id) {
+        }) || self.live_item.as_ref().map(|item| item.item_id.as_str()) != Some(item_id)
+        {
             self.live_item = None;
         }
         replay_cells
@@ -400,15 +393,14 @@ impl ActiveTurnState {
         {
             self.agent_stream = None;
         }
-        let flushed = if self.should_discard_live_item_on_flush(flushed_item.as_ref()) {
+        if self.should_discard_live_item_on_flush(flushed_item.as_ref()) {
             Vec::new()
         } else {
             flushed_item
                 .map(ActiveItemView::into_cell)
                 .into_iter()
                 .collect::<Vec<_>>()
-        };
-        flushed
+        }
     }
 
     fn should_replace_live_tool_placeholder(&self, item: &TranscriptItem) -> bool {

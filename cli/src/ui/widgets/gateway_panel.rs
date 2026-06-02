@@ -141,12 +141,11 @@ impl BottomPaneView for GatewayPanel {
             input_state,
             ..
         } = &mut self.mode
+            && *selected < fields.len()
         {
-            if *selected < fields.len() {
-                let field = &mut fields[*selected];
-                input_state.append_paste(&mut field.value, &value);
-                field.dirty = true;
-            }
+            let field = &mut fields[*selected];
+            input_state.append_paste(&mut field.value, &value);
+            field.dirty = true;
         }
         BottomPaneViewAction::None
     }
