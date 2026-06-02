@@ -270,8 +270,9 @@ impl<'a> MarkdownWriter<'a> {
 
     fn end_code_block(&mut self) {
         self.in_code_block = false;
+        let prefix = format!("{}{}", self.current_prefix_line(), self.code_indent);
         for line in self.code_buf.lines() {
-            push_code_line(line, &self.code_indent, &mut self.out);
+            push_code_line(line, &prefix, &mut self.out);
         }
         self.code_indent.clear();
         self.needs_newline = true;
@@ -788,10 +789,10 @@ fn push_wrapped_spans_with_prefix(
     out.extend(wrapped);
 }
 
-fn push_code_line(line: &str, indent: &str, out: &mut Vec<Line<'static>>) {
+fn push_code_line(line: &str, prefix: &str, out: &mut Vec<Line<'static>>) {
     let mut spans = Vec::new();
-    if !indent.is_empty() {
-        spans.push(Span::raw(indent.to_string()));
+    if !prefix.is_empty() {
+        spans.push(Span::raw(prefix.to_string()));
     }
     spans.push(Span::styled(
         line.to_string(),
