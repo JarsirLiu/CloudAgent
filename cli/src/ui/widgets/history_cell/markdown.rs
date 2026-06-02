@@ -27,7 +27,6 @@ struct MarkdownWriter<'a> {
     list_needs_blank_before_next_item: Vec<bool>,
     list_item_start_line_counts: Vec<usize>,
     heading_prefix: String,
-    in_heading: bool,
     table_rows: Vec<Vec<String>>,
     table_row: Vec<String>,
     in_table_cell: bool,
@@ -71,7 +70,6 @@ impl<'a> MarkdownWriter<'a> {
             list_needs_blank_before_next_item: Vec::new(),
             list_item_start_line_counts: Vec::new(),
             heading_prefix: String::new(),
-            in_heading: false,
             table_rows: Vec::new(),
             table_row: Vec::new(),
             in_table_cell: false,
@@ -197,7 +195,6 @@ impl<'a> MarkdownWriter<'a> {
         if self.needs_newline {
             self.push_blank_line();
         }
-        self.in_heading = true;
         self.heading_prefix = match level {
             pulldown_cmark::HeadingLevel::H1 => "# ".to_string(),
             pulldown_cmark::HeadingLevel::H2 => "## ".to_string(),
@@ -231,7 +228,6 @@ impl<'a> MarkdownWriter<'a> {
         self.flush_current();
         self.current.clear();
         self.heading_prefix.clear();
-        self.in_heading = false;
         self.style_stack.pop();
         self.needs_newline = true;
     }
