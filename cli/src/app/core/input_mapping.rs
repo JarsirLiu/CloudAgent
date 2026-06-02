@@ -59,7 +59,9 @@ impl TuiApp {
             );
             return None;
         }
-        if matches_image_paste_shortcut(key) {
+        if self.bottom_pane.should_capture_global_paste_shortcut()
+            && matches_image_paste_shortcut(key)
+        {
             return Some(ParsedInput::LocalImagePaste);
         }
         match self.bottom_pane.handle_key(key)? {

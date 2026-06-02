@@ -4,7 +4,7 @@ use crate::app::commands::filter_toggle::apply_filter_toggle;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permissions_mode::apply_permission_mode;
 use crate::app::conversation::facade as conversation_facade;
-use crate::app::conversation::image_paste::handle_local_image_paste;
+use crate::app::conversation::image_paste::handle_clipboard_paste;
 use crate::app::effects::copy_text_to_clipboard;
 use crate::input::slash_command::slash_command_help_text;
 use crate::state::NoticeLevel;
@@ -115,7 +115,7 @@ pub(crate) async fn handle_tui_input(
             }
         },
         ParsedInput::LocalImagePaste => {
-            handle_local_image_paste(app);
+            handle_clipboard_paste(app);
         }
         ParsedInput::LocalHelp => {
             app.push_live_cell(HistoryCell::agent(

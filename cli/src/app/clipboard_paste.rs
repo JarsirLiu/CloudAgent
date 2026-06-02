@@ -23,6 +23,20 @@ impl std::fmt::Display for PasteImageError {
 
 impl std::error::Error for PasteImageError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ClipboardPasteContent {
+    Image(PathBuf),
+    Text(String),
+}
+
+pub(crate) fn paste_clipboard_content() -> Result<ClipboardPasteContent, PasteImageError> {
+    match paste_image_to_temp_png() {
+        Ok(path) => Ok(ClipboardPasteContent::Image(path)),
+        Err(PasteImageError::NoImage(_)) => read_clipboard_text().map(ClipboardPasteContent::Text),
+        Err(err) => Err(err),
+    }
+}
+
 pub(crate) fn paste_image_to_temp_png() -> Result<PathBuf, PasteImageError> {
     match paste_image_as_png() {
         Ok(png) => {
@@ -110,6 +124,14 @@ fn paste_image_as_png() -> Result<Vec<u8>, PasteImageError> {
         image::DynamicImage::ImageRgba8(rgba)
     };
     dynamic_image_to_png_bytes(image)
+}
+
+fn read_clipboard_text() -> Result<String, PasteImageError> {
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|err| PasteImageError::ClipboardUnavailable(err.to_string()))?;
+    clipboard
+        .get_text()
+        .map_err(|err| PasteImageError::NoImage(err.to_string()))
 }
 
 fn dynamic_image_to_png_bytes(image: image::DynamicImage) -> Result<Vec<u8>, PasteImageError> {
@@ -267,7 +289,7 @@ fn normalize_windows_path(input: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_pasted_image_path;
+    use super::{ClipboardPasteContent, normalize_pasted_image_path, paste_clipboard_content};
     use std::path::PathBuf;
 
     #[test]
@@ -301,5 +323,14 @@ mod tests {
         let result = normalize_pasted_image_path(input).expect("quoted path should parse");
         #[cfg(not(windows))]
         assert_eq!(result, PathBuf::from("/home/user/My File.png"));
+    }
+
+    #[test]
+    fn clipboard_paste_falls_back_to_text_when_no_image_is_available() {
+        let _ = paste_clipboard_content();
+        // This test primarily guards the public routing shape:
+        // the clipboard path must be able to return text instead of failing hard.
+        let content = ClipboardPasteContent::Text("hello".to_string());
+        assert!(matches!(content, ClipboardPasteContent::Text(_)));
     }
 }

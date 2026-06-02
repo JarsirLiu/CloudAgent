@@ -126,7 +126,9 @@ impl InputPane {
     fn handle_escape_key(&mut self) -> Option<InputPaneAction> {
         // Completion/menu Esc is a navigation action, not an interrupt.
         if self.composer.has_completion_menu() {
-            return self.composer.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            return self
+                .composer
+                .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
                 .map(InputPaneAction::Composer);
         }
         match self
@@ -151,6 +153,14 @@ impl InputPane {
 
     pub(crate) fn composer_has_selection(&self) -> bool {
         self.view_stack.is_empty() && self.composer.has_selection()
+    }
+
+    pub(crate) fn should_capture_global_paste_shortcut(&self) -> bool {
+        if let Some(view) = self.view_stack.last() {
+            view.should_capture_global_paste_shortcut()
+        } else {
+            true
+        }
     }
 
     pub(crate) fn attach_image(&mut self, path: PathBuf) -> bool {

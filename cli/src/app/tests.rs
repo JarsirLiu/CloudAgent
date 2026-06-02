@@ -1,4 +1,5 @@
 use crate::app::TuiApp;
+use crate::app::commands::parse::ParsedInput;
 use crate::app::conversation::actions::execute_server_action;
 use crate::app::conversation::facade as conversation_facade;
 use crate::app::core::transcript_owner::TranscriptOwner;
@@ -10,6 +11,7 @@ use agent_core::{
     SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
     TranscriptItem, TurnItemKind, TurnState,
 };
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 
 fn user(id: &str, text: &str) -> TranscriptItem {
@@ -934,6 +936,22 @@ fn committed_history_without_active_cell_renders_in_transcript_body() {
         .collect::<Vec<_>>();
     assert!(rendered.iter().any(|line| line.contains("hello")));
     assert_eq!(model.body_height, 1);
+}
+
+#[test]
+fn ctrl_v_uses_clipboard_shortcut_only_in_main_composer() {
+    let mut app = test_app();
+    let key = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+
+    assert!(matches!(
+        app.handle_key(key),
+        Some(ParsedInput::LocalImagePaste)
+    ));
+
+    app.bottom_pane
+        .set_config_panel(String::new(), String::new(), String::new());
+
+    assert!(app.handle_key(key).is_none());
 }
 
 #[test]
