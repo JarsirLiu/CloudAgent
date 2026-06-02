@@ -999,6 +999,46 @@ fn slash_completion_expands_bottom_pane_as_single_layout_region() {
 }
 
 #[test]
+fn escape_closes_completion_menu_in_running_mode_without_interrupting_turn() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+
+    let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let bottom_before = app
+        .bottom_pane
+        .desired_height(app.current_mode(), terminal_area.width);
+    let _ = app.bottom_pane.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('/'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    let bottom_open = app
+        .bottom_pane
+        .desired_height(app.current_mode(), terminal_area.width);
+
+    assert!(bottom_open > bottom_before);
+
+    let parsed = app.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+
+    assert!(parsed.is_none());
+    assert_eq!(
+        app.bottom_pane
+            .desired_height(app.current_mode(), terminal_area.width),
+        bottom_before
+    );
+    assert!(!app.run_state.should_exit);
+}
+
+#[test]
 fn welcome_stays_visible_while_composer_has_draft_text() {
     let mut app = TuiApp::new(
         "default".to_string(),
