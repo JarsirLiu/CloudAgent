@@ -28,12 +28,12 @@ pub(super) fn render_active_placeholder(kind: TurnItemKind, title: &str) -> Hist
             if classify_command_kind(title)
                 == ToolUiKind::Exploration(ExplorationKind::WorkspaceCommand) =>
         {
-            let summary = summarize_exploration_command(title);
-            let mut aggregate = ExplorationAggregate::new(summary.clone());
+            let command_preview = summarize_exploration_command(title);
+            let mut aggregate = ExplorationAggregate::new(command_preview.clone());
             aggregate.inspect_commands = 1;
             HistoryCell::exploration(
                 exploration_label(ExplorationKind::WorkspaceCommand),
-                summary,
+                command_preview,
                 aggregate,
                 HistoryTone::Control,
             )
@@ -332,13 +332,13 @@ fn render_exploration_command(command: &str) -> Option<HistoryCell> {
         return None;
     }
 
-    let summary = summarize_exploration_command(command);
-    let mut aggregate = ExplorationAggregate::new(summary.clone());
+    let command_preview = summarize_exploration_command(command);
+    let mut aggregate = ExplorationAggregate::new(command_preview.clone());
     aggregate.inspect_commands = 1;
 
     Some(HistoryCell::exploration(
         exploration_label(ExplorationKind::WorkspaceCommand),
-        "ran 1 inspect command".to_string(),
+        command_preview,
         aggregate,
         HistoryTone::Control,
     ))

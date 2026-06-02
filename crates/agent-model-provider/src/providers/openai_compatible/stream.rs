@@ -160,8 +160,7 @@ fn parse_responses_stream_frame(block: &str) -> Result<ParsedStreamFrame, Provid
                 }));
             }
             if let Some(usage) = response.get("usage").cloned()
-                && let Ok(usage) =
-                    serde_json::from_value::<super::wire::ResponsesUsage>(usage)
+                && let Ok(usage) = serde_json::from_value::<super::wire::ResponsesUsage>(usage)
             {
                 events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
             }
@@ -242,8 +241,7 @@ fn parse_responses_stream_frame(block: &str) -> Result<ParsedStreamFrame, Provid
                 end_turn: None,
             });
             if let Some(usage) = response.get("usage").cloned()
-                && let Ok(usage) =
-                    serde_json::from_value::<super::wire::ResponsesUsage>(usage)
+                && let Ok(usage) = serde_json::from_value::<super::wire::ResponsesUsage>(usage)
             {
                 events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
             }

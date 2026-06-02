@@ -852,7 +852,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.run_state.history_snapshot = Some(messages);
             app.run_state.history_has_more = false;
             app.run_state.history_next_before_turn_id = None;
-            conversation_facade::rebuild_transcript_from_history(app);
+            conversation_facade::replace_transcript_from_history(app);
         }
         ServerAction::ReplaceHistoryPage {
             turns,
@@ -862,7 +862,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.run_state.history_snapshot = Some(turns);
             app.run_state.history_has_more = has_more;
             app.run_state.history_next_before_turn_id = next_before_turn_id;
-            conversation_facade::rebuild_transcript_from_history(app);
+            conversation_facade::replace_transcript_from_history(app);
         }
         ServerAction::PrependHistoryPage {
             turns,

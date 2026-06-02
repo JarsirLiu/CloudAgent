@@ -288,9 +288,7 @@ fn map_responses_tool_call_item(
         .or_else(|| item.get("input").cloned())
         .unwrap_or_else(|| Value::Object(Default::default()));
     let arguments = match arguments {
-        Value::String(raw) => {
-            serde_json::from_str::<Value>(&raw).unwrap_or(Value::String(raw))
-        }
+        Value::String(raw) => serde_json::from_str::<Value>(&raw).unwrap_or(Value::String(raw)),
         other => other,
     };
     Some(map_tool_call(

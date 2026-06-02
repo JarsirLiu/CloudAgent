@@ -1,3 +1,5 @@
+mod powershell;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandAccess {
     ReadOnly,
@@ -54,12 +56,19 @@ fn normalize_command(command: &str) -> String {
 }
 
 fn is_safe_readonly_chain(command: &str) -> bool {
+    split_segments(command)
+        .into_iter()
+        .filter(|segment| !segment.is_empty())
+        .all(is_safe_readonly_segment)
+}
+
+fn split_segments(command: &str) -> Vec<&str> {
     if command.contains("&&") {
         return command
             .split("&&")
             .map(str::trim)
             .filter(|segment| !segment.is_empty())
-            .all(is_safe_readonly_segment);
+            .collect();
     }
 
     if command.contains(';') {
@@ -67,10 +76,10 @@ fn is_safe_readonly_chain(command: &str) -> bool {
             .split(';')
             .map(str::trim)
             .filter(|segment| !segment.is_empty())
-            .all(is_safe_readonly_segment);
+            .collect();
     }
 
-    is_safe_readonly_segment(command)
+    vec![command.trim()]
 }
 
 fn is_safe_readonly_segment(segment: &str) -> bool {
@@ -83,12 +92,9 @@ fn is_safe_readonly_segment(segment: &str) -> bool {
         return false;
     }
 
-    if let Some(rhs) = powershell_assignment_rhs(normalized) {
-        return is_safe_readonly_segment(rhs);
-    }
-
-    if is_safe_powershell_expression(normalized) {
-        return true;
+    match powershell::classify_segment(normalized) {
+        powershell::PowerShellAccess::ReadOnly => return true,
+        powershell::PowerShellAccess::Unknown => {}
     }
 
     let Some(program) = normalized.split_whitespace().next() else {
@@ -113,34 +119,6 @@ fn is_safe_readonly_segment(segment: &str) -> bool {
         "git" => is_safe_git_command(normalized),
         _ => false,
     }
-}
-
-fn powershell_assignment_rhs(segment: &str) -> Option<&str> {
-    if !segment.starts_with('$') {
-        return None;
-    }
-
-    let (lhs, rhs) = segment.split_once('=')?;
-    let lhs = lhs.trim();
-    let rhs = rhs.trim();
-    if rhs.is_empty() || !lhs.starts_with('$') {
-        return None;
-    }
-    if lhs.contains("==") || lhs.contains("!=") {
-        return None;
-    }
-    Some(rhs)
-}
-
-fn is_safe_powershell_expression(segment: &str) -> bool {
-    if !segment.starts_with('$') {
-        return false;
-    }
-
-    !segment.contains("invoke-expression")
-        && !segment.contains("start-process")
-        && !segment.contains("new-object")
-        && !segment.contains("& ")
 }
 
 fn contains_direct_file_write_indicator(command: &str) -> bool {
@@ -292,6 +270,24 @@ mod tests {
             classify_command(
                 "$lines = Get-Content packages/core/src/agents/runtime/agent-core.ts; $lines[630..730] -join \"`n\""
             ),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command(
+                "(Get-Content \"D:\\learn\\gifti\\qwen-code\\packages\\core\\src\\core\\turn.ts\").Count"
+            ),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command("(Get-Content \"x\" | Measure-Object -Line).Lines"),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command("(Get-ChildItem \"x\" -File).Count"),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command("$content = Get-Content \"x\" -Raw; $content.Length"),
             CommandAccess::ReadOnly
         );
     }

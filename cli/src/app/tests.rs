@@ -249,6 +249,106 @@ fn completed_turn_history_merges_only_adjacent_agent_message_runs() {
 }
 
 #[test]
+fn rebuilt_completed_turn_keeps_final_assistant_after_tool_runs() {
+    let mut app = test_app();
+    let history = vec![turn(
+        "turn-1",
+        TurnState::Completed,
+        vec![
+            user("u1", "inspect response/chat behavior"),
+            command("c1", "Get-Content stream.rs"),
+            command("c2", "Get-Content transform.rs"),
+            agent("a1", "Final analysis after checking both files."),
+        ],
+    )];
+
+    app.transcript_owner
+        .rebuild_from_history_snapshot(&history, false);
+
+    let committed = app
+        .transcript_owner
+        .pending_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        committed,
+        vec![
+            "inspect response/chat behavior".to_string(),
+            "Get-Content stream.rs".to_string(),
+            "Get-Content transform.rs".to_string(),
+            "Final analysis after checking both files.".to_string(),
+        ]
+    );
+
+    let model = build_chat_surface_model(&mut app, 100, 40);
+    let ChatSurfaceBody::Transcript(surface) = model.body else {
+        panic!("expected transcript body");
+    };
+    let rendered = surface
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let last_non_empty = rendered
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .expect("transcript should contain visible lines");
+    assert!(last_non_empty.contains("Final analysis after checking both files."));
+}
+
+#[test]
+fn replacing_history_resets_transcript_scroll_to_latest_tail() {
+    let mut app = test_app();
+    let history = vec![turn(
+        "turn-1",
+        TurnState::Completed,
+        vec![
+            user("u1", "inspect response/chat behavior"),
+            command("c1", "Get-Content stream.rs"),
+            command("c2", "Get-Content transform.rs"),
+            agent("a1", "Final analysis after checking both files."),
+        ],
+    )];
+
+    app.transcript_owner
+        .rebuild_from_history_snapshot(&history, false);
+    let initial_model = build_chat_surface_model(&mut app, 100, 4);
+    let ChatSurfaceBody::Transcript(initial_surface) = initial_model.body else {
+        panic!("expected transcript body");
+    };
+    assert!(initial_surface.rendered_rows > 4);
+    assert_eq!(
+        app.transcript_scroll
+            .top_row_for_render(initial_surface.rendered_rows, 4),
+        initial_surface.rendered_rows as u16 - 4
+    );
+
+    assert!(
+        app.transcript_scroll
+            .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+    );
+    let scrolled_top = app
+        .transcript_scroll
+        .top_row_for_render(initial_surface.rendered_rows, 4);
+    assert!(scrolled_top < initial_surface.rendered_rows as u16 - 4);
+
+    app.run_state.history_snapshot = Some(history);
+    crate::app::conversation::facade::replace_transcript_from_history(&mut app);
+
+    let replaced_model = build_chat_surface_model(&mut app, 100, 4);
+    let ChatSurfaceBody::Transcript(replaced_surface) = replaced_model.body else {
+        panic!("expected transcript body");
+    };
+    assert_eq!(
+        app.transcript_scroll
+            .top_row_for_render(replaced_surface.rendered_rows, 4),
+        replaced_surface.rendered_rows as u16 - 4
+    );
+}
+
+#[test]
 fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
@@ -455,7 +555,7 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
         vec![
             "hello".to_string(),
             "first stable\n\nsecond stable\n\nfinal tail".to_string(),
-            "ran 1 inspect command".to_string(),
+            "rg esc".to_string(),
         ]
     );
 }
@@ -536,7 +636,7 @@ fn runtime_non_agent_cells_do_not_become_stream_continuations() {
         vec![
             ("hello".to_string(), false),
             ("thinking".to_string(), false),
-            ("ran 1 inspect command".to_string(), false),
+            ("rg cli".to_string(), false),
         ]
     );
 }
