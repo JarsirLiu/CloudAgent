@@ -116,9 +116,11 @@ impl InputPane {
             }
         }
 
-        // Let the composer handle Esc first (e.g. dismiss completion popup).
-        // Only if the composer did not consume it, treat Esc as Interrupt.
         if key.code == KeyCode::Esc && key.modifiers.is_empty() {
+            // Completion/menu Esc is a navigation action, not an interrupt.
+            if self.composer.has_completion_menu() {
+                return self.composer.handle_key(key).map(InputPaneAction::Composer);
+            }
             if let Some(action) = self.composer.handle_key(key) {
                 return Some(InputPaneAction::Composer(action));
             }
@@ -851,6 +853,27 @@ mod tests {
         assert!(matches!(
             action,
             Some(InputPaneAction::Composer(ComposerIntent::Interrupt))
+        ));
+    }
+
+    #[test]
+    fn esc_closes_completion_menu_before_interrupting() {
+        let mut pane = InputPane::new();
+        let _ = pane.handle_key(KeyEvent {
+            code: KeyCode::Char('/'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+
+        assert!(matches!(
+            pane.handle_key(KeyEvent {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+            }),
+            Some(InputPaneAction::Composer(ComposerIntent::None))
         ));
     }
 
