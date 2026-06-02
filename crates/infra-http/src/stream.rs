@@ -109,7 +109,7 @@ mod tests {
 
         assert_eq!(
             stream.recv().await.expect("first frame").expect("ok frame"),
-            "hello"
+            "data: hello"
         );
         assert_eq!(
             stream.recv().await.expect("close error"),
@@ -211,7 +211,7 @@ mod tests {
 
         assert_eq!(
             stream.recv().await.expect("first frame").expect("ok frame"),
-            "hello"
+            "data: hello"
         );
         assert_eq!(
             stream.recv().await.expect("stall error"),
