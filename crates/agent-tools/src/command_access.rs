@@ -83,6 +83,14 @@ fn is_safe_readonly_segment(segment: &str) -> bool {
         return false;
     }
 
+    if let Some(rhs) = powershell_assignment_rhs(normalized) {
+        return is_safe_readonly_segment(rhs);
+    }
+
+    if is_safe_powershell_expression(normalized) {
+        return true;
+    }
+
     let Some(program) = normalized.split_whitespace().next() else {
         return false;
     };
@@ -105,6 +113,34 @@ fn is_safe_readonly_segment(segment: &str) -> bool {
         "git" => is_safe_git_command(normalized),
         _ => false,
     }
+}
+
+fn powershell_assignment_rhs(segment: &str) -> Option<&str> {
+    if !segment.starts_with('$') {
+        return None;
+    }
+
+    let (lhs, rhs) = segment.split_once('=')?;
+    let lhs = lhs.trim();
+    let rhs = rhs.trim();
+    if rhs.is_empty() || !lhs.starts_with('$') {
+        return None;
+    }
+    if lhs.contains("==") || lhs.contains("!=") {
+        return None;
+    }
+    Some(rhs)
+}
+
+fn is_safe_powershell_expression(segment: &str) -> bool {
+    if !segment.starts_with('$') {
+        return false;
+    }
+
+    !segment.contains("invoke-expression")
+        && !segment.contains("start-process")
+        && !segment.contains("new-object")
+        && !segment.contains("& ")
 }
 
 fn contains_direct_file_write_indicator(command: &str) -> bool {
@@ -250,6 +286,12 @@ mod tests {
         assert_eq!(classify_command("git status"), CommandAccess::ReadOnly);
         assert_eq!(
             classify_command("Get-ChildItem -Force"),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command(
+                "$lines = Get-Content packages/core/src/agents/runtime/agent-core.ts; $lines[630..730] -join \"`n\""
+            ),
             CommandAccess::ReadOnly
         );
     }

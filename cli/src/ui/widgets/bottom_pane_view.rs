@@ -1,5 +1,5 @@
 use crate::input::intent::ComposerIntent;
-use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
+use crate::ui::widgets::server_request_model::ServerRequestInlineState;
 use agent_core::ServerRequestDecisionKind;
 use agent_protocol::RequestId;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};

@@ -10,7 +10,7 @@ use crate::ui::widgets::help_view::HelpView;
 use crate::ui::widgets::model_picker::ModelPicker;
 use crate::ui::widgets::permissions_picker::PermissionsPicker;
 use crate::ui::widgets::reasoning_picker::ReasoningPicker;
-pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
+pub(crate) use crate::ui::widgets::server_request_model::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
 use crate::ui::widgets::weixin_binding_view::{WeixinBindingView, WeixinBindingViewModel};
@@ -413,7 +413,7 @@ impl InputPane {
         self.composer.restore_submission(content);
     }
 
-    pub fn set_server_request(&mut self, request: ServerRequestInlineState) {
+    pub(crate) fn set_server_request(&mut self, request: ServerRequestInlineState) {
         let request = if let Some(view) = self.view_stack.last_mut() {
             match view.try_consume_server_request(request) {
                 Some(request) => request,
@@ -708,14 +708,22 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::widgets::Widget;
 
+    fn command_request(id: &str, title: &str) -> ServerRequestInlineState {
+        ServerRequestInlineState {
+            request_id: RequestId::String(id.to_string()),
+            presentation:
+                crate::ui::widgets::server_request_model::ServerRequestPresentation::command(
+                    title,
+                    "needs approval",
+                    "Get-Content file.rs",
+                ),
+        }
+    }
+
     #[test]
     fn esc_interrupts_even_when_server_request_overlay_is_active() {
         let mut pane = InputPane::new();
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-1".to_string()),
-            title: "Run command?".to_string(),
-            detail: "exec_command".to_string(),
-        });
+        pane.set_server_request(command_request("req-1", "Run command?"));
 
         let action = pane.handle_key(KeyEvent {
             code: KeyCode::Esc,
@@ -733,16 +741,8 @@ mod tests {
     #[test]
     fn server_request_overlay_queues_new_requests_instead_of_replacing_current() {
         let mut pane = InputPane::new();
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-1".to_string()),
-            title: "First command".to_string(),
-            detail: "exec_command".to_string(),
-        });
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-2".to_string()),
-            title: "Second command".to_string(),
-            detail: "exec_command".to_string(),
-        });
+        pane.set_server_request(command_request("req-1", "First command"));
+        pane.set_server_request(command_request("req-2", "Second command"));
 
         let first = pane.handle_key(KeyEvent {
             code: KeyCode::Char('1'),
@@ -778,16 +778,8 @@ mod tests {
     #[test]
     fn queued_server_request_remains_action_required_after_first_submit() {
         let mut pane = InputPane::new();
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-1".to_string()),
-            title: "First command".to_string(),
-            detail: "exec_command".to_string(),
-        });
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-2".to_string()),
-            title: "Second command".to_string(),
-            detail: "exec_command".to_string(),
-        });
+        pane.set_server_request(command_request("req-1", "First command"));
+        pane.set_server_request(command_request("req-2", "Second command"));
 
         let _ = pane.handle_key(KeyEvent {
             code: KeyCode::Char('1'),
@@ -806,11 +798,7 @@ mod tests {
     #[test]
     fn approval_selection_mode_does_not_force_a_text_cursor() {
         let mut pane = InputPane::new();
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-1".to_string()),
-            title: "Run command?".to_string(),
-            detail: "exec_command".to_string(),
-        });
+        pane.set_server_request(command_request("req-1", "Run command?"));
 
         assert_eq!(
             pane.cursor_position(

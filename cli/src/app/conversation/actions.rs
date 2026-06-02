@@ -977,19 +977,16 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         }
         ServerAction::ShowServerRequestPrompt {
             request_id,
-            title,
-            detail,
-            notice,
+            request,
         } => {
             app.show_server_request_prompt(
                 crate::ui::widgets::input_pane::ServerRequestInlineState {
                     request_id,
-                    title,
-                    detail,
+                    presentation: request.clone(),
                 },
             );
             app.bottom_pane
-                .show_transient_notice(NoticeLevel::Warn, notice);
+                .show_transient_notice(NoticeLevel::Warn, request.notice_text());
         }
     }
 }

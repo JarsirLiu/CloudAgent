@@ -579,7 +579,7 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
     assert!(
         pending
             .iter()
-            .any(|entry| entry.contains("Explored workspace|read 1 file")),
+            .any(|entry| entry.contains("Read file|read 1 file")),
         "pending: {pending:?}"
     );
     assert!(
@@ -667,11 +667,11 @@ fn adjacent_exploration_history_cells_merge_without_crossing_reasoning_barrier()
         vec![
             ("you".to_string(), "hello".to_string()),
             (
-                "Explored workspace".to_string(),
-                "searched 1 time, read 1 file".to_string(),
+                "Read file".to_string(),
+                "searched 1 time, read 1 file".to_string()
             ),
             ("Reasoning".to_string(), "thinking".to_string()),
-            ("Explored workspace".to_string(), "read 1 file".to_string()),
+            ("Read file".to_string(), "read 1 file".to_string()),
         ]
     );
 }
@@ -1227,16 +1227,18 @@ fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell()
         &mut app,
         crate::state::reducer::ServerAction::ShowServerRequestPrompt {
             request_id: agent_protocol::RequestId::String("req-1".to_string()),
-            title: "approval".to_string(),
-            detail: "detail".to_string(),
-            notice: "Command approval required".to_string(),
+            request: crate::ui::widgets::server_request_model::ServerRequestPresentation::command(
+                "exec_command",
+                "needs review",
+                "Get-Content file.rs",
+            ),
         },
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
         status.live_banner.as_deref(),
-        Some("Command approval required")
+        Some("Command approval required for exec_command")
     );
     assert_eq!(
         status.live_banner_level,

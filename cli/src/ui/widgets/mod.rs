@@ -15,6 +15,7 @@ pub mod paste_burst;
 pub mod paste_echo_guard;
 pub mod permissions_picker;
 pub mod reasoning_picker;
+pub mod server_request_model;
 pub mod server_request_overlay;
 pub mod session_picker;
 pub mod text_effects;

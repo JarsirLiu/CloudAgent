@@ -67,7 +67,7 @@ fn parse_chat_stream_frame(block: &str) -> Result<ParsedStreamFrame, ProviderStr
     }
 
     let parsed: ChatCompletionStreamChunk =
-        serde_json::from_str(&data).map_err(|err| ProviderStreamError::Protocol {
+        serde_json::from_str(data).map_err(|err| ProviderStreamError::Protocol {
             message: format!("failed to parse streaming chunk: {err}"),
         })?;
 
@@ -159,10 +159,11 @@ fn parse_responses_stream_frame(block: &str) -> Result<ParsedStreamFrame, Provid
                     model_name: Some(model_name.to_string()),
                 }));
             }
-            if let Some(usage) = response.get("usage").cloned() {
-                if let Ok(usage) = serde_json::from_value::<super::wire::ResponsesUsage>(usage) {
-                    events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
-                }
+            if let Some(usage) = response.get("usage").cloned()
+                && let Ok(usage) =
+                    serde_json::from_value::<super::wire::ResponsesUsage>(usage)
+            {
+                events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
             }
         }
         "response.output_text.delta" => {
@@ -240,10 +241,11 @@ fn parse_responses_stream_frame(block: &str) -> Result<ParsedStreamFrame, Provid
                 finish_reason: map_responses_finish_reason(response),
                 end_turn: None,
             });
-            if let Some(usage) = response.get("usage").cloned() {
-                if let Ok(usage) = serde_json::from_value::<super::wire::ResponsesUsage>(usage) {
-                    events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
-                }
+            if let Some(usage) = response.get("usage").cloned()
+                && let Ok(usage) =
+                    serde_json::from_value::<super::wire::ResponsesUsage>(usage)
+            {
+                events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
             }
             done = true;
         }

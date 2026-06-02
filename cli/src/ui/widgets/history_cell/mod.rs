@@ -1,6 +1,7 @@
 mod markdown;
 mod render;
 pub(crate) mod tool_aggregation;
+mod tool_ui;
 mod wrapping;
 
 use agent_core::{ConversationTurn, TranscriptItem};

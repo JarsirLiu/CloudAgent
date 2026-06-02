@@ -34,10 +34,10 @@ fn find_sse_delimiter(buffer: &str) -> Option<(usize, usize)> {
     let mut best: Option<(usize, usize)> = None;
 
     for (delimiter, len) in [("\r\n\r\n", 4usize), ("\n\n", 2usize)] {
-        if let Some(pos) = buffer.find(delimiter) {
-            if best.is_none_or(|(best_pos, _)| pos < best_pos) {
-                best = Some((pos, len));
-            }
+        if let Some(pos) = buffer.find(delimiter)
+            && best.is_none_or(|(best_pos, _)| pos < best_pos)
+        {
+            best = Some((pos, len));
         }
     }
 

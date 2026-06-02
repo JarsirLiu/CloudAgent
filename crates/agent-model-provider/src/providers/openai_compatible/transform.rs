@@ -289,7 +289,7 @@ fn map_responses_tool_call_item(
         .unwrap_or_else(|| Value::Object(Default::default()));
     let arguments = match arguments {
         Value::String(raw) => {
-            serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| Value::String(raw))
+            serde_json::from_str::<Value>(&raw).unwrap_or(Value::String(raw))
         }
         other => other,
     };
