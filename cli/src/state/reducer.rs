@@ -55,6 +55,7 @@ pub(crate) enum UiInputEvent {
     },
     LocalCopy,
     LocalCopyText(String),
+    LocalImagePaste,
     LocalHelp,
     LocalInputError(String),
 }

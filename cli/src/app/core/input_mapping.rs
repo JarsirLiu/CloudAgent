@@ -1,8 +1,9 @@
 use crate::app::TuiApp;
-use crate::app::clipboard_paste::paste_image_to_temp_png;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permission_profile::turn_policy_for_mode;
 use crate::input::intent::ComposerIntent;
+use crate::input::keymap::matches_ctrl_char;
+use crate::input::keymap::matches_image_paste_shortcut;
 use crate::state::NoticeLevel;
 use crate::ui::widgets::input_pane::InputPaneAction;
 use agent_protocol::AppClientCommand;
@@ -58,10 +59,8 @@ impl TuiApp {
             );
             return None;
         }
-        if matches_image_paste_shortcut(key)
-            && handle_ctrl_v_image_paste(self, paste_image_to_temp_png)
-        {
-            return None;
+        if matches_image_paste_shortcut(key) {
+            return Some(ParsedInput::LocalImagePaste);
         }
         match self.bottom_pane.handle_key(key)? {
             InputPaneAction::Composer(ComposerIntent::Submit(content)) => {
@@ -207,36 +206,8 @@ impl TuiApp {
     }
 }
 
-fn matches_ctrl_char(key: KeyEvent, ch: char) -> bool {
-    matches!(key.code, KeyCode::Char(code) if code.eq_ignore_ascii_case(&ch))
-        && key.modifiers.contains(KeyModifiers::CONTROL)
-}
-
-fn matches_image_paste_shortcut(key: KeyEvent) -> bool {
-    (matches!(key.code, KeyCode::Char(code) if code.eq_ignore_ascii_case(&'v') || code == '\u{16}')
-        && key.modifiers.contains(KeyModifiers::CONTROL))
-        || matches!(key.code, KeyCode::Char('\u{16}'))
-        || (matches!(key.code, KeyCode::Insert) && key.modifiers == KeyModifiers::SHIFT)
-}
-
-fn handle_ctrl_v_image_paste<F>(app: &mut TuiApp, paste_image: F) -> bool
-where
-    F: FnOnce() -> Result<std::path::PathBuf, crate::app::clipboard_paste::PasteImageError>,
-{
-    match paste_image() {
-        Ok(path) => app.bottom_pane.attach_image(path),
-        Err(err) => {
-            app.bottom_pane
-                .show_transient_notice(NoticeLevel::Warn, format!("Failed to paste image: {err}"));
-            true
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::handle_ctrl_v_image_paste;
-    use super::matches_image_paste_shortcut;
     use crate::app::TuiApp;
     use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -317,82 +288,5 @@ mod tests {
 
         assert!(parsed.is_none());
         assert!(!app.run_state.should_exit);
-    }
-
-    #[test]
-    fn ctrl_v_paste_attaches_image_placeholder() {
-        let mut app = test_app();
-        let image_path = PathBuf::from(r"D:\temp\paste.png");
-
-        let handled = handle_ctrl_v_image_paste(&mut app, || Ok(image_path));
-
-        assert!(handled);
-        let (lines, _) =
-            app.bottom_pane
-                .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 60);
-        let rendered = lines
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains("[Image #1]"));
-    }
-
-    #[test]
-    fn ctrl_v_paste_surfaces_warning_when_image_read_fails() {
-        let mut app = test_app();
-
-        let handled = handle_ctrl_v_image_paste(&mut app, || {
-            Err(crate::app::clipboard_paste::PasteImageError::NoImage(
-                "missing clipboard image".to_string(),
-            ))
-        });
-
-        assert!(handled);
-        let status = app.bottom_pane.build_status_view_model(&app);
-        let banner = status
-            .live_banner
-            .expect("warning banner should be created");
-        assert!(banner.contains("Failed to paste image"));
-    }
-
-    #[test]
-    fn image_paste_shortcut_accepts_ctrl_v() {
-        assert!(matches_image_paste_shortcut(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::CONTROL
-        )));
-    }
-
-    #[test]
-    fn image_paste_shortcut_accepts_ctrl_alt_v() {
-        assert!(matches_image_paste_shortcut(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::CONTROL | KeyModifiers::ALT
-        )));
-    }
-
-    #[test]
-    fn image_paste_shortcut_accepts_shift_insert() {
-        assert!(matches_image_paste_shortcut(KeyEvent::new(
-            KeyCode::Insert,
-            KeyModifiers::SHIFT
-        )));
-    }
-
-    #[test]
-    fn image_paste_shortcut_accepts_ctrl_v_control_char() {
-        assert!(matches_image_paste_shortcut(KeyEvent::new(
-            KeyCode::Char('\u{16}'),
-            KeyModifiers::CONTROL
-        )));
-    }
-
-    #[test]
-    fn image_paste_shortcut_accepts_bare_ctrl_v_control_char() {
-        assert!(matches_image_paste_shortcut(KeyEvent::new(
-            KeyCode::Char('\u{16}'),
-            KeyModifiers::NONE
-        )));
     }
 }

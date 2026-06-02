@@ -1,15 +1,12 @@
 use crate::app::TuiApp;
-use crate::app::clipboard_paste::paste_image_to_temp_png;
 use crate::app::conversation::actions::handle_tui_input;
 use crate::app::conversation::event_router;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
-use crate::state::NoticeLevel;
 use crate::terminal::{FrameRequester, UiEvent};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
 use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
-use std::path::PathBuf;
 
 pub(crate) struct RuntimeController;
 
@@ -65,7 +62,7 @@ impl RuntimeController {
             }
             UiEvent::Paste(text) => {
                 pause_welcome_animation_for_input(app);
-                handle_paste_event(app, &text, paste_image_to_temp_png);
+                let _ = app.bottom_pane.handle_paste(&text);
                 frame_requester.schedule_frame();
                 RuntimeControl::Continue
             }
@@ -96,26 +93,6 @@ impl RuntimeController {
 
 fn should_request_older_history_page(key: KeyEvent) -> bool {
     matches!(key.code, KeyCode::PageUp | KeyCode::Home)
-}
-
-fn handle_paste_event<F>(app: &mut TuiApp, text: &str, paste_image: F)
-where
-    F: FnOnce() -> Result<PathBuf, crate::app::clipboard_paste::PasteImageError>,
-{
-    match paste_image() {
-        Ok(path) => {
-            let _ = app.bottom_pane.attach_image(path);
-        }
-        Err(err) => {
-            if !text.is_empty() {
-                let _ = app.bottom_pane.handle_paste(text);
-                return;
-            }
-
-            app.bottom_pane
-                .show_transient_notice(NoticeLevel::Warn, format!("Failed to paste image: {err}"));
-        }
-    }
 }
 
 pub(crate) enum RuntimeControl {
@@ -259,22 +236,9 @@ fn try_merge_messages(existing: &mut AppServerEvent, next: &AppServerMessage) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{coalesce_client_events, handle_paste_event};
-    use crate::app::TuiApp;
+    use super::coalesce_client_events;
     use agent_app_server_client::AppServerEvent;
     use agent_protocol::{AppServerMessage, AppServerNotification};
-    use std::path::PathBuf;
-
-    fn test_app() -> TuiApp {
-        TuiApp::new(
-            "default".to_string(),
-            "test",
-            PathBuf::from("D:\\learn\\gifti\\cloudagent"),
-            PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
-            false,
-            "WorkspaceWrite".to_string(),
-        )
-    }
 
     fn command_delta(item_id: &str, delta: &str) -> AppServerEvent {
         AppServerEvent::Message(AppServerMessage::Notification(
@@ -330,105 +294,5 @@ mod tests {
 
         assert_eq!(coalesced.len(), 1);
         assert!(matches!(coalesced[0], AppServerEvent::Message(_)));
-    }
-
-    #[test]
-    fn paste_event_with_text_falls_back_to_text_when_no_image_is_available() {
-        let mut app = test_app();
-
-        handle_paste_event(&mut app, "hello", || {
-            Err(crate::app::clipboard_paste::PasteImageError::NoImage(
-                "missing".to_string(),
-            ))
-        });
-
-        let lines =
-            app.bottom_pane
-                .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
-        let rendered = lines
-            .0
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains("hello"));
-    }
-
-    #[test]
-    fn paste_event_with_text_prefers_clipboard_image_when_available() {
-        let mut app = test_app();
-        let image_path = std::env::temp_dir().join("runtime-paste-priority-test.png");
-        image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 255, 255]))
-            .save(&image_path)
-            .expect("save temp image");
-
-        handle_paste_event(&mut app, "ignored text representation", || Ok(image_path));
-
-        let lines =
-            app.bottom_pane
-                .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
-        let rendered = lines
-            .0
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains("[Image #1]"));
-        assert!(!rendered.contains("ignored text representation"));
-    }
-
-    #[test]
-    fn empty_paste_event_can_attach_clipboard_image() {
-        let mut app = test_app();
-        let image_path = std::env::temp_dir().join("runtime-paste-test.png");
-        image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 255, 0, 255]))
-            .save(&image_path)
-            .expect("save temp image");
-
-        handle_paste_event(&mut app, "", || Ok(image_path.clone()));
-
-        let lines =
-            app.bottom_pane
-                .render_lines_for_test(agent_protocol::FrontendMode::Idle, "", "", 80);
-        let rendered = lines
-            .0
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains("[Image #1]"));
-    }
-
-    #[test]
-    fn empty_paste_event_surfaces_warning_when_clipboard_image_unavailable() {
-        let mut app = test_app();
-
-        handle_paste_event(&mut app, "", || {
-            Err(crate::app::clipboard_paste::PasteImageError::NoImage(
-                "missing".to_string(),
-            ))
-        });
-
-        let status = app.bottom_pane.build_status_view_model(&app);
-        let banner = status
-            .live_banner
-            .expect("warning banner should be created");
-        assert!(banner.contains("Failed to paste image"));
-        assert!(banner.contains("missing"));
     }
 }

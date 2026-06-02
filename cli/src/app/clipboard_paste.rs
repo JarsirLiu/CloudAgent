@@ -43,7 +43,11 @@ pub(crate) fn paste_image_to_temp_png() -> Result<PathBuf, PasteImageError> {
             {
                 try_wsl_clipboard_fallback(&err).or(Err(err))
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(windows)]
+            {
+                try_windows_clipboard_fallback(&err).or(Err(err))
+            }
+            #[cfg(all(not(target_os = "linux"), not(windows)))]
             {
                 Err(err)
             }
@@ -141,6 +145,46 @@ fn try_wsl_clipboard_fallback(error: &PasteImageError) -> Result<PathBuf, PasteI
 }
 
 #[cfg(target_os = "linux")]
+fn try_dump_windows_clipboard_image() -> Option<String> {
+    let script = r#"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $img = Get-Clipboard -Format Image; if ($img -ne $null) { $p=[System.IO.Path]::GetTempFileName(); $p = [System.IO.Path]::ChangeExtension($p,'png'); $img.Save($p,[System.Drawing.Imaging.ImageFormat]::Png); Write-Output $p } else { exit 1 }"#;
+
+    for cmd in ["powershell.exe", "pwsh", "powershell"] {
+        match std::process::Command::new(cmd)
+            .args(["-NoProfile", "-Command", script])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let win_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !win_path.is_empty() {
+                    return Some(win_path);
+                }
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn try_windows_clipboard_fallback(error: &PasteImageError) -> Result<PathBuf, PasteImageError> {
+    use PasteImageError::ClipboardUnavailable;
+    use PasteImageError::NoImage;
+
+    if !matches!(error, ClipboardUnavailable(_) | NoImage(_)) {
+        return Err(error.clone());
+    }
+
+    let Some(path) = try_dump_windows_clipboard_image() else {
+        return Err(error.clone());
+    };
+    let path = PathBuf::from(path);
+    if !is_supported_image_path(&path) {
+        return Err(error.clone());
+    }
+    Ok(path)
+}
+
+#[cfg(windows)]
 fn try_dump_windows_clipboard_image() -> Option<String> {
     let script = r#"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $img = Get-Clipboard -Format Image; if ($img -ne $null) { $p=[System.IO.Path]::GetTempFileName(); $p = [System.IO.Path]::ChangeExtension($p,'png'); $img.Save($p,[System.Drawing.Imaging.ImageFormat]::Png); Write-Output $p } else { exit 1 }"#;
 
