@@ -8,394 +8,529 @@ use crate::text_width::display_width;
 
 pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let input = normalize_markdown_indentation(input);
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_TASKLISTS);
-    let parser = Parser::new_ext(&input, opts).into_offset_iter();
+    MarkdownWriter::new(&input, width).render()
+}
 
-    let mut out: Vec<Line<'static>> = Vec::new();
-    let mut current: Vec<Span<'static>> = Vec::new();
-    let mut style_stack: Vec<Style> = vec![Style::default().fg(Color::Rgb(200, 200, 210))];
-    let mut in_code_block = false;
-    let mut code_lang = String::new();
-    let mut code_indent = String::new();
-    let mut code_buf = String::new();
-    let mut list_stack: Vec<Option<u64>> = Vec::new();
-    let mut line_prefix = String::new();
-    let mut heading_prefix = String::new();
-    let mut in_heading = false;
-    let mut table_rows: Vec<Vec<String>> = Vec::new();
-    let mut table_row: Vec<String> = Vec::new();
-    let mut quote_depth = 0usize;
-    let mut link_stack: Vec<String> = Vec::new();
-    let flush =
-        |current: &mut Vec<Span<'static>>, out: &mut Vec<Line<'static>>, w: usize, prefix: &str| {
-            if !current.is_empty() {
-                push_wrapped_spans(current, out, w, prefix);
-                current.clear();
-            }
-        };
+struct MarkdownWriter<'a> {
+    input: &'a str,
+    width: usize,
+    out: Vec<Line<'static>>,
+    current: Vec<Span<'static>>,
+    table_cell: Vec<Span<'static>>,
+    style_stack: Vec<Style>,
+    in_code_block: bool,
+    code_lang: String,
+    code_indent: String,
+    code_buf: String,
+    indent_stack: Vec<IndentContext>,
+    list_stack: Vec<Option<u64>>,
+    list_needs_blank_before_next_item: Vec<bool>,
+    list_item_start_line_counts: Vec<usize>,
+    heading_prefix: String,
+    in_heading: bool,
+    table_rows: Vec<Vec<String>>,
+    table_row: Vec<String>,
+    in_table_cell: bool,
+    link_stack: Vec<String>,
+    needs_newline: bool,
+    pending_marker_line: bool,
+}
 
-    let mut previous_event_end = 0usize;
+#[derive(Clone, Debug)]
+struct IndentContext {
+    prefix: Vec<Span<'static>>,
+    marker: Option<Vec<Span<'static>>>,
+    is_list: bool,
+}
 
-    for (event, range) in parser {
+impl IndentContext {
+    fn new(prefix: Vec<Span<'static>>, marker: Option<Vec<Span<'static>>>, is_list: bool) -> Self {
+        Self {
+            prefix,
+            marker,
+            is_list,
+        }
+    }
+}
+
+impl<'a> MarkdownWriter<'a> {
+    fn new(input: &'a str, width: usize) -> Self {
+        Self {
+            input,
+            width,
+            out: Vec::new(),
+            current: Vec::new(),
+            table_cell: Vec::new(),
+            style_stack: vec![Style::default().fg(Color::Rgb(200, 200, 210))],
+            in_code_block: false,
+            code_lang: String::new(),
+            code_indent: String::new(),
+            code_buf: String::new(),
+            indent_stack: Vec::new(),
+            list_stack: Vec::new(),
+            list_needs_blank_before_next_item: Vec::new(),
+            list_item_start_line_counts: Vec::new(),
+            heading_prefix: String::new(),
+            in_heading: false,
+            table_rows: Vec::new(),
+            table_row: Vec::new(),
+            in_table_cell: false,
+            link_stack: Vec::new(),
+            needs_newline: false,
+            pending_marker_line: false,
+        }
+    }
+
+    fn render(mut self) -> Vec<Line<'static>> {
+        let mut opts = Options::empty();
+        opts.insert(Options::ENABLE_STRIKETHROUGH);
+        opts.insert(Options::ENABLE_TABLES);
+        opts.insert(Options::ENABLE_TASKLISTS);
+
+        for event in Parser::new_ext(self.input, opts) {
+            self.handle_event(event);
+        }
+
+        self.flush_current();
+        self.out = repair_source_list_indents(self.out, self.input);
+        while self.out.last().is_some_and(|line| line.spans.is_empty()) {
+            self.out.pop();
+        }
+        self.out
+    }
+
+    fn handle_event(&mut self, event: Event<'a>) {
         match event {
-            Event::Start(Tag::CodeBlock(kind)) => {
-                preserve_top_level_source_gap(
-                    &mut out,
-                    &input,
-                    previous_event_end,
-                    range.start,
-                    quote_depth,
-                    list_stack.is_empty(),
-                );
-                let prefix = current_prefix(quote_depth, &line_prefix);
-                flush(&mut current, &mut out, width, &prefix);
-                in_code_block = true;
-                code_lang = match &kind {
-                    CodeBlockKind::Fenced(lang) => lang.to_string(),
-                    _ => String::new(),
-                };
-                code_indent = match &kind {
-                    CodeBlockKind::Fenced(_) => String::new(),
-                    CodeBlockKind::Indented => "    ".to_string(),
-                };
-                code_buf.clear();
+            Event::Start(tag) => self.start_tag(tag),
+            Event::End(tag) => self.end_tag(tag),
+            Event::Text(text) => self.text(text.as_ref()),
+            Event::Code(text) => self.code(text.as_ref()),
+            Event::SoftBreak | Event::HardBreak => self.line_break(),
+            Event::Rule => self.rule(),
+            Event::Html(text) => self.html(text.as_ref()),
+            Event::FootnoteReference(text) => self.push_text_span(text.as_ref()),
+            Event::TaskListMarker(done) => {
+                self.push_span(Span::raw(if done { "[x] " } else { "[ ] " }));
             }
-            Event::End(TagEnd::CodeBlock) => {
-                in_code_block = false;
-                for line in code_buf.lines() {
-                    push_code_line(line, &code_lang, &code_indent, width, &mut out);
-                }
-                code_indent.clear();
+            _ => {}
+        }
+    }
+
+    fn start_tag(&mut self, tag: Tag<'a>) {
+        match tag {
+            Tag::Paragraph => self.start_paragraph(),
+            Tag::Heading { level, .. } => self.start_heading(level),
+            Tag::BlockQuote(_) => self.start_blockquote(),
+            Tag::CodeBlock(kind) => self.start_code_block(kind),
+            Tag::List(start) => self.start_list(start),
+            Tag::Item => self.start_item(),
+            Tag::Emphasis => self.push_style(Modifier::ITALIC),
+            Tag::Strong => self.push_style(Modifier::BOLD),
+            Tag::Strikethrough => self.push_style(Modifier::CROSSED_OUT),
+            Tag::Link { dest_url, .. } => self.link_stack.push(dest_url.to_string()),
+            Tag::Table(_) => self.start_table(),
+            Tag::TableHead => {}
+            Tag::TableRow => {
+                self.table_row.clear();
             }
-            Event::Start(Tag::Heading { level, .. }) => {
-                preserve_top_level_source_gap(
-                    &mut out,
-                    &input,
-                    previous_event_end,
-                    range.start,
-                    quote_depth,
-                    list_stack.is_empty(),
-                );
-                let prefix = current_prefix(quote_depth, &line_prefix);
-                flush(&mut current, &mut out, width, &prefix);
-                in_heading = true;
-                heading_prefix = match level {
-                    pulldown_cmark::HeadingLevel::H1 => "# ".to_string(),
-                    pulldown_cmark::HeadingLevel::H2 => "## ".to_string(),
-                    pulldown_cmark::HeadingLevel::H3 => "### ".to_string(),
-                    pulldown_cmark::HeadingLevel::H4
-                    | pulldown_cmark::HeadingLevel::H5
-                    | pulldown_cmark::HeadingLevel::H6 => "#### ".to_string(),
-                };
-                let heading_style = match level {
-                    pulldown_cmark::HeadingLevel::H1 => Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .add_modifier(Modifier::UNDERLINED),
-                    pulldown_cmark::HeadingLevel::H2 => {
-                        Style::default().add_modifier(Modifier::BOLD)
-                    }
-                    pulldown_cmark::HeadingLevel::H3 => Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .add_modifier(Modifier::ITALIC),
-                    pulldown_cmark::HeadingLevel::H4
-                    | pulldown_cmark::HeadingLevel::H5
-                    | pulldown_cmark::HeadingLevel::H6 => {
-                        Style::default().add_modifier(Modifier::ITALIC)
-                    }
-                };
-                style_stack.push(heading_style);
+            Tag::TableCell => {
+                self.in_table_cell = true;
+                self.table_cell.clear();
             }
-            Event::End(TagEnd::Heading(_)) => {
-                let heading_style = *style_stack.last().unwrap_or(&Style::default());
-                push_wrapped_spans_with_prefix(
-                    &mut current,
-                    &mut out,
-                    width,
-                    Line::from(vec![Span::styled(heading_prefix.clone(), heading_style)]),
-                    Line::from(" ".repeat(display_width(&heading_prefix))),
-                );
-                current.clear();
-                heading_prefix.clear();
-                in_heading = false;
-                style_stack.pop();
+            _ => {}
+        }
+    }
+
+    fn end_tag(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Paragraph => self.end_paragraph(),
+            TagEnd::Heading(_) => self.end_heading(),
+            TagEnd::BlockQuote => self.end_blockquote(),
+            TagEnd::CodeBlock => self.end_code_block(),
+            TagEnd::List(_) => self.end_list(),
+            TagEnd::Item => self.end_item(),
+            TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => {
+                self.style_stack.pop();
             }
-            Event::Start(Tag::List(start)) => {
-                preserve_top_level_source_gap(
-                    &mut out,
-                    &input,
-                    previous_event_end,
-                    range.start,
-                    quote_depth,
-                    list_stack.is_empty(),
-                );
-                let prefix = current_prefix(quote_depth, &line_prefix);
-                flush(&mut current, &mut out, width, &prefix);
-                list_stack.push(start);
-            }
-            Event::Start(Tag::Table(_)) => {
-                preserve_top_level_source_gap(
-                    &mut out,
-                    &input,
-                    previous_event_end,
-                    range.start,
-                    quote_depth,
-                    list_stack.is_empty(),
-                );
-                let prefix = current_prefix(quote_depth, &line_prefix);
-                flush(&mut current, &mut out, width, &prefix);
-                table_rows.clear();
-                table_row.clear();
-            }
-            Event::End(TagEnd::Table) => {
-                flush(&mut current, &mut out, width, "");
-                if !table_row.is_empty() {
-                    table_rows.push(std::mem::take(&mut table_row));
-                }
-                render_table(&table_rows, width, &mut out);
-                table_rows.clear();
-            }
-            Event::Start(Tag::TableHead) => {}
-            Event::End(TagEnd::TableHead) => {
-                flush(&mut current, &mut out, width, "");
-                if !table_row.is_empty() {
-                    table_rows.push(std::mem::take(&mut table_row));
+            TagEnd::Link => self.end_link(),
+            TagEnd::Table => self.end_table(),
+            TagEnd::TableHead => {
+                if !self.table_row.is_empty() {
+                    self.table_rows.push(std::mem::take(&mut self.table_row));
                 }
             }
-            Event::Start(Tag::TableRow) => {
-                flush(&mut current, &mut out, width, "");
-                table_row.clear();
-            }
-            Event::End(TagEnd::TableRow) => {
-                flush(&mut current, &mut out, width, "");
-                if !table_row.is_empty() {
-                    table_rows.push(std::mem::take(&mut table_row));
+            TagEnd::TableRow => {
+                if !self.table_row.is_empty() {
+                    self.table_rows.push(std::mem::take(&mut self.table_row));
                 }
             }
-            Event::Start(Tag::TableCell) => {
-                flush(&mut current, &mut out, width, "");
-            }
-            Event::End(TagEnd::TableCell) => {
-                let cell_text = current
+            TagEnd::TableCell => {
+                let cell_text = self
+                    .table_cell
                     .iter()
                     .map(|span| span.content.as_ref())
                     .collect::<String>()
                     .trim()
                     .to_string();
-                table_row.push(cell_text);
-                current.clear();
-            }
-            Event::Start(Tag::BlockQuote(_)) => {
-                preserve_top_level_source_gap(
-                    &mut out,
-                    &input,
-                    previous_event_end,
-                    range.start,
-                    quote_depth,
-                    list_stack.is_empty(),
-                );
-                let prefix = current_prefix(quote_depth, &line_prefix);
-                flush(&mut current, &mut out, width, &prefix);
-                quote_depth = quote_depth.saturating_add(1);
-                style_stack.push(
-                    style_stack
-                        .last()
-                        .copied()
-                        .unwrap_or_default()
-                        .fg(Color::Green),
-                );
-            }
-            Event::End(TagEnd::BlockQuote) => {
-                let prefix = current_prefix(quote_depth, &line_prefix);
-                flush(&mut current, &mut out, width, &prefix);
-                quote_depth = quote_depth.saturating_sub(1);
-                style_stack.pop();
-            }
-            Event::End(TagEnd::List(_)) => {
-                let prefix = current_prefix(quote_depth, &line_prefix);
-                flush(&mut current, &mut out, width, &prefix);
-                list_stack.pop();
-                line_prefix.clear();
-            }
-            Event::Start(Tag::Item) => {
-                let prefix = current_prefix(quote_depth, &line_prefix);
-                flush(&mut current, &mut out, width, &prefix);
-                let indent = "    ".repeat(list_stack.len().saturating_sub(1));
-                line_prefix = match list_stack.last_mut() {
-                    Some(Some(number)) => {
-                        let prefix = format!("{indent}{number}. ");
-                        *number += 1;
-                        prefix
-                    }
-                    Some(None) => format!("{indent}- "),
-                    None => "- ".to_string(),
-                };
-            }
-            Event::End(TagEnd::Item) => {
-                let prefix = if in_heading {
-                    current_prefix(quote_depth, &heading_prefix)
-                } else {
-                    current_prefix(quote_depth, &line_prefix)
-                };
-                flush(&mut current, &mut out, width, &prefix);
-                line_prefix.clear();
-            }
-            Event::Start(Tag::Emphasis) => {
-                style_stack.push(
-                    style_stack
-                        .last()
-                        .copied()
-                        .unwrap_or_default()
-                        .add_modifier(Modifier::ITALIC),
-                );
-            }
-            Event::End(TagEnd::Emphasis) => {
-                style_stack.pop();
-            }
-            Event::Text(text) => {
-                if in_code_block {
-                    code_buf.push_str(&text);
-                } else {
-                    current.push(Span::styled(text.to_string(), *style_stack.last().unwrap()));
-                }
-            }
-            Event::Code(text) => {
-                current.push(Span::styled(
-                    text.to_string(),
-                    Style::default().fg(Color::Cyan),
-                ));
-            }
-            Event::Start(Tag::Link { dest_url, .. }) => {
-                link_stack.push(dest_url.to_string());
-            }
-            Event::End(TagEnd::Link) => {
-                if let Some(dest) = link_stack.pop()
-                    && !dest.is_empty()
-                {
-                    current.push(Span::raw(" ("));
-                    current.push(Span::styled(
-                        dest,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::UNDERLINED),
-                    ));
-                    current.push(Span::raw(")"));
-                }
-            }
-            Event::Start(Tag::Strikethrough) => {
-                style_stack.push(
-                    style_stack
-                        .last()
-                        .copied()
-                        .unwrap_or_default()
-                        .add_modifier(Modifier::CROSSED_OUT),
-                );
-            }
-            Event::End(TagEnd::Strikethrough) => {
-                style_stack.pop();
-            }
-            Event::Start(Tag::Strong) => {
-                style_stack.push(
-                    style_stack
-                        .last()
-                        .copied()
-                        .unwrap()
-                        .add_modifier(Modifier::BOLD),
-                );
-            }
-            Event::End(TagEnd::Strong) => {
-                style_stack.pop();
-            }
-            Event::Start(Tag::Paragraph) => {
-                let prefix = if in_heading {
-                    current_prefix(quote_depth, &heading_prefix)
-                } else {
-                    current_prefix(quote_depth, &line_prefix)
-                };
-                preserve_top_level_source_gap(
-                    &mut out,
-                    &input,
-                    previous_event_end,
-                    range.start,
-                    quote_depth,
-                    list_stack.is_empty(),
-                );
-                flush(&mut current, &mut out, width, &prefix);
-            }
-            Event::End(TagEnd::Paragraph) => {
-                let prefix = if in_heading {
-                    current_prefix(quote_depth, &heading_prefix)
-                } else {
-                    current_prefix(quote_depth, &line_prefix)
-                };
-                flush(&mut current, &mut out, width, &prefix);
-            }
-            Event::SoftBreak | Event::HardBreak => {
-                let prefix = if in_heading {
-                    current_prefix(quote_depth, &heading_prefix)
-                } else {
-                    current_prefix(quote_depth, &line_prefix)
-                };
-                flush(&mut current, &mut out, width, &prefix);
-            }
-            Event::Rule => out.push(Line::from("———")),
-            Event::Html(text) => current.push(Span::styled(
-                text.to_string(),
-                Style::default().fg(Color::Rgb(140, 150, 170)),
-            )),
-            Event::FootnoteReference(text) => current.push(Span::raw(text.to_string())),
-            Event::TaskListMarker(done) => {
-                current.push(Span::raw(if done { "[x] " } else { "[ ] " }));
+                self.table_row.push(cell_text);
+                self.table_cell.clear();
+                self.in_table_cell = false;
             }
             _ => {}
         }
-
-        previous_event_end = range.end;
     }
 
-    if !current.is_empty() {
-        push_wrapped_spans(&mut current, &mut out, width, "");
-    }
-    out = repair_source_list_indents(out, &input);
-    while out.last().is_some_and(|line| line.spans.is_empty()) {
-        out.pop();
-    }
-    out
-}
-
-fn has_blank_line_between(source: &str, start: usize, end: usize) -> bool {
-    if start >= end || end > source.len() {
-        return false;
+    fn start_paragraph(&mut self) {
+        if self.needs_newline {
+            self.push_blank_line();
+        }
+        self.needs_newline = false;
     }
 
-    source[start..end]
-        .lines()
-        .any(|line| line.trim().is_empty())
-}
-
-fn preserve_top_level_source_gap(
-    out: &mut Vec<Line<'static>>,
-    source: &str,
-    previous_event_end: usize,
-    current_event_start: usize,
-    quote_depth: usize,
-    is_top_level: bool,
-) {
-    if quote_depth == 0
-        && is_top_level
-        && has_blank_line_between(source, previous_event_end, current_event_start)
-        && out.last().is_some_and(|line| !line.spans.is_empty())
-    {
-        out.push(Line::raw(""));
+    fn end_paragraph(&mut self) {
+        self.flush_current();
+        self.needs_newline = true;
     }
-}
 
-fn current_prefix(quote_depth: usize, line_prefix: &str) -> String {
-    let mut prefix = "> ".repeat(quote_depth);
-    prefix.push_str(line_prefix);
-    prefix
+    fn start_heading(&mut self, level: pulldown_cmark::HeadingLevel) {
+        self.flush_current();
+        if self.needs_newline {
+            self.push_blank_line();
+        }
+        self.in_heading = true;
+        self.heading_prefix = match level {
+            pulldown_cmark::HeadingLevel::H1 => "# ".to_string(),
+            pulldown_cmark::HeadingLevel::H2 => "## ".to_string(),
+            pulldown_cmark::HeadingLevel::H3 => "### ".to_string(),
+            pulldown_cmark::HeadingLevel::H4 => "#### ".to_string(),
+            pulldown_cmark::HeadingLevel::H5 => "##### ".to_string(),
+            pulldown_cmark::HeadingLevel::H6 => "###### ".to_string(),
+        };
+        let heading_style = match level {
+            pulldown_cmark::HeadingLevel::H1 => Style::default()
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED),
+            pulldown_cmark::HeadingLevel::H2 => Style::default().add_modifier(Modifier::BOLD),
+            pulldown_cmark::HeadingLevel::H3 => Style::default()
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::ITALIC),
+            pulldown_cmark::HeadingLevel::H4
+            | pulldown_cmark::HeadingLevel::H5
+            | pulldown_cmark::HeadingLevel::H6 => Style::default().add_modifier(Modifier::ITALIC),
+        };
+        self.style_stack.push(heading_style);
+        self.needs_newline = false;
+    }
+
+    fn end_heading(&mut self) {
+        let heading_style = *self.style_stack.last().unwrap_or(&Style::default());
+        self.current.insert(
+            0,
+            Span::styled(self.heading_prefix.clone(), heading_style),
+        );
+        self.flush_current();
+        self.current.clear();
+        self.heading_prefix.clear();
+        self.in_heading = false;
+        self.style_stack.pop();
+        self.needs_newline = true;
+    }
+
+    fn start_blockquote(&mut self) {
+        self.flush_current();
+        if self.needs_newline {
+            self.push_blank_line();
+        }
+        self.indent_stack
+            .push(IndentContext::new(vec![Span::from("> ")], None, false));
+        self.style_stack.push(
+            self.style_stack
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .fg(Color::Green),
+        );
+        self.needs_newline = false;
+    }
+
+    fn end_blockquote(&mut self) {
+        self.flush_current();
+        self.indent_stack.pop();
+        self.style_stack.pop();
+        self.needs_newline = true;
+    }
+
+    fn start_code_block(&mut self, kind: CodeBlockKind<'a>) {
+        self.flush_current();
+        if !self.out.is_empty() {
+            self.push_blank_line();
+        }
+        self.in_code_block = true;
+        self.code_lang = match &kind {
+            CodeBlockKind::Fenced(lang) => lang.to_string(),
+            _ => String::new(),
+        };
+        self.code_indent = match kind {
+            CodeBlockKind::Fenced(_) => String::new(),
+            CodeBlockKind::Indented => "    ".to_string(),
+        };
+        self.code_buf.clear();
+        self.needs_newline = false;
+    }
+
+    fn end_code_block(&mut self) {
+        self.in_code_block = false;
+        for line in self.code_buf.lines() {
+            push_code_line(
+                line,
+                &self.code_lang,
+                &self.code_indent,
+                self.width,
+                &mut self.out,
+            );
+        }
+        self.code_indent.clear();
+        self.needs_newline = true;
+    }
+
+    fn start_list(&mut self, start: Option<u64>) {
+        self.flush_current();
+        if self.list_stack.is_empty() && self.needs_newline {
+            self.push_blank_line();
+        }
+        self.list_stack.push(start);
+        self.list_needs_blank_before_next_item.push(false);
+        self.needs_newline = false;
+    }
+
+    fn end_list(&mut self) {
+        self.flush_current();
+        self.list_stack.pop();
+        self.list_needs_blank_before_next_item.pop();
+        self.needs_newline = true;
+    }
+
+    fn start_item(&mut self) {
+        if self
+            .list_needs_blank_before_next_item
+            .last_mut()
+            .map(std::mem::take)
+            .unwrap_or(false)
+        {
+            self.push_blank_line();
+        }
+        self.flush_current();
+        self.list_item_start_line_counts.push(self.out.len());
+        let depth = self.list_stack.len();
+        let is_ordered = self
+            .list_stack
+            .last()
+            .map(Option::is_some)
+            .unwrap_or(false);
+        let width = depth * 4 - 3;
+        let marker = match self.list_stack.last_mut() {
+            Some(Some(number)) => {
+                let prefix = format!("{number}. ");
+                *number += 1;
+                Some(vec![Span::styled(prefix, Style::default().fg(Color::Rgb(150, 180, 255)))])
+            }
+            Some(None) => Some(vec![Span::styled(
+                "- ".to_string(),
+                Style::default().fg(Color::Rgb(200, 200, 210)),
+            )]),
+            None => Some(vec![Span::raw("- ".to_string())]),
+        };
+        let prefix = if depth == 0 {
+            Vec::new()
+        } else {
+            let indent_len = if is_ordered { width + 2 } else { width + 1 };
+            vec![Span::from(" ".repeat(indent_len))]
+        };
+        self.indent_stack
+            .push(IndentContext::new(prefix, marker, true));
+        self.pending_marker_line = true;
+        self.needs_newline = false;
+    }
+
+    fn end_item(&mut self) {
+        self.flush_current();
+        let start_line_count = self.list_item_start_line_counts.pop().unwrap_or_default();
+        if self.out.len().saturating_sub(start_line_count) > 1
+            && let Some(needs_blank) = self.list_needs_blank_before_next_item.last_mut()
+        {
+            *needs_blank = true;
+        }
+        self.indent_stack.pop();
+        self.pending_marker_line = false;
+    }
+
+    fn start_table(&mut self) {
+        self.flush_current();
+        if self.needs_newline {
+            self.push_blank_line();
+        }
+        self.table_rows.clear();
+        self.table_row.clear();
+        self.needs_newline = false;
+    }
+
+    fn end_table(&mut self) {
+        if !self.table_row.is_empty() {
+            self.table_rows.push(std::mem::take(&mut self.table_row));
+        }
+        render_table(&self.table_rows, self.width, &mut self.out);
+        self.table_rows.clear();
+        self.needs_newline = true;
+    }
+
+    fn text(&mut self, text: &str) {
+        if self.in_code_block {
+            self.code_buf.push_str(text);
+            return;
+        }
+        if self.in_table_cell {
+            self.table_cell.push(Span::styled(
+                text.to_string(),
+                *self.style_stack.last().unwrap(),
+            ));
+            return;
+        }
+        self.push_text_span(text);
+    }
+
+    fn code(&mut self, text: &str) {
+        let span = Span::styled(text.to_string(), Style::default().fg(Color::Cyan));
+        if self.in_table_cell {
+            self.table_cell.push(span);
+        } else {
+            self.push_span(span);
+        }
+    }
+
+    fn html(&mut self, text: &str) {
+        if self.in_table_cell {
+            self.table_cell.push(Span::styled(
+                text.to_string(),
+                Style::default().fg(Color::Rgb(140, 150, 170)),
+            ));
+        } else {
+            self.push_span(Span::styled(
+                text.to_string(),
+                Style::default().fg(Color::Rgb(140, 150, 170)),
+            ));
+        }
+    }
+
+    fn end_link(&mut self) {
+        if let Some(dest) = self.link_stack.pop()
+            && !dest.is_empty()
+        {
+            self.push_span(Span::raw(" ("));
+            self.push_span(Span::styled(
+                dest,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::UNDERLINED),
+            ));
+            self.push_span(Span::raw(")"));
+        }
+    }
+
+    fn line_break(&mut self) {
+        if self.in_table_cell {
+            self.table_cell.push(Span::raw(" "));
+            return;
+        }
+        self.flush_current();
+    }
+
+    fn rule(&mut self) {
+        self.flush_current();
+        if !self.out.is_empty() {
+            self.push_blank_line();
+        }
+        self.out.push(Line::from("———"));
+        self.needs_newline = true;
+    }
+
+    fn push_text_span(&mut self, text: &str) {
+        self.current.push(Span::styled(
+            text.to_string(),
+            *self.style_stack.last().unwrap(),
+        ));
+    }
+
+    fn push_span(&mut self, span: Span<'static>) {
+        self.current.push(span);
+    }
+
+    fn push_style(&mut self, modifier: Modifier) {
+        self.style_stack.push(
+            self.style_stack
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .add_modifier(modifier),
+        );
+    }
+
+    fn flush_current(&mut self) {
+        if self.current.is_empty() {
+            return;
+        }
+        let prefix = self.current_prefix_line();
+        push_wrapped_spans(&mut self.current, &mut self.out, self.width, &prefix);
+        self.current.clear();
+        self.pending_marker_line = false;
+    }
+
+    fn push_blank_line(&mut self) {
+        self.flush_current();
+        if self.out.last().is_some_and(|line| line.spans.is_empty()) {
+            return;
+        }
+
+        let prefix = self.current_prefix_line();
+        if prefix.is_empty() {
+            self.out.push(Line::raw(""));
+        } else {
+            self.out.push(Line::from(prefix));
+        }
+    }
+
+    fn current_prefix_line(&self) -> String {
+        let mut prefix = String::new();
+        let marker_index = if self.pending_marker_line {
+            self.indent_stack
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(index, ctx)| ctx.marker.as_ref().map(|_| index))
+        } else {
+            None
+        };
+        let last_list_index = self.indent_stack.iter().rposition(|ctx| ctx.is_list);
+
+        for (index, ctx) in self.indent_stack.iter().enumerate() {
+            if self.pending_marker_line {
+                if Some(index) == marker_index
+                    && let Some(marker) = &ctx.marker
+                {
+                    prefix.extend(marker.iter().map(|span| span.content.as_ref()));
+                    continue;
+                }
+                if ctx.is_list && marker_index.is_some_and(|marker| marker > index) {
+                    continue;
+                }
+            } else if ctx.is_list && Some(index) != last_list_index {
+                continue;
+            }
+
+            prefix.extend(ctx.prefix.iter().map(|span| span.content.as_ref()));
+        }
+
+        prefix
+    }
 }
 
 fn repair_source_list_indents(lines: Vec<Line<'static>>, source: &str) -> Vec<Line<'static>> {
@@ -843,7 +978,7 @@ mod tests {
 
         assert_eq!(
             text,
-            "Intro\n    abcdefgh\n    ijklmnop\n    qrstuvwx\n    yz"
+            "Intro\n\n    abcdefgh\n    ijklmnop\n    qrstuvwx\n    yz"
         );
     }
 
@@ -860,7 +995,7 @@ mod tests {
         let rendered = render_markdown("Intro\n\n- one\n- two\n\nNext", 80);
         let text = joined(&rendered);
 
-        assert_eq!(text, "Intro\n\n- one\n- two\nNext");
+        assert_eq!(text, "Intro\n\n- one\n- two\n\nNext");
     }
 
     #[test]
@@ -904,6 +1039,38 @@ mod tests {
         assert!(text.contains("———"));
         assert!(text.contains("1. one"));
         assert!(text.contains("2. two"));
+    }
+
+    #[test]
+    fn blockquote_in_ordered_list_on_next_line_is_inline() {
+        let rendered = render_markdown("1.\n   > quoted\n", 80);
+        let text = joined(&rendered);
+
+        assert_eq!(text, "1. > quoted");
+    }
+
+    #[test]
+    fn blockquote_inside_nested_list_keeps_nested_prefixes() {
+        let rendered = render_markdown("1. A\n    - B\n      > inner\n", 80);
+        let text = joined(&rendered);
+
+        assert_eq!(text, "1. A\n    - B\n      > inner");
+    }
+
+    #[test]
+    fn list_item_text_then_blockquote_stays_on_new_line() {
+        let rendered = render_markdown("1. before\n   > quoted\n", 80);
+        let text = joined(&rendered);
+
+        assert_eq!(text, "1. before\n   > quoted");
+    }
+
+    #[test]
+    fn blockquote_with_heading_and_paragraph_preserves_blank_line() {
+        let rendered = render_markdown("> # Heading\n> paragraph text\n", 80);
+        let text = joined(&rendered);
+
+        assert_eq!(text, "> # Heading\n> \n> paragraph text");
     }
 
     #[test]
