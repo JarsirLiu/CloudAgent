@@ -117,8 +117,6 @@ pub async fn run_turn_with_approval<H: TurnHost>(
                 host.audit_turn_cancelled(conversation_id, &turn_id, "interrupted by client");
                 return Ok(outcome);
             }
-            let mut history = host.load_history(conversation_id).await?;
-            let rolled_back_user = history.rollback_last_user_message(&user_item);
             let error_text = format!("{err:#}");
             let mut events = Vec::new();
             emit_event(
@@ -129,22 +127,18 @@ pub async fn run_turn_with_approval<H: TurnHost>(
                     error: error_text.clone(),
                 },
             );
-            host.save_history(history.clone()).await?;
+            host.flush_rollout().await?;
+            let mut failed_history = host.history_from_rollout(conversation_id).await?;
+            failed_history.ensure_tool_outputs_present();
+            host.save_history(failed_history.clone()).await?;
             host.flush_rollout().await?;
             let outcome = TurnOutcome {
                 turn_id: turn_id.clone(),
                 events,
-                history,
+                history: failed_history,
                 model_name: None,
                 state: TurnState::Failed,
             };
-            if !rolled_back_user {
-                tracing::warn!(
-                    conversation_id,
-                    turn_id,
-                    "failed turn could not roll back the last user message from history"
-                );
-            }
             host.audit_turn_failed(conversation_id, &turn_id, &error_text);
             Ok(outcome)
         }

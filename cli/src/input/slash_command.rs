@@ -13,6 +13,7 @@ pub(crate) enum SlashCommand {
     Permissions,
     Config,
     Reasoning,
+    Model,
     Skill,
     Gateway,
     Skills,
@@ -136,6 +137,14 @@ const SLASH_COMMANDS: &[SlashCommandSpec] = &[
         supports_inline_args: false,
     },
     SlashCommandSpec {
+        command: SlashCommand::Model,
+        name: "model",
+        aliases: &[],
+        description: "list available models or switch with /model <name>",
+        argument_hint: Some("[name]"),
+        supports_inline_args: true,
+    },
+    SlashCommandSpec {
         command: SlashCommand::Skill,
         name: "skill",
         aliases: &[],
@@ -203,14 +212,6 @@ pub(crate) fn find_slash_command(name: &str) -> Option<SlashCommand> {
         .iter()
         .find(|spec| spec.matches_name(name))
         .map(|spec| spec.command)
-}
-
-pub(crate) fn slash_command_help_text() -> String {
-    SLASH_COMMANDS
-        .iter()
-        .map(|spec| format!("/{:<12} {}", spec.name, spec.description))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 impl SlashCommandSpec {

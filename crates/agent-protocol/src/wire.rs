@@ -448,6 +448,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "turn/cancelled",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::InterruptResult { .. } => (
+            "turn/interruptResult",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::ConversationStatus { .. } => (
             "conversation/status",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -549,6 +553,7 @@ fn parse_server_notification(
         | "turn/completed"
         | "turn/failed"
         | "turn/cancelled"
+        | "turn/interruptResult"
         | "conversation/status"
         | "conversation/history"
         | "conversation/turnSnapshot"

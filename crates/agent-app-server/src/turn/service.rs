@@ -7,7 +7,9 @@ use agent_core::{
     AgentHost, ApprovalPolicy, CompactionContinuation, EventMsg, InputItem, PermissionProfile,
     ServerRequest, ServerRequestDecision, TurnState, input_items_text_len,
 };
-use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
+use agent_protocol::{
+    AppServerMessage, AppServerNotification, AppServerRequest, InterruptDisposition,
+};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -86,12 +88,12 @@ pub(crate) async fn interrupt_turn(
     send_notification(
         event_tx,
         state,
-        AppServerNotification::Info {
+        AppServerNotification::InterruptResult {
             conversation_id,
-            message: if interrupted {
-                "interrupt requested".to_string()
+            disposition: if interrupted {
+                InterruptDisposition::Requested
             } else {
-                "no active turn".to_string()
+                InterruptDisposition::NoActiveTurn
             },
         },
     )

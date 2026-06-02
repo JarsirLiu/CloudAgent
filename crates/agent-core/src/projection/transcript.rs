@@ -833,6 +833,49 @@ mod tests {
     }
 
     #[test]
+    fn failed_turn_preserves_streamed_partial_assistant_message() {
+        let turns = build_turns_from_rollout_items(&[
+            RolloutItem::from(EventMsg::TurnStarted {
+                turn_id: "turn-1".to_string(),
+                conversation_id: "default".to_string(),
+                user_input: crate::text_input_items("hi"),
+            }),
+            RolloutItem::from(EventMsg::ItemStarted {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:turn-1:0".to_string(),
+                call_id: None,
+                kind: TurnItemKind::AssistantMessage,
+                title: Some("assistant_message".to_string()),
+            }),
+            RolloutItem::from(EventMsg::ItemDelta {
+                turn_id: "turn-1".to_string(),
+                item_id: "assistant:turn-1:0".to_string(),
+                call_id: None,
+                kind: TurnItemDeltaKind::Text,
+                segment_index: None,
+                delta: "partial answer".to_string(),
+            }),
+            RolloutItem::from(EventMsg::TurnFailed {
+                turn_id: "turn-1".to_string(),
+                error: "provider protocol error".to_string(),
+            }),
+        ]);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].state, TurnState::Failed);
+        assert!(matches!(
+            &turns[0].items[..],
+            [
+                TranscriptItem::UserMessage { content: user, .. },
+                TranscriptItem::AgentMessage { text: assistant, .. },
+                TranscriptItem::SystemMessage { text: error, .. },
+            ] if input_items_to_plain_text(user) == "hi"
+                && assistant == "partial answer"
+                && error == "provider protocol error"
+        ));
+    }
+
+    #[test]
     fn item_completed_replaces_streamed_delta_projection() {
         let turns = build_turns_from_rollout_items(&[
             RolloutItem::from(EventMsg::TurnStarted {

@@ -50,6 +50,14 @@ pub(super) fn parse_stream_frame(
 
 fn parse_chat_stream_frame(block: &str) -> Result<ParsedStreamFrame, ProviderStreamError> {
     let (_, data) = parse_sse_block(block);
+    let data = data.trim();
+    if data.is_empty() {
+        return Ok(ParsedStreamFrame {
+            events: Vec::new(),
+            completion: None,
+            done: false,
+        });
+    }
     if data == "[DONE]" {
         return Ok(ParsedStreamFrame {
             events: Vec::new(),
@@ -59,7 +67,7 @@ fn parse_chat_stream_frame(block: &str) -> Result<ParsedStreamFrame, ProviderStr
     }
 
     let parsed: ChatCompletionStreamChunk =
-        serde_json::from_str(&data).map_err(|err| ProviderStreamError::Protocol {
+        serde_json::from_str(data).map_err(|err| ProviderStreamError::Protocol {
             message: format!("failed to parse streaming chunk: {err}"),
         })?;
 
@@ -120,8 +128,16 @@ fn parse_chat_stream_frame(block: &str) -> Result<ParsedStreamFrame, ProviderStr
 
 fn parse_responses_stream_frame(block: &str) -> Result<ParsedStreamFrame, ProviderStreamError> {
     let (event_name, data) = parse_sse_block(block);
+    let data = data.trim();
+    if data.is_empty() {
+        return Ok(ParsedStreamFrame {
+            events: Vec::new(),
+            completion: None,
+            done: false,
+        });
+    }
     let parsed: Value =
-        serde_json::from_str(&data).map_err(|err| ProviderStreamError::Protocol {
+        serde_json::from_str(data).map_err(|err| ProviderStreamError::Protocol {
             message: format!("failed to parse responses event: {err}"),
         })?;
 
@@ -143,10 +159,10 @@ fn parse_responses_stream_frame(block: &str) -> Result<ParsedStreamFrame, Provid
                     model_name: Some(model_name.to_string()),
                 }));
             }
-            if let Some(usage) = response.get("usage").cloned() {
-                if let Ok(usage) = serde_json::from_value::<super::wire::ResponsesUsage>(usage) {
-                    events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
-                }
+            if let Some(usage) = response.get("usage").cloned()
+                && let Ok(usage) = serde_json::from_value::<super::wire::ResponsesUsage>(usage)
+            {
+                events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
             }
         }
         "response.output_text.delta" => {
@@ -224,10 +240,10 @@ fn parse_responses_stream_frame(block: &str) -> Result<ParsedStreamFrame, Provid
                 finish_reason: map_responses_finish_reason(response),
                 end_turn: None,
             });
-            if let Some(usage) = response.get("usage").cloned() {
-                if let Ok(usage) = serde_json::from_value::<super::wire::ResponsesUsage>(usage) {
-                    events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
-                }
+            if let Some(usage) = response.get("usage").cloned()
+                && let Ok(usage) = serde_json::from_value::<super::wire::ResponsesUsage>(usage)
+            {
+                events.push(ProviderStreamEvent::Usage(ModelUsage::from(usage)));
             }
             done = true;
         }
@@ -435,14 +451,19 @@ fn parse_sse_block(block: &str) -> (Option<&str>, String) {
     let mut data_lines = Vec::new();
 
     for line in block.lines() {
-        if let Some(rest) = line.strip_prefix("event:") {
+        if let Some(rest) = strip_sse_field(line, "event") {
             event_name = Some(rest.trim());
-        } else if let Some(rest) = line.strip_prefix("data:") {
-            data_lines.push(rest.trim_start());
+        } else if let Some(rest) = strip_sse_field(line, "data") {
+            data_lines.push(rest);
         }
     }
 
     (event_name, data_lines.join("\n"))
+}
+
+fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
+    line.strip_prefix(&format!("{field}: "))
+        .or_else(|| line.strip_prefix(&format!("{field}:")))
 }
 
 #[cfg(test)]
@@ -650,6 +671,35 @@ mod tests {
     }
 
     #[test]
+    fn chat_event_only_frame_is_ignored() {
+        let frame =
+            parse_stream_frame(WireApi::Chat, "event: ping").expect("ignore event-only frame");
+
+        assert!(frame.events.is_empty());
+        assert!(frame.completion.is_none());
+        assert!(!frame.done);
+    }
+
+    #[test]
+    fn chat_empty_data_frame_is_ignored() {
+        let frame = parse_stream_frame(WireApi::Chat, "data: ").expect("ignore empty data frame");
+
+        assert!(frame.events.is_empty());
+        assert!(frame.completion.is_none());
+        assert!(!frame.done);
+    }
+
+    #[test]
+    fn responses_event_only_frame_is_ignored() {
+        let frame = parse_stream_frame(WireApi::Responses, "event: response.ping")
+            .expect("ignore event-only responses frame");
+
+        assert!(frame.events.is_empty());
+        assert!(frame.completion.is_none());
+        assert!(!frame.done);
+    }
+
+    #[test]
     fn parse_sse_block_joins_multiline_data_fields() {
         let (event_name, data) = parse_sse_block(
             "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\ndata: \"delta\":\"hello\"}",
@@ -659,6 +709,19 @@ mod tests {
         assert_eq!(
             data,
             "{\"type\":\"response.output_text.delta\",\n\"delta\":\"hello\"}"
+        );
+    }
+
+    #[test]
+    fn parse_sse_block_accepts_optional_space_after_field_name() {
+        let (event_name, data) = parse_sse_block(
+            "event:response.output_text.delta\ndata:{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+        );
+
+        assert_eq!(event_name, Some("response.output_text.delta"));
+        assert_eq!(
+            data,
+            "{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}"
         );
     }
 }

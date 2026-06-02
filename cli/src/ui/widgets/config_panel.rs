@@ -1,5 +1,6 @@
 use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::widgets::form_input_state::FormInputState;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -10,7 +11,7 @@ pub struct ConfigPanel {
     api_key: String,
     base_url: String,
     model: String,
-    replace_on_next_input: bool,
+    input_state: FormInputState,
 }
 
 impl ConfigPanel {
@@ -20,45 +21,27 @@ impl ConfigPanel {
             api_key,
             base_url,
             model,
-            replace_on_next_input: true,
-        }
-    }
-
-    fn field_mut(&mut self) -> Option<&mut String> {
-        match self.selected {
-            0 => Some(&mut self.api_key),
-            1 => Some(&mut self.base_url),
-            2 => Some(&mut self.model),
-            _ => None,
-        }
-    }
-
-    fn maybe_replace_field(&mut self) {
-        if self.replace_on_next_input
-            && let Some(field) = self.field_mut()
-        {
-            field.clear();
-            self.replace_on_next_input = false;
+            input_state: FormInputState::new(),
         }
     }
 
     fn move_selection(&mut self, next: usize) {
-        let clamped = next.min(3);
-        if clamped != self.selected {
-            self.selected = clamped;
-            self.replace_on_next_input = true;
-        }
+        self.input_state
+            .move_selection(&mut self.selected, next.min(3));
     }
 }
 
 impl BottomPaneView for ConfigPanel {
+    fn should_capture_global_paste_shortcut(&self) -> bool {
+        false
+    }
+
     fn handle_paste(&mut self, text: &str) -> BottomPaneViewAction {
         let value = text.replace('\n', "");
-        self.maybe_replace_field();
         match self.selected {
-            0 => self.api_key.push_str(&value),
-            1 => self.base_url.push_str(&value),
-            2 => self.model.push_str(&value),
+            0 => self.input_state.append_paste(&mut self.api_key, &value),
+            1 => self.input_state.append_paste(&mut self.base_url, &value),
+            2 => self.input_state.append_paste(&mut self.model, &value),
             _ => {}
         }
         BottomPaneViewAction::None
@@ -73,38 +56,23 @@ impl BottomPaneView for ConfigPanel {
             KeyCode::Down | KeyCode::Tab => self.move_selection(self.selected + 1),
             KeyCode::BackTab => self.move_selection(self.selected.saturating_sub(1)),
             KeyCode::Backspace => match self.selected {
+                0 => self.input_state.backspace(&mut self.api_key),
+                1 => self.input_state.backspace(&mut self.base_url),
+                2 => self.input_state.backspace(&mut self.model),
+                _ => {}
+            },
+            KeyCode::Char(c) => match self.selected {
                 0 => {
-                    if self.replace_on_next_input {
-                        self.api_key.clear();
-                        self.replace_on_next_input = false;
-                    }
-                    self.api_key.pop();
+                    let _ = self.input_state.append_char(&mut self.api_key, c);
                 }
                 1 => {
-                    if self.replace_on_next_input {
-                        self.base_url.clear();
-                        self.replace_on_next_input = false;
-                    }
-                    self.base_url.pop();
+                    let _ = self.input_state.append_char(&mut self.base_url, c);
                 }
                 2 => {
-                    if self.replace_on_next_input {
-                        self.model.clear();
-                        self.replace_on_next_input = false;
-                    }
-                    self.model.pop();
+                    let _ = self.input_state.append_char(&mut self.model, c);
                 }
                 _ => {}
             },
-            KeyCode::Char(c) => {
-                self.maybe_replace_field();
-                match self.selected {
-                    0 => self.api_key.push(c),
-                    1 => self.base_url.push(c),
-                    2 => self.model.push(c),
-                    _ => {}
-                }
-            }
             KeyCode::Enter => {
                 if self.selected == 3 {
                     return BottomPaneViewAction::Composer(ComposerIntent::ConfigSave {
@@ -204,5 +172,39 @@ impl BottomPaneView for ConfigPanel {
 
     fn cursor_position(&self, _area: Rect) -> Option<(u16, u16)> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEventState, KeyModifiers};
+
+    fn key(ch: char) -> KeyEvent {
+        KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn ignores_immediate_char_echo_after_paste() {
+        let mut panel = ConfigPanel::new(String::new(), String::new(), String::new());
+        let _ = panel.handle_paste("token123");
+        for ch in "token123".chars() {
+            let _ = panel.handle_key_event(key(ch));
+        }
+        assert_eq!(panel.api_key, "token123");
+    }
+
+    #[test]
+    fn keeps_regular_typed_input() {
+        let mut panel = ConfigPanel::new(String::new(), String::new(), String::new());
+        let _ = panel.handle_key_event(key('a'));
+        let _ = panel.handle_key_event(key('b'));
+        let _ = panel.handle_key_event(key('c'));
+        assert_eq!(panel.api_key, "abc");
     }
 }

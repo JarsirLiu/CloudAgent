@@ -1,11 +1,12 @@
 use crate::input::intent::GatewayConfigUpdate;
 use crate::state::NoticeLevel;
+use crate::ui::widgets::server_request_model::ServerRequestPresentation;
 use agent_core::conversation::{ConversationSummary, ConversationTurn, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind};
 use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    RequestId,
+    InterruptDisposition, RequestId,
 };
 
 const ERR_TRANSPORT_CLOSED_PREFIX: &str = "ERR_TRANSPORT_CLOSED:";
@@ -33,6 +34,7 @@ pub(crate) enum UiInputEvent {
         model: String,
     },
     LocalReasoning(String),
+    LocalModel(String),
     LocalSkillInsert(String),
     LocalSkillsOpen,
     LocalGatewayOpen,
@@ -134,13 +136,12 @@ pub(crate) enum ServerAction {
         message: String,
         level: NoticeLevel,
     },
+    InterruptResult(InterruptDisposition),
     PushErrorCell(String),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
         request_id: RequestId,
-        title: String,
-        detail: String,
-        notice: String,
+        request: ServerRequestPresentation,
     },
 }
 
@@ -256,6 +257,9 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     message: message.clone(),
                     level: NoticeLevel::Info,
                 });
+            }
+            AppServerNotification::InterruptResult { disposition, .. } => {
+                actions.push(ServerAction::InterruptResult(disposition.clone()));
             }
             AppServerNotification::TokenUsageUpdated {
                 last_usage,
@@ -374,29 +378,23 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             ..
         }) => match request {
             ServerRequest::CommandApproval { request } => {
-                let args_hint = summarize_args_preview(&request.command_preview);
                 actions.push(ServerAction::ShowServerRequestPrompt {
                     request_id: request_id.clone(),
-                    title: format!(
-                        "[{}] command tool `{}` wants approval",
-                        message.conversation_id().unwrap_or("conversation"),
-                        request.tool_name
+                    request: ServerRequestPresentation::command(
+                        request.tool_name.clone(),
+                        request.reason.clone(),
+                        summarize_args_preview(&request.command_preview),
                     ),
-                    detail: format!("reason: {}\nargs: {args_hint}", request.reason),
-                    notice: format!("Command approval required for {}", request.tool_name),
                 });
             }
             ServerRequest::FileChangeApproval { request } => {
-                let change_hint = summarize_args_preview(&request.change_preview);
                 actions.push(ServerAction::ShowServerRequestPrompt {
                     request_id: request_id.clone(),
-                    title: format!(
-                        "[{}] file change tool `{}` wants approval",
-                        message.conversation_id().unwrap_or("conversation"),
-                        request.tool_name
+                    request: ServerRequestPresentation::file_change(
+                        request.tool_name.clone(),
+                        request.reason.clone(),
+                        summarize_args_preview(&request.change_preview),
                     ),
-                    detail: format!("reason: {}\nchange: {change_hint}", request.reason),
-                    notice: format!("File change approval required for {}", request.tool_name),
                 });
             }
         },

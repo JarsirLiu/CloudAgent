@@ -1,6 +1,7 @@
+use crate::input::command_dispatch::intent_for_slash_command;
 use crate::input::completion::{CompletionSelection, CompletionState, SkillCompletion};
 use crate::input::intent::ComposerIntent;
-use crate::input::slash_command::{SlashCommand, find_slash_command};
+use crate::input::slash_command::find_slash_command;
 use crate::text_width::display_width;
 use crate::ui::widgets::completion_popup::completion_popup_lines;
 use crate::ui::widgets::paste_burst::{CharDecision, FlushResult, PasteBurst};
@@ -172,7 +173,7 @@ impl ChatComposer {
                         if let CompletionSelection::Command(command) = selected.selection {
                             self.textarea.clear();
                             self.completion.clear();
-                            return Some(action_for_command(command, ""));
+                            return Some(intent_for_slash_command(command, ""));
                         }
                         self.accept_selected_completion();
                         return Some(ComposerIntent::None);
@@ -648,7 +649,7 @@ impl ChatComposer {
                 if let Some(command) = find_slash_command(name)
                     && (args.is_empty() || command.supports_inline_args())
                 {
-                    return action_for_command(command, args);
+                    return intent_for_slash_command(command, args);
                 }
                 return ComposerIntent::UnknownCommand(name.to_string());
             }
@@ -1074,40 +1075,6 @@ fn format_file_restore_text(
     match mime_type {
         Some(mime) if !mime.is_empty() => format!("[Attachment: {label} ({mime})]"),
         _ => format!("[Attachment: {label}]"),
-    }
-}
-
-fn action_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
-    match command {
-        SlashCommand::Clear => ComposerIntent::Reset,
-        SlashCommand::Compact => ComposerIntent::Compact,
-        SlashCommand::Copy => ComposerIntent::Copy,
-        SlashCommand::Help => ComposerIntent::Help,
-        SlashCommand::Interrupt => ComposerIntent::Interrupt,
-        SlashCommand::Session => {
-            let trimmed = args.trim();
-            if trimmed.is_empty() {
-                ComposerIntent::Session
-            } else {
-                ComposerIntent::SessionSwitch(trimmed.to_string())
-            }
-        }
-        SlashCommand::NewConversation => ComposerIntent::NewConversation(args.trim().to_string()),
-        SlashCommand::SetTitle => ComposerIntent::SetTitle(args.trim().to_string()),
-        SlashCommand::ArchiveConversation => {
-            ComposerIntent::ArchiveConversation(args.trim().to_string())
-        }
-        SlashCommand::DeleteConversation => {
-            ComposerIntent::DeleteConversation(args.trim().to_string())
-        }
-        SlashCommand::Filter => ComposerIntent::Filter(args.trim().to_string()),
-        SlashCommand::Permissions => ComposerIntent::Permissions(args.trim().to_string()),
-        SlashCommand::Config => ComposerIntent::Config,
-        SlashCommand::Reasoning => ComposerIntent::Reasoning(String::new()),
-        SlashCommand::Skill => ComposerIntent::Skill(args.trim().to_string()),
-        SlashCommand::Skills => ComposerIntent::Skills,
-        SlashCommand::Gateway => ComposerIntent::Gateway,
-        SlashCommand::Exit => ComposerIntent::Exit,
     }
 }
 

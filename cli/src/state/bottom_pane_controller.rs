@@ -141,6 +141,10 @@ impl BottomPaneController {
         self.input_pane.composer_has_selection()
     }
 
+    pub(crate) fn should_capture_global_paste_shortcut(&self) -> bool {
+        self.input_pane.should_capture_global_paste_shortcut()
+    }
+
     pub(crate) fn composer_is_empty(&self) -> bool {
         self.input_pane.composer_is_empty()
     }
@@ -229,6 +233,10 @@ impl BottomPaneController {
         self.input_pane.set_filter_picker();
     }
 
+    pub(crate) fn set_help_view(&mut self) {
+        self.input_pane.set_help_view();
+    }
+
     pub(crate) fn request_session_picker(&mut self, mode: SessionPickerMode) {
         self.pending_session_picker = Some(mode);
     }
@@ -251,6 +259,10 @@ impl BottomPaneController {
 
     pub(crate) fn set_reasoning_picker(&mut self, current: ReasoningEffort) {
         self.input_pane.set_reasoning_picker(current);
+    }
+
+    pub(crate) fn set_model_picker(&mut self, current: String, models: Vec<String>) {
+        self.input_pane.set_model_picker(current, models);
     }
 
     pub(crate) fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {

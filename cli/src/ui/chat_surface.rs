@@ -10,7 +10,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-const MAX_CONTENT_WIDTH: u16 = 140;
+const MAX_CONTENT_WIDTH: u16 = 116;
 const MIN_RENDER_WIDTH: u16 = 40;
 const ACTIVE_CELL_HORIZONTAL_MARGIN_WIDTH: u16 = 4;
 const VIEWPORT_TOP_GUTTER_HEIGHT: u16 = 1;

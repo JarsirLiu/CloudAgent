@@ -59,7 +59,9 @@ impl TuiApp {
             );
             return None;
         }
-        if matches_image_paste_shortcut(key) {
+        if self.bottom_pane.should_capture_global_paste_shortcut()
+            && matches_image_paste_shortcut(key)
+        {
             return Some(ParsedInput::LocalImagePaste);
         }
         match self.bottom_pane.handle_key(key)? {
@@ -160,6 +162,9 @@ impl TuiApp {
             }),
             InputPaneAction::Composer(ComposerIntent::Reasoning(effort)) => {
                 Some(ParsedInput::LocalReasoning(effort))
+            }
+            InputPaneAction::Composer(ComposerIntent::Model(model)) => {
+                Some(ParsedInput::LocalModel(model))
             }
             InputPaneAction::Composer(ComposerIntent::Copy) => Some(ParsedInput::LocalCopy),
             InputPaneAction::Composer(ComposerIntent::CopyText(text)) => {

@@ -4,20 +4,15 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
+use crate::input::command_dispatch::intent_for_slash_command;
 use crate::input::intent::ComposerIntent;
-use crate::input::slash_command::{SlashCommand, find_slash_command};
+use crate::input::slash_command::find_slash_command;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::widgets::server_request_model::ServerRequestInlineState;
 use crate::ui::widgets::textarea::TextArea;
 use agent_core::ServerRequestDecisionKind;
 use agent_protocol::RequestId;
 use std::collections::VecDeque;
-
-#[derive(Clone, Debug)]
-pub struct ServerRequestInlineState {
-    pub request_id: RequestId,
-    pub title: String,
-    pub detail: String,
-}
 
 pub struct ServerRequestOverlay {
     state: ServerRequestInlineState,
@@ -28,7 +23,7 @@ pub struct ServerRequestOverlay {
 }
 
 impl ServerRequestOverlay {
-    pub fn new(state: ServerRequestInlineState) -> Self {
+    pub(crate) fn new(state: ServerRequestInlineState) -> Self {
         Self {
             state,
             queue: VecDeque::new(),
@@ -58,10 +53,17 @@ impl ServerRequestOverlay {
             reason,
         }
     }
+
+    fn reply_line_index(&self) -> u16 {
+        if self.state.presentation.reason_text().trim().is_empty() {
+            6
+        } else {
+            8
+        }
+    }
 }
 
 const REPLY_PROMPT_WIDTH: usize = 10;
-const REPLY_LINE_INDEX: u16 = 6;
 const COMPACT_APPROVAL_HEIGHT: u16 = 8;
 
 impl BottomPaneView for ServerRequestOverlay {
@@ -133,8 +135,8 @@ impl BottomPaneView for ServerRequestOverlay {
         } else {
             format!("  +{} queued", self.queue.len())
         };
-        let (command_text, _reason_text) = split_detail(&self.state.detail);
-        let command_line = compact_command(command_text, content_width);
+        let command_line = compact_command(self.state.presentation.preview_text(), content_width);
+        let reason_line = truncate_to_width(self.state.presentation.reason_text(), content_width);
         let option_style = |selected: bool| {
             if selected {
                 Style::default()
@@ -170,7 +172,7 @@ impl BottomPaneView for ServerRequestOverlay {
                 truncate_to_width(
                     &format!(
                         "{}{}{}",
-                        simplify_title(&self.state.title),
+                        self.state.presentation.title_text(),
                         if command_line.is_empty() { "" } else { "  " },
                         command_line
                     ),
@@ -181,6 +183,14 @@ impl BottomPaneView for ServerRequestOverlay {
             Span::styled(queue_label, Style::default().fg(muted)),
         ])];
         lines.push(Line::raw(""));
+        if !reason_line.is_empty() {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("reason ", Style::default().fg(muted)),
+                Span::styled(reason_line, Style::default().fg(Color::Rgb(190, 194, 208))),
+            ]));
+            lines.push(Line::raw(""));
+        }
 
         lines.extend([
             Line::from(vec![
@@ -267,7 +277,7 @@ impl BottomPaneView for ServerRequestOverlay {
             .max(1) as usize;
         let (cursor_row, cursor_col) = self.reply.visual_cursor_position(content_width);
         let mut x = area.x + (REPLY_PROMPT_WIDTH + cursor_col) as u16;
-        let mut y = area.y + REPLY_LINE_INDEX + cursor_row as u16;
+        let mut y = area.y + self.reply_line_index() + cursor_row as u16;
         if area.height > 0 {
             let max_y = area.y + area.height.saturating_sub(1);
             if y > max_y {
@@ -342,45 +352,12 @@ fn truncate_to_width(value: &str, max_width: usize) -> String {
     out
 }
 
-fn split_detail(detail: &str) -> (&str, &str) {
-    let mut command = "";
-    let mut reason = "";
-    for line in detail.lines() {
-        if let Some(value) = line.strip_prefix("args:") {
-            command = value.trim();
-        } else if let Some(value) = line.strip_prefix("reason:") {
-            reason = value.trim();
-        }
-    }
-    (command, reason)
-}
-
-fn simplify_title(title: &str) -> String {
-    title
-        .strip_prefix("tool `")
-        .and_then(|rest| rest.strip_suffix("` wants to run"))
-        .map(|tool| format!("{tool} wants to run"))
-        .unwrap_or_else(|| title.to_string())
-}
-
 fn compact_command(command: &str, width: usize) -> String {
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return String::new();
     }
-    if let Some(extracted) = extract_command_from_json(trimmed) {
-        return truncate_to_width(extracted, width);
-    }
     truncate_to_width(trimmed, width)
-}
-
-fn extract_command_from_json(input: &str) -> Option<&str> {
-    let marker = "\"command\":";
-    let start = input.find(marker)? + marker.len();
-    let rest = input[start..].trim_start();
-    let rest = rest.strip_prefix('"')?;
-    let end = rest.find('"')?;
-    Some(&rest[..end])
 }
 
 fn selected_decision(selected: usize) -> ServerRequestDecisionKind {
@@ -415,41 +392,7 @@ fn slash_intent(line: &str) -> Option<ComposerIntent> {
     if !args.is_empty() && !command.supports_inline_args() {
         return Some(ComposerIntent::UnknownCommand(name.to_string()));
     }
-    Some(intent_for_command(command, args))
-}
-
-fn intent_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
-    match command {
-        SlashCommand::Clear => ComposerIntent::Reset,
-        SlashCommand::Compact => ComposerIntent::Compact,
-        SlashCommand::Copy => ComposerIntent::Copy,
-        SlashCommand::Help => ComposerIntent::Help,
-        SlashCommand::Interrupt => ComposerIntent::Interrupt,
-        SlashCommand::Session => {
-            let trimmed = args.trim();
-            if trimmed.is_empty() {
-                ComposerIntent::Session
-            } else {
-                ComposerIntent::SessionSwitch(trimmed.to_string())
-            }
-        }
-        SlashCommand::NewConversation => ComposerIntent::NewConversation(args.trim().to_string()),
-        SlashCommand::SetTitle => ComposerIntent::SetTitle(args.trim().to_string()),
-        SlashCommand::ArchiveConversation => {
-            ComposerIntent::ArchiveConversation(args.trim().to_string())
-        }
-        SlashCommand::DeleteConversation => {
-            ComposerIntent::DeleteConversation(args.trim().to_string())
-        }
-        SlashCommand::Filter => ComposerIntent::Filter(args.trim().to_string()),
-        SlashCommand::Permissions => ComposerIntent::Permissions(args.trim().to_string()),
-        SlashCommand::Config => ComposerIntent::Config,
-        SlashCommand::Reasoning => ComposerIntent::Reasoning(args.trim().to_string()),
-        SlashCommand::Skill => ComposerIntent::Skill(args.trim().to_string()),
-        SlashCommand::Skills => ComposerIntent::Skills,
-        SlashCommand::Gateway => ComposerIntent::Gateway,
-        SlashCommand::Exit => ComposerIntent::Exit,
-    }
+    Some(intent_for_slash_command(command, args))
 }
 
 #[cfg(test)]
@@ -460,8 +403,12 @@ mod tests {
     fn request_state(id: &str) -> ServerRequestInlineState {
         ServerRequestInlineState {
             request_id: RequestId::String(id.to_string()),
-            title: "Run command?".to_string(),
-            detail: "exec_command".to_string(),
+            presentation:
+                crate::ui::widgets::server_request_model::ServerRequestPresentation::command(
+                    "exec_command",
+                    "needs review",
+                    "Get-Content file.rs",
+                ),
         }
     }
 
@@ -487,7 +434,7 @@ mod tests {
             .cursor_position(Rect::new(0, 20, 80, 16))
             .expect("cursor");
 
-        assert_eq!(y, 26);
+        assert_eq!(y, 28);
     }
 
     #[test]

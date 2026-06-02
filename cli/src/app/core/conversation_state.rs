@@ -137,8 +137,7 @@ impl TuiApp {
         self.run_state.last_turn_usage = None;
         self.run_state.total_turn_usage = None;
         self.run_state.model_context_window = None;
-        self.run_state.pending_submitted_input = Some(content.to_vec());
-        self.run_state.frontend_mode = FrontendMode::Running;
+        self.run_state.turn_lifecycle.begin_submit(content);
         self.bottom_pane.prepare_for_submit();
         self.transcript_owner
             .start_local_user(content.to_vec(), self.run_state.expand_tool_details);
@@ -146,11 +145,11 @@ impl TuiApp {
     }
 
     pub(crate) fn apply_turn_dispatch(&mut self, dispatch: TurnDispatch) {
-        self.run_state.frontend_mode = FrontendMode::Idle;
+        self.run_state.turn_lifecycle.finish_turn();
         self.bottom_pane.on_turn_finished();
         match dispatch {
             TurnDispatch::Completed => {
-                self.run_state.pending_submitted_input = None;
+                self.run_state.turn_lifecycle.clear_pending_submission();
                 if let Some(turn_id) = self.transcript_owner.active_turn_id().map(str::to_owned) {
                     self.transcript_owner
                         .complete_turn(turn_id, self.run_state.expand_tool_details);
@@ -161,13 +160,14 @@ impl TuiApp {
                 self.transcript_scroll.reset();
             }
             TurnDispatch::Failed { error } => {
-                let restored_draft =
-                    if let Some(content) = self.run_state.pending_submitted_input.take() {
-                        self.bottom_pane.restore_submission(&content);
-                        true
-                    } else {
-                        false
-                    };
+                let restored_draft = if let Some(content) =
+                    self.run_state.turn_lifecycle.take_pending_submission()
+                {
+                    self.bottom_pane.restore_submission(&content);
+                    true
+                } else {
+                    false
+                };
                 self.transcript_owner
                     .clear_active_turn(self.run_state.expand_tool_details);
                 let message = if restored_draft {
@@ -179,7 +179,7 @@ impl TuiApp {
                 self.transcript_scroll.reset();
             }
             TurnDispatch::Cancelled { reason } => {
-                self.run_state.pending_submitted_input = None;
+                self.run_state.turn_lifecycle.clear_pending_submission();
                 self.transcript_owner
                     .clear_active_turn(self.run_state.expand_tool_details);
                 self.push_live_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));
@@ -193,12 +193,22 @@ impl TuiApp {
     }
 
     pub(crate) fn current_mode(&self) -> FrontendMode {
-        self.bottom_pane.current_mode(self.run_state.frontend_mode)
+        self.bottom_pane
+            .current_mode(self.run_state.turn_lifecycle.frontend_mode())
     }
 
     pub(crate) fn sync_frontend_mode(&mut self, mode: FrontendMode) {
-        self.run_state.frontend_mode = mode;
+        self.run_state.turn_lifecycle.sync_frontend_mode(mode);
         self.bottom_pane.sync_frontend_mode(mode);
+    }
+
+    pub(crate) fn recover_orphaned_running_turn(&mut self) {
+        self.run_state.turn_lifecycle.recover_orphaned();
+        self.bottom_pane.on_turn_finished();
+        self.clear_server_request_view();
+        self.transcript_owner
+            .clear_active_turn(self.run_state.expand_tool_details);
+        self.transcript_scroll.reset();
     }
 
     pub(crate) fn can_submit_turn(&self) -> bool {

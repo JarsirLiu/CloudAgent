@@ -1,5 +1,6 @@
 use crate::input::intent::{ComposerIntent, GatewayConfigUpdate};
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::widgets::form_input_state::FormInputState;
 use agent_protocol::{PlatformConfigResponse, PlatformControlEntry};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
@@ -27,7 +28,7 @@ enum GatewayPanelMode {
         configured: bool,
         selected: usize,
         fields: Vec<EditableField>,
-        replace_on_next_input: bool,
+        input_state: FormInputState,
         weixin_login: Option<WeixinLoginSessionView>,
     },
 }
@@ -75,7 +76,7 @@ impl GatewayPanel {
                 configured: config.configured,
                 selected: 0,
                 fields,
-                replace_on_next_input: true,
+                input_state: FormInputState::new(),
                 weixin_login,
             },
         }
@@ -94,7 +95,7 @@ impl GatewayPanel {
             GatewayPanelMode::Edit {
                 selected,
                 fields,
-                replace_on_next_input,
+                input_state,
                 platform,
                 configured: _,
                 enabled: _,
@@ -105,32 +106,10 @@ impl GatewayPanel {
                 let next = (*selected as i32 + delta).clamp(0, max) as usize;
                 if next != *selected {
                     *selected = next;
-                    *replace_on_next_input = true;
+                    input_state.clear_paste_echo();
                 }
             }
         }
-    }
-
-    fn current_field_mut(&mut self) -> Option<&mut EditableField> {
-        let GatewayPanelMode::Edit {
-            selected,
-            fields,
-            replace_on_next_input,
-            ..
-        } = &mut self.mode
-        else {
-            return None;
-        };
-        if *selected >= fields.len() {
-            return None;
-        }
-        let field = &mut fields[*selected];
-        if *replace_on_next_input {
-            field.value.clear();
-            field.dirty = true;
-            *replace_on_next_input = false;
-        }
-        Some(field)
     }
 
     fn collect_updates(fields: &[EditableField]) -> Vec<GatewayConfigUpdate> {
@@ -150,9 +129,22 @@ impl GatewayPanel {
 }
 
 impl BottomPaneView for GatewayPanel {
+    fn should_capture_global_paste_shortcut(&self) -> bool {
+        false
+    }
+
     fn handle_paste(&mut self, text: &str) -> BottomPaneViewAction {
-        if let Some(field) = self.current_field_mut() {
-            field.value.push_str(&text.replace('\n', ""));
+        let value = text.replace('\n', "");
+        if let GatewayPanelMode::Edit {
+            selected,
+            fields,
+            input_state,
+            ..
+        } = &mut self.mode
+            && *selected < fields.len()
+        {
+            let field = &mut fields[*selected];
+            input_state.append_paste(&mut field.value, &value);
             field.dirty = true;
         }
         BottomPaneViewAction::None
@@ -183,6 +175,7 @@ impl BottomPaneView for GatewayPanel {
                 configured,
                 selected,
                 fields,
+                input_state,
                 weixin_login,
                 ..
             } => match key.code {
@@ -190,23 +183,29 @@ impl BottomPaneView for GatewayPanel {
                 KeyCode::Down | KeyCode::Tab => self.move_selection(1),
                 KeyCode::BackTab => self.move_selection(-1),
                 KeyCode::Backspace => {
-                    if let Some(field) = self.current_field_mut() {
-                        field.value.pop();
+                    if *selected < fields.len() {
+                        let field = &mut fields[*selected];
+                        input_state.backspace(&mut field.value);
                         field.dirty = true;
                     }
                 }
                 KeyCode::Char(' ') => {
                     if *selected == fields.len() {
                         *enabled = !*enabled;
-                    } else if let Some(field) = self.current_field_mut() {
-                        field.value.push(' ');
-                        field.dirty = true;
+                        input_state.clear_paste_echo();
+                    } else {
+                        let field = &mut fields[*selected];
+                        if input_state.append_char(&mut field.value, ' ') {
+                            field.dirty = true;
+                        }
                     }
                 }
                 KeyCode::Char(c) => {
-                    if let Some(field) = self.current_field_mut() {
-                        field.value.push(c);
-                        field.dirty = true;
+                    if *selected < fields.len() {
+                        let field = &mut fields[*selected];
+                        if input_state.append_char(&mut field.value, c) {
+                            field.dirty = true;
+                        }
                     }
                 }
                 KeyCode::Enter => {
@@ -685,5 +684,42 @@ mod tests {
                     },
                 ]
         ));
+    }
+
+    #[test]
+    fn edit_panel_ignores_immediate_char_echo_after_paste() {
+        let mut panel = GatewayPanel::edit(
+            entry("feishu", false),
+            PlatformConfigResponse {
+                platform: "feishu".to_string(),
+                configured: false,
+                fields: vec![PlatformConfigField {
+                    key: "app_id".to_string(),
+                    value: None,
+                    required: true,
+                    is_secret: false,
+                    is_set: false,
+                }],
+            },
+            None,
+        );
+
+        let _ = panel.handle_paste("token123");
+        for ch in "token123".chars() {
+            let _ = panel.handle_key_event(key(KeyCode::Char(ch)));
+        }
+        let action = panel.handle_key_event(key(KeyCode::Tab));
+        assert!(matches!(action, BottomPaneViewAction::None));
+
+        let rendered = panel
+            .render_lines(80)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("token123 (required)"))
+        );
     }
 }

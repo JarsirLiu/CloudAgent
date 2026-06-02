@@ -21,6 +21,7 @@ pub(crate) enum ComposerIntent {
     Permissions(String),
     Config,
     Reasoning(String),
+    Model(String),
     Skill(String),
     Gateway,
     Skills,

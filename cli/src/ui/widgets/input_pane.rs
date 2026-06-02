@@ -6,9 +6,11 @@ use crate::ui::widgets::config_panel::ConfigPanel;
 use crate::ui::widgets::filter_picker::FilterPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
 use crate::ui::widgets::gateway_panel::{GatewayPanel, WeixinLoginSessionView};
+use crate::ui::widgets::help_view::HelpView;
+use crate::ui::widgets::model_picker::ModelPicker;
 use crate::ui::widgets::permissions_picker::PermissionsPicker;
 use crate::ui::widgets::reasoning_picker::ReasoningPicker;
-pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
+pub(crate) use crate::ui::widgets::server_request_model::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
 use crate::ui::widgets::weixin_binding_view::{WeixinBindingView, WeixinBindingViewModel};
@@ -18,7 +20,7 @@ use agent_core::ServerRequestDecisionKind;
 use agent_core::SkillMetadata;
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
 use config::ReasoningEffort;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
@@ -75,11 +77,15 @@ impl InputPane {
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
         if let Some(view) = self.view_stack.last_mut() {
+            let view_requires_action = view.requires_action();
             match view.handle_key_event(key) {
                 BottomPaneViewAction::None => {
                     // The view did not consume this key.
-                    // For Esc, fall through to composer / interrupt logic below.
-                    if key.code != KeyCode::Esc || !key.modifiers.is_empty() {
+                    // Only action-required overlays may fall through to global Esc interrupt.
+                    if key.code != KeyCode::Esc
+                        || !key.modifiers.is_empty()
+                        || !view_requires_action
+                    {
                         if view.is_complete() {
                             self.view_stack.pop();
                         }
@@ -116,16 +122,28 @@ impl InputPane {
             }
         }
 
-        // Let the composer handle Esc first (e.g. dismiss completion popup).
-        // Only if the composer did not consume it, treat Esc as Interrupt.
         if key.code == KeyCode::Esc && key.modifiers.is_empty() {
-            if let Some(action) = self.composer.handle_key(key) {
-                return Some(InputPaneAction::Composer(action));
-            }
-            return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
+            return self.handle_escape_key();
         }
 
         self.composer.handle_key(key).map(InputPaneAction::Composer)
+    }
+
+    fn handle_escape_key(&mut self) -> Option<InputPaneAction> {
+        // Completion/menu Esc is a navigation action, not an interrupt.
+        if self.composer.has_completion_menu() {
+            return self
+                .composer
+                .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .map(InputPaneAction::Composer);
+        }
+        match self
+            .composer
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        {
+            Some(action) => Some(InputPaneAction::Composer(action)),
+            None => Some(InputPaneAction::Composer(ComposerIntent::Interrupt)),
+        }
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> Option<InputPaneAction> {
@@ -141,6 +159,14 @@ impl InputPane {
 
     pub(crate) fn composer_has_selection(&self) -> bool {
         self.view_stack.is_empty() && self.composer.has_selection()
+    }
+
+    pub(crate) fn should_capture_global_paste_shortcut(&self) -> bool {
+        if let Some(view) = self.view_stack.last() {
+            view.should_capture_global_paste_shortcut()
+        } else {
+            true
+        }
     }
 
     pub(crate) fn attach_image(&mut self, path: PathBuf) -> bool {
@@ -387,7 +413,7 @@ impl InputPane {
         self.composer.restore_submission(content);
     }
 
-    pub fn set_server_request(&mut self, request: ServerRequestInlineState) {
+    pub(crate) fn set_server_request(&mut self, request: ServerRequestInlineState) {
         let request = if let Some(view) = self.view_stack.last_mut() {
             match view.try_consume_server_request(request) {
                 Some(request) => request,
@@ -435,6 +461,11 @@ impl InputPane {
         self.view_stack.push(Box::new(FilterPicker::new()));
     }
 
+    pub fn set_help_view(&mut self) {
+        self.view_stack.clear();
+        self.view_stack.push(Box::new(HelpView::new()));
+    }
+
     pub fn set_permissions_picker(&mut self, current: &str) {
         self.view_stack.clear();
         self.view_stack
@@ -445,6 +476,12 @@ impl InputPane {
         self.view_stack.clear();
         self.view_stack
             .push(Box::new(ReasoningPicker::new(current)));
+    }
+
+    pub fn set_model_picker(&mut self, current: String, models: Vec<String>) {
+        self.view_stack.clear();
+        self.view_stack
+            .push(Box::new(ModelPicker::new(current, models)));
     }
 
     pub fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {
@@ -671,14 +708,22 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::widgets::Widget;
 
+    fn command_request(id: &str, title: &str) -> ServerRequestInlineState {
+        ServerRequestInlineState {
+            request_id: RequestId::String(id.to_string()),
+            presentation:
+                crate::ui::widgets::server_request_model::ServerRequestPresentation::command(
+                    title,
+                    "needs approval",
+                    "Get-Content file.rs",
+                ),
+        }
+    }
+
     #[test]
     fn esc_interrupts_even_when_server_request_overlay_is_active() {
         let mut pane = InputPane::new();
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-1".to_string()),
-            title: "Run command?".to_string(),
-            detail: "exec_command".to_string(),
-        });
+        pane.set_server_request(command_request("req-1", "Run command?"));
 
         let action = pane.handle_key(KeyEvent {
             code: KeyCode::Esc,
@@ -696,16 +741,8 @@ mod tests {
     #[test]
     fn server_request_overlay_queues_new_requests_instead_of_replacing_current() {
         let mut pane = InputPane::new();
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-1".to_string()),
-            title: "First command".to_string(),
-            detail: "exec_command".to_string(),
-        });
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-2".to_string()),
-            title: "Second command".to_string(),
-            detail: "exec_command".to_string(),
-        });
+        pane.set_server_request(command_request("req-1", "First command"));
+        pane.set_server_request(command_request("req-2", "Second command"));
 
         let first = pane.handle_key(KeyEvent {
             code: KeyCode::Char('1'),
@@ -741,16 +778,8 @@ mod tests {
     #[test]
     fn queued_server_request_remains_action_required_after_first_submit() {
         let mut pane = InputPane::new();
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-1".to_string()),
-            title: "First command".to_string(),
-            detail: "exec_command".to_string(),
-        });
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-2".to_string()),
-            title: "Second command".to_string(),
-            detail: "exec_command".to_string(),
-        });
+        pane.set_server_request(command_request("req-1", "First command"));
+        pane.set_server_request(command_request("req-2", "Second command"));
 
         let _ = pane.handle_key(KeyEvent {
             code: KeyCode::Char('1'),
@@ -769,11 +798,7 @@ mod tests {
     #[test]
     fn approval_selection_mode_does_not_force_a_text_cursor() {
         let mut pane = InputPane::new();
-        pane.set_server_request(ServerRequestInlineState {
-            request_id: RequestId::String("req-1".to_string()),
-            title: "Run command?".to_string(),
-            detail: "exec_command".to_string(),
-        });
+        pane.set_server_request(command_request("req-1", "Run command?"));
 
         assert_eq!(
             pane.cursor_position(
@@ -851,6 +876,27 @@ mod tests {
         assert!(matches!(
             action,
             Some(InputPaneAction::Composer(ComposerIntent::Interrupt))
+        ));
+    }
+
+    #[test]
+    fn esc_closes_completion_menu_before_interrupting() {
+        let mut pane = InputPane::new();
+        let _ = pane.handle_key(KeyEvent {
+            code: KeyCode::Char('/'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+
+        assert!(matches!(
+            pane.handle_key(KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: crossterm::event::KeyEventState::NONE,
+            }),
+            Some(InputPaneAction::Composer(ComposerIntent::None))
         ));
     }
 

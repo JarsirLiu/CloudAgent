@@ -1,4 +1,5 @@
 use crate::app::TuiApp;
+use crate::app::commands::parse::ParsedInput;
 use crate::app::conversation::actions::execute_server_action;
 use crate::app::conversation::facade as conversation_facade;
 use crate::app::core::transcript_owner::TranscriptOwner;
@@ -10,6 +11,7 @@ use agent_core::{
     SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
     TranscriptItem, TurnItemKind, TurnState,
 };
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 
 fn user(id: &str, text: &str) -> TranscriptItem {
@@ -247,6 +249,106 @@ fn completed_turn_history_merges_only_adjacent_agent_message_runs() {
 }
 
 #[test]
+fn rebuilt_completed_turn_keeps_final_assistant_after_tool_runs() {
+    let mut app = test_app();
+    let history = vec![turn(
+        "turn-1",
+        TurnState::Completed,
+        vec![
+            user("u1", "inspect response/chat behavior"),
+            command("c1", "Get-Content stream.rs"),
+            command("c2", "Get-Content transform.rs"),
+            agent("a1", "Final analysis after checking both files."),
+        ],
+    )];
+
+    app.transcript_owner
+        .rebuild_from_history_snapshot(&history, false);
+
+    let committed = app
+        .transcript_owner
+        .pending_history_cells()
+        .into_iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        committed,
+        vec![
+            "inspect response/chat behavior".to_string(),
+            "Get-Content stream.rs".to_string(),
+            "Get-Content transform.rs".to_string(),
+            "Final analysis after checking both files.".to_string(),
+        ]
+    );
+
+    let model = build_chat_surface_model(&mut app, 100, 40);
+    let ChatSurfaceBody::Transcript(surface) = model.body else {
+        panic!("expected transcript body");
+    };
+    let rendered = surface
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let last_non_empty = rendered
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .expect("transcript should contain visible lines");
+    assert!(last_non_empty.contains("Final analysis after checking both files."));
+}
+
+#[test]
+fn replacing_history_resets_transcript_scroll_to_latest_tail() {
+    let mut app = test_app();
+    let history = vec![turn(
+        "turn-1",
+        TurnState::Completed,
+        vec![
+            user("u1", "inspect response/chat behavior"),
+            command("c1", "Get-Content stream.rs"),
+            command("c2", "Get-Content transform.rs"),
+            agent("a1", "Final analysis after checking both files."),
+        ],
+    )];
+
+    app.transcript_owner
+        .rebuild_from_history_snapshot(&history, false);
+    let initial_model = build_chat_surface_model(&mut app, 100, 4);
+    let ChatSurfaceBody::Transcript(initial_surface) = initial_model.body else {
+        panic!("expected transcript body");
+    };
+    assert!(initial_surface.rendered_rows > 4);
+    assert_eq!(
+        app.transcript_scroll
+            .top_row_for_render(initial_surface.rendered_rows, 4),
+        initial_surface.rendered_rows as u16 - 4
+    );
+
+    assert!(
+        app.transcript_scroll
+            .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+    );
+    let scrolled_top = app
+        .transcript_scroll
+        .top_row_for_render(initial_surface.rendered_rows, 4);
+    assert!(scrolled_top < initial_surface.rendered_rows as u16 - 4);
+
+    app.run_state.history_snapshot = Some(history);
+    crate::app::conversation::facade::replace_transcript_from_history(&mut app);
+
+    let replaced_model = build_chat_surface_model(&mut app, 100, 4);
+    let ChatSurfaceBody::Transcript(replaced_surface) = replaced_model.body else {
+        panic!("expected transcript body");
+    };
+    assert_eq!(
+        app.transcript_scroll
+            .top_row_for_render(replaced_surface.rendered_rows, 4),
+        replaced_surface.rendered_rows as u16 - 4
+    );
+}
+
+#[test]
 fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
@@ -453,7 +555,7 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
         vec![
             "hello".to_string(),
             "first stable\n\nsecond stable\n\nfinal tail".to_string(),
-            "ran 1 inspect command".to_string(),
+            "rg esc".to_string(),
         ]
     );
 }
@@ -534,7 +636,7 @@ fn runtime_non_agent_cells_do_not_become_stream_continuations() {
         vec![
             ("hello".to_string(), false),
             ("thinking".to_string(), false),
-            ("ran 1 inspect command".to_string(), false),
+            ("rg cli".to_string(), false),
         ]
     );
 }
@@ -577,7 +679,7 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
     assert!(
         pending
             .iter()
-            .any(|entry| entry.contains("Explored workspace|read 1 file")),
+            .any(|entry| entry.contains("Read file|read 1 file")),
         "pending: {pending:?}"
     );
     assert!(
@@ -665,11 +767,11 @@ fn adjacent_exploration_history_cells_merge_without_crossing_reasoning_barrier()
         vec![
             ("you".to_string(), "hello".to_string()),
             (
-                "Explored workspace".to_string(),
-                "searched 1 time, read 1 file".to_string(),
+                "Read file".to_string(),
+                "searched 1 time, read 1 file".to_string()
             ),
             ("Reasoning".to_string(), "thinking".to_string()),
-            ("Explored workspace".to_string(), "read 1 file".to_string()),
+            ("Read file".to_string(), "read 1 file".to_string()),
         ]
     );
 }
@@ -937,6 +1039,22 @@ fn committed_history_without_active_cell_renders_in_transcript_body() {
 }
 
 #[test]
+fn ctrl_v_uses_clipboard_shortcut_only_in_main_composer() {
+    let mut app = test_app();
+    let key = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+
+    assert!(matches!(
+        app.handle_key(key),
+        Some(ParsedInput::LocalImagePaste)
+    ));
+
+    app.bottom_pane
+        .set_config_panel(String::new(), String::new(), String::new());
+
+    assert!(app.handle_key(key).is_none());
+}
+
+#[test]
 fn committed_history_without_active_cell_counts_transcript_height() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -996,6 +1114,46 @@ fn slash_completion_expands_bottom_pane_as_single_layout_region() {
         after,
         before.saturating_add(bottom_height_after - bottom_height_before)
     );
+}
+
+#[test]
+fn escape_closes_completion_menu_in_running_mode_without_interrupting_turn() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+
+    let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let bottom_before = app
+        .bottom_pane
+        .desired_height(app.current_mode(), terminal_area.width);
+    let _ = app.bottom_pane.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('/'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    let bottom_open = app
+        .bottom_pane
+        .desired_height(app.current_mode(), terminal_area.width);
+
+    assert!(bottom_open > bottom_before);
+
+    let parsed = app.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+
+    assert!(parsed.is_none());
+    assert_eq!(
+        app.bottom_pane
+            .desired_height(app.current_mode(), terminal_area.width),
+        bottom_before
+    );
+    assert!(!app.run_state.should_exit);
 }
 
 #[test]
@@ -1125,6 +1283,36 @@ fn server_error_uses_transient_status_banner_instead_of_transcript_cell() {
 }
 
 #[test]
+fn interrupt_no_active_turn_result_recovers_stuck_running_state() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.prepare_submitted_turn(&[InputItem::Text {
+        text: "hello".to_string(),
+    }]);
+    app.run_state.turn_lifecycle.request_interrupt();
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::InterruptResult(
+            agent_protocol::InterruptDisposition::NoActiveTurn,
+        ),
+    );
+
+    assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Idle);
+    assert!(app.can_submit_turn());
+    assert!(app.transcript_owner.active_turn_id().is_none());
+    assert!(app.run_state.turn_lifecycle.pending_submission().is_none());
+    assert!(!app.run_state.turn_lifecycle.interrupt_requested());
+}
+
+#[test]
 fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -1139,16 +1327,18 @@ fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell()
         &mut app,
         crate::state::reducer::ServerAction::ShowServerRequestPrompt {
             request_id: agent_protocol::RequestId::String("req-1".to_string()),
-            title: "approval".to_string(),
-            detail: "detail".to_string(),
-            notice: "Command approval required".to_string(),
+            request: crate::ui::widgets::server_request_model::ServerRequestPresentation::command(
+                "exec_command",
+                "needs review",
+                "Get-Content file.rs",
+            ),
         },
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
         status.live_banner.as_deref(),
-        Some("Command approval required")
+        Some("Command approval required for exec_command")
     );
     assert_eq!(
         status.live_banner_level,
@@ -1425,7 +1615,7 @@ fn failed_turn_restores_submitted_text_to_composer() {
 
     assert!(rendered.contains("continue from this draft"));
     assert!(app.can_submit_turn());
-    assert!(app.run_state.pending_submitted_input.is_none());
+    assert!(app.run_state.turn_lifecycle.pending_submission().is_none());
 }
 
 #[test]
@@ -2116,6 +2306,6 @@ fn transcript_surface_uses_centered_width_metrics() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 30);
     let metrics = ChatSurface::transcript_render_metrics_for_area(area);
 
-    assert_eq!(metrics.width, 116);
-    assert_eq!(metrics.left_padding, 2);
+    assert_eq!(metrics.width, 112);
+    assert_eq!(metrics.left_padding, 4);
 }

@@ -10,6 +10,11 @@ pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
         .rebuild_from_history_snapshot(&history_snapshot, app.run_state.expand_tool_details);
 }
 
+pub(crate) fn replace_transcript_from_history(app: &mut TuiApp) {
+    rebuild_transcript_from_history(app);
+    app.transcript_scroll.reset();
+}
+
 pub(crate) fn upsert_turn_snapshot(app: &mut TuiApp, turn: ConversationTurn) {
     let history = app.run_state.history_snapshot.get_or_insert_with(Vec::new);
     if let Some(existing) = history.iter_mut().find(|existing| existing.id == turn.id) {

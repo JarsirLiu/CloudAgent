@@ -1,3 +1,5 @@
+mod powershell;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandAccess {
     ReadOnly,
@@ -54,12 +56,19 @@ fn normalize_command(command: &str) -> String {
 }
 
 fn is_safe_readonly_chain(command: &str) -> bool {
+    split_segments(command)
+        .into_iter()
+        .filter(|segment| !segment.is_empty())
+        .all(is_safe_readonly_segment)
+}
+
+fn split_segments(command: &str) -> Vec<&str> {
     if command.contains("&&") {
         return command
             .split("&&")
             .map(str::trim)
             .filter(|segment| !segment.is_empty())
-            .all(is_safe_readonly_segment);
+            .collect();
     }
 
     if command.contains(';') {
@@ -67,10 +76,10 @@ fn is_safe_readonly_chain(command: &str) -> bool {
             .split(';')
             .map(str::trim)
             .filter(|segment| !segment.is_empty())
-            .all(is_safe_readonly_segment);
+            .collect();
     }
 
-    is_safe_readonly_segment(command)
+    vec![command.trim()]
 }
 
 fn is_safe_readonly_segment(segment: &str) -> bool {
@@ -81,6 +90,11 @@ fn is_safe_readonly_segment(segment: &str) -> bool {
 
     if contains_mutating_indicator(normalized) || contains_network_indicator(normalized) {
         return false;
+    }
+
+    match powershell::classify_segment(normalized) {
+        powershell::PowerShellAccess::ReadOnly => return true,
+        powershell::PowerShellAccess::Unknown => {}
     }
 
     let Some(program) = normalized.split_whitespace().next() else {
@@ -250,6 +264,30 @@ mod tests {
         assert_eq!(classify_command("git status"), CommandAccess::ReadOnly);
         assert_eq!(
             classify_command("Get-ChildItem -Force"),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command(
+                "$lines = Get-Content packages/core/src/agents/runtime/agent-core.ts; $lines[630..730] -join \"`n\""
+            ),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command(
+                "(Get-Content \"D:\\learn\\gifti\\qwen-code\\packages\\core\\src\\core\\turn.ts\").Count"
+            ),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command("(Get-Content \"x\" | Measure-Object -Line).Lines"),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command("(Get-ChildItem \"x\" -File).Count"),
+            CommandAccess::ReadOnly
+        );
+        assert_eq!(
+            classify_command("$content = Get-Content \"x\" -Raw; $content.Length"),
             CommandAccess::ReadOnly
         );
     }
