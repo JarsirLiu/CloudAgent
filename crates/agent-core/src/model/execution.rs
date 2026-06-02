@@ -116,6 +116,7 @@ mod tests {
                 content: Some("ok".to_string()),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                finish_reason: None,
                 model_name: None,
                 usage: None,
             })
@@ -147,6 +148,7 @@ mod tests {
                 content: Some("ok".to_string()),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                finish_reason: None,
                 model_name: None,
                 usage: None,
             })

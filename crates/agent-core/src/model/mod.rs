@@ -34,6 +34,7 @@ pub struct ModelResponse {
     pub content: Option<String>,
     pub reasoning: Option<String>,
     pub tool_calls: Vec<ToolCall>,
+    pub finish_reason: Option<String>,
     pub model_name: Option<String>,
     pub usage: Option<ModelUsage>,
 }

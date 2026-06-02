@@ -21,6 +21,10 @@ fn apply_signed_delta(base: usize, current: usize, previous: usize) -> usize {
     }
 }
 
+fn finish_reason_implies_tool_use(finish_reason: Option<&str>) -> bool {
+    matches!(finish_reason, Some("tool_calls") | Some("tool_use"))
+}
+
 async fn restore_budget_baseline_from_host<H: TurnHost>(
     host: &H,
     conversation_id: &str,
@@ -588,7 +592,8 @@ pub async fn execute_regular_turn<H: TurnHost>(
         .await?;
         host.save_history(context_manager.history().clone()).await?;
 
-        if tool_calls.is_empty() {
+        let finish_reason = response.finish_reason.as_deref();
+        if tool_calls.is_empty() && !finish_reason_implies_tool_use(finish_reason) {
             loop_guard.reset();
             if !had_streaming_assistant_item && response.content.is_none() {
                 emit_assistant_message_item(
@@ -613,6 +618,11 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 model_name: last_model_name,
                 state: TurnState::Completed,
             });
+        }
+
+        if tool_calls.is_empty() && finish_reason_implies_tool_use(finish_reason) {
+            loop_guard.reset();
+            continue;
         }
 
         let tool_batch: ToolBatchOutcome = host
@@ -1148,6 +1158,7 @@ mod tests {
                 ),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                finish_reason: None,
                 model_name: Some("test-model".to_string()),
                 usage: None,
             })
@@ -1238,6 +1249,7 @@ mod tests {
                     identity: ToolIdentity::built_in("read_file"),
                     arguments: json!({"path":"README.md"}),
                 }],
+                finish_reason: None,
                 model_name: Some("test-model".to_string()),
                 usage: None,
             },
@@ -1245,6 +1257,7 @@ mod tests {
                 content: Some("final answer".to_string()),
                 reasoning: Some("second reasoning".to_string()),
                 tool_calls: vec![],
+                finish_reason: None,
                 model_name: Some("test-model".to_string()),
                 usage: None,
             },
@@ -1291,6 +1304,55 @@ mod tests {
         assert!(delivered.iter().any(
             |event| matches!(event, EventMsg::TurnCompleted { turn_id } if turn_id == "turn-1")
         ));
+    }
+
+    #[tokio::test]
+    async fn finish_reason_tool_use_keeps_turn_open_for_next_round() {
+        let host = MockTurnHost::new(vec![
+            ModelResponse {
+                content: Some("intermediate text".to_string()),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                finish_reason: Some("tool_calls".to_string()),
+                model_name: Some("test-model".to_string()),
+                usage: None,
+            },
+            ModelResponse {
+                content: Some("final answer".to_string()),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                finish_reason: Some("stop".to_string()),
+                model_name: Some("test-model".to_string()),
+                usage: None,
+            },
+        ]);
+
+        let history = ConversationHistory::new("default".to_string(), "system".to_string());
+        let mut delivered = Vec::new();
+        let outcome: TurnOutcome = execute_regular_turn(
+            &host,
+            "default",
+            "turn-1",
+            &(),
+            &(),
+            CancellationToken::new(),
+            history,
+            &mut |event| delivered.push(event.clone()),
+            &(|_req: ServerRequest| async move {
+                Ok(ServerRequestDecision::accept(Some("ok".to_string())))
+            }),
+        )
+        .await
+        .expect("turn outcome");
+
+        assert!(matches!(outcome.state, TurnState::Completed));
+        assert!(delivered.iter().any(
+            |event| matches!(event, EventMsg::TurnCompleted { turn_id } if turn_id == "turn-1")
+        ));
+        assert!(
+            host.responses.lock().expect("responses lock").is_empty(),
+            "turn should have consumed both model responses"
+        );
     }
 
     #[tokio::test]
@@ -1395,6 +1457,7 @@ mod tests {
             content: Some("done".to_string()),
             reasoning: None,
             tool_calls: Vec::new(),
+            finish_reason: None,
             model_name: Some("test-model".to_string()),
             usage: None,
         }]);
@@ -1457,6 +1520,7 @@ mod tests {
                 content: Some("done".to_string()),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                finish_reason: None,
                 model_name: Some("test-model".to_string()),
                 usage: None,
             },
@@ -1464,6 +1528,7 @@ mod tests {
                 content: Some("done again".to_string()),
                 reasoning: None,
                 tool_calls: Vec::new(),
+                finish_reason: None,
                 model_name: Some("test-model".to_string()),
                 usage: None,
             },
