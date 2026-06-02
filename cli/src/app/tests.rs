@@ -1183,6 +1183,36 @@ fn server_error_uses_transient_status_banner_instead_of_transcript_cell() {
 }
 
 #[test]
+fn interrupt_no_active_turn_result_recovers_stuck_running_state() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.prepare_submitted_turn(&[InputItem::Text {
+        text: "hello".to_string(),
+    }]);
+    app.run_state.turn_lifecycle.request_interrupt();
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::InterruptResult(
+            agent_protocol::InterruptDisposition::NoActiveTurn,
+        ),
+    );
+
+    assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Idle);
+    assert!(app.can_submit_turn());
+    assert!(app.transcript_owner.active_turn_id().is_none());
+    assert!(app.run_state.turn_lifecycle.pending_submission().is_none());
+    assert!(!app.run_state.turn_lifecycle.interrupt_requested());
+}
+
+#[test]
 fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -1483,7 +1513,7 @@ fn failed_turn_restores_submitted_text_to_composer() {
 
     assert!(rendered.contains("continue from this draft"));
     assert!(app.can_submit_turn());
-    assert!(app.run_state.pending_submitted_input.is_none());
+    assert!(app.run_state.turn_lifecycle.pending_submission().is_none());
 }
 
 #[test]
@@ -2174,6 +2204,6 @@ fn transcript_surface_uses_centered_width_metrics() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 30);
     let metrics = ChatSurface::transcript_render_metrics_for_area(area);
 
-    assert_eq!(metrics.width, 116);
-    assert_eq!(metrics.left_padding, 2);
+    assert_eq!(metrics.width, 112);
+    assert_eq!(metrics.left_padding, 4);
 }

@@ -6,6 +6,8 @@ use crate::ui::widgets::config_panel::ConfigPanel;
 use crate::ui::widgets::filter_picker::FilterPicker;
 use crate::ui::widgets::footer::{hint_line, status_line};
 use crate::ui::widgets::gateway_panel::{GatewayPanel, WeixinLoginSessionView};
+use crate::ui::widgets::help_view::HelpView;
+use crate::ui::widgets::model_picker::ModelPicker;
 use crate::ui::widgets::permissions_picker::PermissionsPicker;
 use crate::ui::widgets::reasoning_picker::ReasoningPicker;
 pub use crate::ui::widgets::server_request_overlay::ServerRequestInlineState;
@@ -75,11 +77,15 @@ impl InputPane {
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
         if let Some(view) = self.view_stack.last_mut() {
+            let view_requires_action = view.requires_action();
             match view.handle_key_event(key) {
                 BottomPaneViewAction::None => {
                     // The view did not consume this key.
-                    // For Esc, fall through to composer / interrupt logic below.
-                    if key.code != KeyCode::Esc || !key.modifiers.is_empty() {
+                    // Only action-required overlays may fall through to global Esc interrupt.
+                    if key.code != KeyCode::Esc
+                        || !key.modifiers.is_empty()
+                        || !view_requires_action
+                    {
                         if view.is_complete() {
                             self.view_stack.pop();
                         }
@@ -455,6 +461,11 @@ impl InputPane {
         self.view_stack.push(Box::new(FilterPicker::new()));
     }
 
+    pub fn set_help_view(&mut self) {
+        self.view_stack.clear();
+        self.view_stack.push(Box::new(HelpView::new()));
+    }
+
     pub fn set_permissions_picker(&mut self, current: &str) {
         self.view_stack.clear();
         self.view_stack
@@ -465,6 +476,12 @@ impl InputPane {
         self.view_stack.clear();
         self.view_stack
             .push(Box::new(ReasoningPicker::new(current)));
+    }
+
+    pub fn set_model_picker(&mut self, current: String, models: Vec<String>) {
+        self.view_stack.clear();
+        self.view_stack
+            .push(Box::new(ModelPicker::new(current, models)));
     }
 
     pub fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {

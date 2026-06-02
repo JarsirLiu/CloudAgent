@@ -4,8 +4,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
+use crate::input::command_dispatch::intent_for_slash_command;
 use crate::input::intent::ComposerIntent;
-use crate::input::slash_command::{SlashCommand, find_slash_command};
+use crate::input::slash_command::find_slash_command;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crate::ui::widgets::textarea::TextArea;
 use agent_core::ServerRequestDecisionKind;
@@ -415,41 +416,7 @@ fn slash_intent(line: &str) -> Option<ComposerIntent> {
     if !args.is_empty() && !command.supports_inline_args() {
         return Some(ComposerIntent::UnknownCommand(name.to_string()));
     }
-    Some(intent_for_command(command, args))
-}
-
-fn intent_for_command(command: SlashCommand, args: &str) -> ComposerIntent {
-    match command {
-        SlashCommand::Clear => ComposerIntent::Reset,
-        SlashCommand::Compact => ComposerIntent::Compact,
-        SlashCommand::Copy => ComposerIntent::Copy,
-        SlashCommand::Help => ComposerIntent::Help,
-        SlashCommand::Interrupt => ComposerIntent::Interrupt,
-        SlashCommand::Session => {
-            let trimmed = args.trim();
-            if trimmed.is_empty() {
-                ComposerIntent::Session
-            } else {
-                ComposerIntent::SessionSwitch(trimmed.to_string())
-            }
-        }
-        SlashCommand::NewConversation => ComposerIntent::NewConversation(args.trim().to_string()),
-        SlashCommand::SetTitle => ComposerIntent::SetTitle(args.trim().to_string()),
-        SlashCommand::ArchiveConversation => {
-            ComposerIntent::ArchiveConversation(args.trim().to_string())
-        }
-        SlashCommand::DeleteConversation => {
-            ComposerIntent::DeleteConversation(args.trim().to_string())
-        }
-        SlashCommand::Filter => ComposerIntent::Filter(args.trim().to_string()),
-        SlashCommand::Permissions => ComposerIntent::Permissions(args.trim().to_string()),
-        SlashCommand::Config => ComposerIntent::Config,
-        SlashCommand::Reasoning => ComposerIntent::Reasoning(args.trim().to_string()),
-        SlashCommand::Skill => ComposerIntent::Skill(args.trim().to_string()),
-        SlashCommand::Skills => ComposerIntent::Skills,
-        SlashCommand::Gateway => ComposerIntent::Gateway,
-        SlashCommand::Exit => ComposerIntent::Exit,
-    }
+    Some(intent_for_slash_command(command, args))
 }
 
 #[cfg(test)]

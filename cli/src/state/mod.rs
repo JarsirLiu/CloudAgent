@@ -2,12 +2,12 @@ pub mod bottom_pane_controller;
 pub mod bottom_pane_runtime;
 pub mod reducer;
 pub mod selectors;
+pub mod turn_lifecycle;
 
 use agent_core::ConversationTurn;
-use agent_core::InputItem;
 use agent_core::ModelUsage;
-use agent_protocol::FrontendMode;
 use std::time::Instant;
+use turn_lifecycle::TurnLifecycleState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoticeLevel {
@@ -18,22 +18,21 @@ pub enum NoticeLevel {
 
 #[derive(Clone, Debug)]
 pub struct RunState {
-    pub history_snapshot: Option<Vec<ConversationTurn>>,
-    pub history_has_more: bool,
-    pub history_next_before_turn_id: Option<String>,
-    pub last_turn_usage: Option<ModelUsage>,
-    pub total_turn_usage: Option<ModelUsage>,
-    pub model_context_window: Option<u64>,
-    pub pending_submitted_input: Option<Vec<InputItem>>,
-    pub frontend_mode: FrontendMode,
-    pub should_exit: bool,
-    pub live_animation_frame: u64,
-    pub expand_tool_details: bool,
-    pub pre_llm_filter_enabled: bool,
-    pub permission_mode: String,
-    pub weixin_binding: Option<WeixinBindingState>,
-    pub pending_skills_refresh: bool,
-    pub next_skills_refresh_at: Option<Instant>,
+    pub(crate) history_snapshot: Option<Vec<ConversationTurn>>,
+    pub(crate) history_has_more: bool,
+    pub(crate) history_next_before_turn_id: Option<String>,
+    pub(crate) last_turn_usage: Option<ModelUsage>,
+    pub(crate) total_turn_usage: Option<ModelUsage>,
+    pub(crate) model_context_window: Option<u64>,
+    pub(crate) turn_lifecycle: TurnLifecycleState,
+    pub(crate) should_exit: bool,
+    pub(crate) live_animation_frame: u64,
+    pub(crate) expand_tool_details: bool,
+    pub(crate) pre_llm_filter_enabled: bool,
+    pub(crate) permission_mode: String,
+    pub(crate) weixin_binding: Option<WeixinBindingState>,
+    pub(crate) pending_skills_refresh: bool,
+    pub(crate) next_skills_refresh_at: Option<Instant>,
 }
 
 #[derive(Clone, Debug)]
@@ -54,8 +53,7 @@ impl RunState {
             last_turn_usage: None,
             total_turn_usage: None,
             model_context_window: None,
-            pending_submitted_input: None,
-            frontend_mode: FrontendMode::Idle,
+            turn_lifecycle: TurnLifecycleState::new(),
             should_exit: false,
             live_animation_frame: 0,
             expand_tool_details: false,

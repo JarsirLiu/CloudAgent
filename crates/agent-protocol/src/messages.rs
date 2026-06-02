@@ -97,6 +97,13 @@ pub enum NodeWorkerHealth {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InterruptDisposition {
+    Requested,
+    NoActiveTurn,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeWorkerStatus {
     pub worker_scope_key: String,
     pub health: NodeWorkerHealth,
@@ -452,6 +459,10 @@ pub enum AppServerNotification {
         turn_id: TurnId,
         reason: String,
     },
+    InterruptResult {
+        conversation_id: String,
+        disposition: InterruptDisposition,
+    },
     // Incremental/state-sync notification only. Clients should not rely on this as the
     // authoritative bootstrap path for explicit status reads.
     ConversationStatus {
@@ -574,6 +585,9 @@ impl AppServerNotification {
             | Self::TurnCancelled {
                 conversation_id, ..
             }
+            | Self::InterruptResult {
+                conversation_id, ..
+            }
             | Self::ConversationStatus {
                 conversation_id, ..
             }
@@ -679,6 +693,7 @@ pub fn classify_notification(
         | AppServerNotification::ContextCompactionStarted { .. }
         | AppServerNotification::TurnFailed { .. }
         | AppServerNotification::TurnCancelled { .. }
+        | AppServerNotification::InterruptResult { .. }
         | AppServerNotification::ConversationStatus { .. }
         | AppServerNotification::ConversationHistory { .. }
         | AppServerNotification::ConversationHistoryPage { .. }

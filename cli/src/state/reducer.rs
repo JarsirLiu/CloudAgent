@@ -5,7 +5,7 @@ use agent_core::turn::{TurnId, TurnItemKind};
 use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    RequestId,
+    InterruptDisposition, RequestId,
 };
 
 const ERR_TRANSPORT_CLOSED_PREFIX: &str = "ERR_TRANSPORT_CLOSED:";
@@ -33,6 +33,7 @@ pub(crate) enum UiInputEvent {
         model: String,
     },
     LocalReasoning(String),
+    LocalModel(String),
     LocalSkillInsert(String),
     LocalSkillsOpen,
     LocalGatewayOpen,
@@ -134,6 +135,7 @@ pub(crate) enum ServerAction {
         message: String,
         level: NoticeLevel,
     },
+    InterruptResult(InterruptDisposition),
     PushErrorCell(String),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
@@ -256,6 +258,9 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     message: message.clone(),
                     level: NoticeLevel::Info,
                 });
+            }
+            AppServerNotification::InterruptResult { disposition, .. } => {
+                actions.push(ServerAction::InterruptResult(disposition.clone()));
             }
             AppServerNotification::TokenUsageUpdated {
                 last_usage,

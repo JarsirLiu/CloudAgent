@@ -26,7 +26,8 @@ impl ConfigPanel {
     }
 
     fn move_selection(&mut self, next: usize) {
-        self.input_state.move_selection(&mut self.selected, next.min(3));
+        self.input_state
+            .move_selection(&mut self.selected, next.min(3));
     }
 }
 
@@ -54,28 +55,24 @@ impl BottomPaneView for ConfigPanel {
             KeyCode::Up => self.move_selection(self.selected.saturating_sub(1)),
             KeyCode::Down | KeyCode::Tab => self.move_selection(self.selected + 1),
             KeyCode::BackTab => self.move_selection(self.selected.saturating_sub(1)),
-            KeyCode::Backspace => {
-                match self.selected {
-                    0 => self.input_state.backspace(&mut self.api_key),
-                    1 => self.input_state.backspace(&mut self.base_url),
-                    2 => self.input_state.backspace(&mut self.model),
-                    _ => {}
+            KeyCode::Backspace => match self.selected {
+                0 => self.input_state.backspace(&mut self.api_key),
+                1 => self.input_state.backspace(&mut self.base_url),
+                2 => self.input_state.backspace(&mut self.model),
+                _ => {}
+            },
+            KeyCode::Char(c) => match self.selected {
+                0 => {
+                    let _ = self.input_state.append_char(&mut self.api_key, c);
                 }
-            }
-            KeyCode::Char(c) => {
-                match self.selected {
-                    0 => {
-                        let _ = self.input_state.append_char(&mut self.api_key, c);
-                    }
-                    1 => {
-                        let _ = self.input_state.append_char(&mut self.base_url, c);
-                    }
-                    2 => {
-                        let _ = self.input_state.append_char(&mut self.model, c);
-                    }
-                    _ => {}
+                1 => {
+                    let _ = self.input_state.append_char(&mut self.base_url, c);
                 }
-            }
+                2 => {
+                    let _ = self.input_state.append_char(&mut self.model, c);
+                }
+                _ => {}
+            },
             KeyCode::Enter => {
                 if self.selected == 3 {
                     return BottomPaneViewAction::Composer(ComposerIntent::ConfigSave {
@@ -181,7 +178,7 @@ impl BottomPaneView for ConfigPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyModifiers, KeyEventState};
+    use crossterm::event::{KeyEventState, KeyModifiers};
 
     fn key(ch: char) -> KeyEvent {
         KeyEvent {

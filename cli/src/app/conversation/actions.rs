@@ -6,7 +6,8 @@ use crate::app::commands::permissions_mode::apply_permission_mode;
 use crate::app::conversation::facade as conversation_facade;
 use crate::app::conversation::image_paste::handle_clipboard_paste;
 use crate::app::effects::copy_text_to_clipboard;
-use crate::input::slash_command::slash_command_help_text;
+use crate::app::llm_config::{UserLlmSettings, save_user_llm_settings};
+use crate::app::model_catalog::fetch_model_catalog;
 use crate::state::NoticeLevel;
 use crate::state::WeixinBindingState;
 use crate::state::reducer::ServerAction;
@@ -15,13 +16,11 @@ use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat};
 use crate::ui::widgets::weixin_binding_view::WeixinBindingViewModel;
 use agent_app_server_client::AppServerClient;
 use agent_core::{ServerRequestDecision, ServerRequestDecisionKind};
-use agent_protocol::{AppClientCommand, UserTurnInput};
+use agent_protocol::{AppClientCommand, InterruptDisposition, UserTurnInput};
 use anyhow::Result;
-use config::{AgentConfig, ReasoningEffort};
-use serde::Serialize;
+use config::ReasoningEffort;
 use std::collections::HashSet;
 use std::fmt::Display;
-use std::fs;
 use tokio::time::{Duration, timeout};
 
 const HISTORY_PAGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -118,11 +117,8 @@ pub(crate) async fn handle_tui_input(
             handle_clipboard_paste(app);
         }
         ParsedInput::LocalHelp => {
-            app.push_live_cell(HistoryCell::agent(
-                "commands",
-                slash_command_help_text(),
-                HistoryFormat::Markdown,
-            ));
+            app.bottom_pane.set_help_view();
+            show_local_notice(app, NoticeLevel::Info, "Command help opened. Esc to close.");
         }
         ParsedInput::LocalInputError(message) => {
             show_local_notice(app, NoticeLevel::Warn, message);
@@ -150,9 +146,9 @@ pub(crate) async fn handle_tui_input(
             model,
         } => {
             if api_key.is_empty() && base_url.is_empty() && model.is_empty() {
-                let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
+                let cfg = UserLlmSettings::load(&app.workspace_root)?;
                 app.bottom_pane
-                    .set_config_panel(cfg.llm.api_key, cfg.llm.base_url, cfg.llm.model);
+                    .set_config_panel(cfg.api_key, cfg.base_url, cfg.model);
                 return Ok(false);
             }
             if base_url.trim().is_empty() || model.trim().is_empty() {
@@ -163,7 +159,7 @@ pub(crate) async fn handle_tui_input(
                 );
                 return Ok(false);
             }
-            save_user_llm_config_default(&api_key, &base_url, &model)?;
+            save_user_llm_settings(&api_key, &base_url, &model, ReasoningEffort::Medium)?;
             if let Err(err) = client.send_command(AppClientCommand::ReloadLlmConfig {
                 api_key: api_key.clone(),
                 base_url: base_url.clone(),
@@ -180,9 +176,8 @@ pub(crate) async fn handle_tui_input(
         }
         ParsedInput::LocalReasoning(effort) => {
             if effort.trim().is_empty() {
-                let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
-                app.bottom_pane
-                    .set_reasoning_picker(cfg.llm.model_reasoning_effort);
+                let cfg = UserLlmSettings::load(&app.workspace_root)?;
+                app.bottom_pane.set_reasoning_picker(cfg.reasoning_effort);
                 return Ok(false);
             }
             let effort = match effort.trim().parse::<ReasoningEffort>() {
@@ -196,12 +191,12 @@ pub(crate) async fn handle_tui_input(
                     return Ok(false);
                 }
             };
-            let cfg = AgentConfig::load_user_only(app.workspace_root.clone())?;
-            save_user_llm_config(&cfg.llm.api_key, &cfg.llm.base_url, &cfg.llm.model, effort)?;
+            let cfg = UserLlmSettings::load(&app.workspace_root)?;
+            save_user_llm_settings(&cfg.api_key, &cfg.base_url, &cfg.model, effort)?;
             if let Err(err) = client.send_command(AppClientCommand::ReloadLlmConfig {
-                api_key: cfg.llm.api_key.clone(),
-                base_url: cfg.llm.base_url.clone(),
-                model: cfg.llm.model.clone(),
+                api_key: cfg.api_key.clone(),
+                base_url: cfg.base_url.clone(),
+                model: cfg.model.clone(),
             }) {
                 tracing::warn!("failed to reload LLM config after reasoning update: {err}");
             }
@@ -209,6 +204,52 @@ pub(crate) async fn handle_tui_input(
                 app,
                 NoticeLevel::Info,
                 format!("Reasoning effort set to `{effort}`. Default is medium."),
+            );
+            return Ok(false);
+        }
+        ParsedInput::LocalModel(model) => {
+            let trimmed = model.trim();
+            if trimmed.is_empty() {
+                let cfg = UserLlmSettings::load(&app.workspace_root)?;
+                match fetch_model_catalog(&cfg.base_url, &cfg.api_key).await {
+                    Ok(catalog) => {
+                        app.bottom_pane
+                            .set_model_picker(cfg.model.clone(), catalog.models.clone());
+                        show_local_notice(
+                            app,
+                            NoticeLevel::Info,
+                            format!(
+                                "Loaded {} models from {}",
+                                catalog.models.len(),
+                                catalog.source_url
+                            ),
+                        );
+                    }
+                    Err(err) => {
+                        show_local_notice(
+                            app,
+                            NoticeLevel::Error,
+                            format!("Failed to load model list: {err}"),
+                        );
+                    }
+                }
+                return Ok(false);
+            }
+
+            let mut cfg = UserLlmSettings::load(&app.workspace_root)?;
+            cfg.model = trimmed.to_string();
+            cfg.save()?;
+            if let Err(err) = client.send_command(AppClientCommand::ReloadLlmConfig {
+                api_key: cfg.api_key.clone(),
+                base_url: cfg.base_url.clone(),
+                model: cfg.model.clone(),
+            }) {
+                tracing::warn!("failed to reload model after model update: {err}");
+            }
+            show_local_notice(
+                app,
+                NoticeLevel::Info,
+                format!("Model switched to `{}`.", cfg.model),
             );
             return Ok(false);
         }
@@ -651,6 +692,7 @@ pub(crate) async fn handle_tui_input(
             match command {
                 AppClientCommand::SubmitTurn(input) => client.submit_turn(input)?,
                 AppClientCommand::InterruptTurn { conversation_id } => {
+                    app.run_state.turn_lifecycle.request_interrupt();
                     client.interrupt_turn(conversation_id)?
                 }
                 AppClientCommand::ListConversations => {
@@ -910,6 +952,21 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             }
             app.bottom_pane.show_transient_notice(level, message);
         }
+        ServerAction::InterruptResult(disposition) => match disposition {
+            InterruptDisposition::Requested => {
+                app.bottom_pane
+                    .show_transient_notice(NoticeLevel::Info, "interrupt requested".to_string());
+            }
+            InterruptDisposition::NoActiveTurn => {
+                if app.run_state.turn_lifecycle.interrupt_requested()
+                    && app.current_mode() != agent_protocol::FrontendMode::Idle
+                {
+                    app.recover_orphaned_running_turn();
+                }
+                app.bottom_pane
+                    .show_transient_notice(NoticeLevel::Warn, "no active turn".to_string());
+            }
+        },
         ServerAction::PushErrorCell(message) => {
             app.bottom_pane.clear_views();
             app.bottom_pane
@@ -959,53 +1016,6 @@ fn persist_cli_settings(app: &TuiApp) -> Result<()> {
             app.run_state.permission_mode.clone(),
         ),
     )
-}
-
-fn save_user_llm_config_default(api_key: &str, base_url: &str, model: &str) -> Result<()> {
-    save_user_llm_config(api_key, base_url, model, ReasoningEffort::Medium)
-}
-
-fn save_user_llm_config(
-    api_key: &str,
-    base_url: &str,
-    model: &str,
-    reasoning_effort: ReasoningEffort,
-) -> Result<()> {
-    let path = reasoning_effort_config_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let body = toml::to_string(&UserConfigFile {
-        llm: UserLlmConfig {
-            api_key,
-            base_url,
-            model,
-            model_reasoning_effort: reasoning_effort,
-        },
-    })?;
-    fs::write(path, body)?;
-    Ok(())
-}
-
-#[derive(Serialize)]
-struct UserConfigFile<'a> {
-    llm: UserLlmConfig<'a>,
-}
-
-#[derive(Serialize)]
-struct UserLlmConfig<'a> {
-    api_key: &'a str,
-    base_url: &'a str,
-    model: &'a str,
-    model_reasoning_effort: ReasoningEffort,
-}
-fn reasoning_effort_config_path() -> Result<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .ok_or_else(|| anyhow::anyhow!("Cannot find user home directory"))?;
-    Ok(std::path::PathBuf::from(home)
-        .join(".cloudagent")
-        .join("config.toml"))
 }
 
 #[cfg(test)]

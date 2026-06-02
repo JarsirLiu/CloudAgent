@@ -717,6 +717,10 @@ mod tests {
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>();
-        assert!(rendered.iter().any(|line| line.contains("token123 (required)")));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("token123 (required)"))
+        );
     }
 }
