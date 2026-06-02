@@ -22,6 +22,7 @@ pub struct ProviderToolCallDelta {
     pub id: Option<String>,
     pub name: Option<String>,
     pub arguments_delta: Option<String>,
+    pub arguments_replace: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

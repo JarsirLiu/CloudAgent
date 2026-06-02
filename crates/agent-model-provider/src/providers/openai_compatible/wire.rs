@@ -228,6 +228,8 @@ pub(super) struct ChatCompletionResponse {
 #[derive(Deserialize)]
 pub(super) struct ChatCompletionChoice {
     pub message: ChatCompletionMessage,
+    #[serde(default)]
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -334,6 +336,97 @@ impl From<ChatCompletionUsage> for ModelUsage {
             output_tokens: value.completion_tokens,
             reasoning_output_tokens: value
                 .completion_tokens_details
+                .map(|details| details.reasoning_tokens)
+                .unwrap_or(0),
+            total_tokens: value.total_tokens,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub(super) struct ResponsesRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    pub input: Vec<Value>,
+    pub tools: Vec<ResponsesToolSpec>,
+    pub temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub(super) struct ResponsesToolSpec {
+    #[serde(rename = "type")]
+    kind: String,
+    name: String,
+    description: String,
+    parameters: Value,
+}
+
+impl ResponsesToolSpec {
+    pub(super) fn from_spec(spec: &ToolSpec) -> Self {
+        Self {
+            kind: "function".to_string(),
+            name: spec.identity.wire_name.clone(),
+            description: spec.description.clone(),
+            parameters: spec.parameters.clone(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct ResponsesResponse {
+    pub model: String,
+    #[serde(default)]
+    pub output: Vec<Value>,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub incomplete_details: Option<Value>,
+    #[serde(default)]
+    pub usage: Option<ResponsesUsage>,
+}
+
+#[derive(Clone, Deserialize)]
+pub(super) struct ResponsesUsage {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub input_tokens_details: Option<ResponsesInputTokensDetails>,
+    #[serde(default)]
+    pub output_tokens_details: Option<ResponsesOutputTokensDetails>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub(super) struct ResponsesInputTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u64,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub(super) struct ResponsesOutputTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: u64,
+}
+
+impl From<ResponsesUsage> for ModelUsage {
+    fn from(value: ResponsesUsage) -> Self {
+        Self {
+            input_tokens: value.input_tokens,
+            cached_input_tokens: value
+                .input_tokens_details
+                .map(|details| details.cached_tokens)
+                .unwrap_or(0),
+            output_tokens: value.output_tokens,
+            reasoning_output_tokens: value
+                .output_tokens_details
                 .map(|details| details.reasoning_tokens)
                 .unwrap_or(0),
             total_tokens: value.total_tokens,
