@@ -19,7 +19,6 @@ struct MarkdownWriter<'a> {
     table_cell: Vec<Span<'static>>,
     style_stack: Vec<Style>,
     in_code_block: bool,
-    code_lang: String,
     code_indent: String,
     code_buf: String,
     indent_stack: Vec<IndentContext>,
@@ -62,7 +61,6 @@ impl<'a> MarkdownWriter<'a> {
             table_cell: Vec::new(),
             style_stack: vec![Style::default().fg(Color::Rgb(200, 200, 210))],
             in_code_block: false,
-            code_lang: String::new(),
             code_indent: String::new(),
             code_buf: String::new(),
             indent_stack: Vec::new(),
@@ -262,10 +260,6 @@ impl<'a> MarkdownWriter<'a> {
             self.push_blank_line();
         }
         self.in_code_block = true;
-        self.code_lang = match &kind {
-            CodeBlockKind::Fenced(lang) => lang.to_string(),
-            _ => String::new(),
-        };
         self.code_indent = match kind {
             CodeBlockKind::Fenced(_) => String::new(),
             CodeBlockKind::Indented => "    ".to_string(),
@@ -277,13 +271,7 @@ impl<'a> MarkdownWriter<'a> {
     fn end_code_block(&mut self) {
         self.in_code_block = false;
         for line in self.code_buf.lines() {
-            push_code_line(
-                line,
-                &self.code_lang,
-                &self.code_indent,
-                self.width,
-                &mut self.out,
-            );
+            push_code_line(line, &self.code_indent, &mut self.out);
         }
         self.code_indent.clear();
         self.needs_newline = true;
@@ -800,63 +788,16 @@ fn push_wrapped_spans_with_prefix(
     out.extend(wrapped);
 }
 
-fn push_code_line(
-    line: &str,
-    lang: &str,
-    indent: &str,
-    width: usize,
-    out: &mut Vec<Line<'static>>,
-) {
-    let indent_width = display_width(indent);
-    let content_width = width.saturating_sub(indent_width).max(8);
-    let wrapped = wrap_code_segments(line, content_width);
-    let lines = if wrapped.is_empty() {
-        vec![String::new()]
-    } else {
-        wrapped
-    };
-
-    for segment in lines {
-        let mut spans = Vec::new();
-        if !indent.is_empty() {
-            spans.push(Span::raw(indent.to_string()));
-        }
-        spans.extend(highlight_code_line(&segment, lang));
-        out.push(Line::from(spans));
+fn push_code_line(line: &str, indent: &str, out: &mut Vec<Line<'static>>) {
+    let mut spans = Vec::new();
+    if !indent.is_empty() {
+        spans.push(Span::raw(indent.to_string()));
     }
-}
-
-fn wrap_code_segments(line: &str, width: usize) -> Vec<String> {
-    if line.is_empty() {
-        return Vec::new();
-    }
-
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0usize;
-    let width = width.max(1);
-
-    for grapheme in UnicodeSegmentation::graphemes(line, true) {
-        let grapheme_width = display_width(grapheme);
-        if current_width > 0 && current_width.saturating_add(grapheme_width) > width {
-            out.push(std::mem::take(&mut current));
-            current_width = 0;
-        }
-        current.push_str(grapheme);
-        current_width = current_width.saturating_add(grapheme_width);
-    }
-
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
-}
-
-fn highlight_code_line(line: &str, _lang: &str) -> Vec<Span<'static>> {
-    vec![Span::styled(
+    spans.push(Span::styled(
         line.to_string(),
         Style::default().fg(Color::Rgb(210, 210, 220)),
-    )]
+    ));
+    out.push(Line::from(spans));
 }
 
 #[allow(dead_code)]
@@ -968,14 +909,11 @@ mod tests {
     }
 
     #[test]
-    fn code_blocks_wrap_inside_markdown_width_and_keep_indent() {
+    fn code_blocks_keep_content_on_single_line() {
         let rendered = render_markdown("Intro\n\n    abcdefghijklmnopqrstuvwxyz", 12);
         let text = joined(&rendered);
 
-        assert_eq!(
-            text,
-            "Intro\n\n    abcdefgh\n    ijklmnop\n    qrstuvwx\n    yz"
-        );
+        assert_eq!(text, "Intro\n\n    abcdefghijklmnopqrstuvwxyz");
     }
 
     #[test]
@@ -995,11 +933,11 @@ mod tests {
     }
 
     #[test]
-    fn fenced_code_blocks_wrap_without_terminal_hard_wrap() {
+    fn fenced_code_blocks_keep_full_line_content() {
         let rendered = render_markdown("```text\nabcdefghijklmnop\n```", 10);
         let text = joined(&rendered);
 
-        assert_eq!(text, "abcdefghij\nklmnop");
+        assert_eq!(text, "abcdefghijklmnop");
     }
 
     #[test]
