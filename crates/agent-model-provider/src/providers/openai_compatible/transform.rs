@@ -194,7 +194,7 @@ pub(super) fn parse_responses_response(
                 reasoning_parts.extend(extract_reasoning_texts(&item));
             }
             Some("function_call") => {
-                if let Some(call) = map_responses_function_call(&item, tool_spec_index) {
+                if let Some(call) = map_responses_tool_call_item(&item, tool_spec_index) {
                     tool_calls.push(call);
                 }
             }
@@ -274,13 +274,6 @@ fn map_tool_call(
             .unwrap_or(fallback_identity),
         arguments,
     }
-}
-
-fn map_responses_function_call(
-    item: &Value,
-    tool_spec_index: &HashMap<String, ToolSpec>,
-) -> Option<ToolCall> {
-    map_responses_tool_call_item(item, tool_spec_index)
 }
 
 fn map_responses_tool_call_item(
