@@ -129,13 +129,13 @@ impl InputPane {
             return self.composer.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
                 .map(InputPaneAction::Composer);
         }
-        if let Some(action) = self
+        match self
             .composer
             .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
         {
-            return Some(InputPaneAction::Composer(action));
+            Some(action) => Some(InputPaneAction::Composer(action)),
+            None => Some(InputPaneAction::Composer(ComposerIntent::Interrupt)),
         }
-        Some(InputPaneAction::Composer(ComposerIntent::Interrupt))
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> Option<InputPaneAction> {
