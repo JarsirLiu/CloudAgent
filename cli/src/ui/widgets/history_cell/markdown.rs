@@ -12,7 +12,7 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_TASKLISTS);
-    let parser = Parser::new_ext(&input, opts);
+    let parser = Parser::new_ext(&input, opts).into_offset_iter();
 
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut current: Vec<Span<'static>> = Vec::new();
@@ -29,7 +29,6 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let mut table_row: Vec<String> = Vec::new();
     let mut quote_depth = 0usize;
     let mut link_stack: Vec<String> = Vec::new();
-
     let flush =
         |current: &mut Vec<Span<'static>>, out: &mut Vec<Line<'static>>, w: usize, prefix: &str| {
             if !current.is_empty() {
@@ -38,9 +37,19 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
             }
         };
 
-    for event in parser {
+    let mut previous_event_end = 0usize;
+
+    for (event, range) in parser {
         match event {
             Event::Start(Tag::CodeBlock(kind)) => {
+                preserve_top_level_source_gap(
+                    &mut out,
+                    &input,
+                    previous_event_end,
+                    range.start,
+                    quote_depth,
+                    list_stack.is_empty(),
+                );
                 let prefix = current_prefix(quote_depth, &line_prefix);
                 flush(&mut current, &mut out, width, &prefix);
                 in_code_block = true;
@@ -62,6 +71,14 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 code_indent.clear();
             }
             Event::Start(Tag::Heading { level, .. }) => {
+                preserve_top_level_source_gap(
+                    &mut out,
+                    &input,
+                    previous_event_end,
+                    range.start,
+                    quote_depth,
+                    list_stack.is_empty(),
+                );
                 let prefix = current_prefix(quote_depth, &line_prefix);
                 flush(&mut current, &mut out, width, &prefix);
                 in_heading = true;
@@ -106,11 +123,27 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 style_stack.pop();
             }
             Event::Start(Tag::List(start)) => {
+                preserve_top_level_source_gap(
+                    &mut out,
+                    &input,
+                    previous_event_end,
+                    range.start,
+                    quote_depth,
+                    list_stack.is_empty(),
+                );
                 let prefix = current_prefix(quote_depth, &line_prefix);
                 flush(&mut current, &mut out, width, &prefix);
                 list_stack.push(start);
             }
             Event::Start(Tag::Table(_)) => {
+                preserve_top_level_source_gap(
+                    &mut out,
+                    &input,
+                    previous_event_end,
+                    range.start,
+                    quote_depth,
+                    list_stack.is_empty(),
+                );
                 let prefix = current_prefix(quote_depth, &line_prefix);
                 flush(&mut current, &mut out, width, &prefix);
                 table_rows.clear();
@@ -155,6 +188,14 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 current.clear();
             }
             Event::Start(Tag::BlockQuote(_)) => {
+                preserve_top_level_source_gap(
+                    &mut out,
+                    &input,
+                    previous_event_end,
+                    range.start,
+                    quote_depth,
+                    list_stack.is_empty(),
+                );
                 let prefix = current_prefix(quote_depth, &line_prefix);
                 flush(&mut current, &mut out, width, &prefix);
                 quote_depth = quote_depth.saturating_add(1);
@@ -273,6 +314,14 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
                 } else {
                     current_prefix(quote_depth, &line_prefix)
                 };
+                preserve_top_level_source_gap(
+                    &mut out,
+                    &input,
+                    previous_event_end,
+                    range.start,
+                    quote_depth,
+                    list_stack.is_empty(),
+                );
                 flush(&mut current, &mut out, width, &prefix);
             }
             Event::End(TagEnd::Paragraph) => {
@@ -302,6 +351,8 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
             }
             _ => {}
         }
+
+        previous_event_end = range.end;
     }
 
     if !current.is_empty() {
@@ -312,6 +363,33 @@ pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
         out.pop();
     }
     out
+}
+
+fn has_blank_line_between(source: &str, start: usize, end: usize) -> bool {
+    if start >= end || end > source.len() {
+        return false;
+    }
+
+    source[start..end]
+        .lines()
+        .any(|line| line.trim().is_empty())
+}
+
+fn preserve_top_level_source_gap(
+    out: &mut Vec<Line<'static>>,
+    source: &str,
+    previous_event_end: usize,
+    current_event_start: usize,
+    quote_depth: usize,
+    is_top_level: bool,
+) {
+    if quote_depth == 0
+        && is_top_level
+        && has_blank_line_between(source, previous_event_end, current_event_start)
+        && out.last().is_some_and(|line| !line.spans.is_empty())
+    {
+        out.push(Line::raw(""));
+    }
 }
 
 fn current_prefix(quote_depth: usize, line_prefix: &str) -> String {
@@ -770,19 +848,19 @@ mod tests {
     }
 
     #[test]
-    fn paragraphs_render_compactly_without_blank_separator_rows() {
+    fn paragraphs_render_with_single_blank_separator_row() {
         let rendered = render_markdown("First paragraph.\n\nSecond paragraph.", 80);
         let text = joined(&rendered);
 
-        assert_eq!(text, "First paragraph.\nSecond paragraph.");
+        assert_eq!(text, "First paragraph.\n\nSecond paragraph.");
     }
 
     #[test]
-    fn block_boundaries_render_compactly_without_blank_separator_rows() {
+    fn source_blank_lines_before_lists_are_preserved() {
         let rendered = render_markdown("Intro\n\n- one\n- two\n\nNext", 80);
         let text = joined(&rendered);
 
-        assert_eq!(text, "Intro\n- one\n- two\nNext");
+        assert_eq!(text, "Intro\n\n- one\n- two\nNext");
     }
 
     #[test]
