@@ -219,10 +219,8 @@ impl<'a> MarkdownWriter<'a> {
 
     fn end_heading(&mut self) {
         let heading_style = *self.style_stack.last().unwrap_or(&Style::default());
-        self.current.insert(
-            0,
-            Span::styled(self.heading_prefix.clone(), heading_style),
-        );
+        self.current
+            .insert(0, Span::styled(self.heading_prefix.clone(), heading_style));
         self.flush_current();
         self.current.clear();
         self.heading_prefix.clear();
@@ -307,17 +305,16 @@ impl<'a> MarkdownWriter<'a> {
         self.flush_current();
         self.list_item_start_line_counts.push(self.out.len());
         let depth = self.list_stack.len();
-        let is_ordered = self
-            .list_stack
-            .last()
-            .map(Option::is_some)
-            .unwrap_or(false);
+        let is_ordered = self.list_stack.last().map(Option::is_some).unwrap_or(false);
         let width = depth * 4 - 3;
         let marker = match self.list_stack.last_mut() {
             Some(Some(number)) => {
                 let prefix = format!("{number}. ");
                 *number += 1;
-                Some(vec![Span::styled(prefix, Style::default().fg(Color::Rgb(150, 180, 255)))])
+                Some(vec![Span::styled(
+                    prefix,
+                    Style::default().fg(Color::Rgb(150, 180, 255)),
+                )])
             }
             Some(None) => Some(vec![Span::styled(
                 "- ".to_string(),

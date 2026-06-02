@@ -60,15 +60,20 @@ fn build_transcript_lines(
 ) -> Vec<ratatui::text::Line<'static>> {
     let mut lines = Vec::new();
     let mut has_emitted = false;
+    let mut last_kind: Option<crate::ui::widgets::history_cell::HistoryKind> = None;
     for cell in cells {
         if cell.body().trim().is_empty() {
             continue;
         }
         if has_emitted && !cell.is_stream_continuation() {
             lines.push(ratatui::text::Line::from(""));
+            if should_add_tool_gap(last_kind, cell.kind()) {
+                lines.push(ratatui::text::Line::from(""));
+            }
         }
         push_cell_lines(&mut lines, &cell, render_width);
         has_emitted = true;
+        last_kind = Some(cell.kind());
     }
     trim_trailing_blank_lines(&mut lines);
     lines
@@ -91,4 +96,28 @@ fn trim_trailing_blank_lines(lines: &mut Vec<ratatui::text::Line<'static>>) {
     {
         lines.pop();
     }
+}
+
+fn should_add_tool_gap(
+    previous_kind: Option<crate::ui::widgets::history_cell::HistoryKind>,
+    current_kind: crate::ui::widgets::history_cell::HistoryKind,
+) -> bool {
+    matches!(
+        (previous_kind, current_kind),
+        (
+            Some(
+                crate::ui::widgets::history_cell::HistoryKind::Message
+                    | crate::ui::widgets::history_cell::HistoryKind::Reasoning
+                    | crate::ui::widgets::history_cell::HistoryKind::Exploration
+            ),
+            crate::ui::widgets::history_cell::HistoryKind::Command
+        ) | (
+            Some(
+                crate::ui::widgets::history_cell::HistoryKind::Message
+                    | crate::ui::widgets::history_cell::HistoryKind::Reasoning
+                    | crate::ui::widgets::history_cell::HistoryKind::Exploration
+            ),
+            crate::ui::widgets::history_cell::HistoryKind::Tool
+        )
+    )
 }
