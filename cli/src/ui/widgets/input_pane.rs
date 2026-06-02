@@ -18,7 +18,7 @@ use agent_core::ServerRequestDecisionKind;
 use agent_core::SkillMetadata;
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
 use config::ReasoningEffort;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
@@ -117,17 +117,25 @@ impl InputPane {
         }
 
         if key.code == KeyCode::Esc && key.modifiers.is_empty() {
-            // Completion/menu Esc is a navigation action, not an interrupt.
-            if self.composer.has_completion_menu() {
-                return self.composer.handle_key(key).map(InputPaneAction::Composer);
-            }
-            if let Some(action) = self.composer.handle_key(key) {
-                return Some(InputPaneAction::Composer(action));
-            }
-            return Some(InputPaneAction::Composer(ComposerIntent::Interrupt));
+            return self.handle_escape_key();
         }
 
         self.composer.handle_key(key).map(InputPaneAction::Composer)
+    }
+
+    fn handle_escape_key(&mut self) -> Option<InputPaneAction> {
+        // Completion/menu Esc is a navigation action, not an interrupt.
+        if self.composer.has_completion_menu() {
+            return self.composer.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+                .map(InputPaneAction::Composer);
+        }
+        if let Some(action) = self
+            .composer
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        {
+            return Some(InputPaneAction::Composer(action));
+        }
+        Some(InputPaneAction::Composer(ComposerIntent::Interrupt))
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> Option<InputPaneAction> {
@@ -868,10 +876,10 @@ mod tests {
 
         assert!(matches!(
             pane.handle_key(KeyEvent {
-            code: KeyCode::Esc,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: crossterm::event::KeyEventState::NONE,
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: crossterm::event::KeyEventState::NONE,
             }),
             Some(InputPaneAction::Composer(ComposerIntent::None))
         ));
