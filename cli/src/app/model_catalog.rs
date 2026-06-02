@@ -1,6 +1,6 @@
 mod cache;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use cache::ModelCatalogCacheManager;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue};
 use serde_json::Value;

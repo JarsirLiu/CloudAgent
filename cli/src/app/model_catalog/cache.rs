@@ -66,19 +66,17 @@ impl ModelCatalogCacheManager {
 
     async fn load(&self) -> Option<ModelCatalogCacheEntry> {
         match fs::read(&self.cache_path).await {
-            Ok(contents) => {
-                match serde_json::from_slice(&contents) {
-                    Ok(entry) => Some(entry),
-                    Err(err) => {
-                        warn!(
-                            cache_path = %self.cache_path.display(),
-                            error = %err,
-                            "invalid model catalog cache"
-                        );
-                        None
-                    }
+            Ok(contents) => match serde_json::from_slice(&contents) {
+                Ok(entry) => Some(entry),
+                Err(err) => {
+                    warn!(
+                        cache_path = %self.cache_path.display(),
+                        error = %err,
+                        "invalid model catalog cache"
+                    );
+                    None
                 }
-            }
+            },
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
             Err(err) => {
                 warn!(
