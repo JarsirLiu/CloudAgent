@@ -25,7 +25,7 @@ function Remove-UserPathEntry {
     Write-Host "Removed $BinDir from user PATH"
 }
 
-foreach ($name in @("cloudagent.cmd")) {
+foreach ($name in @("cloudagent.cmd", "cloudagent-launch.ps1")) {
     $path = Join-Path $BinDir $name
     if (Test-Path $path) {
         Remove-Item -LiteralPath $path -Force

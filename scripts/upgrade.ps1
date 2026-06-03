@@ -6,6 +6,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Repo = "JarsirLiu/CloudAgent"
+$BootstrapBranch = "release-bootstrap"
+$BootstrapRawBase = "https://raw.githubusercontent.com/$Repo/$BootstrapBranch/bootstrap"
+$MainRawBase = "https://raw.githubusercontent.com/$Repo/main/scripts"
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
 $CurrentDir = Join-Path $InstallRoot "current"
 $CurrentExe = Join-Path $CurrentDir "cloudagent.exe"
@@ -138,6 +141,38 @@ function Invoke-DownloadFile {
     }
 }
 
+function Resolve-BootstrapUrl {
+    param([Parameter(Mandatory = $true)][string]$FileName)
+
+    $bootstrapUrl = "$BootstrapRawBase/$FileName"
+    try {
+        if ($script:CurlCommand) {
+            & $script:CurlCommand.Source `
+                --silent `
+                --show-error `
+                --location `
+                --output NUL `
+                $bootstrapUrl | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                return $bootstrapUrl
+            }
+        }
+        else {
+            $request = [System.Net.HttpWebRequest]::Create($bootstrapUrl)
+            $request.Method = "HEAD"
+            $request.AllowAutoRedirect = $true
+            $request.UserAgent = "cloudagent-upgrade"
+            $response = [System.Net.HttpWebResponse]$request.GetResponse()
+            $response.Dispose()
+            return $bootstrapUrl
+        }
+    }
+    catch {
+    }
+
+    return "$MainRawBase/$FileName"
+}
+
 function Get-ManagedProcessIds {
     if (-not (Test-Path $InstallRoot)) {
         return @()
@@ -202,9 +237,9 @@ function Invoke-InstallScript {
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $installScript = Join-Path $tempRoot "install.ps1"
-    $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $installUrl = Resolve-BootstrapUrl -FileName "install.ps1"
     Invoke-DownloadFile `
-        -Uri "https://raw.githubusercontent.com/$Repo/main/scripts/install.ps1?ts=$cacheBust" `
+        -Uri $installUrl `
         -Headers @{ "User-Agent" = "cloudagent-upgrade" } `
         -OutFile $installScript `
         -Label "Downloading installer script"

@@ -2,6 +2,9 @@
 set -eu
 
 REPO="JarsirLiu/CloudAgent"
+BOOTSTRAP_BRANCH="release-bootstrap"
+BOOTSTRAP_RAW_BASE="https://raw.githubusercontent.com/$REPO/$BOOTSTRAP_BRANCH/bootstrap"
+MAIN_RAW_BASE="https://raw.githubusercontent.com/$REPO/main/scripts"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 INSTALLS_DIR="$INSTALL_ROOT/installs"
 CURRENT_LINK="$INSTALL_ROOT/current"
@@ -95,7 +98,24 @@ detect_arch() {
 }
 
 resolve_latest_release_tag() {
+  bootstrap_version_url="$BOOTSTRAP_RAW_BASE/VERSION"
+  if bootstrap_version=$(curl -fsSL "$bootstrap_version_url" 2>/dev/null | tr -d '[:space:]'); then
+    case "$bootstrap_version" in
+      v*) printf '%s\n' "$bootstrap_version"; return 0 ;;
+    esac
+  fi
+
   curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" | awk -F/ '{print $NF}'
+}
+
+resolve_bootstrap_url() {
+  file_name="$1"
+  bootstrap_url="$BOOTSTRAP_RAW_BASE/$file_name"
+  if curl -fsSL -o /dev/null "$bootstrap_url" 2>/dev/null; then
+    printf '%s\n' "$bootstrap_url"
+  else
+    printf '%s/%s\n' "$MAIN_RAW_BASE" "$file_name"
+  fi
 }
 
 fetch_release_metadata() {
@@ -177,14 +197,38 @@ write_launchers() {
 #!/usr/bin/env sh
 set -eu
 
+BOOTSTRAP_RAW_BASE="$BOOTSTRAP_RAW_BASE"
+MAIN_RAW_BASE="$MAIN_RAW_BASE"
+
+resolve_bootstrap_url() {
+  file_name="\$1"
+  bootstrap_url="\$BOOTSTRAP_RAW_BASE/\$file_name"
+  if curl -fsSL -o /dev/null "\$bootstrap_url" 2>/dev/null; then
+    printf '%s\n' "\$bootstrap_url"
+  else
+    printf '%s/%s\n' "\$MAIN_RAW_BASE" "\$file_name"
+  fi
+}
+
+run_bootstrap_script() {
+  script_url="$1"
+  shift
+  tmp_script="$(mktemp "${TMPDIR:-/tmp}/cloudagent-bootstrap-XXXXXX")"
+  trap 'rm -f "$tmp_script"' EXIT INT TERM
+  curl -fsSL "$script_url" -o "$tmp_script"
+  sh "$tmp_script" "$@"
+}
+
 case "\${1:-}" in
   upgrade)
     shift
-    exec curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/upgrade.sh | sh -s -- "\$@"
+    BOOTSTRAP_UPGRADE_URL="\$(resolve_bootstrap_url upgrade.sh)"
+    run_bootstrap_script "\$BOOTSTRAP_UPGRADE_URL" "\$@"
     ;;
   uninstall)
     shift
-    exec curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/uninstall.sh | sh -s -- "\$@"
+    BOOTSTRAP_UNINSTALL_URL="\$(resolve_bootstrap_url uninstall.sh)"
+    run_bootstrap_script "\$BOOTSTRAP_UNINSTALL_URL" "\$@"
     ;;
   *)
     exec "$CURRENT_LINK/cloudagent" "\$@"

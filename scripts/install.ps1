@@ -6,6 +6,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Repo = "JarsirLiu/CloudAgent"
+$BootstrapBranch = "release-bootstrap"
+$BootstrapRawBase = "https://raw.githubusercontent.com/$Repo/$BootstrapBranch/bootstrap"
+$MainRawBase = "https://raw.githubusercontent.com/$Repo/main/scripts"
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
 $InstallsDir = Join-Path $InstallRoot "installs"
 $CurrentDir = Join-Path $InstallRoot "current"
@@ -144,6 +147,16 @@ function Get-TargetAssetName {
 }
 
 function Resolve-LatestReleaseTag {
+    $bootstrapVersionUrl = "$BootstrapRawBase/VERSION"
+    try {
+        $bootstrapVersion = (Invoke-RestMethod -Uri $bootstrapVersionUrl -Headers @{ "User-Agent" = "cloudagent-installer" }).ToString().Trim()
+        if ($bootstrapVersion.StartsWith("v")) {
+            return $bootstrapVersion
+        }
+    }
+    catch {
+    }
+
     $latestUrl = "https://github.com/$Repo/releases/latest"
 
     if ($script:CurlCommand) {
@@ -195,6 +208,38 @@ function Resolve-LatestReleaseTag {
     throw "Failed to resolve latest release tag from $latestUrl"
 }
 
+function Resolve-BootstrapUrl {
+    param([Parameter(Mandatory = $true)][string]$FileName)
+
+    $bootstrapUrl = "$BootstrapRawBase/$FileName"
+    try {
+        if ($script:CurlCommand) {
+            & $script:CurlCommand.Source `
+                --silent `
+                --show-error `
+                --location `
+                --output NUL `
+                $bootstrapUrl | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                return $bootstrapUrl
+            }
+        }
+        else {
+            $request = [System.Net.HttpWebRequest]::Create($bootstrapUrl)
+            $request.Method = "HEAD"
+            $request.AllowAutoRedirect = $true
+            $request.UserAgent = "cloudagent-installer"
+            $response = [System.Net.HttpWebResponse]$request.GetResponse()
+            $response.Dispose()
+            return $bootstrapUrl
+        }
+    }
+    catch {
+    }
+
+    return "$MainRawBase/$FileName"
+}
+
 function Get-Sha256Hash {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -235,20 +280,129 @@ function Ensure-UserPath {
 
 function Write-Launcher {
     $launcherPath = Join-Path $BinDir "cloudagent.cmd"
+    $helperPath = Join-Path $BinDir "cloudagent-launch.ps1"
+
+    @'
+param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Args
+)
+
+$ErrorActionPreference = "Stop"
+$BootstrapRawBase = '__BOOTSTRAP_RAW_BASE__'
+$MainRawBase = '__MAIN_RAW_BASE__'
+$CurrentDir = '__CURRENT_DIR__'
+$script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
+
+function Get-RemainingArgs {
+    param([string[]]$Arguments)
+
+    if (-not $Arguments -or $Arguments.Count -le 1) {
+        return @()
+    }
+
+    return @($Arguments[1..($Arguments.Count - 1)])
+}
+
+function Resolve-BootstrapUrl {
+    param([Parameter(Mandatory = $true)][string]$FileName)
+
+    $bootstrapUrl = $BootstrapRawBase + '/' + $FileName
+    try {
+        if ($script:CurlCommand) {
+            & $script:CurlCommand.Source `
+                --silent `
+                --show-error `
+                --location `
+                --output NUL `
+                $bootstrapUrl | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                return $bootstrapUrl
+            }
+        }
+        else {
+            $request = [System.Net.HttpWebRequest]::Create($bootstrapUrl)
+            $request.Method = "HEAD"
+            $request.AllowAutoRedirect = $true
+            $request.UserAgent = "cloudagent-installer"
+            $response = [System.Net.HttpWebResponse]$request.GetResponse()
+            $response.Dispose()
+            return $bootstrapUrl
+        }
+    }
+    catch {
+    }
+
+    return $MainRawBase + '/' + $FileName
+}
+
+function Invoke-RemoteScript {
+    param(
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [string[]]$RemainingArgs = @()
+    )
+
+    $scriptUrl = Resolve-BootstrapUrl -FileName $FileName
+    $tempScript = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-" + [guid]::NewGuid().ToString("N") + ".ps1")
+
+    try {
+        if ($script:CurlCommand) {
+            & $script:CurlCommand.Source `
+                --fail `
+                --location `
+                --silent `
+                --show-error `
+                --output $tempScript `
+                $scriptUrl
+            if ($LASTEXITCODE -ne 0) {
+                throw "curl.exe download failed for $scriptUrl"
+            }
+        }
+        else {
+            Invoke-WebRequest -Uri $scriptUrl -Headers @{ "User-Agent" = "cloudagent-installer" } -OutFile $tempScript
+        }
+
+        & $tempScript @RemainingArgs
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    }
+    finally {
+        if (Test-Path $tempScript) {
+            Remove-Item -LiteralPath $tempScript -Force
+        }
+    }
+}
+
+if (-not $Args -or $Args.Count -eq 0) {
+    & (Join-Path $CurrentDir "cloudagent.exe")
+    exit $LASTEXITCODE
+}
+
+switch ($Args[0]) {
+    "upgrade" {
+        Invoke-RemoteScript -FileName "upgrade.ps1" -RemainingArgs (Get-RemainingArgs -Arguments $Args)
+        exit $LASTEXITCODE
+    }
+    "uninstall" {
+        Invoke-RemoteScript -FileName "uninstall.ps1" -RemainingArgs (Get-RemainingArgs -Arguments $Args)
+        exit $LASTEXITCODE
+    }
+    default {
+        & (Join-Path $CurrentDir "cloudagent.exe") @Args
+        exit $LASTEXITCODE
+    }
+}
+'@ |
+        ForEach-Object {
+            $_.Replace('__BOOTSTRAP_RAW_BASE__', $BootstrapRawBase).
+               Replace('__MAIN_RAW_BASE__', $MainRawBase).
+               Replace('__CURRENT_DIR__', $CurrentDir)
+        } | Set-Content -Encoding ASCII -Path $helperPath
+
     @"
 @echo off
-set CMD=%1
-if /I "%CMD%"=="upgrade" (
-  shift
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ts=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); irm https://raw.githubusercontent.com/$Repo/main/scripts/upgrade.ps1?ts=`$ts | iex"
-  exit /b %ERRORLEVEL%
-)
-if /I "%CMD%"=="uninstall" (
-  shift
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ts=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); irm https://raw.githubusercontent.com/$Repo/main/scripts/uninstall.ps1?ts=`$ts | iex"
-  exit /b %ERRORLEVEL%
-)
-"$CurrentDir\cloudagent.exe" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cloudagent-launch.ps1" %*
 "@ | Set-Content -Encoding ASCII -Path $launcherPath
     Write-Host "Installed launcher: $launcherPath"
 }

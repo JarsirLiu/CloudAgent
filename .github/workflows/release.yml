@@ -114,3 +114,81 @@ jobs:
         with:
           files: |
             release/*
+
+      - name: Publish bootstrap scripts
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          checksum_for() {
+            local asset_name="$1"
+            local checksum
+            checksum="$(awk -v file="$asset_name" '$2 == file { print $1 }' "$GITHUB_WORKSPACE/release/SHA256SUMS")"
+            if [ -z "$checksum" ]; then
+              echo "missing checksum for $asset_name" >&2
+              exit 1
+            fi
+            printf '%s\n' "$checksum"
+          }
+
+          LINUX_X64_SHA="$(checksum_for "cloudagent-${RELEASE_TAG}-linux-x64.tar.gz")"
+          MACOS_X64_SHA="$(checksum_for "cloudagent-${RELEASE_TAG}-macos-x64.tar.gz")"
+          MACOS_ARM64_SHA="$(checksum_for "cloudagent-${RELEASE_TAG}-macos-arm64.tar.gz")"
+          WINDOWS_X64_SHA="$(checksum_for "cloudagent-${RELEASE_TAG}-windows-x64.zip")"
+
+          BOOTSTRAP_DIR="$(mktemp -d)"
+          git clone --depth 1 --branch release-bootstrap "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$BOOTSTRAP_DIR" \
+            || git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$BOOTSTRAP_DIR"
+
+          cd "$BOOTSTRAP_DIR"
+          if ! git rev-parse --verify release-bootstrap >/dev/null 2>&1; then
+            git checkout --orphan release-bootstrap
+            git rm -rf . >/dev/null 2>&1 || true
+          else
+            git checkout release-bootstrap
+          fi
+
+          mkdir -p bootstrap
+          cp "$GITHUB_WORKSPACE/scripts/install.sh" bootstrap/install.sh
+          cp "$GITHUB_WORKSPACE/scripts/upgrade.sh" bootstrap/upgrade.sh
+          cp "$GITHUB_WORKSPACE/scripts/uninstall.sh" bootstrap/uninstall.sh
+          cp "$GITHUB_WORKSPACE/scripts/install.ps1" bootstrap/install.ps1
+          cp "$GITHUB_WORKSPACE/scripts/upgrade.ps1" bootstrap/upgrade.ps1
+          cp "$GITHUB_WORKSPACE/scripts/uninstall.ps1" bootstrap/uninstall.ps1
+          printf '%s\n' "$RELEASE_TAG" > bootstrap/VERSION
+
+          cat > bootstrap/latest.json <<JSON
+          {
+            "stable": "${RELEASE_TAG}",
+            "assets": {
+              "linux-x64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/cloudagent-${RELEASE_TAG}-linux-x64.tar.gz",
+                "sha256": "${LINUX_X64_SHA}"
+              },
+              "macos-x64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/cloudagent-${RELEASE_TAG}-macos-x64.tar.gz",
+                "sha256": "${MACOS_X64_SHA}"
+              },
+              "macos-arm64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/cloudagent-${RELEASE_TAG}-macos-arm64.tar.gz",
+                "sha256": "${MACOS_ARM64_SHA}"
+              },
+              "windows-x64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/cloudagent-${RELEASE_TAG}-windows-x64.zip",
+                "sha256": "${WINDOWS_X64_SHA}"
+              }
+            }
+          }
+          JSON
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bootstrap
+          if git diff --cached --quiet; then
+            echo "Bootstrap branch already up to date"
+            exit 0
+          fi
+
+          git commit -m "chore(release): update bootstrap for ${RELEASE_TAG}"
+          git push origin HEAD:release-bootstrap
