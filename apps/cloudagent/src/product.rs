@@ -296,8 +296,8 @@ fn print_release_status_table(
     const IM_PLATFORMS_WIDTH: usize = 14;
 
     println!(
-        "{:<8} {:<STATUS_WIDTH$} {:<LISTEN_WIDTH$} {:<WORKER_WIDTH$} {:<IM_PLATFORMS_WIDTH$} {}",
-        "NODE ID", "STATUS", "LISTEN", "WORKER", "IM PLATFORMS", "DATA ROOT",
+        "{:<8} {:<STATUS_WIDTH$} {:<LISTEN_WIDTH$} {:<WORKER_WIDTH$} {:<IM_PLATFORMS_WIDTH$} DATA ROOT",
+        "NODE ID", "STATUS", "LISTEN", "WORKER", "IM PLATFORMS",
     );
 
     match response {
