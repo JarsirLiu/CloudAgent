@@ -252,7 +252,7 @@ MAIN_RAW_BASE="$MAIN_RAW_BASE"
 
 resolve_bootstrap_url() {
   file_name="\$1"
-  bootstrap_url="\$BOOTSTRAP_RAW_BASE/\$file_name"
+  bootstrap_url="$BOOTSTRAP_RAW_BASE/\$file_name"
   if curl -fsSL -o /dev/null "\$bootstrap_url" 2>/dev/null; then
     printf '%s\n' "\$bootstrap_url"
   else
@@ -261,12 +261,12 @@ resolve_bootstrap_url() {
 }
 
 run_bootstrap_script() {
-  script_url="$1"
+  script_url="\$1"
   shift
-  tmp_script="$(mktemp "${TMPDIR:-/tmp}/cloudagent-bootstrap-XXXXXX")"
-  trap 'rm -f "$tmp_script"' EXIT INT TERM
-  curl -fsSL "$script_url" -o "$tmp_script"
-  sh "$tmp_script" "$@"
+  tmp_script="\$(mktemp "\${TMPDIR:-/tmp}/cloudagent-bootstrap-XXXXXX")"
+  trap 'rm -f "\$tmp_script"' EXIT INT TERM
+  curl -fsSL "\$script_url" -o "\$tmp_script"
+  sh "\$tmp_script" "\$@"
 }
 
 case "\${1:-}" in
