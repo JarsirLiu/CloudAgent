@@ -4,7 +4,9 @@ use agent_protocol::{
     PlatformControlListResponse, PlatformControlStatusResponse,
 };
 use anyhow::{Result, bail};
-use cli::local_node::{connect_node_management_client, create_node_management_client};
+use cli::local_node::{
+    arg_value, connect_node_management_client, create_node_management_client, default_node_addr,
+};
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -30,26 +32,20 @@ async fn maybe_handle_release_command(args: &[OsString], data_root_dir: &Path) -
         "start" => {
             let client = create_node_management_client(&args[1..], data_root_dir).await?;
             let response = client.request_node_status_typed().await?;
-            println!("node ready");
+            println!("🟢 Service started");
+            println!("CloudAgent {} running", cloudagent_version());
             print_node_status_response(&response);
             Ok(true)
         }
         "status" => {
-            let client = connect_node_management_client(&args[1..], data_root_dir).await?;
-            print_node_status(&client).await?;
+            print_release_status(&args[1..], data_root_dir).await?;
             Ok(true)
         }
         "stop" => {
             let client = connect_node_management_client(&args[1..], data_root_dir).await?;
             let response = client.stop_node_typed().await?;
-            println!(
-                "node stop requested: {}",
-                if response.stopping {
-                    "accepted"
-                } else {
-                    "ignored"
-                }
-            );
+            let _ = response;
+            println!("🛑 Service stopped");
             Ok(true)
         }
         _ => Ok(false),
@@ -69,14 +65,8 @@ async fn maybe_handle_node_command(args: &[OsString], data_root_dir: &Path) -> R
         "status" => print_node_status(&client).await?,
         "stop" => {
             let response = client.stop_node_typed().await?;
-            println!(
-                "node stop requested: {}",
-                if response.stopping {
-                    "accepted"
-                } else {
-                    "ignored"
-                }
-            );
+            let _ = response;
+            println!("🛑 Service stopped");
         }
         other => bail!("unknown node action `{other}`. supported actions: status, stop"),
     }
@@ -228,6 +218,23 @@ async fn print_node_status(client: &AppServerClient) -> Result<()> {
     Ok(())
 }
 
+async fn print_release_status(args: &[OsString], data_root_dir: &Path) -> Result<()> {
+    let version = cloudagent_version();
+    println!("CloudAgent {version}");
+
+    let response = match connect_node_management_client(args, data_root_dir).await {
+        Ok(client) => client.request_node_status_typed().await.ok(),
+        Err(_) => None,
+    };
+
+    print_release_status_table(
+        response.as_ref(),
+        resolved_node_addr(args),
+        data_root_dir.display().to_string(),
+    );
+    Ok(())
+}
+
 fn print_node_status_response(response: &NodeStatusResponse) {
     println!("listen_address: {}", response.listen_address);
     println!(
@@ -276,4 +283,61 @@ fn print_node_status_response(response: &NodeStatusResponse) {
             }
         }
     }
+}
+
+fn print_release_status_table(
+    response: Option<&NodeStatusResponse>,
+    listen_address: String,
+    fallback_data_root: String,
+) {
+    const STATUS_WIDTH: usize = 12;
+    const LISTEN_WIDTH: usize = 21;
+    const WORKER_WIDTH: usize = 8;
+    const IM_PLATFORMS_WIDTH: usize = 14;
+
+    println!(
+        "{:<8} {:<STATUS_WIDTH$} {:<LISTEN_WIDTH$} {:<WORKER_WIDTH$} {:<IM_PLATFORMS_WIDTH$} {}",
+        "NODE ID", "STATUS", "LISTEN", "WORKER", "IM PLATFORMS", "DATA ROOT",
+    );
+
+    match response {
+        Some(response) => {
+            let worker = if response.worker_running {
+                "running"
+            } else {
+                "idle"
+            };
+            let im_platforms = format!(
+                "{}/{}",
+                response.platform_runtime_count, response.managed_platform_count
+            );
+            println!(
+                "{:<8} {:<STATUS_WIDTH$} {:<LISTEN_WIDTH$} {:<WORKER_WIDTH$} {:<IM_PLATFORMS_WIDTH$} {}",
+                "local",
+                "运行中",
+                response.listen_address,
+                worker,
+                im_platforms,
+                response.data_root_dir,
+            );
+        }
+        None => {
+            println!(
+                "{:<8} {:<STATUS_WIDTH$} {:<LISTEN_WIDTH$} {:<WORKER_WIDTH$} {:<IM_PLATFORMS_WIDTH$} {}",
+                "local", "已停止", listen_address, "-", "-", fallback_data_root,
+            );
+            println!("hint: run `cloudagent start`");
+        }
+    }
+}
+
+fn cloudagent_version() -> &'static str {
+    option_env!("CLOUDAGENT_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
+fn resolved_node_addr(args: &[OsString]) -> String {
+    arg_value(args, "--node-addr")
+        .or_else(|| std::env::var_os("CLOUDAGENT_NODE_ADDR"))
+        .and_then(|value| value.into_string().ok())
+        .unwrap_or_else(default_node_addr)
 }
