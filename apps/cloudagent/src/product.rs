@@ -237,14 +237,7 @@ async fn print_release_status(args: &[OsString], data_root_dir: &Path) -> Result
 
 fn print_node_status_response(response: &NodeStatusResponse) {
     println!("listen_address: {}", response.listen_address);
-    println!(
-        "worker: {}",
-        if response.worker_running {
-            "running"
-        } else {
-            "idle"
-        }
-    );
+    println!("workers: {}", running_worker_count(response));
     println!(
         "platform_runtimes: {}/{}",
         response.platform_runtime_count, response.managed_platform_count
@@ -297,16 +290,12 @@ fn print_release_status_table(
 
     println!(
         "{:<8} {:<STATUS_WIDTH$} {:<LISTEN_WIDTH$} {:<WORKER_WIDTH$} {:<IM_PLATFORMS_WIDTH$} DATA ROOT",
-        "NODE ID", "STATUS", "LISTEN", "WORKER", "IM PLATFORMS",
+        "NODE ID", "STATUS", "LISTEN", "WORKERS", "IM PLATFORMS",
     );
 
     match response {
         Some(response) => {
-            let worker = if response.worker_running {
-                "running"
-            } else {
-                "idle"
-            };
+            let worker = running_worker_count(response).to_string();
             let im_platforms = format!(
                 "{}/{}",
                 response.platform_runtime_count, response.managed_platform_count
@@ -329,6 +318,14 @@ fn print_release_status_table(
             println!("hint: run `cloudagent start`");
         }
     }
+}
+
+fn running_worker_count(response: &NodeStatusResponse) -> usize {
+    response
+        .workers
+        .iter()
+        .filter(|worker| matches!(worker.health, NodeWorkerHealth::Running))
+        .count()
 }
 
 fn cloudagent_version() -> &'static str {

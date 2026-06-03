@@ -111,6 +111,7 @@ impl WorkerManager {
     }
 
     pub(crate) async fn is_worker_running(&self) -> bool {
+        self.prune_workers().await.ok();
         !self.state.lock().await.workers.is_empty()
     }
 
@@ -669,6 +670,34 @@ mod tests {
 
         manager.prune_workers_at(Instant::now()).await?;
         assert!(manager.state.lock().await.workers.contains_key("session-1"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn is_worker_running_prunes_idle_handle() -> Result<()> {
+        let manager = WorkerManager::new(test_worker_program(), None);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let worker = tokio::spawn(async move {
+            while rx.recv().await.is_some() {}
+            Result::<()>::Ok(())
+        });
+        {
+            let mut state = manager.state.lock().await;
+            let (events_tx, _) = broadcast::channel(8);
+            state.workers.insert(
+                "session-1".to_string(),
+                WorkerHandle {
+                    command_tx: tx,
+                    request_tx: mpsc::unbounded_channel().0,
+                    events_tx,
+                    worker,
+                    last_active_at: Instant::now() - IDLE_WORKER_TTL,
+                },
+            );
+        }
+
+        assert!(!manager.is_worker_running().await);
+        assert!(manager.state.lock().await.workers.is_empty());
         Ok(())
     }
 
