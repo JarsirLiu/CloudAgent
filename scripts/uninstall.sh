@@ -5,6 +5,7 @@ INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 BIN_DIR="${CLOUDAGENT_BIN_DIR:-$HOME/.local/bin}"
 DATA_DIR="${CLOUDAGENT_DATA_DIR:-$HOME/.cloudagent}"
 PURGE=0
+STAGE_TOTAL=3
 
 usage() {
   cat <<'EOF'
@@ -105,24 +106,71 @@ cleanup_path() {
   fi
 }
 
+current_version() {
+  current_link="$INSTALL_ROOT/current"
+  if [ -L "$current_link" ]; then
+    basename "$(readlink "$current_link")"
+  fi
+}
+
+stage_start() {
+  step="$1"
+  title="$2"
+  printf '[%s/%s] %s... ' "$step" "$STAGE_TOTAL" "$title"
+}
+
+stage_done() {
+  detail="${1:-}"
+  if [ -n "$detail" ]; then
+    printf 'done %s\n' "$detail"
+  else
+    printf 'done\n'
+  fi
+}
+
+printf '🧹 Uninstalling CloudAgent\n'
+if version=$(current_version 2>/dev/null); then
+  printf 'CloudAgent %s\n' "$version"
+fi
+printf '\n'
+
+stage_start 1 "Removing launchers"
+launcher_removed=0
 for name in cloudagent cli node agentd; do
   target="$BIN_DIR/$name"
   if [ -L "$target" ] || [ -f "$target" ]; then
     rm -f "$target"
-    echo "removed: $target"
+    launcher_removed=1
   fi
 done
+cleanup_path
+if [ "$launcher_removed" -eq 1 ]; then
+  stage_done
+else
+  stage_done "(already removed)"
+fi
 
+stage_start 2 "Removing installation"
 if [ -d "$INSTALL_ROOT" ]; then
   rm -rf "$INSTALL_ROOT"
-  echo "removed: $INSTALL_ROOT"
+  stage_done
+else
+  stage_done "(already removed)"
 fi
 
+data_stage_title="Keeping user data"
+if [ "$PURGE" -eq 1 ]; then
+  data_stage_title="Removing user data"
+fi
+
+stage_start 3 "$data_stage_title"
 if [ "$PURGE" -eq 1 ] && [ -d "$DATA_DIR" ]; then
   rm -rf "$DATA_DIR"
-  echo "removed: $DATA_DIR"
+  stage_done
+  printf 'CloudAgent removed\n'
+  printf 'User data removed: %s\n' "$DATA_DIR"
 else
-  echo "kept user data: $DATA_DIR"
+  stage_done "(kept)"
+  printf 'CloudAgent removed\n'
+  printf 'User data kept: %s\n' "$DATA_DIR"
 fi
-
-cleanup_path
