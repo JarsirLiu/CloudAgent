@@ -16,6 +16,27 @@ $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-P
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
 $script:LastDownloadStatusLength = 0
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
+$script:StageTotal = 8
+
+function Write-StageStart {
+    param(
+        [int]$Step,
+        [string]$Title
+    )
+
+    Write-Host ("[{0}/{1}] {2}... " -f $Step, $script:StageTotal, $Title) -NoNewline
+}
+
+function Write-StageDone {
+    param([string]$Detail = "")
+
+    if ($Detail) {
+        Write-Host ("done {0}" -f $Detail)
+    }
+    else {
+        Write-Host "done"
+    }
+}
 
 function Format-ByteSize {
     param([double]$Bytes)
@@ -71,7 +92,6 @@ function Invoke-DownloadFile {
         [Parameter(Mandatory = $true)][string]$Label
     )
 
-    Write-Host $Label
     $directory = Split-Path -Parent $OutFile
     if ($directory) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -91,6 +111,11 @@ function Invoke-DownloadFile {
         & $script:CurlCommand.Source @curlArgs
         if ($LASTEXITCODE -ne 0) {
             throw "curl.exe download failed for $Uri"
+        }
+        if (Test-Path $OutFile) {
+            $length = (Get-Item $OutFile).Length
+            Write-DownloadStatus -Label $Label -DownloadedBytes $length -TotalBytes $length
+            Complete-DownloadStatus
         }
         return
     }
@@ -408,12 +433,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cloudagent-launch.ps1"
 }
 
 $headers = @{ "User-Agent" = "cloudagent-installer" }
-Write-Host "Resolving release metadata"
+Write-StageStart -Step 1 -Title "Resolving release metadata"
 $script:ReleaseTag = if ($Version -eq "latest") { Resolve-LatestReleaseTag } else { "v$Version" }
 $releaseVersion = $script:ReleaseTag.TrimStart('v')
 $assetName = Get-TargetAssetName
 $assetUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/$assetName"
 $checksumsUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/SHA256SUMS"
+Write-StageDone -Detail "($script:ReleaseTag)"
 
 $targetDir = Join-Path $InstallsDir $releaseVersion
 if ((-not $Force) -and (Test-Path $targetDir) -and (Test-Path $CurrentDir) -and ((Get-Item $CurrentDir).Target -eq $targetDir)) {
@@ -426,52 +452,63 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cloudagent-install-$PID
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 try {
     $zipPath = Join-Path $tempRoot $assetName
+    Write-StageStart -Step 2 -Title "Downloading release asset"
     Invoke-DownloadFile `
         -Uri $assetUrl `
         -Headers $headers `
         -OutFile $zipPath `
         -Label "Downloading CloudAgent $releaseVersion"
+    Write-StageDone -Detail ("({0})" -f (Format-ByteSize ((Get-Item $zipPath).Length)))
 
     $checksumPath = Join-Path $tempRoot "SHA256SUMS"
+    Write-StageStart -Step 3 -Title "Downloading checksum manifest"
     Invoke-DownloadFile `
         -Uri $checksumsUrl `
         -Headers $headers `
         -OutFile $checksumPath `
         -Label "Downloading checksum manifest"
-    Write-Host "Verifying package checksum"
+    Write-StageDone -Detail ("({0})" -f (Format-ByteSize ((Get-Item $checksumPath).Length)))
+
+    Write-StageStart -Step 4 -Title "Verifying package checksum"
     $expected = (Select-String -Path $checksumPath -Pattern ([regex]::Escape($assetName)) | Select-Object -First 1).Line.Split(' ')[0]
     $actual = Get-Sha256Hash -Path $zipPath
     if ($expected.ToLowerInvariant() -ne $actual) {
         throw "Checksum verification failed for $assetName"
     }
+    Write-StageDone
 
     $unpackRoot = Join-Path $tempRoot "unpack"
-    Write-Host "Extracting package"
+    Write-StageStart -Step 5 -Title "Extracting package"
     Expand-Archive -LiteralPath $zipPath -DestinationPath $unpackRoot -Force
     $packageDir = Get-ChildItem -Path $unpackRoot -Directory | Select-Object -First 1
     if (-not $packageDir) {
         throw "Invalid archive layout: missing package directory"
     }
+    Write-StageDone
 
     if (Test-Path $targetDir) {
         Write-Host "Replacing existing installation at $targetDir"
         Remove-Item -LiteralPath $targetDir -Recurse -Force
     }
-    Write-Host "Installing files to $targetDir"
+    Write-StageStart -Step 6 -Title "Installing files"
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     Copy-Item -Path (Join-Path $packageDir.FullName "*") -Destination $targetDir -Recurse -Force
+    Write-StageDone
 
     if (Test-Path $CurrentDir) {
         Write-Host "Updating current launcher target"
         Remove-Item -LiteralPath $CurrentDir -Recurse -Force
     }
+    Write-StageStart -Step 7 -Title "Refreshing command launchers"
     New-Item -ItemType Junction -Path $CurrentDir -Target $targetDir | Out-Null
-
-    Write-Host "Refreshing command launchers"
     Write-Launcher
-    Ensure-UserPath
+    Write-StageDone
 
-    Write-Host "Installed CloudAgent $releaseVersion"
+    Write-StageStart -Step 8 -Title "Updating PATH"
+    Ensure-UserPath
+    Write-StageDone
+
+    Write-Host "CloudAgent $releaseVersion installed"
     Write-Host "Install root: $InstallRoot"
     Write-Host "Data dir: $DataDir"
     Write-Host "Run: cloudagent start"

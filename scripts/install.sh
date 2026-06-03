@@ -14,15 +14,52 @@ TMPDIR="${TMPDIR:-/tmp}"
 WORK="$TMPDIR/cloudagent-install-$$"
 VERSION="latest"
 FORCE=0
+STAGE_TOTAL=8
 
 trap 'rm -rf "$WORK"' EXIT INT TERM
+
+stage_start() {
+  step="$1"
+  title="$2"
+  printf '[%s/%s] %s... ' "$step" "$STAGE_TOTAL" "$title" >&2
+}
+
+stage_done() {
+  detail="${1:-}"
+  if [ -n "$detail" ]; then
+    printf 'done %s\n' "$detail" >&2
+  else
+    printf 'done\n' >&2
+  fi
+}
+
+human_size() {
+  bytes="$1"
+  awk -v b="$bytes" 'BEGIN {
+    if (b >= 1024*1024*1024) {
+      printf "%.1f GB", b / (1024*1024*1024)
+    } else if (b >= 1024*1024) {
+      printf "%.1f MB", b / (1024*1024)
+    } else if (b >= 1024) {
+      printf "%.1f KB", b / 1024
+    } else {
+      printf "%d B", b
+    }
+  }'
+}
+
+file_size() {
+  path="$1"
+  if size=$(wc -c < "$path" 2>/dev/null); then
+    printf '%s\n' "$size"
+    return 0
+  fi
+  stat -c%s "$path" 2>/dev/null || stat -f%z "$path"
+}
 
 curl_download() {
   url="$1"
   output="$2"
-  label="$3"
-
-  echo "$label"
   mkdir -p "$(dirname "$output")"
   if [ -t 2 ]; then
     curl --fail --location --progress-bar -H "User-Agent: cloudagent-installer" "$url" -o "$output"
@@ -119,7 +156,7 @@ resolve_bootstrap_url() {
 }
 
 fetch_release_metadata() {
-  echo "Resolving release metadata"
+  stage_start 1 "Resolving release metadata"
   if [ "$VERSION" = "latest" ]; then
     RELEASE_TAG=$(resolve_latest_release_tag)
   else
@@ -133,6 +170,7 @@ fetch_release_metadata() {
   ASSET_BASENAME="cloudagent-${RELEASE_TAG}-${OS}-${ARCH}.tar.gz"
   ASSET_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/$ASSET_BASENAME"
   CHECKSUM_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/SHA256SUMS"
+  stage_done "($RELEASE_TAG)"
 }
 
 current_version() {
@@ -144,8 +182,12 @@ current_version() {
 verify_checksum() {
   asset="$1"
   checksum_file="$WORK/SHA256SUMS"
-  curl_download "$CHECKSUM_URL" "$checksum_file" "Downloading checksum manifest"
-  echo "Verifying package checksum"
+  stage_start 3 "Downloading checksum manifest"
+  curl_download "$CHECKSUM_URL" "$checksum_file"
+  checksum_size=$(file_size "$checksum_file")
+  stage_done "($(human_size "$checksum_size"))"
+
+  stage_start 4 "Verifying package checksum"
   if command -v sha256sum >/dev/null 2>&1; then
     (cd "$WORK" && grep "  $ASSET_BASENAME\$" "$checksum_file" | sha256sum -c -)
   elif command -v shasum >/dev/null 2>&1; then
@@ -154,16 +196,22 @@ verify_checksum() {
     [ "$expected" = "$actual" ]
   else
     echo "warning: no sha256 tool found; skipping checksum verification" >&2
+    stage_done "(skipped)"
+    return 0
   fi
+  stage_done
 }
 
 download_and_unpack() {
   asset="$WORK/$ASSET_BASENAME"
-  curl_download "$ASSET_URL" "$asset" "Downloading CloudAgent $RELEASE_VERSION"
+  stage_start 2 "Downloading release asset"
+  curl_download "$ASSET_URL" "$asset"
+  asset_size=$(file_size "$asset")
+  stage_done "($(human_size "$asset_size"))"
   verify_checksum "$asset"
   unpack_root="$WORK/unpack"
   mkdir -p "$unpack_root"
-  echo "Extracting package"
+  stage_start 5 "Extracting package"
   tar -xzf "$asset" -C "$unpack_root"
   package_dir=$(find "$unpack_root" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)
   if [ -z "$package_dir" ]; then
@@ -171,28 +219,30 @@ download_and_unpack() {
     exit 1
   fi
   STAGED_DIR="$package_dir"
+  stage_done
 }
 
 install_files() {
   target="$INSTALLS_DIR/$RELEASE_VERSION"
   if [ "$FORCE" -ne 1 ] && [ "$(current_version || true)" = "$RELEASE_VERSION" ] && [ -d "$target" ]; then
-    echo "cloudagent $RELEASE_VERSION is already installed"
+    printf 'CloudAgent %s is already installed\n' "$RELEASE_VERSION" >&2
     return 0
   fi
   mkdir -p "$INSTALLS_DIR" "$BIN_DIR" "$DATA_DIR"
   if [ -e "$target" ]; then
-    echo "Replacing existing installation at $target"
+    printf 'Replacing existing installation at %s\n' "$target" >&2
     rm -rf "$target"
   fi
-  echo "Installing files to $target"
+  stage_start 6 "Installing files"
   mkdir -p "$target"
   cp -R "$STAGED_DIR"/. "$target"/
-  echo "Updating current launcher target"
+  printf 'Updating current launcher target\n' >&2
   ln -sfn "$target" "$CURRENT_LINK"
+  stage_done
 }
 
 write_launchers() {
-  echo "Refreshing command launchers"
+  stage_start 7 "Refreshing command launchers"
   cat > "$BIN_DIR/cloudagent" <<EOF
 #!/usr/bin/env sh
 set -eu
@@ -244,11 +294,16 @@ exec "$CURRENT_LINK/$name" "\$@"
 EOF
     chmod 755 "$BIN_DIR/$name"
   done
+  stage_done
 }
 
 ensure_path() {
+  stage_start 8 "Updating PATH"
   case ":$PATH:" in
-    *":$BIN_DIR:"*) return 0 ;;
+    *":$BIN_DIR:"*)
+      stage_done "(already configured)"
+      return 0
+      ;;
   esac
 
   path_line='export PATH="$HOME/.local/bin:$PATH"'
@@ -272,6 +327,7 @@ ensure_path() {
   if [ "$touched" -eq 0 ]; then
     echo "add $BIN_DIR to PATH to use cloudagent from new terminals" >&2
   fi
+  stage_done
 }
 
 need_cmd curl
@@ -284,8 +340,8 @@ install_files
 write_launchers
 ensure_path
 
-echo "installed CloudAgent $RELEASE_VERSION"
-echo "install root: $INSTALL_ROOT"
-echo "data dir: $DATA_DIR"
-echo "bin dir: $BIN_DIR"
-echo "run: cloudagent start"
+printf 'CloudAgent %s installed\n' "$RELEASE_VERSION"
+printf 'install root: %s\n' "$INSTALL_ROOT"
+printf 'data dir: %s\n' "$DATA_DIR"
+printf 'bin dir: %s\n' "$BIN_DIR"
+printf 'run: cloudagent start\n'

@@ -12,6 +12,7 @@ CURRENT_NODE="$CURRENT_LINK/node"
 CURRENT_AGENTD="$CURRENT_LINK/agentd"
 TMPDIR="${TMPDIR:-/tmp}"
 WORK="$TMPDIR/cloudagent-upgrade-$$"
+STAGE_TOTAL=3
 
 cleanup() {
   rm -rf "$WORK"
@@ -19,12 +20,24 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+stage_start() {
+  step="$1"
+  title="$2"
+  printf '[%s/%s] %s... ' "$step" "$STAGE_TOTAL" "$title" >&2
+}
+
+stage_done() {
+  detail="${1:-}"
+  if [ -n "$detail" ]; then
+    printf 'done %s\n' "$detail" >&2
+  else
+    printf 'done\n' >&2
+  fi
+}
+
 curl_download() {
   url="$1"
   output="$2"
-  label="$3"
-
-  echo "$label"
   mkdir -p "$(dirname "$output")"
   if [ -t 2 ]; then
     curl --fail --location --progress-bar "$url" -o "$output"
@@ -52,13 +65,14 @@ node_running() {
   ps -ef 2>/dev/null | grep -F "$CURRENT_NODE" | grep -v grep >/dev/null 2>&1
 }
 
+test_upgrade_restart_needed() {
+  [ -x "$CURRENT_NODE" ] && node_running
+}
+
 stop_node_if_running() {
   [ -x "$CURRENT_NODE" ] || return 1
-  if ! node_running; then
-    return 1
-  fi
 
-  echo "stopping local node before upgrade"
+  stage_start 1 "Stopping local node"
   if command -v pkill >/dev/null 2>&1; then
     pkill -f "$CURRENT_AGENTD" >/dev/null 2>&1 || true
     pkill -f "$CURRENT_NODE" >/dev/null 2>&1 || true
@@ -66,6 +80,7 @@ stop_node_if_running() {
     ps -ef 2>/dev/null | grep -F "$CURRENT_AGENTD" | grep -v grep | awk '{print $2}' | xargs -r kill >/dev/null 2>&1 || true
     ps -ef 2>/dev/null | grep -F "$CURRENT_NODE" | grep -v grep | awk '{print $2}' | xargs -r kill >/dev/null 2>&1 || true
   fi
+  stage_done "(stopped)"
   return 0
 }
 
@@ -75,8 +90,9 @@ start_node_after_upgrade() {
     exit 1
   }
 
-  echo "starting local node after upgrade"
+  stage_start 4 "Restarting local node"
   "$CURRENT_EXE" start
+  stage_done
 }
 
 invoke_install_script() {
@@ -91,18 +107,26 @@ invoke_install_script() {
   mkdir -p "$WORK"
   install_script="$WORK/install.sh"
   install_url="$(resolve_bootstrap_url install.sh)"
-  curl_download "$install_url" "$install_script" "Downloading installer script"
+  stage_start 2 "Downloading installer script"
+  curl_download "$install_url" "$install_script"
   chmod +x "$install_script"
+  stage_done
   "$install_script" "$@"
 }
 
 restart_node=0
-if stop_node_if_running; then
+if test_upgrade_restart_needed; then
+  STAGE_TOTAL=4
+  stop_node_if_running
   restart_node=1
+else
+  stage_start 1 "Checking local node"
+  stage_done "(not running)"
 fi
 
-echo "Installing updated CloudAgent version"
+stage_start 3 "Running installer"
 invoke_install_script "$@"
+stage_done
 
 if [ "$restart_node" -eq 1 ]; then
   start_node_after_upgrade

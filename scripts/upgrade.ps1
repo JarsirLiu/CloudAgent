@@ -16,6 +16,27 @@ $CurrentNode = Join-Path $CurrentDir "node.exe"
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cloudagent-upgrade-$PID"
 $script:LastDownloadStatusLength = 0
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
+$script:StageTotal = 4
+
+function Write-StageStart {
+    param(
+        [int]$Step,
+        [string]$Title
+    )
+
+    Write-Host ("[{0}/{1}] {2}... " -f $Step, $script:StageTotal, $Title) -NoNewline
+}
+
+function Write-StageDone {
+    param([string]$Detail = "")
+
+    if ($Detail) {
+        Write-Host ("done {0}" -f $Detail)
+    }
+    else {
+        Write-Host "done"
+    }
+}
 
 function Format-ByteSize {
     param([double]$Bytes)
@@ -71,7 +92,6 @@ function Invoke-DownloadFile {
         [Parameter(Mandatory = $true)][string]$Label
     )
 
-    Write-Host $Label
     $directory = Split-Path -Parent $OutFile
     if ($directory) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -91,6 +111,11 @@ function Invoke-DownloadFile {
         & $script:CurlCommand.Source @curlArgs
         if ($LASTEXITCODE -ne 0) {
             throw "curl.exe download failed for $Uri"
+        }
+        if (Test-Path $OutFile) {
+            $length = (Get-Item $OutFile).Length
+            Write-DownloadStatus -Label $Label -DownloadedBytes $length -TotalBytes $length
+            Complete-DownloadStatus
         }
         return
     }
@@ -206,12 +231,21 @@ function Stop-NodeIfRunning {
         return $false
     }
 
-    Write-Host "Stopping local node before upgrade"
+    Write-StageStart -Step 1 -Title "Stopping local node"
     $processIds = Get-ManagedProcessIds
     if ($processIds.Count -gt 0) {
         Stop-Process -Id $processIds -Force
     }
+    Write-StageDone
     return $true
+}
+
+function Test-UpgradeRestartNeeded {
+    if (-not (Test-Path $CurrentNode)) {
+        return $false
+    }
+
+    return Test-NodeRunning
 }
 
 function Start-NodeAfterUpgrade {
@@ -219,11 +253,12 @@ function Start-NodeAfterUpgrade {
         throw "Upgrade completed but cloudagent.exe is missing from $CurrentDir"
     }
 
-    Write-Host "Starting local node after upgrade"
+    Write-StageStart -Step 4 -Title "Restarting local node"
     & $CurrentExe start
     if ($LASTEXITCODE -ne 0) {
         throw "Upgrade installed successfully, but failed to restart the local node"
     }
+    Write-StageDone
 }
 
 function Invoke-InstallScript {
@@ -238,18 +273,28 @@ function Invoke-InstallScript {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $installScript = Join-Path $tempRoot "install.ps1"
     $installUrl = Resolve-BootstrapUrl -FileName "install.ps1"
+    Write-StageStart -Step 2 -Title "Downloading installer script"
     Invoke-DownloadFile `
         -Uri $installUrl `
         -Headers @{ "User-Agent" = "cloudagent-upgrade" } `
         -OutFile $installScript `
         -Label "Downloading installer script"
+    Write-StageDone
     & $installScript -Version $Version -Force:$Force
 }
 
 try {
-    $restartNode = Stop-NodeIfRunning
-    Write-Host "Installing updated CloudAgent version"
+    $restartNode = $false
+    if (Test-UpgradeRestartNeeded) {
+        $restartNode = Stop-NodeIfRunning
+    }
+    else {
+        Write-StageStart -Step 1 -Title "Checking local node"
+        Write-StageDone -Detail "(not running)"
+    }
+    Write-StageStart -Step 3 -Title "Running installer"
     Invoke-InstallScript
+    Write-StageDone
     if ($restartNode) {
         Start-NodeAfterUpgrade
     }
