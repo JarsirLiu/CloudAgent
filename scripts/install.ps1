@@ -12,6 +12,7 @@ $MainRawBase = "https://raw.githubusercontent.com/$Repo/main/scripts"
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
 $InstallsDir = Join-Path $InstallRoot "installs"
 $CurrentDir = Join-Path $InstallRoot "current"
+$InstallMarker = ".cloudagent-install-complete"
 $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
 $script:LastDownloadStatusLength = 0
@@ -442,7 +443,8 @@ $checksumsUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/S
 Write-StageDone -Detail "($script:ReleaseTag)"
 
 $targetDir = Join-Path $InstallsDir $releaseVersion
-if ((-not $Force) -and (Test-Path $targetDir) -and (Test-Path $CurrentDir) -and ((Get-Item $CurrentDir).Target -eq $targetDir)) {
+$markerPath = Join-Path $targetDir $InstallMarker
+if ((-not $Force) -and (Test-Path $markerPath) -and (Test-Path $CurrentDir) -and ((Get-Item $CurrentDir).Target -eq $targetDir)) {
     Write-Host "CloudAgent $releaseVersion is already installed"
     exit 0
 }
@@ -502,6 +504,7 @@ try {
     Write-StageStart -Step 7 -Title "Refreshing command launchers"
     New-Item -ItemType Junction -Path $CurrentDir -Target $targetDir | Out-Null
     Write-Launcher
+    Set-Content -Encoding ASCII -NoNewline -Path $markerPath -Value ""
     Write-StageDone
 
     Write-StageStart -Step 8 -Title "Updating PATH"
