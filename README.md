@@ -206,7 +206,45 @@ CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连
 ### 安装
 GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
 
-z
+Linux / macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh
+```
+
+Windows:
+
+```bash
+irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 | iex
+```
+
+常用运行命令：
+
+```bash
+# 启动本机 node 服务
+cloudagent start
+
+# 打开 CLI
+cloudagent cli
+
+# 查看本机 node 状态
+cloudagent status
+
+# 停止本机 node 服务
+cloudagent stop
+
+# 将 CloudAgent 升级到最新版本
+# 如果本机 node 正在运行，upgrade 会先停止它，安装后再自动拉起
+cloudagent upgrade
+
+# 卸载 CloudAgent，但保留用户数据
+cloudagent uninstall
+
+# 卸载 CloudAgent，并删除用户数据
+cloudagent uninstall --purge
+```
+
+`cloudagent uninstall` 默认会保留用户数据目录，并移除安装器创建的 CloudAgent PATH 项。使用 `cloudagent uninstall --purge` 可以同时删除用户数据。
 
 ### 权限
 CloudAgent 当前支持三种会话权限模式：
@@ -266,6 +304,55 @@ base_url = "https://api.openai.com/v1"
 api_key = "replace-with-your-api-key"
 model = "gpt-4.1-mini"
 temperature = 0.2
+```
+
+### 安装位置
+Linux / macOS：
+
+- 数据目录：`~/.cloudagent`
+- 已安装二进制：`~/.local/lib/cloudagent/current`
+- 启动器：`~/.local/bin`
+
+Windows：
+
+- 数据目录：`%USERPROFILE%\\.cloudagent`
+- 已安装二进制：`%LOCALAPPDATA%\\CloudAgent\\current`
+- 启动器：`%USERPROFILE%\\.local\\bin\\cloudagent.cmd`
+
+### 升级与卸载
+升级：
+
+```bash
+cloudagent upgrade
+```
+
+安装和升级时的下载进度会尽量用更适合终端的方式显示：
+
+- PowerShell、Windows Terminal，以及通过 PowerShell 安装器启动的 `cmd` 会显示 `MB / total MB` 进度
+- Linux 和 macOS 的交互式终端会显示 `curl` 进度条
+- 非交互环境会使用更简洁的输出
+
+卸载：
+
+```bash
+cloudagent uninstall
+```
+
+默认情况下，卸载会保留 CloudAgent 数据目录中的用户数据。
+
+如果要同时删除用户数据：
+
+Linux / macOS：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh -s -- --purge
+```
+
+Windows：
+
+```bash
+irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.ps1 | iex
+& "$env:USERPROFILE\.local\bin\cloudagent.cmd" uninstall --purge
 ```
 
 ### 本地开发启动
