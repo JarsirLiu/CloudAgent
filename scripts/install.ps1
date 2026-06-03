@@ -240,12 +240,12 @@ function Write-Launcher {
 set CMD=%1
 if /I "%CMD%"=="upgrade" (
   shift
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$ts=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); irm https://raw.githubusercontent.com/$Repo/main/scripts/upgrade.ps1?ts=$ts | iex"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ts=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); irm https://raw.githubusercontent.com/$Repo/main/scripts/upgrade.ps1?ts=`$ts | iex"
   exit /b %ERRORLEVEL%
 )
 if /I "%CMD%"=="uninstall" (
   shift
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$ts=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); irm https://raw.githubusercontent.com/$Repo/main/scripts/uninstall.ps1?ts=$ts | iex"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ts=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); irm https://raw.githubusercontent.com/$Repo/main/scripts/uninstall.ps1?ts=`$ts | iex"
   exit /b %ERRORLEVEL%
 )
 "$CurrentDir\cloudagent.exe" %*
