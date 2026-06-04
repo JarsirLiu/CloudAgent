@@ -331,6 +331,11 @@ async fn seed_workspace(workspace_root: &Path, conversation_id: &str) -> Result<
     tokio::fs::create_dir_all(workspace_root.join("configs")).await?;
     tokio::fs::create_dir_all(data_root.join("conversations")).await?;
     tokio::fs::create_dir_all(data_root.join("state").join("memory")).await?;
+    tokio::fs::write(
+        workspace_root.join("configs").join("config.toml"),
+        "[llm]\nbase_url = \"https://example.invalid/v1\"\napi_key = \"test-key\"\nmodel = \"test-model\"\n",
+    )
+    .await?;
     let store = JsonConversationStore::new(data_root.join("conversations"));
     store.create_conversation(conversation_id).await?;
     Ok(())
