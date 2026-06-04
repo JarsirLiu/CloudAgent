@@ -2,6 +2,17 @@
 
 本文档描述当前仓库里 IM 平台接入的正式结构与运行边界。
 
+注意：
+
+- 当前 IM 仍然是“通过本地 node 做 remote relay”
+- 本文不是 hub 设计文档
+- 本文也不覆盖本地 `node-worker` 改造细节
+
+相关文档：
+
+- [`docs/node-worker-rebuild-plan.zh-CN.md`](D:/learn/gifti/cloudagent/docs/node-worker-rebuild-plan.zh-CN.md)
+- [`docs/node-worker-current-status.zh-CN.md`](D:/learn/gifti/cloudagent/docs/node-worker-current-status.zh-CN.md)
+
 ## 当前角色
 
 - `cloudagent`
@@ -9,9 +20,9 @@
 - `cli`
   终端 surface，只负责和本地 `node` 交互
 - `node`
-  本机常驻进程，负责平台 runtime、worker 生命周期、会话状态与远程 app-server host
+  本机常驻进程，负责平台 runtime、source worker 生命周期、会话状态与远程 app-server host
 - `agentd`
-  按需启动的 worker，负责真正执行 agent 会话
+  source worker 进程，负责所属入口来源下的会话控制与执行编排
 
 ## 运行链路
 
@@ -161,7 +172,7 @@ cloudagent platform disable wecom
 
 - 平台长连接入站
 - 统一 remote app-server 回传
-- `node` 内的平台启停与 worker 协调
+- `node` 内的平台启停与 source worker 协调
 - 文本消息主链路
 
 当前仍未完全覆盖：

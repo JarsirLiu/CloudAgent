@@ -252,7 +252,7 @@ fn print_node_status_response(response: &NodeStatusResponse) {
         );
     }
     if !response.workers.is_empty() {
-        println!("worker_scopes:");
+        println!("worker_instances:");
         for worker in &response.workers {
             match worker.health {
                 NodeWorkerHealth::Running => {

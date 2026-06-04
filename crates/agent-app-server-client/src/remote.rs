@@ -1,9 +1,10 @@
 use crate::{AppServerConnectInfo, AppServerEvent, TypedRequestError};
 use agent_protocol::{
-    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, ConversationListResponse,
-    JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
-    JsonRpcResponse, RequestId, TransportClientInfo, TransportInitializeCapabilities,
-    TransportInitializeParams, TransportInitializeResult,
+    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, CommandExecutionContext,
+    ConversationListResponse, JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage,
+    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId, SessionBootstrapContext,
+    TransportClientInfo, TransportInitializeCapabilities, TransportInitializeParams,
+    TransportInitializeResult,
 };
 use anyhow::{Context, Result, anyhow};
 use serde::de::DeserializeOwned;
@@ -37,6 +38,7 @@ impl RemoteClientConfig {
                 experimental_api: self.client.experimental_api,
                 opt_out_notification_methods: self.client.opt_out_notification_methods.clone(),
             }),
+            session_context: self.client.session_context.clone(),
         }
     }
 }
@@ -46,6 +48,7 @@ pub struct RemoteAppServerClient {
     event_rx: mpsc::Receiver<AppServerEvent>,
     pending_events: VecDeque<AppServerEvent>,
     request_counter: Arc<AtomicI64>,
+    default_command_context: Option<CommandExecutionContext>,
     writer_task: JoinHandle<Result<()>>,
     reader_task: JoinHandle<Result<()>>,
 }
@@ -54,12 +57,17 @@ pub struct RemoteAppServerClient {
 pub struct RemoteAppServerRequestHandle {
     command_tx: mpsc::UnboundedSender<RemoteOutbound>,
     request_counter: Arc<AtomicI64>,
+    default_command_context: Option<CommandExecutionContext>,
 }
 
 enum RemoteOutbound {
-    Command(AppClientCommand),
+    Command {
+        command: AppClientCommand,
+        context: Option<CommandExecutionContext>,
+    },
     Request {
         request: JsonRpcRequest,
+        context: Option<CommandExecutionContext>,
         response_tx: oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>,
     },
     Shutdown,
@@ -108,6 +116,8 @@ impl RemoteAppServerClient {
         let event_capacity = config.client.channel_capacity.max(1);
         let (event_tx, event_rx) = mpsc::channel(event_capacity);
         let request_counter = Arc::new(AtomicI64::new(1));
+        let default_command_context =
+            session_context_to_command_context(config.client.session_context.as_ref());
         let request_counter_for_writer = request_counter.clone();
         let pending_requests = Arc::new(Mutex::new(PendingRequestMap::new()));
         let pending_requests_for_writer = pending_requests.clone();
@@ -137,6 +147,7 @@ impl RemoteAppServerClient {
             event_rx,
             pending_events,
             request_counter,
+            default_command_context,
             writer_task,
             reader_task,
         })
@@ -144,7 +155,10 @@ impl RemoteAppServerClient {
 
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(RemoteOutbound::Command(command))
+            .send(RemoteOutbound::Command {
+                command,
+                context: self.default_command_context.clone(),
+            })
             .map_err(|_| anyhow!("remote app server command channel is closed"))
     }
 
@@ -152,6 +166,7 @@ impl RemoteAppServerClient {
         RemoteAppServerRequestHandle {
             command_tx: self.command_tx.clone(),
             request_counter: self.request_counter.clone(),
+            default_command_context: self.default_command_context.clone(),
         }
     }
 
@@ -182,6 +197,7 @@ impl RemoteAppServerClient {
             event_rx: _,
             pending_events: _,
             request_counter: _,
+            default_command_context: _,
             writer_task,
             reader_task,
         } = self;
@@ -197,7 +213,10 @@ impl RemoteAppServerClient {
 impl RemoteAppServerRequestHandle {
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(RemoteOutbound::Command(command))
+            .send(RemoteOutbound::Command {
+                command,
+                context: self.default_command_context.clone(),
+            })
             .map_err(|_| anyhow!("remote app server command channel is closed"))
     }
 
@@ -223,6 +242,7 @@ impl RemoteAppServerRequestHandle {
         self.command_tx
             .send(RemoteOutbound::Request {
                 request,
+                context: self.default_command_context.clone(),
                 response_tx,
             })
             .map_err(|_| TypedRequestError::Transport {
@@ -270,12 +290,13 @@ where
 {
     while let Some(outbound) = command_rx.recv().await {
         match outbound {
-            RemoteOutbound::Command(command) => {
+            RemoteOutbound::Command { command, context } => {
                 let envelope = AppClientCommandEnvelope {
                     request_id: RequestId::Integer(
                         request_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                     ),
                     command,
+                    context,
                 };
                 let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
                 writer.write_all(payload.as_bytes()).await?;
@@ -283,9 +304,11 @@ where
                 writer.flush().await?;
             }
             RemoteOutbound::Request {
-                request,
+                mut request,
+                context,
                 response_tx,
             } => {
+                inject_request_context(&mut request, context);
                 pending_requests
                     .lock()
                     .await
@@ -299,6 +322,47 @@ where
         }
     }
     Ok(())
+}
+
+fn session_context_to_command_context(
+    session_context: Option<&SessionBootstrapContext>,
+) -> Option<CommandExecutionContext> {
+    let session_context = session_context?;
+    let context = CommandExecutionContext {
+        session_id: session_context.session_id.clone(),
+        workspace_id: None,
+        workspace_root: session_context.workspace_root.clone(),
+        cwd: session_context.cwd.clone(),
+        permission_mode: session_context.permission_mode.clone(),
+        data_root_dir: session_context.data_root_dir.clone(),
+    };
+    if context.session_id.is_none()
+        && context.workspace_root.is_none()
+        && context.cwd.is_none()
+        && context.permission_mode.is_none()
+        && context.data_root_dir.is_none()
+    {
+        None
+    } else {
+        Some(context)
+    }
+}
+
+fn inject_request_context(request: &mut JsonRpcRequest, context: Option<CommandExecutionContext>) {
+    let Some(context) = context else {
+        return;
+    };
+    let mut params = request.params.take().unwrap_or(serde_json::Value::Null);
+    if !params.is_object() {
+        params = serde_json::json!({});
+    }
+    if let Some(object) = params.as_object_mut() {
+        object.insert(
+            "_context".to_string(),
+            serde_json::to_value(context).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    request.params = Some(params);
 }
 
 async fn read_transport_messages_from<R>(
@@ -467,8 +531,9 @@ mod tests {
     use crate::{AppServerConnectInfo, AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY};
     use agent_protocol::{
         AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerMessageEnvelope,
-        AppServerNotification, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
-        JsonRpcResponse, TransportInitializeParams, TransportInitializeResult,
+        AppServerNotification, CommandExecutionContext, JsonRpcMessage, JsonRpcNotification,
+        JsonRpcRequest, JsonRpcResponse, SessionBootstrapContext, TransportInitializeParams,
+        TransportInitializeResult,
     };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -485,6 +550,7 @@ mod tests {
                 experimental_api: true,
                 opt_out_notification_methods: Vec::new(),
                 channel_capacity: DEFAULT_EVENT_CHANNEL_CAPACITY,
+                session_context: None,
             },
             connect_timeout: Duration::from_secs(5),
             initialize_timeout: Duration::from_secs(5),
@@ -990,6 +1056,315 @@ mod tests {
                 "typed conversation/list should not emit a duplicate notification event: {event:?}"
             );
         }
+
+        client.shutdown().await.expect("shutdown client");
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn local_node_client_sends_session_context_in_initialize() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let address = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept client");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half).lines();
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read initialize line")
+                .expect("initialize payload");
+            let JsonRpcMessage::Request(JsonRpcRequest { id, method, params }) =
+                serde_json::from_str(&line).expect("initialize jsonrpc")
+            else {
+                panic!("expected initialize request");
+            };
+            assert_eq!(method, "initialize");
+            let params: TransportInitializeParams =
+                serde_json::from_value(params.expect("initialize params"))
+                    .expect("initialize params should decode");
+            let session_context = params
+                .session_context
+                .expect("session context should be present");
+            assert_eq!(session_context.session_id.as_deref(), Some("session-1"));
+            assert_eq!(session_context.source_domain.as_deref(), Some("local:cli"));
+            assert_eq!(session_context.workspace_root.as_deref(), Some("D:/repo-z"));
+            assert_eq!(
+                session_context.data_root_dir.as_deref(),
+                Some("D:/repo-z/data")
+            );
+
+            let payload = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
+                id,
+                result: serde_json::to_value(TransportInitializeResult {
+                    server_info: agent_protocol::TransportServerInfo {
+                        name: "node".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    protocol_version: "1".to_string(),
+                    transport: "remote".to_string(),
+                })
+                .expect("serialize initialize result"),
+            }))
+            .expect("serialize initialize response");
+            write_half
+                .write_all(payload.as_bytes())
+                .await
+                .expect("write initialize response");
+            write_half
+                .write_all(b"\n")
+                .await
+                .expect("write initialize newline");
+            write_half.flush().await.expect("flush initialize response");
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read initialized line")
+                .expect("initialized payload");
+            let JsonRpcMessage::Notification(JsonRpcNotification { method, .. }) =
+                serde_json::from_str(&line).expect("initialized jsonrpc")
+            else {
+                panic!("expected initialized notification");
+            };
+            assert_eq!(method, "initialized");
+        });
+
+        let config = RemoteClientConfig {
+            address: address.to_string(),
+            client: AppServerConnectInfo {
+                client_name: "cloudagent-cli".to_string(),
+                client_version: "0.0.0-test".to_string(),
+                experimental_api: true,
+                opt_out_notification_methods: Vec::new(),
+                channel_capacity: DEFAULT_EVENT_CHANNEL_CAPACITY,
+                session_context: Some(SessionBootstrapContext {
+                    session_id: Some("session-1".to_string()),
+                    source_domain: Some("local:cli".to_string()),
+                    workspace_root: Some("D:/repo-z".to_string()),
+                    cwd: Some("D:/repo-z".to_string()),
+                    permission_mode: Some("WorkspaceWrite".to_string()),
+                    data_root_dir: Some("D:/repo-z/data".to_string()),
+                }),
+            },
+            connect_timeout: Duration::from_secs(5),
+            initialize_timeout: Duration::from_secs(5),
+        };
+
+        let client = RemoteAppServerClient::connect(config)
+            .await
+            .expect("connect client");
+        client.shutdown().await.expect("shutdown client");
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn local_node_client_sends_default_command_context_after_initialize() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let address = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept client");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half).lines();
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read initialize line")
+                .expect("initialize payload");
+            let JsonRpcMessage::Request(JsonRpcRequest { id, .. }) =
+                serde_json::from_str(&line).expect("initialize jsonrpc")
+            else {
+                panic!("expected initialize request");
+            };
+
+            let payload = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
+                id,
+                result: serde_json::to_value(TransportInitializeResult {
+                    server_info: agent_protocol::TransportServerInfo {
+                        name: "node".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    protocol_version: "1".to_string(),
+                    transport: "remote".to_string(),
+                })
+                .expect("serialize initialize result"),
+            }))
+            .expect("serialize initialize response");
+            write_half
+                .write_all(payload.as_bytes())
+                .await
+                .expect("write initialize response");
+            write_half.write_all(b"\n").await.expect("write newline");
+            write_half.flush().await.expect("flush initialize response");
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read initialized line")
+                .expect("initialized payload");
+            let JsonRpcMessage::Notification(JsonRpcNotification { method, .. }) =
+                serde_json::from_str(&line).expect("initialized jsonrpc")
+            else {
+                panic!("expected initialized notification");
+            };
+            assert_eq!(method, "initialized");
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read command line")
+                .expect("command payload");
+            let rpc: JsonRpcMessage = serde_json::from_str(&line).expect("jsonrpc command");
+            let envelope = AppClientCommandEnvelope::try_from(rpc).expect("command envelope");
+            assert!(matches!(
+                envelope.command,
+                AppClientCommand::ListConversations
+            ));
+            let context = envelope.context.expect("default command context");
+            assert_eq!(context.workspace_root.as_deref(), Some("D:/repo-z"));
+            assert_eq!(context.cwd.as_deref(), Some("D:/repo-z/subdir"));
+            assert_eq!(context.data_root_dir.as_deref(), Some("D:/repo-z/data"));
+        });
+
+        let mut config = test_config(address.to_string());
+        config.client.session_context = Some(SessionBootstrapContext {
+            session_id: Some("session-1".to_string()),
+            source_domain: Some("local:cli".to_string()),
+            workspace_root: Some("D:/repo-z".to_string()),
+            cwd: Some("D:/repo-z/subdir".to_string()),
+            permission_mode: Some("WorkspaceWrite".to_string()),
+            data_root_dir: Some("D:/repo-z/data".to_string()),
+        });
+        let client = RemoteAppServerClient::connect(config)
+            .await
+            .expect("connect client");
+
+        client
+            .send_command(AppClientCommand::ListConversations)
+            .expect("send command");
+
+        client.shutdown().await.expect("shutdown client");
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn local_node_request_handle_injects_default_context_into_typed_request() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let address = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept client");
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half).lines();
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read initialize line")
+                .expect("initialize payload");
+            let JsonRpcMessage::Request(JsonRpcRequest { id, .. }) =
+                serde_json::from_str(&line).expect("initialize jsonrpc")
+            else {
+                panic!("expected initialize request");
+            };
+
+            let payload = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
+                id,
+                result: serde_json::to_value(TransportInitializeResult {
+                    server_info: agent_protocol::TransportServerInfo {
+                        name: "node".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    protocol_version: "1".to_string(),
+                    transport: "remote".to_string(),
+                })
+                .expect("serialize initialize result"),
+            }))
+            .expect("serialize initialize response");
+            write_half
+                .write_all(payload.as_bytes())
+                .await
+                .expect("write initialize response");
+            write_half.write_all(b"\n").await.expect("write newline");
+            write_half.flush().await.expect("flush initialize response");
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read initialized line")
+                .expect("initialized payload");
+            let JsonRpcMessage::Notification(JsonRpcNotification { method, .. }) =
+                serde_json::from_str(&line).expect("initialized jsonrpc")
+            else {
+                panic!("expected initialized notification");
+            };
+            assert_eq!(method, "initialized");
+
+            let line = reader
+                .next_line()
+                .await
+                .expect("read typed request line")
+                .expect("typed request payload");
+            let JsonRpcMessage::Request(JsonRpcRequest { id, method, params }) =
+                serde_json::from_str(&line).expect("typed request jsonrpc")
+            else {
+                panic!("expected typed request");
+            };
+            assert_eq!(method, "conversation/list");
+            let params = params.expect("request params");
+            let context: CommandExecutionContext = serde_json::from_value(
+                params
+                    .get("_context")
+                    .cloned()
+                    .expect("request context field"),
+            )
+            .expect("decode request context");
+            assert_eq!(context.workspace_root.as_deref(), Some("D:/repo-z"));
+            assert_eq!(context.cwd.as_deref(), Some("D:/repo-z/subdir"));
+            assert_eq!(context.data_root_dir.as_deref(), Some("D:/repo-z/data"));
+
+            let response = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
+                id,
+                result: serde_json::json!({ "conversations": [] }),
+            }))
+            .expect("serialize list response");
+            write_half
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            write_half.write_all(b"\n").await.expect("write newline");
+            write_half.flush().await.expect("flush response");
+        });
+
+        let mut config = test_config(address.to_string());
+        config.client.session_context = Some(SessionBootstrapContext {
+            session_id: Some("session-1".to_string()),
+            source_domain: Some("local:cli".to_string()),
+            workspace_root: Some("D:/repo-z".to_string()),
+            cwd: Some("D:/repo-z/subdir".to_string()),
+            permission_mode: Some("WorkspaceWrite".to_string()),
+            data_root_dir: Some("D:/repo-z/data".to_string()),
+        });
+        let client = RemoteAppServerClient::connect(config)
+            .await
+            .expect("connect client");
+
+        let response = client
+            .request_handle()
+            .request_conversation_list()
+            .await
+            .expect("conversation list");
+        assert!(response.conversations.is_empty());
 
         client.shutdown().await.expect("shutdown client");
         server.await.expect("server task");

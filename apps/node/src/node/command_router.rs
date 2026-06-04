@@ -8,11 +8,11 @@ use agent_core::conversation::ConversationSummary;
 use agent_core::conversation_busy_error;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
-    ConversationHistoryPageResponse, ConversationHistoryResponse, ConversationListResponse,
-    ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest,
-    NodeStatusResponse, NodeStopResponse, PlatformConfigResponse, PlatformControlListResponse,
-    PlatformControlStatusResponse, PlatformControlUpdateResponse, RequestId, SkillsListResponse,
-    WeixinLoginStartResponse, WeixinLoginStatusResponse,
+    CommandExecutionContext, ConversationHistoryPageResponse, ConversationHistoryResponse,
+    ConversationListResponse, ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage,
+    JsonRpcRequest, NodeStatusResponse, NodeStopResponse, PlatformConfigResponse,
+    PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
+    RequestId, SkillsListResponse, WeixinLoginStartResponse, WeixinLoginStatusResponse,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
@@ -51,6 +51,7 @@ where
     if matches!(envelope.command, AppClientCommand::Exit) {
         return Ok(false);
     }
+    session.apply_command_context(envelope.context.as_ref());
 
     if let Some(error) = hub_mode_only_error_response(&rpc, &envelope.command) {
         match error {
@@ -109,7 +110,12 @@ where
             AppClientCommand::RequestConversationStatus { .. } => {
                 let value = runtime
                     .workers()
-                    .request_json(session.worker_scope_key(), &target_conversation, request)
+                    .request_json(
+                        session.worker_scope_key(),
+                        &target_conversation,
+                        request,
+                        command_execution_context(session),
+                    )
                     .await
                     .map_err(anyhow::Error::from)?;
                 let response: ConversationStatusResponse = serde_json::from_value(value)?;
@@ -123,7 +129,12 @@ where
             AppClientCommand::RequestConversationHistory { .. } => {
                 let value = runtime
                     .workers()
-                    .request_json(session.worker_scope_key(), &target_conversation, request)
+                    .request_json(
+                        session.worker_scope_key(),
+                        &target_conversation,
+                        request,
+                        command_execution_context(session),
+                    )
                     .await
                     .map_err(anyhow::Error::from)?;
                 let response: ConversationHistoryResponse = serde_json::from_value(value)?;
@@ -137,7 +148,12 @@ where
             AppClientCommand::RequestConversationHistoryPage { .. } => {
                 let value = runtime
                     .workers()
-                    .request_json(session.worker_scope_key(), &target_conversation, request)
+                    .request_json(
+                        session.worker_scope_key(),
+                        &target_conversation,
+                        request,
+                        command_execution_context(session),
+                    )
                     .await
                     .map_err(anyhow::Error::from)?;
                 let response: ConversationHistoryPageResponse = serde_json::from_value(value)?;
@@ -157,10 +173,43 @@ where
                 session.worker_scope_key(),
                 &target_conversation,
                 envelope.command.clone(),
+                command_execution_context(session),
             )
             .await?;
     }
     Ok(true)
+}
+
+fn command_execution_context(session: &NodeSessionState) -> Option<CommandExecutionContext> {
+    let workspace_root = session
+        .workspace_root()
+        .map(|path| path.to_string_lossy().into_owned());
+    let cwd = session
+        .cwd()
+        .map(|path| path.to_string_lossy().into_owned());
+    let permission_mode = session.permission_mode().map(ToString::to_string);
+    let session_id = session.session_id().map(ToString::to_string);
+    let data_root_dir = session
+        .data_root_dir()
+        .map(|path| path.to_string_lossy().into_owned());
+
+    if session_id.is_none()
+        && workspace_root.is_none()
+        && cwd.is_none()
+        && permission_mode.is_none()
+        && data_root_dir.is_none()
+    {
+        return None;
+    }
+
+    Some(CommandExecutionContext {
+        session_id,
+        workspace_id: None,
+        workspace_root,
+        cwd,
+        permission_mode,
+        data_root_dir,
+    })
 }
 
 async fn handle_typed_request_message<W>(
@@ -187,6 +236,7 @@ where
             return Ok(Some(true));
         }
     };
+    session.apply_command_context(envelope.context.as_ref());
 
     if let Some(error) = hub_mode_only_error_response(rpc, &envelope.command) {
         match error {
@@ -283,6 +333,7 @@ where
                     session.worker_scope_key(),
                     &target_conversation,
                     typed_request,
+                    command_execution_context(session),
                 )
                 .await
                 .map_err(anyhow::Error::from)?;
@@ -1023,6 +1074,7 @@ mod tests {
         let rpc = JsonRpcMessage::from(AppClientCommandEnvelope {
             request_id: RequestId::Integer(17),
             command: AppClientCommand::ListSkills,
+            context: None,
         });
 
         let should_continue = handle_command_message(rpc, &runtime, &mut session, &mut writer)
@@ -1098,6 +1150,7 @@ mod tests {
                     approval_policy: ApprovalPolicy::OnRequest,
                 },
             }),
+            context: None,
         });
 
         let should_continue = handle_command_message(rpc, &runtime, &mut session, &mut writer)

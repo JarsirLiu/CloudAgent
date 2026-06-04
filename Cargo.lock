@@ -26,6 +26,8 @@ dependencies = [
  "agent-core",
  "agent-protocol",
  "anyhow",
+ "cli",
+ "config",
  "notify",
  "serde",
  "serde_json",
@@ -163,6 +165,7 @@ version = "0.1.41"
 dependencies = [
  "agent-app-server",
  "agent-core",
+ "agent-protocol",
  "anyhow",
  "cli",
  "config",

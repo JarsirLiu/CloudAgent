@@ -118,6 +118,7 @@ async fn connect_node_client(node_address: &str, client_name: &str) -> Result<Ap
             experimental_api: true,
             opt_out_notification_methods: Vec::new(),
             channel_capacity: agent_app_server_client::DEFAULT_EVENT_CHANNEL_CAPACITY,
+            session_context: None,
         },
         connect_timeout: Duration::from_secs(2),
         initialize_timeout: Duration::from_secs(5),

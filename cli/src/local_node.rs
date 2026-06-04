@@ -70,6 +70,7 @@ pub async fn create_node_management_client(
         &program,
         &node_args,
         data_root_dir,
+        None,
     )
     .await
 }

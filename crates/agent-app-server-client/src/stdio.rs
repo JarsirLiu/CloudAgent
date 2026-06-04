@@ -1,7 +1,7 @@
 use crate::{AppServerEvent, DEFAULT_EVENT_CHANNEL_CAPACITY, TypedRequestError, forward_event};
 use agent_protocol::{
-    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcError,
-    JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId,
+    AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, CommandExecutionContext,
+    JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId,
 };
 use anyhow::{Context, Result, anyhow};
 use serde::de::DeserializeOwned;
@@ -36,7 +36,10 @@ pub struct StdioAppServerRequestHandle {
 }
 
 enum StdioOutbound {
-    Command(AppClientCommand),
+    Command {
+        command: AppClientCommand,
+        context: Option<CommandExecutionContext>,
+    },
     Request {
         request: JsonRpcRequest,
         response_tx: oneshot::Sender<Result<JsonRpcResponseEnvelope, io::Error>>,
@@ -98,7 +101,20 @@ impl StdioAppServerClient {
 
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(StdioOutbound::Command(command))
+            .send(StdioOutbound::Command {
+                command,
+                context: None,
+            })
+            .map_err(|_| anyhow!("stdio app-server command channel is closed"))
+    }
+
+    pub fn send_command_with_context(
+        &self,
+        command: AppClientCommand,
+        context: Option<CommandExecutionContext>,
+    ) -> Result<()> {
+        self.command_tx
+            .send(StdioOutbound::Command { command, context })
             .map_err(|_| anyhow!("stdio app-server command channel is closed"))
     }
 
@@ -131,7 +147,10 @@ impl StdioAppServerClient {
             reader_task,
         } = self;
 
-        let _ = command_tx.send(StdioOutbound::Command(AppClientCommand::Exit));
+        let _ = command_tx.send(StdioOutbound::Command {
+            command: AppClientCommand::Exit,
+            context: None,
+        });
         drop(command_tx);
 
         let mut child = child.lock().await;
@@ -149,7 +168,10 @@ impl StdioAppServerClient {
 impl StdioAppServerRequestHandle {
     pub fn send_command(&self, command: AppClientCommand) -> Result<()> {
         self.command_tx
-            .send(StdioOutbound::Command(command))
+            .send(StdioOutbound::Command {
+                command,
+                context: None,
+            })
             .map_err(|_| anyhow!("stdio app-server command channel is closed"))
     }
 
@@ -232,10 +254,11 @@ where
 {
     while let Some(outbound) = command_rx.recv().await {
         match outbound {
-            StdioOutbound::Command(command) => {
+            StdioOutbound::Command { command, context } => {
                 let envelope = AppClientCommandEnvelope {
                     request_id: RequestId::Integer(request_counter.fetch_add(1, Ordering::Relaxed)),
                     command,
+                    context,
                 };
                 let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
                 writer.write_all(payload.as_bytes()).await?;
@@ -378,8 +401,8 @@ mod tests {
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
 
         command_tx
-            .send(StdioOutbound::Command(AppClientCommand::SubmitTurn(
-                UserTurnInput {
+            .send(StdioOutbound::Command {
+                command: AppClientCommand::SubmitTurn(UserTurnInput {
                     conversation_id: "default".to_string(),
                     content: vec![agent_core::InputItem::Text {
                         text: "hello".to_string(),
@@ -388,8 +411,9 @@ mod tests {
                         permission_profile: PermissionProfile::ReadOnly,
                         approval_policy: ApprovalPolicy::OnRequest,
                     },
-                },
-            )))
+                }),
+                context: None,
+            })
             .expect("queue command");
         drop(command_tx);
 

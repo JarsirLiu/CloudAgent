@@ -1,4 +1,5 @@
 use agent_protocol::TransportClientInfo;
+use std::path::Path;
 
 const PLATFORM_RUNTIME_CLIENT_PREFIX: &str = "node-platform-";
 const PLATFORM_RUNTIME_FALLBACK_PREFIX: &str = "cloudagent-platform-";
@@ -6,7 +7,17 @@ const PLATFORM_RUNTIME_FALLBACK_PREFIX: &str = "cloudagent-platform-";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NodeSource {
     domain_id: String,
-    worker_scope_key: String,
+    worker_scope_policy: WorkerScopePolicy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkerScopePolicy {
+    // Local surfaces share the same resident node, but their worker identity is
+    // derived from the target workspace instead of the node startup directory.
+    WorkspaceScopedLocal,
+    // Remote / IM style sources stay domain-scoped for now so one shared worker
+    // can multiplex multiple sessions while still receiving explicit execution context.
+    DomainScopedShared,
 }
 
 impl NodeSource {
@@ -14,24 +25,55 @@ impl NodeSource {
         let session_scope_key = sanitize_source_segment(&session_scope_key.into());
         Self {
             domain_id: format!("remote:{session_scope_key}"),
-            worker_scope_key: format!("remote:{session_scope_key}"),
+            worker_scope_policy: WorkerScopePolicy::DomainScopedShared,
         }
     }
 
     pub(crate) fn from_client_info(client_info: &TransportClientInfo) -> Self {
         let domain_id = source_domain_id(&client_info.name);
+        Self::from_domain_id(domain_id)
+    }
+
+    pub(crate) fn from_domain_id(domain_id: impl Into<String>) -> Self {
+        let domain_id = domain_id.into();
         Self {
-            worker_scope_key: domain_id.clone(),
+            worker_scope_policy: worker_scope_policy_for_domain(&domain_id),
             domain_id,
         }
     }
 
-    pub(crate) fn worker_scope_key(&self) -> &str {
-        &self.worker_scope_key
-    }
-
     pub(crate) fn domain_id(&self) -> &str {
         &self.domain_id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn worker_scope_policy(&self) -> WorkerScopePolicy {
+        self.worker_scope_policy
+    }
+
+    pub(crate) fn worker_scope_key(&self, workspace_root: Option<&Path>) -> String {
+        match self.worker_scope_policy {
+            WorkerScopePolicy::WorkspaceScopedLocal => {
+                if let Some(workspace_root) = workspace_root {
+                    // The worker key must remain stable for the same workspace
+                    // even when multiple local CLI sessions connect over time.
+                    let normalized = workspace_root
+                        .to_string_lossy()
+                        .replace('/', "\\")
+                        .to_ascii_lowercase();
+                    let hash = normalized
+                        .bytes()
+                        .fold(1469598103934665603u64, |acc, byte| {
+                            acc.wrapping_mul(1099511628211)
+                                .wrapping_add(u64::from(byte))
+                        });
+                    format!("{}@{hash:016x}", self.domain_id)
+                } else {
+                    self.domain_id.clone()
+                }
+            }
+            WorkerScopePolicy::DomainScopedShared => self.domain_id.clone(),
+        }
     }
 }
 
@@ -60,6 +102,14 @@ fn source_domain_id(client_name: &str) -> String {
                 format!("remote:{normalized}")
             }
         }
+    }
+}
+
+fn worker_scope_policy_for_domain(domain_id: &str) -> WorkerScopePolicy {
+    if domain_id.starts_with("local:") {
+        WorkerScopePolicy::WorkspaceScopedLocal
+    } else {
+        WorkerScopePolicy::DomainScopedShared
     }
 }
 
@@ -123,8 +173,11 @@ fn sanitize_source_segment(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{NodeSource, platform_runtime_client_name, sanitize_source_segment};
+    use super::{
+        NodeSource, WorkerScopePolicy, platform_runtime_client_name, sanitize_source_segment,
+    };
     use agent_protocol::TransportClientInfo;
+    use std::path::Path;
 
     #[test]
     fn cli_client_maps_to_local_cli_domain() {
@@ -134,7 +187,10 @@ mod tests {
         });
 
         assert_eq!(source.domain_id(), "local:cli");
-        assert_eq!(source.worker_scope_key(), "local:cli");
+        assert_eq!(
+            source.worker_scope_policy(),
+            WorkerScopePolicy::WorkspaceScopedLocal
+        );
     }
 
     #[test]
@@ -145,7 +201,10 @@ mod tests {
         });
 
         assert_eq!(source.domain_id(), "local:web");
-        assert_eq!(source.worker_scope_key(), "local:web");
+        assert_eq!(
+            source.worker_scope_policy(),
+            WorkerScopePolicy::WorkspaceScopedLocal
+        );
     }
 
     #[test]
@@ -156,7 +215,10 @@ mod tests {
         });
 
         assert_eq!(source.domain_id(), "im:feishu");
-        assert_eq!(source.worker_scope_key(), "im:feishu");
+        assert_eq!(
+            source.worker_scope_policy(),
+            WorkerScopePolicy::DomainScopedShared
+        );
     }
 
     #[test]
@@ -167,7 +229,10 @@ mod tests {
         });
 
         assert_eq!(source.domain_id(), "im:my-new-im");
-        assert_eq!(source.worker_scope_key(), "im:my-new-im");
+        assert_eq!(
+            source.worker_scope_policy(),
+            WorkerScopePolicy::DomainScopedShared
+        );
     }
 
     #[test]
@@ -178,7 +243,10 @@ mod tests {
         });
 
         assert_eq!(source.domain_id(), "remote:third-party-bridge-v1");
-        assert_eq!(source.worker_scope_key(), "remote:third-party-bridge-v1");
+        assert_eq!(
+            source.worker_scope_policy(),
+            WorkerScopePolicy::DomainScopedShared
+        );
     }
 
     #[test]
@@ -187,8 +255,34 @@ mod tests {
 
         assert_eq!(source.domain_id(), "remote:127-0-0-1-47799-session-1");
         assert_eq!(
-            source.worker_scope_key(),
+            source.worker_scope_key(None),
             "remote:127-0-0-1-47799-session-1"
+        );
+    }
+
+    #[test]
+    fn local_sources_derive_workspace_scoped_worker_key() {
+        let source = NodeSource::from_domain_id("local:cli");
+
+        let key = source.worker_scope_key(Some(Path::new("D:/Repo/App")));
+
+        assert!(key.starts_with("local:cli@"));
+    }
+
+    #[test]
+    fn local_sources_without_workspace_fall_back_to_domain_scope() {
+        let source = NodeSource::from_domain_id("local:web");
+
+        assert_eq!(source.worker_scope_key(None), "local:web");
+    }
+
+    #[test]
+    fn remote_sources_keep_domain_scoped_worker_key() {
+        let source = NodeSource::from_domain_id("im:feishu");
+
+        assert_eq!(
+            source.worker_scope_key(Some(Path::new("D:/Repo/App"))),
+            "im:feishu"
         );
     }
 

@@ -8,6 +8,8 @@ use serde_json::Value;
 pub struct AppClientCommandEnvelope {
     pub request_id: RequestId,
     pub command: AppClientCommand,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<CommandExecutionContext>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,7 +35,18 @@ impl TryFrom<JsonRpcMessage> for AppClientCommandEnvelope {
 
 impl From<AppClientCommandEnvelope> for JsonRpcMessage {
     fn from(envelope: AppClientCommandEnvelope) -> Self {
-        let (method, params) = command_method_and_params(&envelope.command);
+        let (method, mut params) = command_method_and_params(&envelope.command);
+        if let Some(context) = envelope.context {
+            if !params.is_object() {
+                params = serde_json::json!({});
+            }
+            if let Some(object) = params.as_object_mut() {
+                object.insert(
+                    "_context".to_string(),
+                    serde_json::to_value(context).unwrap_or(Value::Null),
+                );
+            }
+        }
         JsonRpcMessage::Request(JsonRpcRequest {
             id: envelope.request_id,
             method: method.to_string(),
@@ -123,21 +136,38 @@ fn extract_event_seq(params: Option<Value>) -> (Option<u64>, Option<Value>) {
 }
 
 fn command_from_request(request: JsonRpcRequest) -> anyhow::Result<AppClientCommandEnvelope> {
-    let command = parse_command(&request.method, request.params)?;
+    let (context, params) = extract_command_context(request.params);
+    let command = parse_command(&request.method, params)?;
     Ok(AppClientCommandEnvelope {
         request_id: request.id,
         command,
+        context,
     })
 }
 
 fn command_from_notification(
     notification: JsonRpcNotification,
 ) -> anyhow::Result<AppClientCommandEnvelope> {
-    let command = parse_command(&notification.method, notification.params)?;
+    let (context, params) = extract_command_context(notification.params);
+    let command = parse_command(&notification.method, params)?;
     Ok(AppClientCommandEnvelope {
         request_id: RequestId::String("notification".to_string()),
         command,
+        context,
     })
+}
+
+fn extract_command_context(
+    params: Option<Value>,
+) -> (Option<CommandExecutionContext>, Option<Value>) {
+    let mut params = params;
+    let mut context = None;
+    if let Some(Value::Object(object)) = params.as_mut()
+        && let Some(raw_context) = object.remove("_context")
+    {
+        context = serde_json::from_value(raw_context).ok();
+    }
+    (context, params)
 }
 
 fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClientCommand> {
@@ -1029,6 +1059,7 @@ mod tests {
                     approval_policy: ApprovalPolicy::OnRequest,
                 },
             }),
+            context: None,
         };
 
         let rpc = JsonRpcMessage::from(envelope.clone());
@@ -1062,6 +1093,7 @@ mod tests {
                 request_id: RequestId::Integer(7),
                 decision: ServerRequestDecision::accept(Some("ok".to_string())),
             },
+            context: None,
         };
 
         let rpc = JsonRpcMessage::from(envelope.clone());
@@ -1092,6 +1124,7 @@ mod tests {
                 before_turn_id: Some("turn-9".to_string()),
                 limit: 25,
             },
+            context: None,
         };
         let rpc = JsonRpcMessage::from(envelope);
         let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");
@@ -1114,6 +1147,7 @@ mod tests {
         let envelope = AppClientCommandEnvelope {
             request_id: RequestId::Integer(13),
             command: AppClientCommand::ListOnlineNodes,
+            context: None,
         };
         let rpc = JsonRpcMessage::from(envelope);
         let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");
@@ -1128,6 +1162,7 @@ mod tests {
             command: AppClientCommand::SelectTargetNode {
                 node_id: "node-a".to_string(),
             },
+            context: None,
         };
         let rpc = JsonRpcMessage::from(envelope);
         let parsed = AppClientCommandEnvelope::try_from(rpc).expect("command should parse");

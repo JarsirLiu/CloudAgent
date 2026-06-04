@@ -1,10 +1,13 @@
-use agent_app_server::run_stdio_server;
+mod runtime_manager;
+
+use agent_app_server::run_stdio_server_with_runtime_manager;
 use agent_core::AgentHost;
 use anyhow::Result;
 use cli::agent_host::build_agent_host;
 use cli::app::cli_settings::load_cli_settings;
 use cli::{ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
+use runtime_manager::AgentdRuntimeManager;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -21,6 +24,7 @@ async fn main() -> Result<()> {
         config.cli.permission_mode = settings.permission_mode;
     }
     let conversation_history_turn_limit = config.cli.conversation_history_turn_limit;
+    let data_root_override = data_dir_override_arg(&args);
     let runtime = build_agent_host(config)?;
 
     match args.get(1).map(String::as_str) {
@@ -30,7 +34,11 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some("app-server-stdio") => {
-            run_stdio_server(runtime, false, None).await?;
+            let manager = Arc::new(AgentdRuntimeManager::new(
+                std::env::current_dir()?,
+                data_root_override,
+            ));
+            run_stdio_server_with_runtime_manager(manager, None, false, None).await?;
             return Ok(());
         }
         _ => {}
@@ -65,11 +73,7 @@ async fn run_console_mode(
 }
 
 fn apply_data_dir_override(config: &mut AgentConfig, args: &[String]) {
-    let Some(value) = args
-        .windows(2)
-        .find(|pair| pair[0] == "--data-dir")
-        .map(|pair| PathBuf::from(&pair[1]))
-    else {
+    let Some(value) = data_dir_override_arg(args) else {
         return;
     };
     config.runtime.data_root_dir = if value.is_absolute() {
@@ -79,4 +83,10 @@ fn apply_data_dir_override(config: &mut AgentConfig, args: &[String]) {
     };
     config.runtime.conversation_store_dir = config.runtime.data_root_dir.join("conversations");
     config.runtime.memory.root_dir = config.runtime.data_root_dir.join("state").join("memory");
+}
+
+fn data_dir_override_arg(args: &[String]) -> Option<PathBuf> {
+    args.windows(2)
+        .find(|pair| pair[0] == "--data-dir")
+        .map(|pair| PathBuf::from(&pair[1]))
 }

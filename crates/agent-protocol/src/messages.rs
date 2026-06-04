@@ -20,11 +20,45 @@ pub struct TransportInitializeCapabilities {
     pub opt_out_notification_methods: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SessionBootstrapContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_root_dir: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CommandExecutionContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_root_dir: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransportInitializeParams {
     pub client_info: TransportClientInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<TransportInitializeCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_context: Option<SessionBootstrapContext>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,6 +139,8 @@ pub enum InterruptDisposition {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeWorkerStatus {
+    // Compatibility/debug field. For local sources this is now a derived worker
+    // instance key, not a raw directory identity.
     pub worker_scope_key: String,
     pub health: NodeWorkerHealth,
     #[serde(default, skip_serializing_if = "Option::is_none")]

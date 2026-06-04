@@ -279,7 +279,16 @@ where
             let params = request.params.unwrap_or(serde_json::Value::Null);
             let initialize: TransportInitializeParams = serde_json::from_value(params)
                 .context("failed to decode remote app-server initialize params")?;
-            session.set_source(NodeSource::from_client_info(&initialize.client_info));
+            let source = initialize
+                .session_context
+                .as_ref()
+                .and_then(|context| context.source_domain.clone())
+                .map(NodeSource::from_domain_id)
+                .unwrap_or_else(|| NodeSource::from_client_info(&initialize.client_info));
+            session.set_source(source);
+            if let Some(context) = initialize.session_context.as_ref() {
+                session.apply_session_context(context);
+            }
             session.mark_initialize_accepted();
             write_jsonrpc_message(
                 writer,
@@ -323,6 +332,8 @@ where
 }
 
 fn default_listen_address() -> String {
+    // This is only a local node discovery default. It is not the worker scope
+    // rule and it must not be treated as execution-context identity.
     format!("127.0.0.1:{}", workspace_scoped_node_port())
 }
 
@@ -443,7 +454,7 @@ mod tests {
     use agent_core::SkillRuntime;
     use agent_protocol::{
         JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId,
-        TransportInitializeParams,
+        SessionBootstrapContext, TransportInitializeParams,
     };
     use std::ffi::OsString;
     use tokio::io::{AsyncBufReadExt, BufReader, duplex};
@@ -536,6 +547,7 @@ mod tests {
                         version: "0.0.0-test".to_string(),
                     },
                     capabilities: None,
+                    session_context: None,
                 })
                 .expect("serialize initialize params"),
             ),
@@ -588,6 +600,7 @@ mod tests {
                         version: "0.0.0-test".to_string(),
                     },
                     capabilities: None,
+                    session_context: None,
                 })
                 .expect("serialize initialize params"),
             ),
@@ -638,5 +651,148 @@ mod tests {
         assert_eq!(id, RequestId::Integer(99));
         assert_eq!(error.code, -32601);
         assert!(error.message.contains("unsupported request method"));
+    }
+
+    #[tokio::test]
+    async fn initialize_applies_session_context_to_node_session_state() {
+        let runtime = test_runtime().await;
+        let mut session = NodeSessionState::new("default", "session-test-4");
+        let (mut writer, reader) = duplex(4096);
+        let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::String("initialize".to_string()),
+            method: "initialize".to_string(),
+            params: Some(
+                serde_json::to_value(TransportInitializeParams {
+                    client_info: agent_protocol::TransportClientInfo {
+                        name: "cloudagent-cli".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    capabilities: None,
+                    session_context: Some(SessionBootstrapContext {
+                        session_id: Some("session-ctx-1".to_string()),
+                        source_domain: Some("local:cli".to_string()),
+                        workspace_root: Some("D:/repo-a".to_string()),
+                        cwd: Some("D:/repo-a/subdir".to_string()),
+                        permission_mode: Some("WorkspaceWrite".to_string()),
+                        data_root_dir: Some("D:/repo-a/data".to_string()),
+                    }),
+                })
+                .expect("serialize initialize params"),
+            ),
+        }))
+        .expect("serialize initialize request");
+
+        handle_transport_line(&initialize, &runtime, &mut session, &mut writer)
+            .await
+            .expect("initialize should succeed");
+
+        let mut line = String::new();
+        let mut reader = BufReader::new(reader);
+        reader.read_line(&mut line).await.expect("read response");
+
+        assert_eq!(session.source_domain_id(), "local:cli");
+        assert_eq!(session.session_id(), Some("session-ctx-1"));
+        assert_eq!(
+            session
+                .workspace_root()
+                .map(|path| path.to_string_lossy().replace('/', "\\")),
+            Some("D:\\repo-a".to_string())
+        );
+        assert_eq!(
+            session
+                .cwd()
+                .map(|path| path.to_string_lossy().replace('/', "\\")),
+            Some("D:\\repo-a\\subdir".to_string())
+        );
+        assert_eq!(session.permission_mode(), Some("WorkspaceWrite"));
+        assert_eq!(
+            session
+                .data_root_dir()
+                .map(|path| path.to_string_lossy().replace('/', "\\")),
+            Some("D:\\repo-a\\data".to_string())
+        );
+        assert!(session.worker_scope_key().starts_with("local:cli@"));
+    }
+
+    #[tokio::test]
+    async fn two_local_cli_sessions_with_different_workspaces_get_distinct_worker_scopes() {
+        let runtime = test_runtime().await;
+        let mut session_a = NodeSessionState::new("default", "session-test-5a");
+        let mut session_b = NodeSessionState::new("default", "session-test-5b");
+        let (mut writer_a, reader_a) = duplex(4096);
+        let (mut writer_b, reader_b) = duplex(4096);
+
+        let initialize_a = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::String("initialize-a".to_string()),
+            method: "initialize".to_string(),
+            params: Some(
+                serde_json::to_value(TransportInitializeParams {
+                    client_info: agent_protocol::TransportClientInfo {
+                        name: "cloudagent-cli".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    capabilities: None,
+                    session_context: Some(SessionBootstrapContext {
+                        session_id: Some("session-a".to_string()),
+                        source_domain: Some("local:cli".to_string()),
+                        workspace_root: Some("D:/repo-alpha".to_string()),
+                        cwd: Some("D:/repo-alpha".to_string()),
+                        permission_mode: Some("WorkspaceWrite".to_string()),
+                        data_root_dir: Some("D:/repo-alpha/data".to_string()),
+                    }),
+                })
+                .expect("serialize initialize params a"),
+            ),
+        }))
+        .expect("serialize initialize request a");
+        handle_transport_line(&initialize_a, &runtime, &mut session_a, &mut writer_a)
+            .await
+            .expect("initialize a should succeed");
+
+        let initialize_b = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::String("initialize-b".to_string()),
+            method: "initialize".to_string(),
+            params: Some(
+                serde_json::to_value(TransportInitializeParams {
+                    client_info: agent_protocol::TransportClientInfo {
+                        name: "cloudagent-cli".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    capabilities: None,
+                    session_context: Some(SessionBootstrapContext {
+                        session_id: Some("session-b".to_string()),
+                        source_domain: Some("local:cli".to_string()),
+                        workspace_root: Some("D:/repo-beta".to_string()),
+                        cwd: Some("D:/repo-beta".to_string()),
+                        permission_mode: Some("WorkspaceWrite".to_string()),
+                        data_root_dir: Some("D:/repo-beta/data".to_string()),
+                    }),
+                })
+                .expect("serialize initialize params b"),
+            ),
+        }))
+        .expect("serialize initialize request b");
+        handle_transport_line(&initialize_b, &runtime, &mut session_b, &mut writer_b)
+            .await
+            .expect("initialize b should succeed");
+
+        let mut sink = String::new();
+        let mut reader_a = BufReader::new(reader_a);
+        let mut reader_b = BufReader::new(reader_b);
+        reader_a
+            .read_line(&mut sink)
+            .await
+            .expect("read response a");
+        sink.clear();
+        reader_b
+            .read_line(&mut sink)
+            .await
+            .expect("read response b");
+
+        assert_eq!(session_a.source_domain_id(), "local:cli");
+        assert_eq!(session_b.source_domain_id(), "local:cli");
+        assert_ne!(session_a.worker_scope_key(), session_b.worker_scope_key());
+        assert!(session_a.worker_scope_key().starts_with("local:cli@"));
+        assert!(session_b.worker_scope_key().starts_with("local:cli@"));
     }
 }

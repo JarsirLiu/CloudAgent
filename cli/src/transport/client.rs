@@ -2,7 +2,7 @@ use crate::app::{ConsoleBootstrap, ConsoleConfig};
 use agent_app_server_client::{
     AppServerClient, AppServerConnectInfo, InProcessClientConfig, RemoteClientConfig,
 };
-use agent_protocol::NodeStatusResponse;
+use agent_protocol::{NodeStatusResponse, SessionBootstrapContext};
 use anyhow::{Result, anyhow};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,33 @@ pub(crate) async fn create_client(
             program,
             args,
             expected_data_root_dir,
-        } => create_local_node_client(address, program, args, expected_data_root_dir).await,
+        } => {
+            // The resident node is shared, so the CLI must always send the
+            // session workspace explicitly instead of relying on node startup cwd.
+            let session_context = SessionBootstrapContext {
+                session_id: None,
+                source_domain: Some("local:cli".to_string()),
+                workspace_root: Some(config.workspace_root.to_string_lossy().into_owned()),
+                cwd: Some(config.workspace_root.to_string_lossy().into_owned()),
+                permission_mode: Some(config.initial_permission_mode.clone()),
+                data_root_dir: Some(
+                    config
+                        .conversation_store_dir
+                        .parent()
+                        .unwrap_or(&config.conversation_store_dir)
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+            };
+            create_local_node_client(
+                address,
+                program,
+                args,
+                expected_data_root_dir,
+                Some(session_context),
+            )
+            .await
+        }
         ConsoleBootstrap::Embedded { runtime } => {
             Ok(AppServerClient::in_process(InProcessClientConfig {
                 runtime: runtime.clone(),
@@ -40,15 +66,16 @@ pub async fn create_local_node_client(
     program: &std::ffi::OsString,
     args: &[std::ffi::OsString],
     expected_data_root_dir: &Path,
+    session_context: Option<SessionBootstrapContext>,
 ) -> Result<AppServerClient> {
     if launches_node_via_cargo(program, args)
-        && let Ok(client) = connect_local_node_once(address).await
+        && let Ok(client) = connect_local_node_once(address, session_context.clone()).await
     {
         let client = verify_local_node_data_root(client, address, expected_data_root_dir).await?;
         stop_existing_development_node(client, address).await?;
     }
 
-    match connect_local_node_once(address).await {
+    match connect_local_node_once(address, session_context.clone()).await {
         Ok(client) => verify_local_node_data_root(client, address, expected_data_root_dir).await,
         Err(first_error) => {
             if existing_node_looks_unhealthy(&first_error) {
@@ -58,7 +85,7 @@ pub async fn create_local_node_client(
             }
             let mut child = spawn_local_node_process(program, args)?;
             let client = wait_for_service(
-                || connect_local_node_once(address),
+                || connect_local_node_once(address, session_context.clone()),
                 Some(&mut child),
                 local_node_launch_timeout(program, args),
                 Duration::from_millis(100),
@@ -88,7 +115,7 @@ async fn wait_for_local_node_to_stop(
 ) -> Result<()> {
     let deadline = Instant::now() + timeout;
     loop {
-        match connect_local_node_once(address).await {
+        match connect_local_node_once(address, None).await {
             Ok(_) => {
                 if Instant::now() >= deadline {
                     return Err(anyhow!(
@@ -107,7 +134,7 @@ pub async fn connect_existing_local_node_client(
     address: &str,
     expected_data_root_dir: &Path,
 ) -> Result<AppServerClient> {
-    let client = connect_local_node_once(address).await?;
+    let client = connect_local_node_once(address, None).await?;
     verify_local_node_data_root(client, address, expected_data_root_dir).await
 }
 
@@ -116,6 +143,8 @@ async fn verify_local_node_data_root(
     address: &str,
     expected_data_root_dir: &Path,
 ) -> Result<AppServerClient> {
+    // A matching node address is not sufficient. We also verify the data root
+    // so a stale local node cannot silently attach the CLI to the wrong store.
     let status: NodeStatusResponse = client
         .request_node_status_typed()
         .await
@@ -266,7 +295,10 @@ fn debug_exe_name(base: &str) -> PathBuf {
     Path::new("debug").join(exe)
 }
 
-async fn connect_local_node_once(address: &str) -> Result<AppServerClient> {
+async fn connect_local_node_once(
+    address: &str,
+    session_context: Option<SessionBootstrapContext>,
+) -> Result<AppServerClient> {
     AppServerClient::remote(RemoteClientConfig {
         address: address.to_string(),
         client: AppServerConnectInfo {
@@ -277,6 +309,7 @@ async fn connect_local_node_once(address: &str) -> Result<AppServerClient> {
             experimental_api: true,
             opt_out_notification_methods: Vec::new(),
             channel_capacity: agent_app_server_client::DEFAULT_EVENT_CHANNEL_CAPACITY,
+            session_context,
         },
         connect_timeout: Duration::from_secs(1),
         initialize_timeout: Duration::from_secs(5),
@@ -326,9 +359,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{connect_local_node_once, existing_node_looks_unhealthy, wait_for_service};
+    use super::{
+        connect_local_node_once, create_local_node_client, existing_node_looks_unhealthy,
+        wait_for_service,
+    };
     use agent_protocol::{
-        ConversationHistoryResponse, ConversationStatusResponse, JsonRpcRequest, RequestId,
+        ConversationHistoryResponse, ConversationStatusResponse, JsonRpcMessage, JsonRpcRequest,
+        JsonRpcResponse, NodeStatusResponse, RequestId, SessionBootstrapContext,
+        TransportInitializeParams, TransportInitializeResult, TransportServerInfo,
     };
     use anyhow::{Result, anyhow};
     use std::sync::{
@@ -337,6 +375,7 @@ mod tests {
     };
     use std::time::Duration;
     use std::{ffi::OsString, path::PathBuf};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{TcpListener, TcpStream};
 
     #[tokio::test]
@@ -420,8 +459,285 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_node_connections_send_distinct_session_contexts_per_workspace() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake node listener");
+        let address = listener.local_addr().expect("listener addr").to_string();
+
+        let expected_contexts = vec![
+            (
+                "D:/repo-alpha".to_string(),
+                "D:/repo-alpha".to_string(),
+                "D:/repo-alpha/data".to_string(),
+            ),
+            (
+                "D:/repo-beta".to_string(),
+                "D:/repo-beta".to_string(),
+                "D:/repo-beta/data".to_string(),
+            ),
+        ];
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.expect("accept connection");
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = BufReader::new(reader);
+
+                let mut initialize_line = String::new();
+                reader
+                    .read_line(&mut initialize_line)
+                    .await
+                    .expect("read initialize");
+                let JsonRpcMessage::Request(request) =
+                    serde_json::from_str(initialize_line.trim_end()).expect("parse initialize")
+                else {
+                    panic!("expected initialize request");
+                };
+                assert_eq!(request.method, "initialize");
+                let params: TransportInitializeParams =
+                    serde_json::from_value(request.params.expect("initialize params"))
+                        .expect("decode initialize params");
+                let context = params.session_context.expect("session context");
+                seen.push((
+                    context.workspace_root.expect("workspace root"),
+                    context.cwd.expect("cwd"),
+                    context.data_root_dir.expect("data root dir"),
+                ));
+
+                let initialize_response = JsonRpcMessage::Response(JsonRpcResponse {
+                    id: request.id,
+                    result: serde_json::to_value(TransportInitializeResult {
+                        server_info: TransportServerInfo {
+                            name: "node".to_string(),
+                            version: "0.0.0-test".to_string(),
+                        },
+                        protocol_version: "1".to_string(),
+                        transport: "remote".to_string(),
+                    })
+                    .expect("serialize initialize result"),
+                });
+                let payload =
+                    serde_json::to_string(&initialize_response).expect("serialize response");
+                writer
+                    .write_all(payload.as_bytes())
+                    .await
+                    .expect("write initialize response");
+                writer.write_all(b"\n").await.expect("write newline");
+
+                let mut initialized_line = String::new();
+                reader
+                    .read_line(&mut initialized_line)
+                    .await
+                    .expect("read initialized");
+                let JsonRpcMessage::Notification(notification) =
+                    serde_json::from_str(initialized_line.trim_end())
+                        .expect("parse initialized notification")
+                else {
+                    panic!("expected initialized notification");
+                };
+                assert_eq!(notification.method, "initialized");
+            }
+            seen
+        });
+
+        let client_a = connect_local_node_once(
+            &address,
+            Some(SessionBootstrapContext {
+                session_id: Some("session-alpha".to_string()),
+                source_domain: Some("local:cli".to_string()),
+                workspace_root: Some("D:/repo-alpha".to_string()),
+                cwd: Some("D:/repo-alpha".to_string()),
+                permission_mode: Some("WorkspaceWrite".to_string()),
+                data_root_dir: Some("D:/repo-alpha/data".to_string()),
+            }),
+        )
+        .await
+        .expect("connect alpha client");
+        let client_b = connect_local_node_once(
+            &address,
+            Some(SessionBootstrapContext {
+                session_id: Some("session-beta".to_string()),
+                source_domain: Some("local:cli".to_string()),
+                workspace_root: Some("D:/repo-beta".to_string()),
+                cwd: Some("D:/repo-beta".to_string()),
+                permission_mode: Some("WorkspaceWrite".to_string()),
+                data_root_dir: Some("D:/repo-beta/data".to_string()),
+            }),
+        )
+        .await
+        .expect("connect beta client");
+
+        client_a.shutdown().await.expect("shutdown alpha client");
+        client_b.shutdown().await.expect("shutdown beta client");
+
+        let seen = server.await.expect("fake node server task");
+        assert_eq!(seen, expected_contexts);
+    }
+
+    #[tokio::test]
+    async fn create_local_node_client_preserves_workspace_context_and_data_root() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake node listener");
+        let address = listener.local_addr().expect("listener addr").to_string();
+        let expected_data_root = PathBuf::from("D:/shared-node-data");
+        let expected_contexts = vec![
+            (
+                "session-alpha".to_string(),
+                "D:/repo-alpha".to_string(),
+                "D:/repo-alpha".to_string(),
+                "D:/shared-node-data".to_string(),
+            ),
+            (
+                "session-beta".to_string(),
+                "D:/repo-beta".to_string(),
+                "D:/repo-beta".to_string(),
+                "D:/shared-node-data".to_string(),
+            ),
+        ];
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.expect("accept connection");
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = BufReader::new(reader);
+
+                let mut initialize_line = String::new();
+                reader
+                    .read_line(&mut initialize_line)
+                    .await
+                    .expect("read initialize");
+                let JsonRpcMessage::Request(request) =
+                    serde_json::from_str(initialize_line.trim_end()).expect("parse initialize")
+                else {
+                    panic!("expected initialize request");
+                };
+                assert_eq!(request.method, "initialize");
+                let params: TransportInitializeParams =
+                    serde_json::from_value(request.params.expect("initialize params"))
+                        .expect("decode initialize params");
+                let context = params.session_context.expect("session context");
+                seen.push((
+                    context.session_id.expect("session id"),
+                    context.workspace_root.expect("workspace root"),
+                    context.cwd.expect("cwd"),
+                    context.data_root_dir.expect("data root dir"),
+                ));
+
+                let initialize_response = JsonRpcMessage::Response(JsonRpcResponse {
+                    id: request.id,
+                    result: serde_json::to_value(TransportInitializeResult {
+                        server_info: TransportServerInfo {
+                            name: "node".to_string(),
+                            version: "0.0.0-test".to_string(),
+                        },
+                        protocol_version: "1".to_string(),
+                        transport: "remote".to_string(),
+                    })
+                    .expect("serialize initialize result"),
+                });
+                let payload =
+                    serde_json::to_string(&initialize_response).expect("serialize response");
+                writer
+                    .write_all(payload.as_bytes())
+                    .await
+                    .expect("write initialize response");
+                writer.write_all(b"\n").await.expect("write newline");
+
+                let mut initialized_line = String::new();
+                reader
+                    .read_line(&mut initialized_line)
+                    .await
+                    .expect("read initialized");
+                let JsonRpcMessage::Notification(notification) =
+                    serde_json::from_str(initialized_line.trim_end())
+                        .expect("parse initialized notification")
+                else {
+                    panic!("expected initialized notification");
+                };
+                assert_eq!(notification.method, "initialized");
+
+                let mut status_line = String::new();
+                reader
+                    .read_line(&mut status_line)
+                    .await
+                    .expect("read node status request");
+                let JsonRpcMessage::Request(request) = serde_json::from_str(status_line.trim_end())
+                    .expect("parse node status request")
+                else {
+                    panic!("expected node/status request");
+                };
+                assert_eq!(request.method, "node/status");
+                let status_response = JsonRpcMessage::Response(JsonRpcResponse {
+                    id: request.id,
+                    result: serde_json::to_value(NodeStatusResponse {
+                        listen_address: "127.0.0.1:47070".to_string(),
+                        worker_running: false,
+                        platform_runtime_count: 0,
+                        managed_platform_count: 0,
+                        data_root_dir: "D:/shared-node-data".to_string(),
+                        conversation_store_dir: "D:/shared-node-data/conversations".to_string(),
+                        workers: Vec::new(),
+                    })
+                    .expect("serialize node status response"),
+                });
+                let payload =
+                    serde_json::to_string(&status_response).expect("serialize status response");
+                writer
+                    .write_all(payload.as_bytes())
+                    .await
+                    .expect("write node status response");
+                writer.write_all(b"\n").await.expect("write newline");
+            }
+            seen
+        });
+
+        let client_a = create_local_node_client(
+            &address,
+            &OsString::from("node.exe"),
+            &[],
+            &expected_data_root,
+            Some(SessionBootstrapContext {
+                session_id: Some("session-alpha".to_string()),
+                source_domain: Some("local:cli".to_string()),
+                workspace_root: Some("D:/repo-alpha".to_string()),
+                cwd: Some("D:/repo-alpha".to_string()),
+                permission_mode: Some("WorkspaceWrite".to_string()),
+                data_root_dir: Some("D:/shared-node-data".to_string()),
+            }),
+        )
+        .await
+        .expect("connect alpha client");
+        let client_b = create_local_node_client(
+            &address,
+            &OsString::from("node.exe"),
+            &[],
+            &expected_data_root,
+            Some(SessionBootstrapContext {
+                session_id: Some("session-beta".to_string()),
+                source_domain: Some("local:cli".to_string()),
+                workspace_root: Some("D:/repo-beta".to_string()),
+                cwd: Some("D:/repo-beta".to_string()),
+                permission_mode: Some("WorkspaceWrite".to_string()),
+                data_root_dir: Some("D:/shared-node-data".to_string()),
+            }),
+        )
+        .await
+        .expect("connect beta client");
+
+        client_a.shutdown().await.expect("shutdown alpha client");
+        client_b.shutdown().await.expect("shutdown beta client");
+
+        let seen = server.await.expect("fake node server task");
+        assert_eq!(seen, expected_contexts);
+    }
+
+    #[tokio::test]
     #[ignore = "manual smoke test: requires fresh prebuilt node/agentd binaries"]
     async fn local_node_remote_smoke_supports_startup_typed_reads() {
+        // This is intentionally kept as an opt-in smoke test because it depends
+        // on prebuilt binaries and a real local process environment.
         let exe_dir = current_binary_dir();
         let node = exe_dir.join(exe_name("node"));
         let agentd = exe_dir.join(exe_name("agentd"));
@@ -451,7 +767,7 @@ mod tests {
             .expect("spawn node");
 
         let mut client = wait_for_service(
-            || connect_local_node_once(&address),
+            || connect_local_node_once(&address, None),
             Some(&mut child),
             Duration::from_secs(5),
             Duration::from_millis(100),

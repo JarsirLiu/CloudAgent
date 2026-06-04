@@ -8,8 +8,8 @@ mod turn;
 
 use agent_core::AgentHost;
 use agent_protocol::{
-    AppClientCommandEnvelope, AppServerMessageEnvelope, JsonRpcError, JsonRpcErrorPayload,
-    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
+    AppClientCommandEnvelope, AppServerMessageEnvelope, CommandExecutionContext, JsonRpcError,
+    JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, SessionBootstrapContext,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -18,15 +18,33 @@ use tokio::sync::mpsc;
 
 pub use app::in_process::{
     InProcessClientHandle, InProcessClientSender, InProcessServer, start_in_process,
+    start_in_process_with_runtime_manager,
 };
+pub use app::runtime_manager::{AppRuntimeManager, FixedRuntimeManager};
 
 pub async fn run_stdio_server(
     runtime: Arc<AgentHost>,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) -> Result<()> {
-    let mut client = start_in_process(
-        runtime.clone(),
+    run_stdio_server_with_runtime_manager(
+        Arc::new(FixedRuntimeManager::new(runtime)),
+        None,
+        auto_approve,
+        auto_approve_reason,
+    )
+    .await
+}
+
+pub async fn run_stdio_server_with_runtime_manager(
+    runtime_manager: Arc<dyn AppRuntimeManager>,
+    session_context: Option<SessionBootstrapContext>,
+    auto_approve: bool,
+    auto_approve_reason: Option<String>,
+) -> Result<()> {
+    let mut client = start_in_process_with_runtime_manager(
+        runtime_manager.clone(),
+        session_context,
         None,
         true,
         auto_approve,
@@ -66,13 +84,20 @@ pub async fn run_stdio_server(
         while let Some(message) = command_rx.recv().await {
             match message {
                 JsonRpcMessage::Request(request) => {
-                    handle_stdio_request(&runtime, &sender, &event_tx, &state, request).await?;
+                    handle_stdio_request(
+                        runtime_manager.as_ref(),
+                        &sender,
+                        &event_tx,
+                        &state,
+                        request,
+                    )
+                    .await?;
                 }
                 JsonRpcMessage::Notification(notification) => {
                     let envelope = AppClientCommandEnvelope::try_from(
                         JsonRpcMessage::Notification(notification),
                     )?;
-                    sender.send_command(envelope.command)?;
+                    sender.send_command_with_context(envelope.command, envelope.context)?;
                 }
                 JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {}
             }
@@ -88,23 +113,24 @@ pub async fn run_stdio_server(
 }
 
 async fn handle_stdio_request(
-    runtime: &Arc<AgentHost>,
+    runtime_manager: &dyn AppRuntimeManager,
     sender: &app::in_process::InProcessClientSender,
     event_tx: &mpsc::UnboundedSender<JsonRpcMessage>,
     state: &Arc<tokio::sync::Mutex<routing::command_router::ServerState>>,
     request: JsonRpcRequest,
 ) -> Result<()> {
+    let runtime = runtime_for_request(runtime_manager, &request)?;
     let request_id = request.id.clone();
     let response = match request.method.as_str() {
         "conversation/list" => {
-            let result = session::service::read_conversation_list(runtime, state).await?;
+            let result = session::service::read_conversation_list(&runtime, state).await?;
             JsonRpcMessage::Response(JsonRpcResponse {
                 id: request_id,
                 result: serde_json::to_value(result)?,
             })
         }
         "skills/list" => {
-            let result = session::service::read_skills_list(runtime, state).await?;
+            let result = session::service::read_skills_list(&runtime, state).await?;
             JsonRpcMessage::Response(JsonRpcResponse {
                 id: request_id,
                 result: serde_json::to_value(result)?,
@@ -113,7 +139,8 @@ async fn handle_stdio_request(
         "conversation/status" => {
             let conversation_id = required_string_param(&request, "conversation_id")?;
             let result =
-                session::service::read_conversation_status(runtime, state, conversation_id).await?;
+                session::service::read_conversation_status(&runtime, state, conversation_id)
+                    .await?;
             JsonRpcMessage::Response(JsonRpcResponse {
                 id: request_id,
                 result: serde_json::to_value(result)?,
@@ -122,7 +149,7 @@ async fn handle_stdio_request(
         "conversation/history" => {
             let conversation_id = required_string_param(&request, "conversation_id")?;
             let result =
-                session::service::read_conversation_history(runtime, state, conversation_id)
+                session::service::read_conversation_history(&runtime, state, conversation_id)
                     .await?;
             JsonRpcMessage::Response(JsonRpcResponse {
                 id: request_id,
@@ -135,7 +162,7 @@ async fn handle_stdio_request(
             let before_turn_id = optional_value_field::<String>(&params, "before_turn_id")?;
             let limit = optional_value_field::<usize>(&params, "limit")?.unwrap_or(30);
             let result = session::service::read_conversation_history_page(
-                runtime,
+                &runtime,
                 state,
                 conversation_id,
                 before_turn_id,
@@ -160,7 +187,7 @@ async fn handle_stdio_request(
         }),
         _ => match AppClientCommandEnvelope::try_from(JsonRpcMessage::Request(request)) {
             Ok(envelope) => {
-                sender.send_command(envelope.command)?;
+                sender.send_command_with_context(envelope.command, envelope.context)?;
                 return Ok(());
             }
             Err(error) => {
@@ -183,6 +210,22 @@ async fn handle_stdio_request(
 
     let _ = event_tx.send(response);
     Ok(())
+}
+
+fn runtime_for_request(
+    runtime_manager: &dyn AppRuntimeManager,
+    request: &JsonRpcRequest,
+) -> Result<Arc<AgentHost>> {
+    let context = request_command_context(request);
+    runtime_manager
+        .runtime_for_command(context.as_ref())
+        .or_else(|_| runtime_manager.initial_runtime())
+}
+
+fn request_command_context(request: &JsonRpcRequest) -> Option<CommandExecutionContext> {
+    AppClientCommandEnvelope::try_from(JsonRpcMessage::Request(request.clone()))
+        .ok()
+        .and_then(|envelope| envelope.context)
 }
 
 fn required_string_param(request: &JsonRpcRequest, field: &str) -> Result<String> {
@@ -212,4 +255,129 @@ where
         return Ok(None);
     }
     Ok(Some(serde_json::from_value(value)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{request_command_context, runtime_for_request};
+    use crate::AppRuntimeManager;
+    use agent_core::{AgentHost, AgentHostExt};
+    use agent_protocol::{
+        AppClientCommand, AppClientCommandEnvelope, CommandExecutionContext, JsonRpcMessage,
+        JsonRpcRequest, RequestId,
+    };
+    use anyhow::{Result, anyhow};
+    use cli::agent_host::build_agent_host;
+    use config::AgentConfig;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestRuntimeManager {
+        default_runtime: Arc<AgentHost>,
+        by_workspace: HashMap<String, Arc<AgentHost>>,
+    }
+
+    impl TestRuntimeManager {
+        fn runtime_by_workspace(&self, workspace_root: Option<&str>) -> Result<Arc<AgentHost>> {
+            let Some(workspace_root) = workspace_root else {
+                return Ok(self.default_runtime.clone());
+            };
+            self.by_workspace
+                .get(workspace_root)
+                .cloned()
+                .ok_or_else(|| anyhow!("missing test runtime for workspace `{workspace_root}`"))
+        }
+    }
+
+    impl AppRuntimeManager for TestRuntimeManager {
+        fn initial_runtime(&self) -> Result<Arc<AgentHost>> {
+            Ok(self.default_runtime.clone())
+        }
+
+        fn runtime_for_command(
+            &self,
+            command_context: Option<&CommandExecutionContext>,
+        ) -> Result<Arc<AgentHost>> {
+            self.runtime_by_workspace(command_context.and_then(|ctx| ctx.workspace_root.as_deref()))
+        }
+    }
+
+    #[test]
+    fn extracts_command_context_from_typed_request() {
+        let request = typed_request_with_context(RequestId::Integer(7), "D:/repo-b".to_string());
+
+        let context = request_command_context(&request).expect("context");
+        assert_eq!(context.workspace_root.as_deref(), Some("D:/repo-b"));
+        assert_eq!(context.session_id.as_deref(), Some("session-9"));
+    }
+
+    #[tokio::test]
+    async fn typed_request_runtime_selection_prefers_request_context() -> Result<()> {
+        let runtime_a = test_runtime("request-runtime-a")?;
+        let runtime_b = test_runtime("request-runtime-b")?;
+        let workspace_a = workspace_string(&runtime_a);
+        let workspace_b = workspace_string(&runtime_b);
+        let manager = TestRuntimeManager {
+            default_runtime: runtime_a.clone(),
+            by_workspace: HashMap::from([
+                (workspace_a.clone(), runtime_a.clone()),
+                (workspace_b.clone(), runtime_b.clone()),
+            ]),
+        };
+
+        let request = typed_request_with_context(RequestId::Integer(9), workspace_b.clone());
+        let runtime = runtime_for_request(&manager, &request)?;
+
+        assert_eq!(workspace_string(&runtime), workspace_b);
+        Ok(())
+    }
+
+    fn typed_request_with_context(request_id: RequestId, workspace_root: String) -> JsonRpcRequest {
+        let rpc = JsonRpcMessage::from(AppClientCommandEnvelope {
+            request_id,
+            command: AppClientCommand::ListConversations,
+            context: Some(CommandExecutionContext {
+                session_id: Some("session-9".to_string()),
+                workspace_id: None,
+                workspace_root: Some(workspace_root),
+                cwd: Some("D:/repo-b/subdir".to_string()),
+                permission_mode: Some("WorkspaceWrite".to_string()),
+                data_root_dir: Some("D:/repo-b/data".to_string()),
+            }),
+        });
+        let JsonRpcMessage::Request(request) = rpc else {
+            panic!("expected request");
+        };
+        request
+    }
+
+    fn test_runtime(label: &str) -> Result<Arc<AgentHost>> {
+        let root = unique_temp_workspace(label);
+        std::fs::create_dir_all(root.join("configs"))?;
+        std::fs::create_dir_all(root.join("data").join("conversations"))?;
+        std::fs::create_dir_all(root.join("data").join("state").join("memory"))?;
+        let mut config = AgentConfig::load(root)?;
+        config.llm.api_key = "test-key".to_string();
+        config.llm.base_url = "https://example.invalid/v1".to_string();
+        config.llm.model = "test-model".to_string();
+        build_agent_host(config)
+    }
+
+    fn workspace_string(runtime: &Arc<AgentHost>) -> String {
+        runtime
+            .context()
+            .workspace_root
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn unique_temp_workspace(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("cloudagent-stdio-request-{label}-{unique}"))
+    }
 }

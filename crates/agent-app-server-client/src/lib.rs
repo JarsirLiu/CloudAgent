@@ -9,8 +9,8 @@ use agent_protocol::{
     JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
     NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
-    RequestId, SelectTargetNodeResponse, SkillsListResponse, UserTurnInput,
-    WeixinLoginStartResponse, WeixinLoginStatusResponse, classify_notification,
+    RequestId, SelectTargetNodeResponse, SessionBootstrapContext, SkillsListResponse,
+    UserTurnInput, WeixinLoginStartResponse, WeixinLoginStatusResponse, classify_notification,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;
@@ -36,6 +36,7 @@ pub struct AppServerConnectInfo {
     pub experimental_api: bool,
     pub opt_out_notification_methods: Vec<String>,
     pub channel_capacity: usize,
+    pub session_context: Option<SessionBootstrapContext>,
 }
 
 #[derive(Debug, Clone)]

@@ -5,17 +5,13 @@ use std::path::PathBuf;
 
 #[cfg(test)]
 pub(crate) fn test_worker_program() -> OsString {
-    let candidates = worker_program_candidates();
-    if let Some(path) = candidates.iter().find(|path| path.exists()) {
-        return path.clone().into_os_string();
-    }
-
     let status = std::process::Command::new("cargo")
         .args(["build", "-p", "agentd"])
         .status()
         .expect("spawn cargo build -p agentd");
     assert!(status.success(), "cargo build -p agentd failed: {status}");
 
+    let candidates = worker_program_candidates();
     candidates
         .iter()
         .find(|path| path.exists())
