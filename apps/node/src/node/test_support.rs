@@ -12,20 +12,26 @@ static TEST_WORKER_PROGRAM: OnceLock<OsString> = OnceLock::new();
 pub(crate) fn test_worker_program() -> OsString {
     TEST_WORKER_PROGRAM
         .get_or_init(|| {
+            if let Some(path) = worker_program_candidates()
+                .iter()
+                .find(|path| path.exists())
+            {
+                return path.clone().into_os_string();
+            }
+
             let status = std::process::Command::new("cargo")
                 .args(["build", "-p", "agentd"])
                 .status()
                 .expect("spawn cargo build -p agentd");
             assert!(status.success(), "cargo build -p agentd failed: {status}");
 
-            let candidates = worker_program_candidates();
-            candidates
+            worker_program_candidates()
                 .iter()
                 .find(|path| path.exists())
                 .unwrap_or_else(|| {
                     panic!(
                         "failed to locate test worker binary after build; checked: {}",
-                        candidates
+                        worker_program_candidates()
                             .iter()
                             .map(|path| path.display().to_string())
                             .collect::<Vec<_>>()
