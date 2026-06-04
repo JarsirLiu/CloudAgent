@@ -744,7 +744,6 @@ impl AgentConfig {
 
     pub fn load_user_only(workspace_root: impl Into<PathBuf>) -> Result<Self> {
         let workspace_root = workspace_root.into();
-        migrate_workspace_runtime_layout(&workspace_root)?;
         let mut config = Self::defaults(workspace_root.clone());
         if let Some(data_root) = default_user_data_root() {
             config.runtime.data_root_dir = data_root.clone();
@@ -898,6 +897,12 @@ fn merge_directory_contents(source: &Path, target: &Path) -> Result<()> {
                     target_path.display()
                 )
             })?;
+        } else {
+            bail!(
+                "refusing to merge legacy runtime file {} because target {} already exists; resolve the conflict manually before retrying migration",
+                source_path.display(),
+                target_path.display()
+            );
         }
     }
     Ok(())
@@ -1207,6 +1212,56 @@ mod tests {
         assert!(new_platform.join("feishu.json").exists());
         assert!(!workspace.join("data").exists());
         assert!(!workspace.join("platform").exists());
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn load_user_only_does_not_create_workspace_runtime_root() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after unix epoch")
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!("cloudagent-user-only-{unique}"));
+
+        let _ = AgentConfig::load_user_only(&workspace).expect("load user-only config");
+
+        assert!(!workspace.join(".cloudagent").exists());
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn migrate_workspace_runtime_layout_fails_on_file_conflict() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after unix epoch")
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!("cloudagent-runtime-conflict-{unique}"));
+        let legacy_platform = workspace.join("platform");
+        let runtime_platform = default_workspace_platform_root(&workspace);
+
+        std::fs::create_dir_all(&legacy_platform).expect("create legacy platform dir");
+        std::fs::create_dir_all(&runtime_platform).expect("create runtime platform dir");
+        std::fs::write(
+            legacy_platform.join("feishu.json"),
+            br#"{"source":"legacy"}"#,
+        )
+        .expect("write legacy file");
+        std::fs::write(
+            runtime_platform.join("feishu.json"),
+            br#"{"source":"runtime"}"#,
+        )
+        .expect("write runtime file");
+
+        let error =
+            migrate_workspace_runtime_layout(&workspace).expect_err("migration should fail");
+        assert!(
+            error.to_string().contains("resolve the conflict manually"),
+            "unexpected conflict error: {error:#}"
+        );
+        assert!(legacy_platform.join("feishu.json").exists());
+        assert!(runtime_platform.join("feishu.json").exists());
 
         let _ = std::fs::remove_dir_all(workspace);
     }
