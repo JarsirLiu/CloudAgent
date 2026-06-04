@@ -16,19 +16,19 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let args: Vec<String> = std::env::args().collect();
-    let workspace_root = std::env::current_dir()?;
-    let mut config = AgentConfig::load(workspace_root)?;
-    apply_data_dir_override(&mut config, &args);
-    if let Ok(Some(settings)) = load_cli_settings(&config.runtime.conversation_store_dir) {
-        config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
-        config.cli.permission_mode = settings.permission_mode;
-    }
-    let conversation_history_turn_limit = config.cli.conversation_history_turn_limit;
     let data_root_override = data_dir_override_arg(&args);
-    let runtime = build_agent_host(config)?;
 
     match args.get(1).map(String::as_str) {
         Some("console") => {
+            let workspace_root = std::env::current_dir()?;
+            let mut config = AgentConfig::load(workspace_root)?;
+            apply_data_dir_override(&mut config, &args);
+            if let Ok(Some(settings)) = load_cli_settings(&config.runtime.conversation_store_dir) {
+                config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
+                config.cli.permission_mode = settings.permission_mode;
+            }
+            let conversation_history_turn_limit = config.cli.conversation_history_turn_limit;
+            let runtime = build_agent_host(config)?;
             runtime.run_startup_retention_cleanup().await;
             run_console_mode(runtime, conversation_history_turn_limit).await?;
             return Ok(());
