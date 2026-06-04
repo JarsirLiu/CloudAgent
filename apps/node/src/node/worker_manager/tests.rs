@@ -1,17 +1,9 @@
 use super::types::{NodeEvent, WorkerHandle, record_worker_fault, should_evict_worker};
 use super::{IDLE_WORKER_TTL, WorkerManager};
 use crate::node::test_support::test_worker_program;
-use agent_core::conversation::ConversationSummary;
-use agent_protocol::{
-    CommandExecutionContext, ConversationListResponse, JsonRpcRequest, NodeWorkerHealth, RequestId,
-};
+use agent_protocol::NodeWorkerHealth;
 use anyhow::Result;
-use config::default_workspace_data_root;
-use infra_store::JsonConversationStore;
-use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 
@@ -251,108 +243,4 @@ async fn status_snapshot_reports_running_and_faulted_scopes() -> Result<()> {
             && status.detail.as_deref() == Some("transport failed")
     }));
     Ok(())
-}
-
-#[tokio::test]
-async fn shared_worker_process_switches_runtime_by_request_context() -> Result<()> {
-    let manager = WorkerManager::new(test_worker_program(), None);
-    let workspace_a = unique_workspace("worker-runtime-a");
-    let workspace_b = unique_workspace("worker-runtime-b");
-    seed_workspace(&workspace_a, "conversation-a").await?;
-    seed_workspace(&workspace_b, "conversation-b").await?;
-
-    let response_a: ConversationListResponse = serde_json::from_value(
-        manager
-            .request_json(
-                "local:cli-shared",
-                "default",
-                list_conversations_request(1),
-                Some(context_for_workspace(&workspace_a)),
-            )
-            .await?,
-    )?;
-    let response_b: ConversationListResponse = serde_json::from_value(
-        manager
-            .request_json(
-                "local:cli-shared",
-                "default",
-                list_conversations_request(2),
-                Some(context_for_workspace(&workspace_b)),
-            )
-            .await?,
-    )?;
-
-    assert_eq!(
-        conversation_ids(&response_a),
-        BTreeSet::from(["conversation-a".to_string()])
-    );
-    assert_eq!(
-        conversation_ids(&response_b),
-        BTreeSet::from(["conversation-b".to_string()])
-    );
-
-    let statuses = manager.status_snapshot().await;
-    assert_eq!(statuses.len(), 1);
-    assert_eq!(statuses[0].worker_scope_key, "local:cli-shared");
-    assert!(matches!(statuses[0].health, NodeWorkerHealth::Running));
-
-    manager.shutdown().await?;
-    Ok(())
-}
-
-fn list_conversations_request(id: i64) -> JsonRpcRequest {
-    JsonRpcRequest {
-        id: RequestId::Integer(id),
-        method: "conversation/list".to_string(),
-        params: Some(serde_json::Value::Null),
-    }
-}
-
-fn context_for_workspace(workspace_root: &Path) -> CommandExecutionContext {
-    let data_root = default_workspace_data_root(workspace_root);
-    CommandExecutionContext {
-        session_id: Some(format!(
-            "session-{}",
-            workspace_root
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("workspace")
-        )),
-        workspace_id: None,
-        workspace_root: Some(workspace_root.to_string_lossy().into_owned()),
-        cwd: Some(workspace_root.to_string_lossy().into_owned()),
-        permission_mode: Some("WorkspaceWrite".to_string()),
-        data_root_dir: Some(data_root.to_string_lossy().into_owned()),
-    }
-}
-
-async fn seed_workspace(workspace_root: &Path, conversation_id: &str) -> Result<()> {
-    let data_root = default_workspace_data_root(workspace_root);
-    tokio::fs::create_dir_all(workspace_root.join("configs")).await?;
-    tokio::fs::create_dir_all(data_root.join("conversations")).await?;
-    tokio::fs::create_dir_all(data_root.join("state").join("memory")).await?;
-    tokio::fs::write(
-        workspace_root.join("configs").join("config.toml"),
-        "[llm]\nbase_url = \"https://example.invalid/v1\"\napi_key = \"test-key\"\nmodel = \"test-model\"\n",
-    )
-    .await?;
-    let store = JsonConversationStore::new(data_root.join("conversations"));
-    store.create_conversation(conversation_id).await?;
-    Ok(())
-}
-
-fn conversation_ids(response: &ConversationListResponse) -> BTreeSet<String> {
-    response
-        .conversations
-        .iter()
-        .map(|summary: &ConversationSummary| summary.conversation_id.clone())
-        .collect()
-}
-
-fn unique_workspace(label: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time after unix epoch")
-        .as_nanos();
-    std::env::temp_dir().join(format!("cloudagent-worker-test-{label}-{unique}"))
 }

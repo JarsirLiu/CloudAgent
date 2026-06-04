@@ -12,7 +12,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{Child, ChildStderr, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, timeout};
@@ -61,7 +61,7 @@ impl StdioAppServerClient {
         command.args(&config.args);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
-        command.stderr(Stdio::null());
+        command.stderr(Stdio::piped());
         command.kill_on_drop(true);
         configure_background_stdio_child(&mut command);
 
@@ -77,11 +77,16 @@ impl StdioAppServerClient {
             .stdout
             .take()
             .ok_or_else(|| anyhow!("stdio app-server child missing stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("stdio app-server child missing stderr"))?;
 
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_CAPACITY);
         let request_counter = Arc::new(AtomicI64::new(1));
         let pending_requests = Arc::new(Mutex::new(PendingRequestMap::new()));
+        let stderr_buffer = Arc::new(Mutex::new(String::new()));
 
         tokio::spawn(write_commands(
             stdin,
@@ -89,7 +94,13 @@ impl StdioAppServerClient {
             request_counter.clone(),
             pending_requests.clone(),
         ));
-        let reader_task = tokio::spawn(read_events(stdout, event_tx, pending_requests));
+        tokio::spawn(read_stderr(stderr, stderr_buffer.clone()));
+        let reader_task = tokio::spawn(read_events(
+            stdout,
+            event_tx,
+            pending_requests,
+            stderr_buffer,
+        ));
 
         Ok(Self {
             command_tx,
@@ -287,14 +298,22 @@ async fn read_events(
     stdout: tokio::process::ChildStdout,
     event_tx: mpsc::Sender<AppServerEvent>,
     pending_requests: SharedPendingRequests,
+    stderr_buffer: Arc<Mutex<String>>,
 ) -> Result<()> {
-    read_events_from(BufReader::new(stdout), event_tx, pending_requests).await
+    read_events_from(
+        BufReader::new(stdout),
+        event_tx,
+        pending_requests,
+        stderr_buffer,
+    )
+    .await
 }
 
 async fn read_events_from<R>(
     reader: R,
     event_tx: mpsc::Sender<AppServerEvent>,
     pending_requests: SharedPendingRequests,
+    stderr_buffer: Arc<Mutex<String>>,
 ) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
@@ -304,6 +323,7 @@ where
         event_tx,
         "stdio app server closed",
         pending_requests,
+        stderr_buffer,
     )
     .await
 }
@@ -313,6 +333,7 @@ async fn read_events_from_with_disconnect_message<R>(
     event_tx: mpsc::Sender<AppServerEvent>,
     disconnect_message: &str,
     pending_requests: SharedPendingRequests,
+    stderr_buffer: Arc<Mutex<String>>,
 ) -> Result<()>
 where
     R: AsyncBufRead + Unpin,
@@ -363,11 +384,12 @@ where
         }
     }
 
+    let disconnect_message = enrich_disconnect_message(disconnect_message, &stderr_buffer).await;
     let mut pending = pending_requests.lock().await;
     for (_, response_tx) in pending.drain() {
         let _ = response_tx.send(Err(io::Error::new(
             ErrorKind::BrokenPipe,
-            disconnect_message.to_string(),
+            disconnect_message.clone(),
         )));
     }
     drop(pending);
@@ -376,11 +398,50 @@ where
         &event_tx,
         &mut skipped_events,
         AppServerEvent::Disconnected {
-            message: disconnect_message.to_string(),
+            message: disconnect_message,
         },
     )
     .await;
     Ok(())
+}
+
+async fn read_stderr(stderr: ChildStderr, stderr_buffer: Arc<Mutex<String>>) -> Result<()> {
+    let mut lines = BufReader::new(stderr).lines();
+    let mut captured = Vec::new();
+    while let Some(line) = lines.next_line().await? {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            captured.push(trimmed.to_string());
+        }
+    }
+    if !captured.is_empty() {
+        *stderr_buffer.lock().await = captured.join("\n");
+    }
+    Ok(())
+}
+
+async fn enrich_disconnect_message(
+    disconnect_message: &str,
+    stderr_buffer: &Arc<Mutex<String>>,
+) -> String {
+    let stderr = stderr_buffer.lock().await.trim().to_string();
+    if stderr.is_empty() {
+        return disconnect_message.to_string();
+    }
+    format!(
+        "{disconnect_message}; stderr: {}",
+        summarize_stderr(&stderr)
+    )
+}
+
+fn summarize_stderr(stderr: &str) -> String {
+    const MAX_CHARS: usize = 400;
+    let mut summary = stderr.replace('\r', "");
+    if summary.chars().count() <= MAX_CHARS {
+        return summary;
+    }
+    summary = summary.chars().take(MAX_CHARS).collect::<String>();
+    format!("{summary}...")
 }
 
 #[cfg(test)]
@@ -483,10 +544,16 @@ mod tests {
         });
         let (event_tx, mut event_rx) = mpsc::channel(8);
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let stderr_buffer = Arc::new(Mutex::new(String::new()));
 
-        read_events_from(BufReader::new(read_side), event_tx, pending_requests)
-            .await
-            .expect("read events");
+        read_events_from(
+            BufReader::new(read_side),
+            event_tx,
+            pending_requests,
+            stderr_buffer,
+        )
+        .await
+        .expect("read events");
         writer.await.expect("writer task");
 
         match event_rx.recv().await.expect("notification event") {
@@ -554,10 +621,16 @@ mod tests {
         });
         let (event_tx, mut event_rx) = mpsc::channel(8);
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let stderr_buffer = Arc::new(Mutex::new(String::new()));
 
-        read_events_from(BufReader::new(read_side), event_tx, pending_requests)
-            .await
-            .expect("read events");
+        read_events_from(
+            BufReader::new(read_side),
+            event_tx,
+            pending_requests,
+            stderr_buffer,
+        )
+        .await
+        .expect("read events");
         writer.await.expect("writer task");
 
         let mut messages = Vec::new();
@@ -588,10 +661,12 @@ mod tests {
         });
         let (event_tx, _event_rx) = mpsc::channel(8);
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let stderr_buffer = Arc::new(Mutex::new(String::new()));
         let reader_task = tokio::spawn(read_events_from(
             BufReader::new(read_side),
             event_tx,
             pending_requests.clone(),
+            stderr_buffer,
         ));
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
         let (request_tx, request_rx) = oneshot::channel();
