@@ -86,7 +86,11 @@ mod tests {
 
     #[test]
     fn dev_mode_uses_data_platform_directory() {
-        let root = PathBuf::from(r"D:\repo\cloudagent\.cloudagent\data");
+        let root = std::env::temp_dir()
+            .join("repo")
+            .join("cloudagent")
+            .join(".cloudagent")
+            .join("data");
         assert_eq!(
             platform_config_dir(Some(root.as_os_str())),
             root.parent()

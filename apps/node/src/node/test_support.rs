@@ -2,31 +2,40 @@
 use std::ffi::OsString;
 #[cfg(test)]
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::OnceLock;
+
+#[cfg(test)]
+static TEST_WORKER_PROGRAM: OnceLock<OsString> = OnceLock::new();
 
 #[cfg(test)]
 pub(crate) fn test_worker_program() -> OsString {
-    let status = std::process::Command::new("cargo")
-        .args(["build", "-p", "agentd"])
-        .status()
-        .expect("spawn cargo build -p agentd");
-    assert!(status.success(), "cargo build -p agentd failed: {status}");
+    TEST_WORKER_PROGRAM
+        .get_or_init(|| {
+            let status = std::process::Command::new("cargo")
+                .args(["build", "-p", "agentd"])
+                .status()
+                .expect("spawn cargo build -p agentd");
+            assert!(status.success(), "cargo build -p agentd failed: {status}");
 
-    let candidates = worker_program_candidates();
-    candidates
-        .iter()
-        .find(|path| path.exists())
-        .unwrap_or_else(|| {
-            panic!(
-                "failed to locate test worker binary after build; checked: {}",
-                candidates
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+            let candidates = worker_program_candidates();
+            candidates
+                .iter()
+                .find(|path| path.exists())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "failed to locate test worker binary after build; checked: {}",
+                        candidates
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+                .clone()
+                .into_os_string()
         })
         .clone()
-        .into_os_string()
 }
 
 #[cfg(test)]
