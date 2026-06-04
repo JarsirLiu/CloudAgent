@@ -6,6 +6,7 @@ use agent_protocol::{
     CommandExecutionContext, ConversationListResponse, JsonRpcRequest, NodeWorkerHealth, RequestId,
 };
 use anyhow::Result;
+use config::default_workspace_data_root;
 use infra_store::JsonConversationStore;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -308,6 +309,7 @@ fn list_conversations_request(id: i64) -> JsonRpcRequest {
 }
 
 fn context_for_workspace(workspace_root: &Path) -> CommandExecutionContext {
+    let data_root = default_workspace_data_root(workspace_root);
     CommandExecutionContext {
         session_id: Some(format!(
             "session-{}",
@@ -320,15 +322,16 @@ fn context_for_workspace(workspace_root: &Path) -> CommandExecutionContext {
         workspace_root: Some(workspace_root.to_string_lossy().into_owned()),
         cwd: Some(workspace_root.to_string_lossy().into_owned()),
         permission_mode: Some("WorkspaceWrite".to_string()),
-        data_root_dir: Some(workspace_root.join("data").to_string_lossy().into_owned()),
+        data_root_dir: Some(data_root.to_string_lossy().into_owned()),
     }
 }
 
 async fn seed_workspace(workspace_root: &Path, conversation_id: &str) -> Result<()> {
+    let data_root = default_workspace_data_root(workspace_root);
     tokio::fs::create_dir_all(workspace_root.join("configs")).await?;
-    tokio::fs::create_dir_all(workspace_root.join("data").join("conversations")).await?;
-    tokio::fs::create_dir_all(workspace_root.join("data").join("state").join("memory")).await?;
-    let store = JsonConversationStore::new(workspace_root.join("data").join("conversations"));
+    tokio::fs::create_dir_all(data_root.join("conversations")).await?;
+    tokio::fs::create_dir_all(data_root.join("state").join("memory")).await?;
+    let store = JsonConversationStore::new(data_root.join("conversations"));
     store.create_conversation(conversation_id).await?;
     Ok(())
 }

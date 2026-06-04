@@ -13,7 +13,7 @@ fn default_data_root_dir() -> PathBuf {
     }
 
     std::env::current_dir()
-        .map(|cwd| cwd.join("data"))
+        .map(|cwd| cwd.join(".cloudagent").join("data"))
         .unwrap_or_else(|_| PathBuf::from("data"))
 }
 
@@ -37,6 +37,15 @@ mod tests {
     #[test]
     fn explicit_data_root_wins() {
         let explicit = PathBuf::from(r"D:\repo\cloudagent\data");
+        assert_eq!(
+            resolve_data_root_dir(Some(OsStr::new(explicit.as_os_str()))),
+            explicit
+        );
+    }
+
+    #[test]
+    fn dev_default_data_root_uses_workspace_cloudagent_directory_shape() {
+        let explicit = PathBuf::from(r"D:\repo\cloudagent\.cloudagent\data");
         assert_eq!(
             resolve_data_root_dir(Some(OsStr::new(explicit.as_os_str()))),
             explicit

@@ -10,6 +10,9 @@ data/conversations/*
 data/ui-settings.json
 data/platform/*
 data/platforms/*
+.cloudagent/data/
+.cloudagent/platform/
+apps/*/.cloudagent/
 cli/data/state/*
 cli/data/cache/*
 cli/data/logs/*
@@ -19,6 +22,7 @@ cli/data/ui-settings.json
 
 # Local config and secrets
 configs/agent.toml
+.cloudagent/config.toml
 *.local.toml
 .env
 .env.*

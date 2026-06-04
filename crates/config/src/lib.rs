@@ -220,6 +220,7 @@ struct PartialCliConfig {
 impl AgentConfig {
     pub fn load(workspace_root: impl Into<PathBuf>) -> Result<Self> {
         let workspace_root = workspace_root.into();
+        migrate_workspace_runtime_layout(&workspace_root)?;
         let paths = config_search_paths(&workspace_root);
         Self::load_from_paths(workspace_root, paths)
     }
@@ -743,6 +744,7 @@ impl AgentConfig {
 
     pub fn load_user_only(workspace_root: impl Into<PathBuf>) -> Result<Self> {
         let workspace_root = workspace_root.into();
+        migrate_workspace_runtime_layout(&workspace_root)?;
         let mut config = Self::defaults(workspace_root.clone());
         if let Some(data_root) = default_user_data_root() {
             config.runtime.data_root_dir = data_root.clone();
@@ -766,7 +768,15 @@ impl AgentConfig {
 }
 
 pub fn default_workspace_data_root(workspace_root: &Path) -> PathBuf {
-    workspace_root.join("data")
+    default_workspace_runtime_root(workspace_root).join("data")
+}
+
+pub fn default_workspace_runtime_root(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".cloudagent")
+}
+
+pub fn default_workspace_platform_root(workspace_root: &Path) -> PathBuf {
+    default_workspace_runtime_root(workspace_root).join("platform")
 }
 
 pub fn default_user_data_root() -> Option<PathBuf> {
@@ -815,6 +825,93 @@ fn config_search_paths_with_home(workspace_root: &Path, home: Option<PathBuf>) -
         paths.push(home.join(".cloudagent").join("config.toml"));
     }
     paths
+}
+
+pub fn migrate_workspace_runtime_layout(workspace_root: &Path) -> Result<()> {
+    let runtime_root = default_workspace_runtime_root(workspace_root);
+    std::fs::create_dir_all(&runtime_root).with_context(|| {
+        format!(
+            "failed to create workspace runtime root {}",
+            runtime_root.display()
+        )
+    })?;
+
+    let data_root = default_workspace_data_root(workspace_root);
+    let platform_root = default_workspace_platform_root(workspace_root);
+
+    migrate_legacy_dir(&workspace_root.join("data"), &data_root)?;
+    merge_legacy_dir(&workspace_root.join("platform"), &platform_root)?;
+    merge_legacy_dir(&data_root.join("platform"), &platform_root)?;
+
+    Ok(())
+}
+
+fn migrate_legacy_dir(source: &Path, target: &Path) -> Result<()> {
+    if !source.exists() || target.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::rename(source, target).with_context(|| {
+        format!(
+            "failed to migrate legacy runtime directory {} -> {}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn merge_legacy_dir(source: &Path, target: &Path) -> Result<()> {
+    if !source.exists() || source == target {
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    merge_directory_contents(source, target)?;
+    remove_dir_if_empty(source)?;
+    Ok(())
+}
+
+fn merge_directory_contents(source: &Path, target: &Path) -> Result<()> {
+    std::fs::create_dir_all(target)
+        .with_context(|| format!("failed to create {}", target.display()))?;
+    for entry in
+        std::fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
+    {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            merge_directory_contents(&source_path, &target_path)?;
+            remove_dir_if_empty(&source_path)?;
+        } else if !target_path.exists() {
+            std::fs::rename(&source_path, &target_path).with_context(|| {
+                format!(
+                    "failed to migrate legacy runtime file {} -> {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_dir_if_empty(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if std::fs::read_dir(path)?.next().is_none() {
+        std::fs::remove_dir(path)
+            .with_context(|| format!("failed to remove empty directory {}", path.display()))?;
+    }
+    Ok(())
 }
 
 fn user_home_dir() -> Option<PathBuf> {
@@ -911,7 +1008,9 @@ fn default_system_prompt() -> String {
 mod tests {
     use super::{
         AgentConfig, InputModality, PartialAgentConfig, PartialCliConfig, PartialToolConfig,
-        config_search_paths_with_home, normalize_input_modalities, parse_input_modalities,
+        config_search_paths_with_home, default_workspace_data_root,
+        default_workspace_platform_root, migrate_workspace_runtime_layout,
+        normalize_input_modalities, parse_input_modalities,
     };
     use crate::ReasoningEffort;
     use std::path::PathBuf;
@@ -1059,5 +1158,56 @@ mod tests {
         assert_eq!(config.llm.model_reasoning_effort, ReasoningEffort::High);
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn default_workspace_data_root_uses_workspace_cloudagent_directory() {
+        let workspace = PathBuf::from("D:/repo/cloudagent");
+        assert_eq!(
+            default_workspace_data_root(&workspace),
+            workspace.join(".cloudagent").join("data")
+        );
+    }
+
+    #[test]
+    fn migrate_workspace_runtime_layout_moves_legacy_data_and_platform_dirs() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after unix epoch")
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!("cloudagent-runtime-migrate-{unique}"));
+        let legacy_data = workspace.join("data");
+        let legacy_platform = workspace.join("platform");
+        let legacy_data_platform = legacy_data.join("platform");
+
+        std::fs::create_dir_all(legacy_data.join("conversations")).expect("create legacy data");
+        std::fs::create_dir_all(&legacy_platform).expect("create legacy platform");
+        std::fs::create_dir_all(&legacy_data_platform).expect("create legacy data/platform");
+        std::fs::write(
+            legacy_data.join("conversations").join("session_index.db"),
+            b"db",
+        )
+        .expect("write legacy conversation index");
+        std::fs::write(legacy_platform.join("feishu.seen-events.json"), b"[]")
+            .expect("write legacy seen-events");
+        std::fs::write(legacy_data_platform.join("feishu.json"), b"{}")
+            .expect("write legacy platform config");
+
+        migrate_workspace_runtime_layout(&workspace).expect("migrate runtime layout");
+
+        let new_data = default_workspace_data_root(&workspace);
+        let new_platform = default_workspace_platform_root(&workspace);
+        assert!(
+            new_data
+                .join("conversations")
+                .join("session_index.db")
+                .exists()
+        );
+        assert!(new_platform.join("feishu.seen-events.json").exists());
+        assert!(new_platform.join("feishu.json").exists());
+        assert!(!workspace.join("data").exists());
+        assert!(!workspace.join("platform").exists());
+
+        let _ = std::fs::remove_dir_all(workspace);
     }
 }
