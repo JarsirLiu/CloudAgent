@@ -121,6 +121,10 @@ fn detect_terminal_color_depth() -> ColorDepth {
     )
 }
 
+pub(crate) fn prepare_terminal_color_output() {
+    let _ = windows_console_supports_or_enables_virtual_terminal();
+}
+
 fn stdout_color_depth() -> ColorDepth {
     match supports_color::on_cached(supports_color::Stream::Stdout) {
         Some(level) if level.has_16m => ColorDepth::TrueColor,

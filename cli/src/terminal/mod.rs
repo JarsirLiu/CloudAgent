@@ -7,7 +7,9 @@ mod keyboard_modes;
 use anyhow::Result;
 use crossterm::Command;
 use crossterm::SynchronizedUpdate;
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -18,7 +20,7 @@ use std::io::{self, stdout};
 use std::panic;
 use std::sync::Once;
 
-use color_compat::TerminalCapabilities;
+use color_compat::{TerminalCapabilities, prepare_terminal_color_output};
 pub use color_compat::apply_color_cli_preference;
 pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
@@ -39,11 +41,13 @@ pub(crate) fn init() -> Result<TerminalGuard> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     let init_result = (|| -> Result<TerminalGuard> {
+        prepare_terminal_color_output();
         execute!(
             stdout,
             EnterAlternateScreen,
             EnableAlternateScroll,
-            EnableBracketedPaste
+            EnableBracketedPaste,
+            EnableMouseCapture
         )?;
         keyboard_modes::enable_keyboard_enhancement();
         let backend = CrosstermBackend::new(io::stdout());
@@ -64,6 +68,7 @@ pub(crate) fn restore() -> Result<()> {
     let _ = execute!(
         io::stdout(),
         DisableBracketedPaste,
+        DisableMouseCapture,
         DisableAlternateScroll,
         LeaveAlternateScreen
     );
