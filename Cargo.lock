@@ -474,6 +474,7 @@ dependencies = [
  "futures",
  "image",
  "infra-store",
+ "libc",
  "pulldown-cmark",
  "ratatui",
  "reqwest 0.12.28",

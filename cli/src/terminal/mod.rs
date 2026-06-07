@@ -16,7 +16,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use std::fmt;
-use std::io::{self, stdout};
+use std::io::{self, IsTerminal, stdout};
 use std::panic;
 use std::sync::Once;
 
@@ -38,6 +38,13 @@ pub(crate) struct PreparedHistoryProjection {
 }
 
 pub(crate) fn init() -> Result<TerminalGuard> {
+    if !io::stdin().is_terminal() {
+        anyhow::bail!("stdin is not a terminal");
+    }
+    if !io::stdout().is_terminal() {
+        anyhow::bail!("stdout is not a terminal");
+    }
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     let init_result = (|| -> Result<TerminalGuard> {
@@ -50,6 +57,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
             EnableMouseCapture
         )?;
         keyboard_modes::enable_keyboard_enhancement();
+        flush_terminal_input_buffer();
         let backend = CrosstermBackend::new(io::stdout());
         let capabilities = TerminalCapabilities::detect();
         let terminal = custom_terminal::Terminal::new(backend, capabilities)?;
@@ -63,6 +71,29 @@ pub(crate) fn init() -> Result<TerminalGuard> {
     }
     init_result
 }
+
+#[cfg(unix)]
+fn flush_terminal_input_buffer() {
+    // Safety: flushing the stdin queue does not move ownership and only drops pending input events.
+    let _ = unsafe { libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH) };
+}
+
+#[cfg(windows)]
+fn flush_terminal_input_buffer() {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::FlushConsoleInputBuffer;
+    use windows_sys::Win32::System::Console::GetStdHandle;
+    use windows_sys::Win32::System::Console::STD_INPUT_HANDLE;
+
+    let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+        return;
+    }
+    let _ = unsafe { FlushConsoleInputBuffer(handle) };
+}
+
+#[cfg(not(any(unix, windows)))]
+fn flush_terminal_input_buffer() {}
 
 pub(crate) fn restore() -> Result<()> {
     let _ = execute!(
