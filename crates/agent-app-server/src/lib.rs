@@ -52,6 +52,7 @@ pub async fn run_stdio_server_with_runtime_manager(
     );
     let sender = client.sender();
     let state = client.state();
+    let view = client.view();
     let (command_tx, mut command_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
     let event_tx_for_events = event_tx.clone();
@@ -89,6 +90,7 @@ pub async fn run_stdio_server_with_runtime_manager(
                         &sender,
                         &event_tx,
                         &state,
+                        &view,
                         request,
                     )
                     .await?;
@@ -117,6 +119,7 @@ async fn handle_stdio_request(
     sender: &app::in_process::InProcessClientSender,
     event_tx: &mpsc::UnboundedSender<JsonRpcMessage>,
     state: &Arc<tokio::sync::Mutex<routing::command_router::ServerState>>,
+    view: &session::conversation_watch::ConversationWatchManager,
     request: JsonRpcRequest,
 ) -> Result<()> {
     let runtime = runtime_for_request(runtime_manager, &request)?;
@@ -136,11 +139,10 @@ async fn handle_stdio_request(
                 result: serde_json::to_value(result)?,
             })
         }
-        "conversation/status" => {
+        "conversation/view" => {
             let conversation_id = required_string_param(&request, "conversation_id")?;
             let result =
-                session::service::read_conversation_status(&runtime, state, conversation_id)
-                    .await?;
+                session::service::read_conversation_view(&runtime, view, conversation_id).await?;
             JsonRpcMessage::Response(JsonRpcResponse {
                 id: request_id,
                 result: serde_json::to_value(result)?,

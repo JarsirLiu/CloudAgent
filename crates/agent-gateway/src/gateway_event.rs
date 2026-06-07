@@ -86,13 +86,13 @@ pub enum GatewayEvent {
     },
     ContextCompactionStarted {
         target: OutboundTarget,
-        turn_id: String,
+        turn_id: Option<String>,
         continuation: CompactionContinuation,
         estimated_tokens: u64,
     },
     ContextCompacted {
         target: OutboundTarget,
-        turn_id: String,
+        turn_id: Option<String>,
         continuation: CompactionContinuation,
         pre_context_tokens_estimate: u64,
         post_context_tokens_estimate: u64,

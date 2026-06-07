@@ -1,5 +1,6 @@
 use crate::app::runtime_manager::{AppRuntimeManager, FixedRuntimeManager};
-use crate::routing::command_router::{ServerState, handle_command};
+use crate::routing::command_router::{AppSessionServices, ServerState, handle_command};
+use crate::session::conversation_watch::ConversationWatchManager;
 use crate::session::skills_watch::spawn_skill_watch;
 use crate::session::state as session_state;
 use agent_core::AgentHost;
@@ -27,6 +28,7 @@ pub struct InProcessClientHandle {
     command_tx: mpsc::UnboundedSender<ServerMessage>,
     event_rx: mpsc::UnboundedReceiver<AppServerMessage>,
     state: Arc<Mutex<ServerState>>,
+    view: ConversationWatchManager,
 }
 
 #[derive(Clone)]
@@ -73,6 +75,10 @@ impl InProcessClientHandle {
     pub(crate) fn state(&self) -> Arc<Mutex<ServerState>> {
         self.state.clone()
     }
+
+    pub(crate) fn view(&self) -> ConversationWatchManager {
+        self.view.clone()
+    }
 }
 
 pub struct InProcessServer;
@@ -109,8 +115,10 @@ pub fn start_in_process_with_runtime_manager(
         initial_conversation_id.clone(),
         emit_all_conversations,
     )));
+    let view = ConversationWatchManager::new(event_tx.clone(), state.clone());
 
     let state_for_task = state.clone();
+    let view_for_task = view.clone();
     let initial_runtime = runtime_manager
         .runtime_for_session(session_context.as_ref())
         .or_else(|_| runtime_manager.initial_runtime())
@@ -147,8 +155,11 @@ pub fn start_in_process_with_runtime_manager(
                     if handle_command(
                         runtime.clone(),
                         command,
-                        &event_tx,
-                        state_for_task.clone(),
+                        AppSessionServices {
+                            event_tx: event_tx.clone(),
+                            state: state_for_task.clone(),
+                            view: view_for_task.clone(),
+                        },
                         auto_approve,
                         auto_approve_reason.clone(),
                     )
@@ -186,6 +197,7 @@ pub fn start_in_process_with_runtime_manager(
         command_tx,
         event_rx,
         state,
+        view,
     }
 }
 

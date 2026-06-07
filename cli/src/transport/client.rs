@@ -364,7 +364,7 @@ mod tests {
         wait_for_service,
     };
     use agent_protocol::{
-        ConversationHistoryResponse, ConversationStatusResponse, JsonRpcMessage, JsonRpcRequest,
+        ConversationHistoryResponse, ConversationViewResponse, JsonRpcMessage, JsonRpcRequest,
         JsonRpcResponse, NodeStatusResponse, RequestId, SessionBootstrapContext,
         TransportInitializeParams, TransportInitializeResult, TransportServerInfo,
     };
@@ -789,21 +789,21 @@ mod tests {
         .expect("history response");
         assert!(history.turns.is_empty());
 
-        let status: ConversationStatusResponse = tokio::time::timeout(
+        let view: ConversationViewResponse = tokio::time::timeout(
             Duration::from_secs(5),
             client.request_typed(JsonRpcRequest {
-                id: RequestId::String("smoke-status".to_string()),
-                method: "conversation/status".to_string(),
+                id: RequestId::String("smoke-view".to_string()),
+                method: "conversation/view".to_string(),
                 params: Some(serde_json::json!({ "conversation_id": conversation_id })),
             }),
         )
         .await
-        .expect("status request timed out")
-        .expect("status response");
-        assert_eq!(status.snapshot.conversation_id, conversation_id);
+        .expect("view request timed out")
+        .expect("view response");
+        assert_eq!(view.snapshot.conversation_id, conversation_id);
         assert!(
             client.try_next_event().is_none(),
-            "startup typed reads should not enqueue duplicate history/status notifications"
+            "startup typed reads should not enqueue duplicate history/view notifications"
         );
 
         client.shutdown().await.expect("shutdown client");

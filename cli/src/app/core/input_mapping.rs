@@ -274,7 +274,12 @@ mod tests {
             "visible transcript",
             HistoryFormat::Markdown,
         ));
-        app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+        app.apply_conversation_view_snapshot(
+            crate::app::core::conversation_state::conversation_view_snapshot_for_test(
+                &app.conversation_id,
+                agent_protocol::FrontendMode::Running,
+            ),
+        );
 
         assert!(
             app.should_route_key_to_transcript_scroll(KeyEvent::new(
@@ -287,7 +292,12 @@ mod tests {
     #[test]
     fn ctrl_d_does_not_exit_while_turn_is_running() {
         let mut app = test_app();
-        app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+        app.apply_conversation_view_snapshot(
+            crate::app::core::conversation_state::conversation_view_snapshot_for_test(
+                &app.conversation_id,
+                agent_protocol::FrontendMode::Running,
+            ),
+        );
 
         let parsed = app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
 

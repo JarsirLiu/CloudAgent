@@ -101,22 +101,6 @@ impl BottomPaneController {
         self.runtime.sync_frontend_mode(mode);
     }
 
-    pub(crate) fn derive_mode(
-        &self,
-        frontend_mode: FrontendMode,
-        requires_action: bool,
-    ) -> FrontendMode {
-        if requires_action {
-            FrontendMode::WaitingForServerRequest
-        } else {
-            frontend_mode
-        }
-    }
-
-    pub(crate) fn current_mode(&self, frontend_mode: FrontendMode) -> FrontendMode {
-        self.derive_mode(frontend_mode, self.requires_action())
-    }
-
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
         self.input_pane.handle_key(key)
     }
@@ -299,10 +283,6 @@ impl BottomPaneController {
         self.input_pane.dismiss_server_request(request_id);
     }
 
-    pub(crate) fn requires_action(&self) -> bool {
-        self.input_pane.requires_action()
-    }
-
     pub(crate) fn build_status_view_model(&self, app: &TuiApp) -> StatusViewModel {
         let mode = app.current_mode();
         let fallback = status_text_from_mode(mode);
@@ -443,7 +423,6 @@ fn format_tokens(value: u64) -> String {
 mod tests {
     use crate::app::TuiApp;
     use crate::state::NoticeLevel;
-    use agent_protocol::FrontendMode;
     use std::path::PathBuf;
 
     fn test_app() -> TuiApp {
@@ -458,8 +437,22 @@ mod tests {
     }
 
     fn mark_running(app: &mut TuiApp) {
-        app.sync_frontend_mode(FrontendMode::Running);
+        app.apply_conversation_view_snapshot(running_snapshot(&app.conversation_id));
         app.bottom_pane.on_turn_started();
+    }
+
+    fn running_snapshot(conversation_id: &str) -> agent_protocol::ConversationViewSnapshot {
+        agent_protocol::ConversationViewSnapshot {
+            conversation_id: conversation_id.to_string(),
+            status: agent_protocol::ConversationViewStatus::Active {
+                active_turn_id: None,
+                flags: vec![agent_protocol::ConversationActiveFlag::RunningTurn],
+            },
+            active_turn: None,
+            pending_requests: Vec::new(),
+            message_count: 0,
+            updated_at_ms: 0,
+        }
     }
 
     #[test]
@@ -650,7 +643,7 @@ mod tests {
     #[test]
     fn working_without_runtime_does_not_show_elapsed_hint() {
         let mut app = test_app();
-        app.sync_frontend_mode(FrontendMode::Running);
+        app.apply_conversation_view_snapshot(running_snapshot(&app.conversation_id));
         app.bottom_pane
             .live_label_override_for_test(Some("Working".to_string()));
 

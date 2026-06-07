@@ -74,23 +74,19 @@ async fn load_initial_history(
             ServerAction::ReplaceHistory(response.turns),
         );
     }
-    let status = timeout(
+    let view = timeout(
         STARTUP_REQUEST_TIMEOUT,
-        client.request_conversation_status_typed(conversation_id),
+        client.request_conversation_view_typed(conversation_id),
     )
     .await
     .map_err(|_| {
         anyhow!(
-            "timed out loading conversation status for `{conversation_id}`; the local node could not get a healthy worker response. restart `node` and retry"
+            "timed out loading conversation view for `{conversation_id}`; the local node could not get a healthy worker response. restart `node` and retry"
         )
     })??;
-    let mode = match status.snapshot.conversation_status {
-        agent_core::ConversationStatus::Busy => agent_protocol::FrontendMode::Running,
-        agent_core::ConversationStatus::Idle => agent_protocol::FrontendMode::Idle,
-    };
     crate::app::conversation::actions::execute_server_action(
         app,
-        ServerAction::SetFrontendMode(mode),
+        ServerAction::SetConversationView(view.snapshot),
     );
     Ok(())
 }

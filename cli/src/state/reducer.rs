@@ -5,8 +5,8 @@ use agent_core::conversation::{ConversationSummary, ConversationTurn, Transcript
 use agent_core::turn::{TurnId, TurnItemKind};
 use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
 use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, FrontendMode,
-    InterruptDisposition, RequestId,
+    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest,
+    ConversationViewSnapshot, InterruptDisposition, RequestId,
 };
 
 const ERR_TRANSPORT_CLOSED_PREFIX: &str = "ERR_TRANSPORT_CLOSED:";
@@ -72,7 +72,7 @@ pub(crate) struct ServerMessageReduce {
 pub(crate) enum ServerAction {
     SetConversationList(Vec<ConversationSummary>),
     InvalidateSkillsCatalog,
-    SetFrontendMode(FrontendMode),
+    SetConversationView(ConversationViewSnapshot),
     SwitchConversation(String),
     ClearCurrentTurnUsage,
     SetTokenUsage {
@@ -149,19 +149,12 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     let mut actions = Vec::new();
     match message {
         AppServerMessage::Notification(notification) => match notification {
-            AppServerNotification::FrontendStateChanged { mode, .. } => {
-                actions.push(ServerAction::SetFrontendMode(*mode));
+            AppServerNotification::ConversationViewChanged { snapshot, .. } => {
+                actions.push(ServerAction::SetConversationView(snapshot.clone()));
             }
             AppServerNotification::TurnStarted { turn_id, .. } => {
                 actions.push(ServerAction::ClearCurrentTurnUsage);
                 actions.push(ServerAction::BindActiveTurn(turn_id.clone()));
-            }
-            AppServerNotification::ConversationStatus { snapshot, .. } => {
-                let mode = match snapshot.conversation_status {
-                    agent_core::ConversationStatus::Busy => FrontendMode::Running,
-                    agent_core::ConversationStatus::Idle => FrontendMode::Idle,
-                };
-                actions.push(ServerAction::SetFrontendMode(mode));
             }
             AppServerNotification::ConversationHistory { turns, .. } => {
                 actions.push(ServerAction::ReplaceHistory(turns.clone()));
@@ -346,26 +339,14 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 });
             }
             AppServerNotification::TurnCompleted { .. } => {
-                actions.push(ServerAction::ClearContextCompactionStatus);
-                actions.push(ServerAction::ClearServerRequestStatus);
-                actions.push(ServerAction::ClearServerRequestView);
-                actions.push(ServerAction::ClearLastToolName);
                 actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
             }
             AppServerNotification::TurnFailed { error, .. } => {
-                actions.push(ServerAction::ClearContextCompactionStatus);
-                actions.push(ServerAction::ClearServerRequestStatus);
-                actions.push(ServerAction::ClearServerRequestView);
-                actions.push(ServerAction::ClearLastToolName);
                 actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
                     error: error.clone(),
                 }));
             }
             AppServerNotification::TurnCancelled { reason, .. } => {
-                actions.push(ServerAction::ClearContextCompactionStatus);
-                actions.push(ServerAction::ClearServerRequestStatus);
-                actions.push(ServerAction::ClearServerRequestView);
-                actions.push(ServerAction::ClearLastToolName);
                 actions.push(ServerAction::TurnDispatch(TurnDispatch::Cancelled {
                     reason: reason.clone(),
                 }));
@@ -659,7 +640,7 @@ mod tests {
         let message =
             AppServerMessage::Notification(AppServerNotification::ContextCompactionStarted {
                 conversation_id: "default".to_string(),
-                turn_id: "turn-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
                 continuation: CompactionContinuation::MidTurn,
                 estimated_tokens: 12_345,
             });

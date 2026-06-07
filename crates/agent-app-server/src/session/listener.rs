@@ -23,6 +23,9 @@ pub(crate) enum ConversationListenerCommand {
     ActiveTurnSnapshot {
         ack: oneshot::Sender<Option<ConversationTurn>>,
     },
+    SystemError {
+        message: String,
+    },
     FinishTurn {
         turn_state: TurnState,
         ack: oneshot::Sender<()>,
@@ -41,12 +44,18 @@ pub(crate) fn start_conversation_listener(
         while let Some(command) = command_rx.recv().await {
             match command {
                 ConversationListenerCommand::ProjectEvent(event) => {
-                    for notification in projector.project_turn_event(&event) {
+                    let notifications = projector.project_turn_event(&event);
+                    for notification in notifications {
                         send_notification(&event_tx, &state, notification).await;
                     }
                 }
                 ConversationListenerCommand::ActiveTurnSnapshot { ack } => {
                     let _ = ack.send(projector.active_turn_snapshot());
+                }
+                ConversationListenerCommand::SystemError { message } => {
+                    for notification in projector.project_system_error(message) {
+                        send_notification(&event_tx, &state, notification).await;
+                    }
                 }
                 ConversationListenerCommand::FinishTurn { turn_state, ack } => {
                     for notification in projector.finish_turn(turn_state) {
@@ -78,6 +87,12 @@ impl ConversationListenerHandle {
             .ok()
             .and_then(|result| result.ok())
             .flatten()
+    }
+
+    pub(crate) fn system_error(&self, message: String) {
+        let _ = self
+            .command_tx
+            .send(ConversationListenerCommand::SystemError { message });
     }
 
     pub(crate) async fn finish_turn(&self, turn_state: TurnState) {

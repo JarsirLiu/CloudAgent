@@ -1,6 +1,7 @@
 mod jsonrpc;
 mod messages;
 mod types;
+mod view_state;
 mod wire;
 
 pub use jsonrpc::{
@@ -9,4 +10,5 @@ pub use jsonrpc::{
 };
 pub use messages::*;
 pub use types::*;
+pub use view_state::*;
 pub use wire::*;

@@ -1,14 +1,14 @@
 use crate::app::notification::send_notification;
 use crate::routing::command_router::{ServerState, merge_active_turn};
+use crate::session::conversation_watch::ConversationWatchManager;
 use crate::session::state as session_state;
 use agent_core::{
-    AgentHost, ConversationStatus, ConversationTurn, InputItem, TranscriptItem, TurnState,
-    input_items_preview_text,
+    AgentHost, ConversationTurn, InputItem, TranscriptItem, TurnState, input_items_preview_text,
 };
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
-    ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
-    FrontendMode, SkillsListResponse,
+    ConversationHistoryResponse, ConversationListResponse, ConversationViewResponse,
+    ConversationViewSnapshot, SkillsListResponse,
 };
 use anyhow::Result;
 use std::sync::Arc;
@@ -123,32 +123,23 @@ pub(crate) async fn read_conversation_history(
     Ok(ConversationHistoryResponse { turns })
 }
 
-pub(crate) async fn request_conversation_status(
+pub(crate) async fn request_conversation_view(
     runtime: &Arc<AgentHost>,
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: String,
 ) -> Result<()> {
-    let snapshot = runtime.conversation_status(&conversation_id).await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationStatus {
-            conversation_id,
-            snapshot,
-        },
-    )
-    .await;
+    hydrate_conversation_view(runtime, view, &conversation_id).await?;
+    view.emit_current(&conversation_id).await;
     Ok(())
 }
 
-pub(crate) async fn read_conversation_status(
+pub(crate) async fn read_conversation_view(
     runtime: &Arc<AgentHost>,
-    _state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: String,
-) -> Result<ConversationStatusResponse> {
-    Ok(ConversationStatusResponse {
-        snapshot: runtime.conversation_status(&conversation_id).await?,
+) -> Result<ConversationViewResponse> {
+    Ok(ConversationViewResponse {
+        snapshot: conversation_view_snapshot(runtime, view, &conversation_id).await?,
     })
 }
 
@@ -200,27 +191,12 @@ pub(crate) async fn read_conversation_history_page(
     })
 }
 
-pub(crate) async fn replay_frontend_state(
+pub(crate) async fn replay_conversation_view_state(
     runtime: &Arc<AgentHost>,
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: &str,
 ) -> Result<()> {
-    let snapshot = runtime.conversation_status(conversation_id).await?;
-    let mode = match snapshot.conversation_status {
-        ConversationStatus::Busy => FrontendMode::Running,
-        ConversationStatus::Idle => FrontendMode::Idle,
-    };
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::FrontendStateChanged {
-            conversation_id: conversation_id.to_string(),
-            mode,
-        },
-    )
-    .await;
-    Ok(())
+    request_conversation_view(runtime, view, conversation_id.to_string()).await
 }
 
 async fn active_turn_snapshot(
@@ -235,6 +211,29 @@ async fn active_turn_snapshot(
         Some(listener) => listener.active_turn_snapshot().await,
         None => None,
     }
+}
+
+async fn conversation_view_snapshot(
+    runtime: &Arc<AgentHost>,
+    view: &ConversationWatchManager,
+    conversation_id: &str,
+) -> Result<ConversationViewSnapshot> {
+    hydrate_conversation_view(runtime, view, conversation_id).await?;
+    Ok(view.snapshot(conversation_id).await)
+}
+
+async fn hydrate_conversation_view(
+    runtime: &Arc<AgentHost>,
+    view: &ConversationWatchManager,
+    conversation_id: &str,
+) -> Result<()> {
+    let message_count = runtime
+        .conversation_status(conversation_id)
+        .await
+        .map(|status| status.message_count)
+        .unwrap_or(0);
+    view.note_loaded(conversation_id, message_count).await;
+    Ok(())
 }
 
 fn recover_inactive_running_turns(
@@ -272,11 +271,12 @@ pub(crate) async fn switch_conversation(
     runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: String,
 ) -> Result<()> {
     session_state::apply_active_conversation(state, conversation_id.clone()).await;
     session_state::persist_active_conversation(runtime, state, &conversation_id).await;
-    publish_switched_conversation_state(runtime, event_tx, state, &conversation_id).await?;
+    publish_switched_conversation_state(runtime, event_tx, state, view, &conversation_id).await?;
     let conversations = runtime.list_conversations().await?;
     send_notification(
         event_tx,
@@ -294,6 +294,7 @@ pub(crate) async fn archive_conversation(
     runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: String,
 ) -> Result<()> {
     runtime.archive_conversation(&conversation_id).await?;
@@ -305,7 +306,8 @@ pub(crate) async fn archive_conversation(
     let switched_active = transition.switched_active;
     if switched_active {
         session_state::persist_active_conversation(runtime, state, &active_session_id).await;
-        publish_switched_conversation_state(runtime, event_tx, state, &active_session_id).await?;
+        publish_switched_conversation_state(runtime, event_tx, state, view, &active_session_id)
+            .await?;
     }
     let conversations = runtime.list_conversations().await?;
     send_notification(
@@ -376,6 +378,7 @@ pub(crate) async fn delete_conversation(
     runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: String,
 ) -> Result<()> {
     let was_active = {
@@ -387,7 +390,7 @@ pub(crate) async fn delete_conversation(
         let next_conversation_id = runtime.create_conversation_with_timestamp_id().await?;
         session_state::apply_active_conversation(state, next_conversation_id.clone()).await;
         session_state::persist_active_conversation(runtime, state, &next_conversation_id).await;
-        publish_switched_conversation_state(runtime, event_tx, state, &next_conversation_id)
+        publish_switched_conversation_state(runtime, event_tx, state, view, &next_conversation_id)
             .await?;
     }
     let active_session_id = {
@@ -589,6 +592,7 @@ async fn publish_switched_conversation_state(
     runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: &str,
 ) -> Result<()> {
     send_notification(
@@ -599,16 +603,8 @@ async fn publish_switched_conversation_state(
         },
     )
     .await;
-    let snapshot = runtime.conversation_status(conversation_id).await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationStatus {
-            conversation_id: conversation_id.to_string(),
-            snapshot,
-        },
-    )
-    .await;
+    hydrate_conversation_view(runtime, view, conversation_id).await?;
+    view.emit_current(conversation_id).await;
     let mut turns = runtime.build_turns_from_rollout(conversation_id).await?;
     let active_turn = active_turn_snapshot(state, conversation_id).await;
     recover_inactive_running_turns(&mut turns, active_turn.as_ref());
@@ -625,51 +621,5 @@ async fn publish_switched_conversation_state(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::recover_inactive_running_turns;
-    use agent_core::{ConversationTurn, TranscriptItem, TurnState};
-
-    fn turn(id: &str, state: TurnState) -> ConversationTurn {
-        ConversationTurn {
-            id: id.to_string(),
-            state,
-            items: vec![TranscriptItem::AgentMessage {
-                id: format!("assistant:{id}"),
-                text: "partial".to_string(),
-            }],
-            rollout_start_index: 0,
-            rollout_end_index: 0,
-        }
-    }
-
-    #[test]
-    fn recovery_marks_orphaned_running_turn_interrupted() {
-        let mut turns = vec![turn("turn-1", TurnState::Running)];
-
-        recover_inactive_running_turns(&mut turns, None);
-
-        assert_eq!(turns[0].state, TurnState::Cancelled);
-        assert!(turns[0].items.iter().any(|item| matches!(
-            item,
-            TranscriptItem::SystemMessage { id, text }
-                if id == "turn_interrupted:turn-1"
-                    && text.contains("Previous process exited")
-        )));
-    }
-
-    #[test]
-    fn recovery_preserves_current_active_running_turn() {
-        let active_turn = turn("turn-1", TurnState::Running);
-        let mut turns = vec![active_turn.clone()];
-
-        recover_inactive_running_turns(&mut turns, Some(&active_turn));
-
-        assert_eq!(turns[0].state, TurnState::Running);
-        assert!(
-            !turns[0]
-                .items
-                .iter()
-                .any(|item| item.id() == "turn_interrupted:turn-1")
-        );
-    }
-}
+#[path = "session_service_tests.rs"]
+mod session_service_tests;

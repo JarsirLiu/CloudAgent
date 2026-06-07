@@ -1,15 +1,16 @@
 use crate::server_request::coordinator::{ResolvedServerRequest, ServerRequestCoordinator};
 use crate::server_request::service as server_request_service;
+use crate::session::conversation_watch::ConversationWatchManager;
 use crate::session::listener::ConversationListenerHandle;
 use crate::session::service as session_service;
 use crate::session::subscriptions::ConversationSubscriptions;
+use crate::session::turn_registry::SessionTurnRegistry;
 use crate::turn::service as turn_service;
 use agent_core::ConversationTurn;
 use agent_core::{AgentHost, ModelProviderSettings};
 use agent_core::{ServerRequest, ServerRequestDecision, TurnState};
 use agent_protocol::{AppClientCommand, AppServerMessage};
 use anyhow::Result;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -20,8 +21,7 @@ pub(crate) struct ServerState {
     emit_all_conversations: bool,
     subscriptions: ConversationSubscriptions,
     server_requests: ServerRequestCoordinator,
-    turn_tasks_by_conversation: HashMap<String, Vec<JoinHandle<()>>>,
-    active_listeners: HashMap<String, ConversationListenerHandle>,
+    turns: SessionTurnRegistry,
     title_jobs_in_flight: HashSet<String>,
 }
 
@@ -32,35 +32,24 @@ impl ServerState {
             emit_all_conversations,
             subscriptions: ConversationSubscriptions::new(default_conversation_id),
             server_requests: ServerRequestCoordinator::new(),
-            turn_tasks_by_conversation: HashMap::new(),
-            active_listeners: HashMap::new(),
+            turns: SessionTurnRegistry::default(),
             title_jobs_in_flight: HashSet::new(),
         }
     }
 
     pub(crate) fn track_turn_task(&mut self, conversation_id: String, task: JoinHandle<()>) {
-        let tasks = self
-            .turn_tasks_by_conversation
-            .entry(conversation_id)
-            .or_default();
-        tasks.retain(|task| !task.is_finished());
-        tasks.push(task);
+        self.turns.track_turn_task(conversation_id, task);
     }
 
     pub(crate) fn take_turn_tasks_for_conversation(
         &mut self,
         conversation_id: &str,
     ) -> Vec<JoinHandle<()>> {
-        self.turn_tasks_by_conversation
-            .remove(conversation_id)
-            .unwrap_or_default()
+        self.turns.take_turn_tasks_for_conversation(conversation_id)
     }
 
     pub(crate) fn take_all_turn_tasks(&mut self) -> Vec<JoinHandle<()>> {
-        self.turn_tasks_by_conversation
-            .drain()
-            .flat_map(|(_, tasks)| tasks)
-            .collect()
+        self.turns.take_all_turn_tasks()
     }
 
     pub(crate) fn set_active_listener(
@@ -68,18 +57,18 @@ impl ServerState {
         conversation_id: String,
         listener: ConversationListenerHandle,
     ) {
-        self.active_listeners.insert(conversation_id, listener);
+        self.turns.set_active_listener(conversation_id, listener);
     }
 
     pub(crate) fn clear_active_listener(&mut self, conversation_id: &str) {
-        self.active_listeners.remove(conversation_id);
+        self.turns.clear_active_listener(conversation_id);
     }
 
     pub(crate) fn active_listener(
         &self,
         conversation_id: &str,
     ) -> Option<ConversationListenerHandle> {
-        self.active_listeners.get(conversation_id).cloned()
+        self.turns.active_listener(conversation_id)
     }
 
     pub(crate) fn active_conversation_id(&self) -> &str {
@@ -191,9 +180,15 @@ impl ServerState {
 }
 
 #[derive(Clone)]
-pub(crate) struct TurnSpawnDependencies {
+pub(crate) struct AppSessionServices {
     pub(crate) event_tx: mpsc::UnboundedSender<AppServerMessage>,
     pub(crate) state: Arc<Mutex<ServerState>>,
+    pub(crate) view: ConversationWatchManager,
+}
+
+#[derive(Clone)]
+pub(crate) struct TurnSpawnDependencies {
+    pub(crate) services: AppSessionServices,
     pub(crate) auto_approve: bool,
     pub(crate) auto_approve_reason: Option<String>,
 }
@@ -201,11 +196,13 @@ pub(crate) struct TurnSpawnDependencies {
 pub(crate) async fn handle_command(
     runtime: Arc<AgentHost>,
     command: AppClientCommand,
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: Arc<Mutex<ServerState>>,
+    services: AppSessionServices,
     auto_approve: bool,
     auto_approve_reason: Option<String>,
 ) -> Result<()> {
+    let event_tx = &services.event_tx;
+    let state = &services.state;
+    let view = &services.view;
     match command {
         AppClientCommand::SubmitTurn(input) => {
             {
@@ -214,8 +211,7 @@ pub(crate) async fn handle_command(
             }
             turn_service::submit_turn(
                 runtime,
-                event_tx,
-                &state,
+                &services,
                 input.conversation_id,
                 input.content,
                 input.turn_policy.permission_profile,
@@ -226,33 +222,27 @@ pub(crate) async fn handle_command(
             .await;
         }
         AppClientCommand::InterruptTurn { conversation_id } => {
-            turn_service::interrupt_turn(&runtime, event_tx, &state, conversation_id).await;
+            turn_service::interrupt_turn(&runtime, &services, conversation_id).await;
         }
         AppClientCommand::CompactConversation { conversation_id } => {
-            turn_service::compact_conversation(&runtime, event_tx, &state, conversation_id).await?;
+            turn_service::compact_conversation(&runtime, &services, conversation_id).await?;
         }
-        AppClientCommand::RequestConversationStatus { conversation_id } => {
-            session_service::request_conversation_status(
-                &runtime,
-                event_tx,
-                &state,
-                conversation_id,
-            )
-            .await?;
+        AppClientCommand::RequestConversationView { conversation_id } => {
+            session_service::request_conversation_view(&runtime, view, conversation_id).await?;
         }
         AppClientCommand::RequestConversationHistory { conversation_id } => {
             session_service::request_conversation_history(
                 &runtime,
                 event_tx,
-                &state,
+                state,
                 conversation_id.clone(),
             )
             .await?;
-            session_service::replay_frontend_state(&runtime, event_tx, &state, &conversation_id)
+            session_service::replay_conversation_view_state(&runtime, view, &conversation_id)
                 .await?;
             server_request_service::replay_pending_for_conversation(
                 event_tx,
-                &state,
+                state,
                 &conversation_id,
             )
             .await;
@@ -265,7 +255,7 @@ pub(crate) async fn handle_command(
             session_service::request_conversation_history_page(
                 &runtime,
                 event_tx,
-                &state,
+                state,
                 conversation_id,
                 before_turn_id,
                 limit,
@@ -273,26 +263,25 @@ pub(crate) async fn handle_command(
             .await?;
         }
         AppClientCommand::ListConversations => {
-            session_service::list_conversations(&runtime, event_tx, &state).await?;
+            session_service::list_conversations(&runtime, event_tx, state).await?;
         }
         AppClientCommand::ListSkills => {
-            session_service::report_hub_mode_only_command(event_tx, &state, "ListSkills").await;
+            session_service::report_hub_mode_only_command(event_tx, state, "ListSkills").await;
         }
         AppClientCommand::ListOnlineNodes => {
-            session_service::report_hub_mode_only_command(event_tx, &state, "ListOnlineNodes")
-                .await;
+            session_service::report_hub_mode_only_command(event_tx, state, "ListOnlineNodes").await;
         }
         AppClientCommand::ListPlatforms => {
-            report_node_managed_only_command(event_tx, &state, "ListPlatforms").await;
+            report_node_managed_only_command(event_tx, state, "ListPlatforms").await;
         }
         AppClientCommand::GetNodeStatus => {
-            report_node_managed_only_command(event_tx, &state, "GetNodeStatus").await;
+            report_node_managed_only_command(event_tx, state, "GetNodeStatus").await;
         }
         AppClientCommand::StopNode => {
-            report_node_managed_only_command(event_tx, &state, "StopNode").await;
+            report_node_managed_only_command(event_tx, state, "StopNode").await;
         }
         AppClientCommand::CreateConversation { conversation_id } => {
-            session_service::create_conversation(&runtime, event_tx, &state, conversation_id)
+            session_service::create_conversation(&runtime, event_tx, state, conversation_id)
                 .await?;
         }
         AppClientCommand::SetConversationTitle {
@@ -302,34 +291,34 @@ pub(crate) async fn handle_command(
             session_service::set_conversation_title(
                 &runtime,
                 event_tx,
-                &state,
+                state,
                 conversation_id,
                 title,
             )
             .await?;
         }
         AppClientCommand::SwitchConversation { conversation_id } => {
-            session_service::switch_conversation(&runtime, event_tx, &state, conversation_id)
+            session_service::switch_conversation(&runtime, event_tx, state, view, conversation_id)
                 .await?;
         }
         AppClientCommand::SelectTargetNode { .. } => {
-            session_service::report_hub_mode_only_command(event_tx, &state, "SelectTargetNode")
+            session_service::report_hub_mode_only_command(event_tx, state, "SelectTargetNode")
                 .await;
         }
         AppClientCommand::GetPlatformStatus { .. } => {
-            report_node_managed_only_command(event_tx, &state, "GetPlatformStatus").await;
+            report_node_managed_only_command(event_tx, state, "GetPlatformStatus").await;
         }
         AppClientCommand::GetPlatformConfig { .. } => {
-            report_node_managed_only_command(event_tx, &state, "GetPlatformConfig").await;
+            report_node_managed_only_command(event_tx, state, "GetPlatformConfig").await;
         }
         AppClientCommand::SetPlatformEnabled { .. } => {
-            report_node_managed_only_command(event_tx, &state, "SetPlatformEnabled").await;
+            report_node_managed_only_command(event_tx, state, "SetPlatformEnabled").await;
         }
         AppClientCommand::SetPlatformConfigValue { .. } => {
-            report_node_managed_only_command(event_tx, &state, "SetPlatformConfigValue").await;
+            report_node_managed_only_command(event_tx, state, "SetPlatformConfigValue").await;
         }
         AppClientCommand::ClearPlatformConfigValue { .. } => {
-            report_node_managed_only_command(event_tx, &state, "ClearPlatformConfigValue").await;
+            report_node_managed_only_command(event_tx, state, "ClearPlatformConfigValue").await;
         }
         AppClientCommand::ReloadLlmConfig {
             api_key,
@@ -343,37 +332,35 @@ pub(crate) async fn handle_command(
             })?;
         }
         AppClientCommand::StartWeixinLogin => {
-            report_node_managed_only_command(event_tx, &state, "StartWeixinLogin").await;
+            report_node_managed_only_command(event_tx, state, "StartWeixinLogin").await;
         }
         AppClientCommand::CheckWeixinLogin { .. } => {
-            report_node_managed_only_command(event_tx, &state, "CheckWeixinLogin").await;
+            report_node_managed_only_command(event_tx, state, "CheckWeixinLogin").await;
         }
         AppClientCommand::ArchiveConversation { conversation_id } => {
-            session_service::archive_conversation(&runtime, event_tx, &state, conversation_id)
+            session_service::archive_conversation(&runtime, event_tx, state, view, conversation_id)
                 .await?;
         }
         AppClientCommand::DeleteConversation { conversation_id } => {
-            session_service::delete_conversation(&runtime, event_tx, &state, conversation_id)
+            session_service::delete_conversation(&runtime, event_tx, state, view, conversation_id)
                 .await?;
         }
         AppClientCommand::ResetConversation { conversation_id } => {
-            session_service::reset_conversation(&runtime, event_tx, &state, conversation_id)
-                .await?;
+            session_service::reset_conversation(&runtime, event_tx, state, conversation_id).await?;
         }
         AppClientCommand::SubscribeConversation { conversation_id } => {
-            session_service::subscribe_conversation(event_tx, &state, conversation_id.clone())
-                .await;
-            session_service::replay_frontend_state(&runtime, event_tx, &state, &conversation_id)
+            session_service::subscribe_conversation(event_tx, state, conversation_id.clone()).await;
+            session_service::replay_conversation_view_state(&runtime, view, &conversation_id)
                 .await?;
             server_request_service::replay_pending_for_conversation(
                 event_tx,
-                &state,
+                state,
                 &conversation_id,
             )
             .await;
         }
         AppClientCommand::UnsubscribeConversation { conversation_id } => {
-            session_service::unsubscribe_conversation(event_tx, &state, conversation_id).await;
+            session_service::unsubscribe_conversation(event_tx, state, conversation_id).await;
         }
         AppClientCommand::ResolveServerRequest {
             conversation_id,
@@ -383,7 +370,8 @@ pub(crate) async fn handle_command(
             server_request_service::resolve_command(
                 &runtime,
                 event_tx,
-                &state,
+                state,
+                view,
                 conversation_id,
                 request_id,
                 decision,

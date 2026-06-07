@@ -14,7 +14,7 @@ pub(super) fn worker_command_name(command: &AppClientCommand) -> &'static str {
         AppClientCommand::InterruptTurn { .. } => "interrupt_turn",
         AppClientCommand::CompactConversation { .. } => "compact_conversation",
         AppClientCommand::ResetConversation { .. } => "reset_conversation",
-        AppClientCommand::RequestConversationStatus { .. } => "request_conversation_status",
+        AppClientCommand::RequestConversationView { .. } => "request_conversation_view",
         AppClientCommand::RequestConversationHistory { .. } => "request_conversation_history",
         AppClientCommand::RequestConversationHistoryPage { .. } => {
             "request_conversation_history_page"

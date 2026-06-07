@@ -1,9 +1,9 @@
-use crate::types::{FrontendMode, NotificationDelivery, NotificationStream};
+use crate::types::{NotificationDelivery, NotificationStream};
+use crate::view_state::ConversationViewSnapshot;
 use crate::{RequestId, UserTurnInput};
 use agent_core::{
-    CompactionContinuation, ConversationSnapshot, ConversationSummary, ConversationTurn,
-    ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision, SkillMetadata,
-    TranscriptItem, TurnId,
+    CompactionContinuation, ConversationSummary, ConversationTurn, ModelRetryStage, ModelUsage,
+    ServerRequest, ServerRequestDecision, SkillMetadata, TranscriptItem, TurnId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -95,9 +95,9 @@ pub struct SkillsListResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConversationStatusResponse {
-    // Typed read surface for authoritative frontend mode bootstrap.
-    pub snapshot: ConversationSnapshot,
+pub struct ConversationViewResponse {
+    // Typed read surface for authoritative multi-client view state bootstrap.
+    pub snapshot: ConversationViewSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -245,7 +245,7 @@ pub enum AppClientCommand {
     ResetConversation {
         conversation_id: String,
     },
-    RequestConversationStatus {
+    RequestConversationView {
         conversation_id: String,
     },
     RequestConversationHistory {
@@ -328,7 +328,7 @@ impl AppClientCommand {
             | Self::InterruptTurn { conversation_id }
             | Self::CompactConversation { conversation_id }
             | Self::ResetConversation { conversation_id }
-            | Self::RequestConversationStatus { conversation_id }
+            | Self::RequestConversationView { conversation_id }
             | Self::RequestConversationHistory { conversation_id }
             | Self::RequestConversationHistoryPage {
                 conversation_id, ..
@@ -365,10 +365,9 @@ impl AppClientCommand {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppServerNotification {
-    // Incremental frontend sync only. This is not a substitute for typed status bootstrap.
-    FrontendStateChanged {
+    ConversationViewChanged {
         conversation_id: String,
-        mode: FrontendMode,
+        snapshot: ConversationViewSnapshot,
     },
     TurnStarted {
         conversation_id: String,
@@ -449,7 +448,7 @@ pub enum AppServerNotification {
     },
     ContextCompacted {
         conversation_id: String,
-        turn_id: TurnId,
+        turn_id: Option<TurnId>,
         continuation: CompactionContinuation,
         pre_context_tokens_estimate: u64,
         post_context_tokens_estimate: u64,
@@ -459,7 +458,7 @@ pub enum AppServerNotification {
     },
     ContextCompactionStarted {
         conversation_id: String,
-        turn_id: TurnId,
+        turn_id: Option<TurnId>,
         continuation: CompactionContinuation,
         estimated_tokens: u64,
     },
@@ -498,12 +497,6 @@ pub enum AppServerNotification {
     InterruptResult {
         conversation_id: String,
         disposition: InterruptDisposition,
-    },
-    // Incremental/state-sync notification only. Clients should not rely on this as the
-    // authoritative bootstrap path for explicit status reads.
-    ConversationStatus {
-        conversation_id: String,
-        snapshot: ConversationSnapshot,
     },
     // Incremental/state-sync notification only. Clients should bootstrap transcript state
     // through typed conversation/history reads and treat this as a sync/update channel.
@@ -558,7 +551,7 @@ pub enum AppServerNotification {
 impl AppServerNotification {
     pub fn conversation_id(&self) -> &str {
         match self {
-            Self::FrontendStateChanged {
+            Self::ConversationViewChanged {
                 conversation_id, ..
             }
             | Self::TurnStarted {
@@ -622,9 +615,6 @@ impl AppServerNotification {
                 conversation_id, ..
             }
             | Self::InterruptResult {
-                conversation_id, ..
-            }
-            | Self::ConversationStatus {
                 conversation_id, ..
             }
             | Self::ConversationHistory {
@@ -720,6 +710,7 @@ pub fn classify_notification(
             NotificationDelivery::Lossless,
         ),
         AppServerNotification::TurnStarted { .. }
+        | AppServerNotification::ConversationViewChanged { .. }
         | AppServerNotification::ItemStarted { .. }
         | AppServerNotification::ServerRequestRequested { .. }
         | AppServerNotification::ServerRequestResolved { .. }
@@ -730,15 +721,13 @@ pub fn classify_notification(
         | AppServerNotification::TurnFailed { .. }
         | AppServerNotification::TurnCancelled { .. }
         | AppServerNotification::InterruptResult { .. }
-        | AppServerNotification::ConversationStatus { .. }
         | AppServerNotification::ConversationHistory { .. }
         | AppServerNotification::ConversationHistoryPage { .. }
         | AppServerNotification::ConversationList { .. }
         | AppServerNotification::SkillsChanged { .. }
         | AppServerNotification::OnlineNodeList { .. }
         | AppServerNotification::ConversationSwitched { .. }
-        | AppServerNotification::ConversationSubscriptionChanged { .. }
-        | AppServerNotification::FrontendStateChanged { .. } => {
+        | AppServerNotification::ConversationSubscriptionChanged { .. } => {
             (NotificationStream::Control, NotificationDelivery::Lossless)
         }
         AppServerNotification::CommandExecutionOutputDelta { .. }

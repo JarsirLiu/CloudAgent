@@ -204,7 +204,9 @@ impl NodeSessionState {
 mod tests {
     use super::NodeSessionState;
     use crate::node::worker_manager::NodeEvent;
-    use agent_protocol::{AppServerMessage, AppServerNotification};
+    use agent_protocol::{
+        AppServerMessage, AppServerNotification, ConversationViewSnapshot, ConversationViewStatus,
+    };
 
     #[test]
     fn unsubscribe_ack_is_forwarded_even_after_local_unsubscribe() {
@@ -221,5 +223,40 @@ mod tests {
         };
 
         assert!(session.should_forward_event(&event));
+    }
+
+    #[test]
+    fn conversation_view_changed_only_forwards_subscribed_conversations() {
+        let session = NodeSessionState::new("conversation-1", "session-1");
+
+        assert!(session.should_forward_event(&conversation_view_event("conversation-1")));
+        assert!(!session.should_forward_event(&conversation_view_event("conversation-2")));
+    }
+
+    #[test]
+    fn subscription_allows_additional_conversation_view_events() {
+        let mut session = NodeSessionState::new("conversation-1", "session-1");
+
+        session.subscribe_conversation("conversation-2");
+
+        assert!(session.should_forward_event(&conversation_view_event("conversation-2")));
+    }
+
+    fn conversation_view_event(conversation_id: &str) -> NodeEvent {
+        NodeEvent::Message {
+            message: Box::new(AppServerMessage::Notification(
+                AppServerNotification::ConversationViewChanged {
+                    conversation_id: conversation_id.to_string(),
+                    snapshot: ConversationViewSnapshot {
+                        conversation_id: conversation_id.to_string(),
+                        status: ConversationViewStatus::Idle,
+                        active_turn: None,
+                        pending_requests: Vec::new(),
+                        message_count: 0,
+                        updated_at_ms: 0,
+                    },
+                },
+            )),
+        }
     }
 }

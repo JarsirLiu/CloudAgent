@@ -5,7 +5,7 @@ mod stdio;
 use agent_core::ServerRequestDecision;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
-    ConversationHistoryResponse, ConversationListResponse, ConversationStatusResponse,
+    ConversationHistoryResponse, ConversationListResponse, ConversationViewResponse,
     JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
     NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
@@ -143,12 +143,12 @@ impl AppServerClient {
         self.request_handle().request_skills_list_typed().await
     }
 
-    pub async fn request_conversation_status_typed(
+    pub async fn request_conversation_view_typed(
         &self,
         conversation_id: impl Into<String>,
-    ) -> Result<ConversationStatusResponse, TypedRequestError> {
+    ) -> Result<ConversationViewResponse, TypedRequestError> {
         self.request_handle()
-            .request_conversation_status_typed(conversation_id)
+            .request_conversation_view_typed(conversation_id)
             .await
     }
 
@@ -392,13 +392,13 @@ impl AppServerRequestHandle {
         .await
     }
 
-    pub async fn request_conversation_status_typed(
+    pub async fn request_conversation_view_typed(
         &self,
         conversation_id: impl Into<String>,
-    ) -> Result<ConversationStatusResponse, TypedRequestError> {
+    ) -> Result<ConversationViewResponse, TypedRequestError> {
         self.request_typed(JsonRpcRequest {
             id: next_request_id(),
-            method: "conversation/status".to_string(),
+            method: "conversation/view".to_string(),
             params: Some(serde_json::json!({
                 "conversation_id": conversation_id.into(),
             })),

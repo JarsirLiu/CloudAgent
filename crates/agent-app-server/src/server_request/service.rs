@@ -1,5 +1,6 @@
 use crate::app::notification::{send_notification, send_request};
 use crate::routing::command_router::ServerState;
+use crate::session::conversation_watch::ConversationWatchManager;
 use agent_core::AgentHost;
 use agent_core::ServerRequestDecision;
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest, RequestId};
@@ -10,6 +11,7 @@ pub(crate) async fn resolve_command(
     runtime: &Arc<AgentHost>,
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     _conversation_id: String,
     request_id: RequestId,
     decision: ServerRequestDecision,
@@ -21,6 +23,8 @@ pub(crate) async fn resolve_command(
     if let Some(resolved) = resolved {
         runtime
             .resolve_pending_request(&resolved.conversation_id, &request_id)
+            .await;
+        view.note_server_request_resolved(&resolved.conversation_id, request_id.clone())
             .await;
         send_notification(
             event_tx,
@@ -40,6 +44,7 @@ pub(crate) async fn resolve_command(
 pub(crate) async fn resolve_pending_for_finished_turn(
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: &str,
     turn_id: &str,
     reason: &str,
@@ -52,6 +57,8 @@ pub(crate) async fn resolve_pending_for_finished_turn(
         )
     };
     for (request_id, turn_id, request, decision) in resolved {
+        view.note_server_request_resolved(conversation_id, request_id.clone())
+            .await;
         send_notification(
             event_tx,
             state,
@@ -70,6 +77,7 @@ pub(crate) async fn resolve_pending_for_finished_turn(
 pub(crate) async fn resolve_pending_for_interrupted_conversation(
     event_tx: &mpsc::UnboundedSender<AppServerMessage>,
     state: &Arc<Mutex<ServerState>>,
+    view: &ConversationWatchManager,
     conversation_id: &str,
     reason: &str,
 ) {
@@ -81,6 +89,8 @@ pub(crate) async fn resolve_pending_for_interrupted_conversation(
         )
     };
     for (request_id, turn_id, request, decision) in resolved {
+        view.note_server_request_resolved(conversation_id, request_id.clone())
+            .await;
         send_notification(
             event_tx,
             state,

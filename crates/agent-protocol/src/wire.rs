@@ -185,7 +185,7 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
         "conversation/reset" => Ok(AppClientCommand::ResetConversation {
             conversation_id: value_field(params, "conversation_id")?,
         }),
-        "conversation/status" => Ok(AppClientCommand::RequestConversationStatus {
+        "conversation/view" => Ok(AppClientCommand::RequestConversationView {
             conversation_id: value_field(params, "conversation_id")?,
         }),
         "conversation/history" => Ok(AppClientCommand::RequestConversationHistory {
@@ -287,8 +287,8 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             "conversation/reset",
             serde_json::json!({ "conversation_id": conversation_id }),
         ),
-        AppClientCommand::RequestConversationStatus { conversation_id } => (
-            "conversation/status",
+        AppClientCommand::RequestConversationView { conversation_id } => (
+            "conversation/view",
             serde_json::json!({ "conversation_id": conversation_id }),
         ),
         AppClientCommand::RequestConversationHistory { conversation_id } => (
@@ -394,8 +394,8 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
 
 fn notification_method_and_params(notification: &AppServerNotification) -> (&'static str, Value) {
     match notification {
-        AppServerNotification::FrontendStateChanged { .. } => (
-            "frontend/stateChanged",
+        AppServerNotification::ConversationViewChanged { .. } => (
+            "conversation/viewChanged",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
         AppServerNotification::TurnStarted { .. } => (
@@ -482,10 +482,6 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "turn/interruptResult",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ConversationStatus { .. } => (
-            "conversation/status",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
         AppServerNotification::ConversationHistory { .. } => (
             "conversation/history",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -562,7 +558,7 @@ fn parse_server_notification(
 ) -> anyhow::Result<AppServerNotification> {
     let params = params.unwrap_or(Value::Null);
     match method {
-        "frontend/stateChanged"
+        "conversation/viewChanged"
         | "turn/started"
         | "item/started"
         | "item/agentMessage/delta"
@@ -584,7 +580,6 @@ fn parse_server_notification(
         | "turn/failed"
         | "turn/cancelled"
         | "turn/interruptResult"
-        | "conversation/status"
         | "conversation/history"
         | "conversation/turnSnapshot"
         | "conversation/historyPage"
@@ -792,6 +787,54 @@ mod tests {
                 assert_eq!(item_id, "tool:custom");
                 assert_eq!(call_id.as_deref(), Some("call-1"));
                 assert_eq!(delta, "custom output");
+            }
+            other => panic!("unexpected notification: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn conversation_view_changed_roundtrips_through_jsonrpc_notification() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(
+                AppServerNotification::ConversationViewChanged {
+                    conversation_id: "default".to_string(),
+                    snapshot: ConversationViewSnapshot {
+                        conversation_id: "default".to_string(),
+                        status: ConversationViewStatus::Active {
+                            active_turn_id: Some("turn-1".to_string()),
+                            flags: vec![ConversationActiveFlag::RunningTurn],
+                        },
+                        active_turn: None,
+                        pending_requests: Vec::new(),
+                        message_count: 3,
+                        updated_at_ms: 42,
+                    },
+                },
+            ),
+            event_seq: Some(12),
+        };
+
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+        assert_eq!(notification.method, "conversation/viewChanged");
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        assert_eq!(reparsed.event_seq, Some(12));
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::ConversationViewChanged {
+                conversation_id,
+                snapshot,
+            }) => {
+                assert_eq!(conversation_id, "default");
+                assert_eq!(snapshot.conversation_id, "default");
+                assert_eq!(snapshot.message_count, 3);
+                assert!(matches!(
+                    snapshot.status,
+                    ConversationViewStatus::Active { .. }
+                ));
             }
             other => panic!("unexpected notification: {other:?}"),
         }

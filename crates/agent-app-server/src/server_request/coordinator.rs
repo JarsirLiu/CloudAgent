@@ -8,7 +8,6 @@ use tokio::sync::oneshot;
 #[derive(Debug)]
 pub(crate) struct ServerRequestCoordinator {
     pending: HashMap<RequestId, PendingServerRequest>,
-    resolved: HashMap<RequestId, ResolvedServerRequest>,
     request_counter: AtomicI64,
 }
 
@@ -32,7 +31,6 @@ impl ServerRequestCoordinator {
     pub(crate) fn new() -> Self {
         Self {
             pending: HashMap::new(),
-            resolved: HashMap::new(),
             request_counter: AtomicI64::new(1),
         }
     }
@@ -89,10 +87,9 @@ impl ServerRequestCoordinator {
                 request: pending.request,
                 decision,
             };
-            self.resolved.insert(request_id.clone(), resolved.clone());
             Some(resolved)
         } else {
-            self.resolved.get(request_id).cloned()
+            None
         }
     }
 
@@ -194,14 +191,14 @@ mod tests {
         let first = coordinator
             .resolve(&request_id, decision.clone())
             .expect("first resolve");
-        let second = coordinator
-            .resolve(&request_id, decision)
-            .expect("second resolve should be replayed");
+        let second = coordinator.resolve(&request_id, decision);
 
         assert_eq!(first.conversation_id, "conv-a");
-        assert_eq!(second.conversation_id, "conv-a");
         assert_eq!(first.turn_id, "turn-1");
-        assert_eq!(second.turn_id, "turn-1");
+        assert!(
+            second.is_none(),
+            "second resolve should not replay notifications"
+        );
     }
 
     #[test]

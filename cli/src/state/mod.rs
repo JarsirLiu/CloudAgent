@@ -4,8 +4,8 @@ pub mod reducer;
 pub mod selectors;
 pub mod turn_lifecycle;
 
-use agent_core::ConversationTurn;
-use agent_core::ModelUsage;
+use agent_core::{ConversationTurn, ModelUsage};
+use agent_protocol::ConversationViewSnapshot;
 use std::time::Instant;
 use turn_lifecycle::TurnLifecycleState;
 
@@ -19,6 +19,7 @@ pub enum NoticeLevel {
 #[derive(Clone, Debug)]
 pub struct RunState {
     pub(crate) history_snapshot: Option<Vec<ConversationTurn>>,
+    pub(crate) conversation_view_snapshot: Option<ConversationViewSnapshot>,
     pub(crate) history_has_more: bool,
     pub(crate) history_next_before_turn_id: Option<String>,
     pub(crate) last_turn_usage: Option<ModelUsage>,
@@ -48,6 +49,7 @@ impl RunState {
     pub fn new(_connection_label: &str) -> Self {
         Self {
             history_snapshot: None,
+            conversation_view_snapshot: None,
             history_has_more: false,
             history_next_before_turn_id: None,
             last_turn_usage: None,

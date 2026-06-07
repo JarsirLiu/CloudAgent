@@ -8,7 +8,10 @@ use crate::ui::transcript_render_cache::TranscriptRenderCache;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
 use agent_core::conversation::{ConversationSummary, InputItem};
 use agent_core::turn::{ModelRetryStage, TurnItemKind};
-use agent_protocol::{FrontendMode, RequestId};
+use agent_protocol::{
+    ConversationActiveFlag, ConversationViewSnapshot, ConversationViewStatus, FrontendMode,
+    RequestId,
+};
 
 impl TuiApp {
     pub(crate) fn new(
@@ -193,22 +196,17 @@ impl TuiApp {
     }
 
     pub(crate) fn current_mode(&self) -> FrontendMode {
-        self.bottom_pane
-            .current_mode(self.run_state.turn_lifecycle.frontend_mode())
+        self.run_state
+            .conversation_view_snapshot
+            .as_ref()
+            .map(frontend_mode_from_snapshot)
+            .unwrap_or(FrontendMode::Idle)
     }
 
-    pub(crate) fn sync_frontend_mode(&mut self, mode: FrontendMode) {
-        self.run_state.turn_lifecycle.sync_frontend_mode(mode);
+    pub(crate) fn apply_conversation_view_snapshot(&mut self, snapshot: ConversationViewSnapshot) {
+        let mode = frontend_mode_from_snapshot(&snapshot);
+        self.run_state.conversation_view_snapshot = Some(snapshot);
         self.bottom_pane.sync_frontend_mode(mode);
-    }
-
-    pub(crate) fn recover_orphaned_running_turn(&mut self) {
-        self.run_state.turn_lifecycle.recover_orphaned();
-        self.bottom_pane.on_turn_finished();
-        self.clear_server_request_view();
-        self.transcript_owner
-            .clear_active_turn(self.run_state.expand_tool_details);
-        self.transcript_scroll.reset();
     }
 
     pub(crate) fn can_submit_turn(&self) -> bool {
@@ -218,5 +216,50 @@ impl TuiApp {
     #[cfg(test)]
     pub(crate) fn live_cells(&self) -> &[HistoryCell] {
         self.transcript_owner.live_cells()
+    }
+}
+
+fn frontend_mode_from_snapshot(
+    snapshot: &agent_protocol::ConversationViewSnapshot,
+) -> FrontendMode {
+    match &snapshot.status {
+        ConversationViewStatus::Active { flags, .. }
+            if flags.contains(&ConversationActiveFlag::WaitingOnApproval) =>
+        {
+            FrontendMode::WaitingForServerRequest
+        }
+        ConversationViewStatus::Active { .. } => FrontendMode::Running,
+        ConversationViewStatus::NotLoaded
+        | ConversationViewStatus::Idle
+        | ConversationViewStatus::SystemError { .. } => FrontendMode::Idle,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn conversation_view_snapshot_for_test(
+    conversation_id: &str,
+    mode: FrontendMode,
+) -> agent_protocol::ConversationViewSnapshot {
+    let status = match mode {
+        FrontendMode::Idle => ConversationViewStatus::Idle,
+        FrontendMode::Running => ConversationViewStatus::Active {
+            active_turn_id: None,
+            flags: vec![ConversationActiveFlag::RunningTurn],
+        },
+        FrontendMode::WaitingForServerRequest => ConversationViewStatus::Active {
+            active_turn_id: None,
+            flags: vec![
+                ConversationActiveFlag::RunningTurn,
+                ConversationActiveFlag::WaitingOnApproval,
+            ],
+        },
+    };
+    agent_protocol::ConversationViewSnapshot {
+        conversation_id: conversation_id.to_string(),
+        status,
+        active_turn: None,
+        pending_requests: Vec::new(),
+        message_count: 0,
+        updated_at_ms: 0,
     }
 }

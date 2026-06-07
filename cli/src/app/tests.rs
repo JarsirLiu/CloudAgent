@@ -2,6 +2,7 @@ use crate::app::TuiApp;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::conversation::actions::execute_server_action;
 use crate::app::conversation::facade as conversation_facade;
+use crate::app::core::conversation_state::conversation_view_snapshot_for_test;
 use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::runtime::display::should_show_welcome;
 use crate::ui::chat_surface::ChatSurface;
@@ -71,6 +72,13 @@ fn test_app() -> TuiApp {
         false,
         "ReadOnly".to_string(),
     )
+}
+
+fn mark_running(app: &mut TuiApp) {
+    app.apply_conversation_view_snapshot(conversation_view_snapshot_for_test(
+        &app.conversation_id,
+        agent_protocol::FrontendMode::Running,
+    ));
 }
 
 fn read_file_result(id: &str, path: &str) -> TranscriptItem {
@@ -1126,7 +1134,7 @@ fn escape_closes_completion_menu_in_running_mode_without_interrupting_turn() {
         false,
         "ReadOnly".to_string(),
     );
-    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+    mark_running(&mut app);
 
     let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
     let bottom_before = app
@@ -1296,7 +1304,6 @@ fn interrupt_no_active_turn_result_recovers_stuck_running_state() {
     app.prepare_submitted_turn(&[InputItem::Text {
         text: "hello".to_string(),
     }]);
-    app.run_state.turn_lifecycle.request_interrupt();
 
     execute_server_action(
         &mut app,
@@ -1309,7 +1316,6 @@ fn interrupt_no_active_turn_result_recovers_stuck_running_state() {
     assert!(app.can_submit_turn());
     assert!(app.transcript_owner.active_turn_id().is_none());
     assert!(app.run_state.turn_lifecycle.pending_submission().is_none());
-    assert!(!app.run_state.turn_lifecycle.interrupt_requested());
 }
 
 #[test]
@@ -1351,7 +1357,7 @@ fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell()
 #[test]
 fn command_output_delta_updates_status_without_transcript_history() {
     let mut app = test_app();
-    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+    mark_running(&mut app);
     app.bottom_pane.on_turn_started();
 
     execute_server_action(
@@ -1383,7 +1389,7 @@ fn command_output_delta_updates_status_without_transcript_history() {
 #[test]
 fn in_progress_command_completion_keeps_status_until_final_completion() {
     let mut app = test_app();
-    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+    mark_running(&mut app);
     app.bottom_pane.on_turn_started();
 
     execute_server_action(
@@ -1433,7 +1439,7 @@ fn in_progress_command_completion_keeps_status_until_final_completion() {
 #[test]
 fn completed_streamed_agent_item_survives_turn_completion() {
     let mut app = test_app();
-    app.sync_frontend_mode(agent_protocol::FrontendMode::Running);
+    mark_running(&mut app);
     app.bottom_pane.on_turn_started();
 
     execute_server_action(
@@ -1563,12 +1569,23 @@ fn cancelled_turn_clears_running_state_and_reenables_submit() {
     app.prepare_submitted_turn(&[InputItem::Text {
         text: "hello".to_string(),
     }]);
+    assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Idle);
+    assert!(app.can_submit_turn());
+
+    app.apply_conversation_view_snapshot(conversation_view_snapshot_for_test(
+        "default",
+        agent_protocol::FrontendMode::Running,
+    ));
     assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Running);
     assert!(!app.can_submit_turn());
 
     app.apply_turn_dispatch(crate::state::reducer::TurnDispatch::Cancelled {
         reason: "interrupted".to_string(),
     });
+    app.apply_conversation_view_snapshot(conversation_view_snapshot_for_test(
+        "default",
+        agent_protocol::FrontendMode::Idle,
+    ));
 
     assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Idle);
     assert!(app.can_submit_turn());

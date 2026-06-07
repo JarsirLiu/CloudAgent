@@ -692,7 +692,6 @@ pub(crate) async fn handle_tui_input(
             match command {
                 AppClientCommand::SubmitTurn(input) => client.submit_turn(input)?,
                 AppClientCommand::InterruptTurn { conversation_id } => {
-                    app.run_state.turn_lifecycle.request_interrupt();
                     client.interrupt_turn(conversation_id)?
                 }
                 AppClientCommand::ListConversations => {
@@ -803,8 +802,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.run_state.pending_skills_refresh = true;
             app.run_state.next_skills_refresh_at = None;
         }
-        ServerAction::SetFrontendMode(mode) => {
-            app.sync_frontend_mode(mode);
+        ServerAction::SetConversationView(snapshot) => {
+            app.apply_conversation_view_snapshot(snapshot);
         }
         ServerAction::SwitchConversation(conversation_id) => {
             app.bottom_pane.clear_session_picker();
@@ -958,11 +957,12 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                     .show_transient_notice(NoticeLevel::Info, "interrupt requested".to_string());
             }
             InterruptDisposition::NoActiveTurn => {
-                if app.run_state.turn_lifecycle.interrupt_requested()
-                    && app.current_mode() != agent_protocol::FrontendMode::Idle
-                {
-                    app.recover_orphaned_running_turn();
-                }
+                app.run_state.turn_lifecycle.clear_pending_submission();
+                app.bottom_pane.on_turn_finished();
+                app.clear_server_request_view();
+                app.transcript_owner
+                    .clear_active_turn(app.run_state.expand_tool_details);
+                app.transcript_scroll.reset();
                 app.bottom_pane
                     .show_transient_notice(NoticeLevel::Warn, "no active turn".to_string());
             }

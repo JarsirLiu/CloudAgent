@@ -9,7 +9,7 @@ use agent_core::conversation_busy_error;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
     CommandExecutionContext, ConversationHistoryPageResponse, ConversationHistoryResponse,
-    ConversationListResponse, ConversationStatusResponse, JsonRpcErrorPayload, JsonRpcMessage,
+    ConversationListResponse, ConversationViewResponse, JsonRpcErrorPayload, JsonRpcMessage,
     JsonRpcRequest, NodeStatusResponse, NodeStopResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
     RequestId, SkillsListResponse, WeixinLoginStartResponse, WeixinLoginStatusResponse,
@@ -107,7 +107,7 @@ where
     }
     if let Some(request) = typed_request_from_command(&envelope.command, &envelope.request_id) {
         match envelope.command {
-            AppClientCommand::RequestConversationStatus { .. } => {
+            AppClientCommand::RequestConversationView { .. } => {
                 let value = runtime
                     .workers()
                     .request_json(
@@ -118,7 +118,7 @@ where
                     )
                     .await
                     .map_err(anyhow::Error::from)?;
-                let response: ConversationStatusResponse = serde_json::from_value(value)?;
+                let response: ConversationViewResponse = serde_json::from_value(value)?;
                 write_jsonrpc_response(
                     writer,
                     envelope.request_id,
@@ -369,8 +369,8 @@ fn typed_request_from_command(
         AppClientCommand::ListPlatforms => ("platform/list", serde_json::Value::Null),
         AppClientCommand::GetNodeStatus => ("node/status", serde_json::Value::Null),
         AppClientCommand::StopNode => ("node/stop", serde_json::Value::Null),
-        AppClientCommand::RequestConversationStatus { conversation_id } => (
-            "conversation/status",
+        AppClientCommand::RequestConversationView { conversation_id } => (
+            "conversation/view",
             serde_json::json!({ "conversation_id": conversation_id }),
         ),
         AppClientCommand::RequestConversationHistory { conversation_id } => (
@@ -687,9 +687,9 @@ async fn sync_typed_read_registry(
                 },
             })
         }
-        AppClientCommand::RequestConversationStatus { .. } => {
-            let response: ConversationStatusResponse = serde_json::from_value(value.clone())?;
-            AppServerMessage::Notification(AppServerNotification::ConversationStatus {
+        AppClientCommand::RequestConversationView { .. } => {
+            let response: ConversationViewResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::ConversationViewChanged {
                 conversation_id: conversation_id.to_string(),
                 snapshot: response.snapshot,
             })
@@ -729,7 +729,7 @@ fn command_name(command: &AppClientCommand) -> &'static str {
         AppClientCommand::InterruptTurn { .. } => "interrupt_turn",
         AppClientCommand::CompactConversation { .. } => "compact_conversation",
         AppClientCommand::ResetConversation { .. } => "reset_conversation",
-        AppClientCommand::RequestConversationStatus { .. } => "request_conversation_status",
+        AppClientCommand::RequestConversationView { .. } => "request_conversation_view",
         AppClientCommand::RequestConversationHistory { .. } => "request_conversation_history",
         AppClientCommand::RequestConversationHistoryPage { .. } => {
             "request_conversation_history_page"
@@ -797,7 +797,7 @@ pub(crate) async fn target_conversation_id(
         | AppClientCommand::InterruptTurn { conversation_id }
         | AppClientCommand::CompactConversation { conversation_id }
         | AppClientCommand::ResetConversation { conversation_id }
-        | AppClientCommand::RequestConversationStatus { conversation_id }
+        | AppClientCommand::RequestConversationView { conversation_id }
         | AppClientCommand::RequestConversationHistory { conversation_id }
         | AppClientCommand::RequestConversationHistoryPage {
             conversation_id, ..
@@ -856,8 +856,8 @@ mod tests {
     use agent_protocol::JsonRpcNotification;
     use agent_protocol::{
         AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
-        FrontendMode, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestId, SkillsListResponse,
-        TurnPolicy, UserTurnInput,
+        ConversationViewStatus, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestId,
+        SkillsListResponse, TurnPolicy, UserTurnInput,
     };
     use tokio::io::{AsyncBufReadExt, BufReader, duplex};
     use tokio::sync::broadcast;
@@ -1131,11 +1131,13 @@ mod tests {
     #[tokio::test]
     async fn submit_turn_request_is_rejected_when_node_marks_conversation_busy() {
         let runtime = test_runtime().await;
-        runtime
-            .executions()
-            .lock()
-            .await
-            .update_frontend_mode("conversation-1", FrontendMode::Running);
+        runtime.executions().lock().await.update_conversation_view(
+            "conversation-1",
+            &ConversationViewStatus::Active {
+                active_turn_id: Some("turn-1".to_string()),
+                flags: Vec::new(),
+            },
+        );
         let mut session = NodeSessionState::new("conversation-1", "session-1");
         let (writer, reader) = duplex(4096);
         let mut writer = writer;
