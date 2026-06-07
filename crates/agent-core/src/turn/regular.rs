@@ -1,6 +1,10 @@
-use super::compaction::{CompactionContinuation, CompactionMode, maybe_compact_history};
+use super::compaction::{
+    CompactionContinuation, CompactionMode, maybe_compact_history_with_start_callback,
+};
 use super::loop_guard::LoopGuard;
-use super::{ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome};
+use super::{
+    ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome, build_model_request_shape_audit,
+};
 use crate::context::{ContextFragment, ContextInjectionStrategy, MemoryBudgetSource};
 use crate::model::ReasoningDelta;
 use crate::skill::{render_skill_catalog, render_skill_injection};
@@ -126,7 +130,6 @@ pub async fn execute_regular_turn<H: TurnHost>(
             &context_manager,
             filter_policy,
             &environment_context,
-            &tool_specs,
             &settings,
             BudgetedFragmentInputs {
                 raw_memory_fragment: raw_memory_fragment.clone(),
@@ -168,33 +171,29 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &settings.workspace_root,
             );
 
-        let compaction = maybe_compact_history(
+        let compaction = maybe_compact_history_with_start_callback(
             host,
             context_manager.history_mut(),
             &cancellation_token,
             CompactionMode::Automatic {
                 estimated_total_tokens: estimated_total_tokens
                     .max(compaction_estimated_total_tokens),
-                memory_floor_tokens: settings.post_compact_memory_floor_tokens,
-                safety_buffer_tokens: settings.context_budget_safety_buffer_tokens,
                 continuation: compaction_continuation(roundtrip_count),
+            },
+            |start| {
+                emit_event(
+                    &mut events,
+                    on_event,
+                    EventMsg::ContextCompactionStarted {
+                        turn_id: turn_id.to_string(),
+                        continuation: start.continuation,
+                        estimated_tokens: estimated_total_tokens.max(start.estimated_history_tokens)
+                            as u64,
+                    },
+                );
             },
         )
         .await?;
-        if compaction.is_some() {
-            emit_event(
-                &mut events,
-                on_event,
-                EventMsg::ContextCompactionStarted {
-                    turn_id: turn_id.to_string(),
-                    continuation: compaction
-                        .as_ref()
-                        .map(|compacted| compacted.continuation)
-                        .unwrap_or(CompactionContinuation::PreTurn),
-                    estimated_tokens: estimated_total_tokens as u64,
-                },
-            );
-        }
         if let Some(compacted) = compaction.as_ref() {
             host.persist_rollout_items(
                 conversation_id,
@@ -217,7 +216,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
                     post_context_tokens_estimate: compacted.post_context_tokens_estimate,
                     pre_message_count: compacted.pre_message_count,
                     post_message_count: compacted.post_message_count,
-                    preserved_tail_count: compacted.post_message_count.saturating_sub(2),
+                    preserved_user_count: compacted.preserved_user_count,
                 },
             );
         }
@@ -227,7 +226,6 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &context_manager,
                 filter_policy,
                 &environment_context,
-                &tool_specs,
                 &settings,
                 BudgetedFragmentInputs {
                     raw_memory_fragment: raw_memory_fragment.clone(),
@@ -279,11 +277,7 @@ pub async fn execute_regular_turn<H: TurnHost>(
             &tool_specs,
             settings.context_compaction_request_overhead_tokens,
         );
-        let available_history_tokens = trigger_tokens
-            .saturating_sub(overhead_now)
-            .saturating_sub(settings.post_compact_memory_floor_tokens)
-            .saturating_sub(settings.context_budget_safety_buffer_tokens)
-            .max(1);
+        let available_history_tokens = trigger_tokens.max(1);
         let compaction_triggered_now = estimated_total_tokens > available_history_tokens;
         let _ = append_context_budget_log(
             &settings.data_root_dir,
@@ -359,6 +353,12 @@ pub async fn execute_regular_turn<H: TurnHost>(
             model_request.messages.len(),
             tool_specs.len(),
         );
+        let request_shape = build_model_request_shape_audit(
+            &model_request.messages,
+            tool_specs.len(),
+            compaction.as_ref().map(|compacted| compacted.continuation),
+        );
+        host.audit_model_request_shape(conversation_id, turn_id, &request_shape);
 
         struct TurnStreamObserver<'a, E: FnMut(&EventMsg) + ?Sized> {
             turn_id: &'a str,
@@ -740,7 +740,6 @@ fn build_budgeted_fragments_for_current_history(
     context_manager: &ContextManager,
     filter_policy: FilterPolicy,
     environment_context: &crate::context::EnvironmentContext,
-    tool_specs: &[crate::ToolSpec],
     settings: &crate::turn::RegularTurnSettings,
     inputs: BudgetedFragmentInputs,
 ) -> crate::context::BudgetedFragments {
@@ -748,11 +747,9 @@ fn build_budgeted_fragments_for_current_history(
         &context_manager.history().messages,
         filter_policy,
         environment_context.render(),
-        tool_specs,
         &settings.workspace_root,
         settings.model_context_window,
         settings.context_compaction_trigger_ratio,
-        settings.context_compaction_request_overhead_tokens,
         MemoryBudgetSource {
             memory: inputs.raw_memory_fragment,
             skills: inputs.skill_summary,
@@ -1380,8 +1377,6 @@ mod tests {
             &CancellationToken::new(),
             CompactionMode::Automatic {
                 estimated_total_tokens: usize::MAX,
-                memory_floor_tokens: 0,
-                safety_buffer_tokens: 0,
                 continuation: CompactionContinuation::PreTurn,
             },
         )
@@ -1396,8 +1391,6 @@ mod tests {
             &CancellationToken::new(),
             CompactionMode::Automatic {
                 estimated_total_tokens: usize::MAX,
-                memory_floor_tokens: 0,
-                safety_buffer_tokens: 0,
                 continuation: CompactionContinuation::MidTurn,
             },
         )
@@ -1435,8 +1428,6 @@ mod tests {
             &cancellation_token,
             CompactionMode::Automatic {
                 estimated_total_tokens: usize::MAX,
-                memory_floor_tokens: 0,
-                safety_buffer_tokens: 0,
                 continuation: CompactionContinuation::MidTurn,
             },
         )
@@ -1629,7 +1620,6 @@ mod tests {
         };
         let environment = host.environment_context();
         let filter_policy = FilterPolicy { enabled: false };
-        let tool_specs = Vec::<ToolSpec>::new();
 
         let mut context_manager =
             ContextManager::from_history(ConversationHistory::new("default", "system"));
@@ -1646,7 +1636,6 @@ mod tests {
             &context_manager,
             filter_policy,
             &environment,
-            &tool_specs,
             &settings,
             BudgetedFragmentInputs {
                 raw_memory_fragment: host.raw_memory_fragment(),
@@ -1665,7 +1654,6 @@ mod tests {
             &context_manager,
             filter_policy,
             &environment,
-            &tool_specs,
             &settings,
             BudgetedFragmentInputs {
                 raw_memory_fragment: host.raw_memory_fragment(),

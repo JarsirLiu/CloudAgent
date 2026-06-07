@@ -275,12 +275,12 @@ impl AgentConfig {
         Self {
             runtime: RuntimeConfig {
                 system_prompt: default_system_prompt(),
-                max_tool_roundtrips: None,
+                max_tool_roundtrips: Some(12),
                 data_root_dir: data_root_dir.clone(),
                 conversation_store_dir: data_root_dir.join("conversations"),
                 skills_enabled: true,
                 skill_roots: Vec::new(),
-                model_context_window: 200_000,
+                model_context_window: 258_000,
                 context_compaction_trigger_ratio: 0.90,
                 context_compaction_target_tokens: 36_000,
                 context_compaction_request_overhead_tokens: 28_000,
@@ -457,24 +457,9 @@ impl AgentConfig {
             let trigger_tokens = ((self.runtime.model_context_window as f32)
                 * self.runtime.context_compaction_trigger_ratio)
                 as usize;
-            if self.runtime.context_compaction_request_overhead_tokens >= trigger_tokens {
-                self.runtime.context_compaction_request_overhead_tokens =
-                    trigger_tokens.saturating_sub(4_000);
-            }
             if self.runtime.context_compaction_target_tokens >= trigger_tokens {
                 self.runtime.context_compaction_target_tokens =
                     trigger_tokens.saturating_sub(8_000).max(512);
-            }
-            if self
-                .runtime
-                .context_compaction_target_tokens
-                .saturating_add(self.runtime.context_compaction_request_overhead_tokens)
-                >= trigger_tokens
-            {
-                self.runtime.context_compaction_target_tokens = trigger_tokens
-                    .saturating_sub(self.runtime.context_compaction_request_overhead_tokens)
-                    .saturating_sub(4_000)
-                    .max(512);
             }
             if self.runtime.context_compaction_preserved_tail_tokens
                 >= self.runtime.context_compaction_target_tokens
@@ -629,24 +614,9 @@ impl AgentConfig {
         }
         let trigger_tokens = ((self.runtime.model_context_window as f32)
             * self.runtime.context_compaction_trigger_ratio) as usize;
-        if self.runtime.context_compaction_request_overhead_tokens >= trigger_tokens {
-            self.runtime.context_compaction_request_overhead_tokens =
-                trigger_tokens.saturating_sub(4_000);
-        }
         if self.runtime.context_compaction_target_tokens >= trigger_tokens {
             self.runtime.context_compaction_target_tokens =
                 trigger_tokens.saturating_sub(8_000).max(512);
-        }
-        if self
-            .runtime
-            .context_compaction_target_tokens
-            .saturating_add(self.runtime.context_compaction_request_overhead_tokens)
-            >= trigger_tokens
-        {
-            self.runtime.context_compaction_target_tokens = trigger_tokens
-                .saturating_sub(self.runtime.context_compaction_request_overhead_tokens)
-                .saturating_sub(4_000)
-                .max(512);
         }
         if self.runtime.context_compaction_preserved_tail_tokens
             >= self.runtime.context_compaction_target_tokens

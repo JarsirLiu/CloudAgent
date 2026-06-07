@@ -251,7 +251,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             post_context_tokens_estimate,
             pre_message_count,
             post_message_count,
-            preserved_tail_count,
+            preserved_user_count,
             ..
         } => EventFlow::Continue(vec![GatewayEvent::ContextCompacted {
             target: target.clone(),
@@ -261,7 +261,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             post_context_tokens_estimate: *post_context_tokens_estimate,
             pre_message_count: *pre_message_count,
             post_message_count: *post_message_count,
-            preserved_tail_count: *preserved_tail_count,
+            preserved_user_count: *preserved_user_count,
         }]),
         AppServerNotification::TurnCompleted {
             conversation_id,

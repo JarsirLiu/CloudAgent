@@ -184,7 +184,7 @@ impl ConversationNotificationProjector {
                 post_context_tokens_estimate,
                 pre_message_count,
                 post_message_count,
-                preserved_tail_count,
+                preserved_user_count,
             } => {
                 vec![AppServerNotification::ContextCompacted {
                     conversation_id: self.conversation_id.clone(),
@@ -194,7 +194,7 @@ impl ConversationNotificationProjector {
                     post_context_tokens_estimate: *post_context_tokens_estimate,
                     pre_message_count: *pre_message_count,
                     post_message_count: *post_message_count,
-                    preserved_tail_count: *preserved_tail_count,
+                    preserved_user_count: *preserved_user_count,
                 }]
             }
             EventMsg::ContextCompactionStarted {

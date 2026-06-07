@@ -171,11 +171,9 @@ impl ContextFacade {
         history: &[ResponseItem],
         filter_policy: FilterPolicy,
         environment_fragment: ResponseItem,
-        tool_specs: &[ToolSpec],
         workspace_root: &Path,
         model_context_window: u64,
         trigger_ratio: f32,
-        configured_overhead_tokens: usize,
         source: MemoryBudgetSource,
     ) -> BudgetedFragments {
         build_memory_budgeted_fragments(
@@ -183,11 +181,9 @@ impl ContextFacade {
             history,
             filter_policy,
             environment_fragment,
-            tool_specs,
             workspace_root,
             model_context_window,
             trigger_ratio,
-            configured_overhead_tokens,
             source,
         )
     }

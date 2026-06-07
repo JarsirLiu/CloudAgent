@@ -275,16 +275,12 @@ worker-oriented 二进制。
 8. 不允许把“一会话一 worker”作为默认实现前提。
 9. worker 内的会话与目录复用策略必须显式建模，不能依赖进程继承状态。
 
-`node-worker` 改造文档统一收敛为：
+当前保留的架构实施文档：
 
-- [`docs/node-worker-rebuild-plan.zh-CN.md`](D:/learn/gifti/cloudagent/docs/node-worker-rebuild-plan.zh-CN.md)
-  架构总览、职责边界、长期运行约束
-- [`docs/node-worker-current-status.zh-CN.md`](D:/learn/gifti/cloudagent/docs/node-worker-current-status.zh-CN.md)
-  当前代码落地状态、自动回归结果、当前明确边界
-- [`docs/node-worker-phase1-checklist.zh-CN.md`](D:/learn/gifti/cloudagent/docs/node-worker-phase1-checklist.zh-CN.md)
-  第一阶段实施清单与迁移顺序
-- [`docs/node-worker-protocol-draft.zh-CN.md`](D:/learn/gifti/cloudagent/docs/node-worker-protocol-draft.zh-CN.md)
-  协议、Rust 骨架与接口草案
+- [`docs/projection-state-machine-refactor.zh-CN.md`](D:/learn/gifti/cloudagent/docs/projection-state-machine-refactor.zh-CN.md)
+  会话 view 状态机重构、后端状态真相、前端投影边界。
+- [`docs/auto-compaction-codex-alignment.zh-CN.md`](D:/learn/gifti/cloudagent/docs/auto-compaction-codex-alignment.zh-CN.md)
+  自动压缩 checkpoint、rollout 重建、turn aborted 边界和工具循环保护。
 
 ## 本地校验
 

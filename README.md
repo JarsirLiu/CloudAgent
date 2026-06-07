@@ -25,7 +25,7 @@
 ### Overview
 CloudAgent is an agent designed for remote control, multi-device collaboration, and mobile-first operation. In the future, it will support logging in from any device, connecting to remote devices for continuous interaction, and creating scheduled or wake-up tasks that can be handled automatically. The long-term goal is for CloudAgent to become your "internet employee" — coordinating across devices for project development, deployment, monitoring, and more day-to-day remote workflows, all controllable from a single phone.
 
-Today, CloudAgent already supports remote access through Feishu and personal WeChat. It uses a `node-worker` architecture with a lightweight resident process, on-demand worker startup, and idle recycling to reduce resource usage. The current version provides a CLI interface, supports any OpenAI-compatible model, accepts image input, and can be used directly for coding tasks. Its default context window is `200k`, and when usage approaches the threshold (`90%`), CloudAgent automatically compacts context to keep long conversations stable.
+Today, CloudAgent already supports remote access through Feishu and personal WeChat. It uses a `node-worker` architecture with a lightweight resident process, on-demand worker startup, and idle recycling to reduce resource usage. The current version provides a CLI interface, supports any OpenAI-compatible model, accepts image input, and can be used directly for coding tasks. Its default context window is `258k`, and when usage approaches the threshold (`90%`), CloudAgent automatically compacts context to keep long conversations stable.
 
 ### Roadmap
 In progress:
@@ -186,7 +186,7 @@ cargo run -p cli
 
 CloudAgent 是一款面向远程操控的 Agent，目标是服务于多端互连、远程协同和移动控制场景。未来，它将支持用户在任意设备登录后，与其他远端设备建立连接并持续交互；同时也将支持任务创建、定时唤醒与自动处理机制。最终，CloudAgent 将成为您的“互联网员工”，通过多端协同完成项目开发、部署、监控，以及更多日常远程操作与自动化工作，而这一切只需要一部手机即可完成。
 
-目前，CloudAgent 已支持飞书、个人微信远程接入，并采用 `node-worker` 架构：通过轻量常驻进程承载基础能力，在需要时按会话拉起 worker，空闲后自动回收，以尽可能节省系统资源。当前版本已提供 CLI 交互，支持任意 OpenAI 兼容模型接入与图片输入，可直接用于代码编写与日常任务处理。默认上下文窗口为 `200k`，当上下文使用接近阈值（`90%`）时，会自动执行压缩，以提升长对话场景下的稳定性。
+目前，CloudAgent 已支持飞书、个人微信远程接入，并采用 `node-worker` 架构：通过轻量常驻进程承载基础能力，在需要时按会话拉起 worker，空闲后自动回收，以尽可能节省系统资源。当前版本已提供 CLI 交互，支持任意 OpenAI 兼容模型接入与图片输入，可直接用于代码编写与日常任务处理。默认上下文窗口为 `258k`，当上下文使用接近阈值（`90%`）时，会自动执行压缩，以提升长对话场景下的稳定性。
 
 ### 开发进度（Roadmap）
 已开发：

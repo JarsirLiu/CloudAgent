@@ -223,7 +223,7 @@ fn context_compaction_notifications_preserve_continuation() {
         post_context_tokens_estimate: 4_321,
         pre_message_count: 20,
         post_message_count: 6,
-        preserved_tail_count: 4,
+        preserved_user_count: 4,
     });
 
     assert!(matches!(

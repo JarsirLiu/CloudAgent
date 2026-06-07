@@ -1,6 +1,6 @@
 use crate::context::{
-    CompactionSummary, ContextCompactionConfig, ContextFacade, ContextFragment,
-    build_compaction_summary_request, plan_manual_history_compaction,
+    CompactionSummary, ContextCompactionConfig, ContextFacade, build_compaction_summary_request,
+    plan_manual_history_compaction,
 };
 use crate::conversation::ConversationHistory;
 use crate::rollout::RolloutItem;
@@ -16,7 +16,7 @@ pub enum ManualCompactionOutcome {
         post_context_tokens_estimate: u64,
         pre_message_count: usize,
         post_message_count: usize,
-        preserved_tail_count: usize,
+        preserved_user_count: usize,
     },
     Skipped {
         estimated_history_tokens: usize,
@@ -34,7 +34,13 @@ pub struct AppliedCompaction {
     pub post_context_tokens_estimate: u64,
     pub pre_message_count: usize,
     pub post_message_count: usize,
-    pub preserved_tail_count: usize,
+    pub preserved_user_count: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CompactionStart {
+    pub continuation: CompactionContinuation,
+    pub estimated_history_tokens: usize,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -51,8 +57,6 @@ pub enum CompactionMode {
     },
     Automatic {
         estimated_total_tokens: usize,
-        memory_floor_tokens: usize,
-        safety_buffer_tokens: usize,
         continuation: CompactionContinuation,
     },
 }
@@ -66,8 +70,21 @@ pub async fn maybe_compact_history<H>(
 where
     H: TurnHost,
 {
+    maybe_compact_history_with_start_callback(host, history, cancellation_token, mode, |_| {}).await
+}
+
+pub async fn maybe_compact_history_with_start_callback<H, F>(
+    host: &H,
+    history: &mut ConversationHistory,
+    cancellation_token: &CancellationToken,
+    mode: CompactionMode,
+    on_start: F,
+) -> Result<Option<AppliedCompaction>>
+where
+    H: TurnHost,
+    F: FnOnce(CompactionStart),
+{
     let context_facade = ContextFacade::new();
-    let environment_context = host.environment_context();
     let settings = host.regular_turn_settings();
     let estimated_history_tokens = context_facade.estimate_history_tokens_for_canonical_compaction(
         &history.messages,
@@ -77,12 +94,6 @@ where
     let compaction_config = ContextCompactionConfig {
         model_context_window: settings.model_context_window,
         trigger_ratio: settings.context_compaction_trigger_ratio,
-        request_overhead_tokens: context_facade.estimate_request_overhead_tokens(
-            &history.messages,
-            &environment_context.render(),
-            &[],
-            settings.context_compaction_request_overhead_tokens,
-        ),
         compacted_target_tokens: settings.context_compaction_target_tokens,
         preserved_user_turns: settings.context_compaction_preserved_user_turns,
         preserved_tail_tokens: settings.context_compaction_preserved_tail_tokens,
@@ -100,18 +111,12 @@ where
         }
         CompactionMode::Automatic {
             estimated_total_tokens,
-            memory_floor_tokens,
-            safety_buffer_tokens,
             ..
         } => {
             let trigger_tokens = ((settings.model_context_window as f32)
                 * settings.context_compaction_trigger_ratio)
                 as usize;
-            let available_history_tokens = trigger_tokens
-                .saturating_sub(compaction_config.request_overhead_tokens)
-                .saturating_sub(memory_floor_tokens)
-                .saturating_sub(safety_buffer_tokens)
-                .max(1);
+            let available_history_tokens = trigger_tokens.max(1);
             if estimated_total_tokens <= available_history_tokens {
                 return Ok(None);
             }
@@ -135,6 +140,14 @@ where
     ) else {
         return Ok(None);
     };
+    let continuation = match mode {
+        CompactionMode::Manual { .. } => CompactionContinuation::PreTurn,
+        CompactionMode::Automatic { continuation, .. } => continuation,
+    };
+    on_start(CompactionStart {
+        continuation,
+        estimated_history_tokens,
+    });
 
     let summary_request = build_compaction_summary_request(
         &filtered_plan,
@@ -153,15 +166,21 @@ where
     let pre_message_count = history.messages.len();
     let pre_context_tokens_estimate =
         context_facade.estimate_history_tokens(&history.messages) as u64;
-    let continuation = match mode {
-        CompactionMode::Manual { .. } => CompactionContinuation::PreTurn,
-        CompactionMode::Automatic { continuation, .. } => continuation,
-    };
     let compacted = context_facade.apply_compaction(&mut history.messages, &raw_plan, summary);
     let post_message_count = compacted.replacement_history.len();
     let post_context_tokens_estimate =
         context_facade.estimate_history_tokens(&compacted.replacement_history) as u64;
-    let preserved_tail_count = post_message_count.saturating_sub(2);
+    let preserved_user_count = compacted
+        .replacement_history
+        .iter()
+        .filter(|item| {
+            matches!(item, crate::ResponseItem::User { content } if {
+                let text = crate::input_items_to_plain_text(content);
+                let trimmed = text.trim_start();
+                !trimmed.starts_with("[Context Summary]") && !trimmed.starts_with("<turn_aborted>")
+            })
+        })
+        .count();
     let rendered_summary = compacted.summary.rendered();
 
     Ok(Some(AppliedCompaction {
@@ -173,7 +192,7 @@ where
         post_context_tokens_estimate,
         pre_message_count,
         post_message_count,
-        preserved_tail_count,
+        preserved_user_count,
     }))
 }
 
@@ -225,6 +244,6 @@ where
         post_context_tokens_estimate: compacted.post_context_tokens_estimate,
         pre_message_count: compacted.pre_message_count,
         post_message_count: compacted.post_message_count,
-        preserved_tail_count: compacted.preserved_tail_count,
+        preserved_user_count: compacted.preserved_user_count,
     })
 }

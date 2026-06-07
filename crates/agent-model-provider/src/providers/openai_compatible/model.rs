@@ -19,7 +19,7 @@ use config::LlmConfig;
 use infra_http::{build_http_client, spawn_sse_frame_stream};
 use reqwest::Client;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
@@ -330,6 +330,8 @@ impl OpenAiCompatibleModel {
         let mut completion: Option<ProviderCompletion> = None;
         let mut tool_calls_acc: HashMap<usize, StreamingToolCallAcc> = HashMap::new();
         let mut saw_provider_event = false;
+        let mut saw_substantive_event = false;
+        let stream_started_at = Instant::now();
         let timeout_ms = self.runtime.stream_idle_timeout.as_millis() as u64;
 
         loop {
@@ -350,6 +352,9 @@ impl OpenAiCompatibleModel {
             };
             saw_provider_event = true;
             let event = event.map_err(anyhow::Error::new)?;
+            if !saw_substantive_event && provider_stream_event_is_substantive(&event) {
+                saw_substantive_event = true;
+            }
             match event {
                 ProviderStreamEvent::TextDelta(delta) => {
                     if !delta.is_empty() {
@@ -412,6 +417,14 @@ impl OpenAiCompatibleModel {
                     break;
                 }
             }
+            if !saw_substantive_event
+                && stream_started_at.elapsed() >= self.runtime.stream_idle_timeout
+            {
+                return Err(anyhow::Error::new(ProviderStreamError::RequestTimeout {
+                    stage: "first content",
+                    timeout_ms,
+                }));
+            }
         }
 
         let completion = completion
@@ -425,6 +438,28 @@ impl OpenAiCompatibleModel {
             model_name,
             usage,
         })
+    }
+}
+
+fn provider_stream_event_is_substantive(event: &ProviderStreamEvent) -> bool {
+    match event {
+        ProviderStreamEvent::TextDelta(delta) => !delta.is_empty(),
+        ProviderStreamEvent::ReasoningDelta(ProviderReasoningDelta::SummaryText {
+            delta, ..
+        })
+        | ProviderStreamEvent::ReasoningDelta(ProviderReasoningDelta::Text { delta, .. }) => {
+            !delta.is_empty()
+        }
+        ProviderStreamEvent::ToolCallDelta(delta) => {
+            delta.id.as_ref().is_some_and(|id| !id.is_empty())
+                || delta.name.as_ref().is_some_and(|name| !name.is_empty())
+                || delta
+                    .arguments_delta
+                    .as_ref()
+                    .is_some_and(|arguments| !arguments.is_empty())
+        }
+        ProviderStreamEvent::Completed(_) => true,
+        ProviderStreamEvent::Usage(_) | ProviderStreamEvent::Metadata(_) => false,
     }
 }
 

@@ -5,6 +5,7 @@ mod events;
 mod host;
 mod lifecycle;
 mod loop_guard;
+mod model_request_audit;
 mod orchestrator;
 mod outcome;
 mod output;
@@ -12,6 +13,9 @@ mod policy;
 mod regular;
 mod request_id;
 mod utils;
+
+#[cfg(test)]
+mod model_request_audit_tests;
 
 pub use api::{chat, chat_with_approval, chat_with_approval_and_events, compact_conversation};
 pub use compaction::{CompactionContinuation, ManualCompactionOutcome, run_manual_compaction};
@@ -27,6 +31,7 @@ pub use host::{
     RegularTurnSettings, RestoredBudgetBaseline, ServerRequestHandler, ToolBatchOutcome, TurnHost,
 };
 pub use lifecycle::{TurnLifecycleClass, TurnLifecyclePhase};
+pub use model_request_audit::{ModelRequestShapeAudit, build_model_request_shape_audit};
 pub use orchestrator::run_turn_with_approval;
 pub use outcome::{TurnOutcome, emit_assistant_message_item};
 pub use output::AgentTurnOutput;

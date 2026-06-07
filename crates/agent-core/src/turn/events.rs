@@ -167,7 +167,7 @@ pub enum EventMsg {
         post_context_tokens_estimate: u64,
         pre_message_count: usize,
         post_message_count: usize,
-        preserved_tail_count: usize,
+        preserved_user_count: usize,
     },
     ContextCompactionStarted {
         turn_id: TurnId,

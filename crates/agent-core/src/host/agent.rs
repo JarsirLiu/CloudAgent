@@ -853,6 +853,21 @@ impl TurnHost for AgentHost {
             json!({ "message_count": message_count, "tool_count": tool_count }),
         );
     }
+    fn audit_model_request_shape(
+        &self,
+        conversation_id: &str,
+        turn_id: &str,
+        shape: &crate::turn::ModelRequestShapeAudit,
+    ) {
+        self.append_audit(
+            conversation_id,
+            Some(turn_id),
+            "model.request_shape",
+            "info",
+            serde_json::to_value(shape)
+                .unwrap_or_else(|_| json!({ "error": "model_request_shape_serialize_failed" })),
+        );
+    }
     fn audit_model_response_received(
         &self,
         conversation_id: &str,

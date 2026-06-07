@@ -6,6 +6,7 @@ use crate::rollout::RolloutItem;
 use crate::skill::SkillRuntime;
 use crate::state::ActiveTurnHandle;
 use crate::tool::{RegularTurnToolExposure, ToolCall, ToolSpec};
+use crate::turn::ModelRequestShapeAudit;
 use crate::turn::{EventMsg, ServerRequest, ServerRequestDecision};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -159,6 +160,13 @@ pub trait TurnHost: Send + Sync {
         message_count: usize,
         tool_count: usize,
     );
+    fn audit_model_request_shape(
+        &self,
+        _conversation_id: &str,
+        _turn_id: &str,
+        _shape: &ModelRequestShapeAudit,
+    ) {
+    }
     fn audit_model_response_received(
         &self,
         conversation_id: &str,

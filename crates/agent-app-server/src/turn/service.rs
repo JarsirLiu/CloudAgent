@@ -133,7 +133,7 @@ pub(crate) async fn compact_conversation(
             post_context_tokens_estimate,
             pre_message_count: _,
             post_message_count: _,
-            preserved_tail_count: _,
+            preserved_user_count: _,
         } => {
             send_notification(
                 event_tx,

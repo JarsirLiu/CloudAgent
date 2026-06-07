@@ -1,6 +1,5 @@
 use crate::context::{FilterPolicy, facade::ContextFacade};
 use crate::conversation::{ResponseItem, text_input_items};
-use crate::tool::ToolSpec;
 use std::path::Path;
 
 #[derive(Clone, Debug, Default)]
@@ -43,11 +42,9 @@ pub fn build_memory_budgeted_fragments(
     history: &[ResponseItem],
     filter_policy: FilterPolicy,
     environment_fragment: ResponseItem,
-    tool_specs: &[ToolSpec],
     workspace_root: &Path,
     model_context_window: u64,
     trigger_ratio: f32,
-    configured_overhead_tokens: usize,
     source: MemoryBudgetSource,
 ) -> BudgetedFragments {
     let mut fragments = vec![environment_fragment.clone()];
@@ -59,16 +56,9 @@ pub fn build_memory_budgeted_fragments(
     };
     let history_tokens =
         facade.estimate_history_tokens_for_compaction(history, filter_policy, workspace_root);
-    let overhead_tokens = facade.estimate_request_overhead_tokens(
-        history,
-        &environment_fragment,
-        tool_specs,
-        configured_overhead_tokens,
-    );
     let trigger_tokens = ((model_context_window as f32) * trigger_ratio) as usize;
     let available_tokens = trigger_tokens
         .saturating_sub(history_tokens)
-        .saturating_sub(overhead_tokens)
         .saturating_sub(source.safety_buffer_tokens)
         .saturating_sub(512);
     if available_tokens < 64 {

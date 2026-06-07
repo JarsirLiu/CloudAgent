@@ -7,7 +7,6 @@ use crate::model::ModelRequest;
 pub struct ContextCompactionConfig {
     pub model_context_window: u64,
     pub trigger_ratio: f32,
-    pub request_overhead_tokens: usize,
     pub compacted_target_tokens: usize,
     pub preserved_user_turns: usize,
     pub preserved_tail_tokens: usize,
@@ -16,9 +15,8 @@ pub struct ContextCompactionConfig {
 
 #[derive(Clone, Debug)]
 pub struct ContextCompactionPlan {
-    prefix: Vec<ResponseItem>,
-    preserved_tail: Vec<ResponseItem>,
-    compacted_target_tokens: usize,
+    pub(crate) prefix: Vec<ResponseItem>,
+    pub(crate) preserved_tail: Vec<ResponseItem>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,9 +44,7 @@ pub fn plan_history_compaction(
         return None;
     }
     let trigger_tokens = ((config.model_context_window as f32) * config.trigger_ratio) as usize;
-    let available_history_tokens = trigger_tokens
-        .saturating_sub(config.request_overhead_tokens)
-        .max(1);
+    let available_history_tokens = trigger_tokens.max(1);
     if estimated <= available_history_tokens {
         return None;
     }
@@ -102,7 +98,6 @@ fn build_compaction_plan(
     Some(ContextCompactionPlan {
         prefix,
         preserved_tail: messages[keep_start..].to_vec(),
-        compacted_target_tokens: config.compacted_target_tokens.max(1),
     })
 }
 
@@ -134,7 +129,7 @@ fn find_recent_user_boundary(
 ) -> Option<usize> {
     let mut seen_users = 0usize;
     for index in (1..messages.len()).rev() {
-        if matches!(messages[index], ResponseItem::User { .. }) {
+        if response_item_is_real_user_message(&messages[index]) {
             seen_users += 1;
             if seen_users == preserved_user_turns {
                 return Some(index);
@@ -206,6 +201,15 @@ fn find_matching_tool_call(messages: &[ResponseItem], tool_call_id: &str) -> Opt
     None
 }
 
+fn response_item_is_real_user_message(item: &ResponseItem) -> bool {
+    let ResponseItem::User { content } = item else {
+        return false;
+    };
+    let text = render_input_items_for_compaction(content);
+    let trimmed = text.trim_start();
+    !trimmed.starts_with("[Context Summary]") && !trimmed.starts_with("<turn_aborted>")
+}
+
 pub fn build_compaction_summary_request(
     plan: &ContextCompactionPlan,
     config: ContextCompactionConfig,
@@ -256,76 +260,14 @@ pub fn apply_history_compaction(
     plan: &ContextCompactionPlan,
     summary: CompactionSummary,
 ) -> ContextCompactionResult {
-    let system_prompt = messages[0].clone();
-    let tail_budget = plan
-        .compacted_target_tokens
-        .saturating_sub(estimate_message_tokens(std::slice::from_ref(
-            &system_prompt,
-        )));
-    let preserved_tail = trim_tail_to_total_budget(&plan.preserved_tail, tail_budget);
-    let tail_tokens = estimate_message_tokens(&preserved_tail);
-    let summary_budget = plan
-        .compacted_target_tokens
-        .saturating_sub(estimate_message_tokens(std::slice::from_ref(
-            &system_prompt,
-        )))
-        .saturating_sub(tail_tokens)
-        .max(1);
-    let rendered_summary = truncate_summary_source(&summary.rendered(), summary_budget);
+    let replacement = super::build_compacted_replacement_history(messages, plan, &summary).messages;
 
-    let mut replacement_history = Vec::with_capacity(preserved_tail.len() + 2);
-    replacement_history.push(system_prompt);
-    replacement_history.push(ResponseItem::System {
-        content: rendered_summary,
-    });
-    replacement_history.extend(preserved_tail);
-
-    *messages = replacement_history.clone();
+    *messages = replacement.clone();
 
     ContextCompactionResult {
         summary,
-        replacement_history,
+        replacement_history: replacement,
     }
-}
-
-fn trim_tail_to_total_budget(tail: &[ResponseItem], tail_budget: usize) -> Vec<ResponseItem> {
-    if tail.is_empty() || estimate_message_tokens(tail) <= tail_budget {
-        return tail.to_vec();
-    }
-
-    let mut keep_start = choose_tail_start_from_token_budget_within_slice(tail, tail_budget.max(1));
-    while keep_start < tail.len() {
-        if !matches!(tail[keep_start], ResponseItem::Tool { .. }) {
-            break;
-        }
-        keep_start += 1;
-    }
-
-    if keep_start >= tail.len() {
-        Vec::new()
-    } else {
-        tail[keep_start..].to_vec()
-    }
-}
-
-fn choose_tail_start_from_token_budget_within_slice(
-    messages: &[ResponseItem],
-    target_limit: usize,
-) -> usize {
-    let mut keep_start = messages.len();
-    let mut kept_tokens = 0usize;
-
-    for index in (0..messages.len()).rev() {
-        let item_tokens = estimate_message_tokens(std::slice::from_ref(&messages[index]));
-        if kept_tokens.saturating_add(item_tokens) > target_limit && keep_start < messages.len() {
-            break;
-        }
-
-        keep_start = index;
-        kept_tokens = kept_tokens.saturating_add(item_tokens);
-    }
-
-    keep_start.min(messages.len())
 }
 
 impl CompactionSummary {
@@ -798,7 +740,6 @@ mod tests {
             ContextCompactionConfig {
                 model_context_window: 2_048,
                 trigger_ratio: 0.5,
-                request_overhead_tokens: 128,
                 compacted_target_tokens: 720,
                 preserved_user_turns: 3,
                 preserved_tail_tokens: 512,
@@ -812,7 +753,6 @@ mod tests {
             ContextCompactionConfig {
                 model_context_window: 2_048,
                 trigger_ratio: 0.5,
-                request_overhead_tokens: 128,
                 compacted_target_tokens: 720,
                 preserved_user_turns: 3,
                 preserved_tail_tokens: 512,
@@ -826,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_recent_messages_when_applying_compaction() {
+    fn applies_compaction_as_clean_checkpoint_history() {
         let mut messages = vec![ResponseItem::System {
             content: "system".to_string(),
         }];
@@ -862,13 +802,11 @@ mod tests {
                 }),
             });
         }
-        let tail_before = messages[messages.len().saturating_sub(6)..].to_vec();
         let plan = plan_history_compaction(
             &messages,
             ContextCompactionConfig {
                 model_context_window: 2_048,
                 trigger_ratio: 0.45,
-                request_overhead_tokens: 128,
                 compacted_target_tokens: 614,
                 preserved_user_turns: 3,
                 preserved_tail_tokens: 512,
@@ -886,14 +824,21 @@ mod tests {
             .ensure_defaults(),
         );
 
-        let tail_after = messages[messages.len().saturating_sub(6)..].to_vec();
-        assert_eq!(tail_before.len(), tail_after.len());
-        assert!(matches!(
-            (&tail_before[0], &tail_after[0]),
-            (ResponseItem::User { content: before }, ResponseItem::User { content: after }) if before == after
-        ));
+        assert!(messages.iter().all(|item| {
+            matches!(
+                item,
+                ResponseItem::System { .. } | ResponseItem::User { .. }
+            )
+        }));
+        assert!(messages.iter().any(|item| {
+            matches!(item, ResponseItem::User { content } if input_items_to_plain_text(content).starts_with("q"))
+        }));
         assert!(result.summary.rendered().contains("[Context Summary]"));
         assert_eq!(result.replacement_history.len(), messages.len());
+        assert!(matches!(
+            messages.last(),
+            Some(ResponseItem::User { content }) if input_items_to_plain_text(content).starts_with("[Context Summary]")
+        ));
     }
 
     #[test]
@@ -951,7 +896,6 @@ mod tests {
                 ],
             }],
             preserved_tail: Vec::new(),
-            compacted_target_tokens: 128,
         };
 
         let summary = CompactionSummary::fallback_from_plan(&plan);
