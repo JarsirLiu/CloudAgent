@@ -20,12 +20,14 @@ use crate::app::clipboard_paste::{is_supported_image_path, normalize_pasted_imag
 use crate::ui::widgets::textarea::{TextArea, TextAreaState, is_altgr};
 
 mod attachments;
+mod history;
 #[cfg(test)]
 mod tests;
 
 use attachments::{
     AttachedSkill, LocalAttachedImage, RemoteAttachedImage, build_submission_content,
 };
+use history::{ComposerHistory, HistoryNavigation};
 
 pub struct ComposerRender {
     pub lines: Vec<Line<'static>>,
@@ -47,9 +49,7 @@ pub struct ChatComposer {
     textarea_state: RefCell<TextAreaState>,
     completion: CompletionState,
     paste_burst: PasteBurst,
-    history: Vec<String>,
-    history_cursor: Option<usize>,
-    last_history_text: Option<String>,
+    history: ComposerHistory,
     local_images: Vec<LocalAttachedImage>,
     remote_images: Vec<RemoteAttachedImage>,
     attached_skills: Vec<AttachedSkill>,
@@ -63,9 +63,7 @@ impl ChatComposer {
             textarea_state: RefCell::new(TextAreaState::default()),
             completion: CompletionState::default(),
             paste_burst: PasteBurst::default(),
-            history: Vec::new(),
-            history_cursor: None,
-            last_history_text: None,
+            history: ComposerHistory::default(),
             local_images: Vec::new(),
             remote_images: Vec::new(),
             attached_skills: Vec::new(),
@@ -439,8 +437,7 @@ impl ChatComposer {
         *self.textarea_state.borrow_mut() = TextAreaState::default();
         self.completion.clear();
         self.paste_burst.clear_after_explicit_paste();
-        self.history_cursor = None;
-        self.last_history_text = None;
+        self.history.clear_all();
         self.local_images.clear();
         self.remote_images.clear();
         self.attached_skills.clear();
@@ -615,8 +612,7 @@ impl ChatComposer {
         let local_images = std::mem::take(&mut self.local_images);
         let remote_images = std::mem::take(&mut self.remote_images);
         self.completion.clear();
-        self.history_cursor = None;
-        self.last_history_text = None;
+        self.history.clear_navigation();
         let attached_skills = std::mem::take(&mut self.attached_skills);
         let content =
             build_submission_content(&text, &local_images, &remote_images, &attached_skills);
@@ -624,7 +620,7 @@ impl ChatComposer {
             ComposerIntent::None
         } else {
             if !text.is_empty() {
-                self.record_history_entry(text.clone());
+                self.history.record(text.clone());
             }
             if local_images.is_empty()
                 && remote_images.is_empty()
@@ -711,56 +707,33 @@ impl ChatComposer {
             return false;
         }
 
-        matches!(&self.last_history_text, Some(prev) if prev == text)
+        self.history.last_text_matches(text)
     }
 
     fn navigate_history_up(&mut self) {
-        if self.history.is_empty() {
-            return;
+        if let Some(entry) = self.history.navigate_up() {
+            self.apply_history_entry(entry);
         }
-        let next = match self.history_cursor {
-            None => self.history.len().saturating_sub(1),
-            Some(0) => 0,
-            Some(idx) => idx.saturating_sub(1),
-        };
-        self.history_cursor = Some(next);
-        self.apply_history_entry(next);
     }
 
     fn navigate_history_down(&mut self) {
-        let Some(idx) = self.history_cursor else {
-            return;
-        };
-        if idx + 1 >= self.history.len() {
-            self.history_cursor = None;
-            self.last_history_text = None;
-            self.textarea.clear();
-            *self.textarea_state.borrow_mut() = TextAreaState::default();
-            return;
+        match self.history.navigate_down() {
+            HistoryNavigation::Apply(entry) => self.apply_history_entry(entry),
+            HistoryNavigation::ClearComposer => {
+                self.textarea.clear();
+                *self.textarea_state.borrow_mut() = TextAreaState::default();
+            }
+            HistoryNavigation::Unchanged => {}
         }
-        let next = idx + 1;
-        self.history_cursor = Some(next);
-        self.apply_history_entry(next);
     }
 
-    fn apply_history_entry(&mut self, index: usize) {
-        if let Some(entry) = self.history.get(index).cloned() {
-            self.textarea.set_text(entry.clone());
-            *self.textarea_state.borrow_mut() = TextAreaState::default();
-            self.last_history_text = Some(entry);
-        }
+    fn apply_history_entry(&mut self, entry: String) {
+        self.textarea.set_text(entry);
+        *self.textarea_state.borrow_mut() = TextAreaState::default();
     }
 
     fn reset_history_navigation_if_needed(&mut self) {
-        self.history_cursor = None;
-        self.last_history_text = None;
-    }
-
-    fn record_history_entry(&mut self, entry: String) {
-        if self.history.last().is_some_and(|last| last == &entry) {
-            return;
-        }
-        self.history.push(entry);
+        self.history.clear_navigation();
     }
 
     fn accept_selected_completion(&mut self) {
