@@ -113,16 +113,49 @@ fn detect_terminal_color_depth() -> ColorDepth {
     if is_apple_terminal() {
         return ColorDepth::Ansi256;
     }
+
+    effective_color_depth(
+        stdout_color_depth(),
+        has_truecolor_terminal_signal(),
+        is_known_truecolor_term_program(),
+    )
+}
+
+fn stdout_color_depth() -> ColorDepth {
+    match supports_color::on_cached(supports_color::Stream::Stdout) {
+        Some(level) if level.has_16m => ColorDepth::TrueColor,
+        Some(level) if level.has_256 => ColorDepth::Ansi256,
+        Some(_) => ColorDepth::Ansi16,
+        None => env_color_depth_fallback(),
+    }
+}
+
+fn effective_color_depth(
+    stdout_depth: ColorDepth,
+    has_windows_terminal_session: bool,
+    has_known_truecolor_term_program: bool,
+) -> ColorDepth {
+    if has_windows_terminal_session {
+        return ColorDepth::TrueColor;
+    }
+    if stdout_depth == ColorDepth::Ansi16 && has_known_truecolor_term_program {
+        return ColorDepth::TrueColor;
+    }
+    stdout_depth
+}
+
+fn env_color_depth_fallback() -> ColorDepth {
     if matches_colorterm("truecolor") || matches_colorterm("24bit") {
         return ColorDepth::TrueColor;
     }
-    if std::env::var_os("WT_SESSION").is_some() {
+    if has_truecolor_terminal_signal() {
+        return ColorDepth::TrueColor;
+    }
+    if is_known_truecolor_term_program() {
         return ColorDepth::TrueColor;
     }
     if let Some(term_program) = env_lowercase("TERM_PROGRAM")
-        && ["iterm", "wezterm", "vscode", "warp", "hyper", "kitty"]
-            .iter()
-            .any(|needle| term_program.contains(needle))
+        && term_program.contains("windows terminal")
     {
         return ColorDepth::TrueColor;
     }
@@ -139,6 +172,73 @@ fn detect_terminal_color_depth() -> ColorDepth {
         return ColorDepth::Ansi256;
     }
     ColorDepth::Ansi16
+}
+
+fn is_known_truecolor_term_program() -> bool {
+    env_lowercase("TERM_PROGRAM")
+        .map(|term_program| {
+            let normalized = normalize_terminal_name(&term_program);
+            ["iterm", "wezterm", "vscode", "warp", "hyper", "kitty"]
+                .iter()
+                .any(|needle| term_program.contains(needle))
+                || normalized == "windowsterminal"
+        })
+        .unwrap_or(false)
+}
+
+fn is_windows_terminal_session() -> bool {
+    std::env::var_os("WT_SESSION").is_some()
+        || std::env::var_os("WT_PROFILE_ID").is_some()
+        || env_lowercase("TERM_PROGRAM")
+            .map(|term_program| normalize_terminal_name(&term_program) == "windowsterminal")
+            .unwrap_or(false)
+}
+
+fn has_truecolor_terminal_signal() -> bool {
+    is_windows_terminal_session() || windows_console_supports_or_enables_virtual_terminal()
+}
+
+#[cfg(windows)]
+fn windows_console_supports_or_enables_virtual_terminal() -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE,
+        SetConsoleMode,
+    };
+
+    unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return false;
+        }
+
+        let mut mode = 0;
+        if GetConsoleMode(handle, &mut mode) == 0 {
+            return false;
+        }
+        if mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0 {
+            return true;
+        }
+
+        // Some Windows Terminal cmd profiles do not expose WT_* environment
+        // variables to child processes. Enabling VT is the reliable capability
+        // probe for those sessions, and it is required before ANSI rendering.
+        SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn windows_console_supports_or_enables_virtual_terminal() -> bool {
+    false
+}
+
+fn normalize_terminal_name(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '-' | '_' | '.'))
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 fn detect_synchronized_update_support() -> bool {
@@ -258,7 +358,8 @@ fn parse_color_depth_override(value: &str) -> Option<ColorDepth> {
 fn parse_color_mode_override(value: &str) -> Option<ColorDepth> {
     match value.to_ascii_lowercase().as_str() {
         "never" => Some(ColorDepth::NoColor),
-        "always" | "auto" => None,
+        "always" => Some(ColorDepth::TrueColor),
+        "auto" => None,
         _ => None,
     }
 }
@@ -383,7 +484,7 @@ fn color_distance_sq(r: u8, g: u8, b: u8, target: (u8, u8, u8)) -> u32 {
 mod tests {
     use super::{
         BackgroundTone, ColorCliPreference, ColorDepth, TerminalCapabilities, adapt_bg,
-        adapt_color, color_cli_preference,
+        adapt_color, color_cli_preference, effective_color_depth,
     };
     use ratatui::style::Color;
     use std::ffi::OsString;
@@ -467,6 +568,199 @@ mod tests {
             }
         }
         assert_eq!(capabilities.color_depth, ColorDepth::Ansi256);
+    }
+
+    #[test]
+    fn color_always_forces_truecolor() {
+        let _lock = env_lock();
+        let previous_mode = std::env::var_os("CLOUDAGENT_COLOR_MODE");
+        let previous_depth = std::env::var_os("CLOUDAGENT_COLOR_DEPTH");
+        let previous_no_color = std::env::var_os("NO_COLOR");
+        unsafe {
+            std::env::set_var("CLOUDAGENT_COLOR_MODE", "always");
+            std::env::remove_var("CLOUDAGENT_COLOR_DEPTH");
+            std::env::remove_var("NO_COLOR");
+        }
+        let capabilities = TerminalCapabilities::detect();
+        unsafe {
+            match previous_mode {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_MODE", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_MODE"),
+            }
+            match previous_depth {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_DEPTH", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_DEPTH"),
+            }
+            match previous_no_color {
+                Some(value) => std::env::set_var("NO_COLOR", value),
+                None => std::env::remove_var("NO_COLOR"),
+            }
+        }
+        assert_eq!(capabilities.color_depth, ColorDepth::TrueColor);
+    }
+
+    #[test]
+    fn wt_session_promotes_to_truecolor() {
+        let _lock = env_lock();
+        let previous_wt_session = std::env::var_os("WT_SESSION");
+        let previous_mode = std::env::var_os("CLOUDAGENT_COLOR_MODE");
+        let previous_depth = std::env::var_os("CLOUDAGENT_COLOR_DEPTH");
+        let previous_no_color = std::env::var_os("NO_COLOR");
+        let previous_force_color = std::env::var_os("FORCE_COLOR");
+        unsafe {
+            std::env::set_var("WT_SESSION", "test-session");
+            std::env::remove_var("CLOUDAGENT_COLOR_MODE");
+            std::env::remove_var("CLOUDAGENT_COLOR_DEPTH");
+            std::env::remove_var("NO_COLOR");
+            std::env::remove_var("FORCE_COLOR");
+        }
+        let capabilities = TerminalCapabilities::detect();
+        unsafe {
+            match previous_wt_session {
+                Some(value) => std::env::set_var("WT_SESSION", value),
+                None => std::env::remove_var("WT_SESSION"),
+            }
+            match previous_mode {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_MODE", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_MODE"),
+            }
+            match previous_depth {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_DEPTH", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_DEPTH"),
+            }
+            match previous_no_color {
+                Some(value) => std::env::set_var("NO_COLOR", value),
+                None => std::env::remove_var("NO_COLOR"),
+            }
+            match previous_force_color {
+                Some(value) => std::env::set_var("FORCE_COLOR", value),
+                None => std::env::remove_var("FORCE_COLOR"),
+            }
+        }
+        assert_eq!(capabilities.color_depth, ColorDepth::TrueColor);
+    }
+
+    #[test]
+    fn windows_terminal_session_promotes_even_when_stdout_reports_ansi16() {
+        assert_eq!(
+            effective_color_depth(
+                ColorDepth::Ansi16,
+                /*has_windows_terminal_session*/ true,
+                /*has_known_truecolor_term_program*/ false,
+            ),
+            ColorDepth::TrueColor
+        );
+    }
+
+    #[test]
+    fn known_truecolor_terminal_promotes_ansi16() {
+        assert_eq!(
+            effective_color_depth(
+                ColorDepth::Ansi16,
+                /*has_windows_terminal_session*/ false,
+                /*has_known_truecolor_term_program*/ true,
+            ),
+            ColorDepth::TrueColor
+        );
+    }
+
+    #[test]
+    fn windows_terminal_name_is_known_truecolor_terminal() {
+        let _lock = env_lock();
+        let previous_term_program = std::env::var_os("TERM_PROGRAM");
+        unsafe {
+            std::env::set_var("TERM_PROGRAM", "WindowsTerminal");
+        }
+        let detected = super::is_known_truecolor_term_program();
+        unsafe {
+            match previous_term_program {
+                Some(value) => std::env::set_var("TERM_PROGRAM", value),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+        }
+        assert!(detected);
+    }
+
+    #[test]
+    fn windows_terminal_profile_id_is_windows_terminal_session() {
+        let _lock = env_lock();
+        let previous_wt_session = std::env::var_os("WT_SESSION");
+        let previous_wt_profile_id = std::env::var_os("WT_PROFILE_ID");
+        let previous_term_program = std::env::var_os("TERM_PROGRAM");
+        unsafe {
+            std::env::remove_var("WT_SESSION");
+            std::env::set_var("WT_PROFILE_ID", "{test-profile}");
+            std::env::remove_var("TERM_PROGRAM");
+        }
+        let detected = super::is_windows_terminal_session();
+        unsafe {
+            match previous_wt_session {
+                Some(value) => std::env::set_var("WT_SESSION", value),
+                None => std::env::remove_var("WT_SESSION"),
+            }
+            match previous_wt_profile_id {
+                Some(value) => std::env::set_var("WT_PROFILE_ID", value),
+                None => std::env::remove_var("WT_PROFILE_ID"),
+            }
+            match previous_term_program {
+                Some(value) => std::env::set_var("TERM_PROGRAM", value),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+        }
+        assert!(detected);
+    }
+
+    #[test]
+    fn force_color_does_not_block_windows_terminal_truecolor_promotion() {
+        let _lock = env_lock();
+        let previous_wt_session = std::env::var_os("WT_SESSION");
+        let previous_mode = std::env::var_os("CLOUDAGENT_COLOR_MODE");
+        let previous_depth = std::env::var_os("CLOUDAGENT_COLOR_DEPTH");
+        let previous_no_color = std::env::var_os("NO_COLOR");
+        let previous_force_color = std::env::var_os("FORCE_COLOR");
+        unsafe {
+            std::env::set_var("WT_SESSION", "test-session");
+            std::env::remove_var("CLOUDAGENT_COLOR_MODE");
+            std::env::remove_var("CLOUDAGENT_COLOR_DEPTH");
+            std::env::remove_var("NO_COLOR");
+            std::env::set_var("FORCE_COLOR", "1");
+        }
+        let capabilities = TerminalCapabilities::detect();
+        unsafe {
+            match previous_wt_session {
+                Some(value) => std::env::set_var("WT_SESSION", value),
+                None => std::env::remove_var("WT_SESSION"),
+            }
+            match previous_mode {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_MODE", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_MODE"),
+            }
+            match previous_depth {
+                Some(value) => std::env::set_var("CLOUDAGENT_COLOR_DEPTH", value),
+                None => std::env::remove_var("CLOUDAGENT_COLOR_DEPTH"),
+            }
+            match previous_no_color {
+                Some(value) => std::env::set_var("NO_COLOR", value),
+                None => std::env::remove_var("NO_COLOR"),
+            }
+            match previous_force_color {
+                Some(value) => std::env::set_var("FORCE_COLOR", value),
+                None => std::env::remove_var("FORCE_COLOR"),
+            }
+        }
+        assert_eq!(capabilities.color_depth, ColorDepth::TrueColor);
+    }
+
+    #[test]
+    fn ansi256_is_not_promoted_by_terminal_name() {
+        assert_eq!(
+            effective_color_depth(
+                ColorDepth::Ansi256,
+                /*has_windows_terminal_session*/ false,
+                /*has_known_truecolor_term_program*/ true,
+            ),
+            ColorDepth::Ansi256
+        );
     }
 
     #[test]
