@@ -10,7 +10,7 @@ pub(crate) async fn run_tui_event_loop(
     client: &mut AppServerClient,
 ) -> Result<()> {
     let mut terminal = TerminalGuard::new()?;
-    let (mut events, frame_requester) = spawn_tui_event_loop();
+    let (mut events, frame_requester, _event_loop_controller) = spawn_tui_event_loop();
     let mut controller = RuntimeController::new();
     frame_requester.schedule_frame();
 

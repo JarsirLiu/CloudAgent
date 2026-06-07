@@ -20,8 +20,8 @@ use std::io::{self, IsTerminal, stdout};
 use std::panic;
 use std::sync::Once;
 
-use color_compat::{TerminalCapabilities, prepare_terminal_color_output};
 pub use color_compat::apply_color_cli_preference;
+use color_compat::{TerminalCapabilities, prepare_terminal_color_output};
 pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
