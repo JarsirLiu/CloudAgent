@@ -329,8 +329,26 @@ impl OpenAiCompatibleModel {
         let mut usage: Option<ModelUsage> = None;
         let mut completion: Option<ProviderCompletion> = None;
         let mut tool_calls_acc: HashMap<usize, StreamingToolCallAcc> = HashMap::new();
+        let mut saw_provider_event = false;
+        let timeout_ms = self.runtime.stream_idle_timeout.as_millis() as u64;
 
-        while let Some(event) = stream.recv().await {
+        loop {
+            let maybe_event = timeout(self.runtime.stream_idle_timeout, stream.recv())
+                .await
+                .map_err(|_| {
+                    anyhow::Error::new(ProviderStreamError::RequestTimeout {
+                        stage: if saw_provider_event {
+                            "next event"
+                        } else {
+                            "first event"
+                        },
+                        timeout_ms,
+                    })
+                })?;
+            let Some(event) = maybe_event else {
+                break;
+            };
+            saw_provider_event = true;
             let event = event.map_err(anyhow::Error::new)?;
             match event {
                 ProviderStreamEvent::TextDelta(delta) => {
@@ -549,6 +567,97 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn streaming_times_out_when_provider_sends_no_model_events() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("listener addr");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept client");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set read timeout");
+            stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .expect("set write timeout");
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                let read = stream.read(&mut buf).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/event-stream\r\n",
+                "Transfer-Encoding: chunked\r\n",
+                "Connection: keep-alive\r\n",
+                "\r\n"
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write headers");
+            for _ in 0..6 {
+                let body = "data: \n\n";
+                stream
+                    .write_all(format!("{:X}\r\n", body.len()).as_bytes())
+                    .expect("write chunk size");
+                stream.write_all(body.as_bytes()).expect("write chunk body");
+                stream.write_all(b"\r\n").expect("write chunk suffix");
+                stream.flush().expect("flush empty event");
+                thread::sleep(Duration::from_millis(250));
+            }
+        });
+
+        let model = OpenAiCompatibleModel::new(LlmConfig {
+            base_url: format!("http://{addr}/chat/completions"),
+            api_key: "test-key".to_string(),
+            model: "test-model".to_string(),
+            input_modalities: default_input_modalities(),
+            temperature: 0.0,
+            model_reasoning_effort: config::ReasoningEffort::Medium,
+            request_max_retries: 0,
+            stream_max_retries: 0,
+            stream_idle_timeout_ms: 1_000,
+        })
+        .expect("build model");
+
+        let mut observer = TestObserver::default();
+        let err = model
+            .complete_streaming(
+                ModelRequest {
+                    messages: vec![ResponseItem::User {
+                        content: agent_core::text_input_items("hello"),
+                    }],
+                    tools: Vec::new(),
+                    temperature: 0.0,
+                    reasoning_effort: None,
+                    tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
+                },
+                &mut observer,
+            )
+            .await
+            .expect_err("streaming should time out without provider events");
+
+        let stream_error = err
+            .downcast_ref::<ProviderStreamError>()
+            .expect("provider stream error");
+        assert!(matches!(
+            stream_error,
+            ProviderStreamError::RequestTimeout {
+                stage: "first event",
+                timeout_ms: 1_000
+            }
+        ));
+
+        server.join().expect("server thread");
     }
 
     #[tokio::test]
