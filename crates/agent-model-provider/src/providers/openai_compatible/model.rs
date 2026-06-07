@@ -21,6 +21,7 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::time::timeout;
 
 pub struct OpenAiCompatibleModel {
     client: Client,
@@ -138,13 +139,16 @@ impl OpenAiCompatibleModel {
             )),
         };
 
-        let response =
-            request_builder
-                .send()
-                .await
-                .map_err(|err| ProviderStreamError::Transport {
-                    message: format!("failed to send streaming LLM request: {err}"),
-                })?;
+        let timeout_ms = self.runtime.stream_idle_timeout.as_millis() as u64;
+        let response = timeout(self.runtime.stream_idle_timeout, request_builder.send())
+            .await
+            .map_err(|_| ProviderStreamError::RequestTimeout {
+                stage: "send",
+                timeout_ms,
+            })?
+            .map_err(|err| ProviderStreamError::Transport {
+                message: format!("failed to send streaming LLM request: {err}"),
+            })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -202,25 +206,42 @@ impl OpenAiCompatibleModel {
         let tool_index = tool_spec_index(&provider_request.tools);
         let payload = build_chat_request(&provider_request, &self.config.model, false);
 
-        let response = self
-            .client
-            .post(self.endpoint(WireStrategy::Chat))
-            .bearer_auth(&self.config.api_key)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| {
-                anyhow::Error::new(ProviderRequestError::Transport {
-                    message: format!("failed to send LLM request: {err}"),
-                })
-            })?;
-
-        let status = response.status();
-        let body = response.text().await.map_err(|err| {
+        let timeout_ms = self.runtime.stream_idle_timeout.as_millis() as u64;
+        let response = timeout(
+            self.runtime.stream_idle_timeout,
+            self.client
+                .post(self.endpoint(WireStrategy::Chat))
+                .bearer_auth(&self.config.api_key)
+                .json(&payload)
+                .send(),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::Error::new(ProviderRequestError::Timeout {
+                stage: "send",
+                timeout_ms,
+            })
+        })?
+        .map_err(|err| {
             anyhow::Error::new(ProviderRequestError::Transport {
-                message: format!("failed to read LLM body: {err}"),
+                message: format!("failed to send LLM request: {err}"),
             })
         })?;
+
+        let status = response.status();
+        let body = timeout(self.runtime.stream_idle_timeout, response.text())
+            .await
+            .map_err(|_| {
+                anyhow::Error::new(ProviderRequestError::Timeout {
+                    stage: "read body",
+                    timeout_ms,
+                })
+            })?
+            .map_err(|err| {
+                anyhow::Error::new(ProviderRequestError::Transport {
+                    message: format!("failed to read LLM body: {err}"),
+                })
+            })?;
         if !status.is_success() {
             return Err(anyhow::Error::new(Self::request_error_from_response(
                 status, body,
@@ -240,25 +261,42 @@ impl OpenAiCompatibleModel {
         let tool_index = tool_spec_index(&provider_request.tools);
         let payload = build_responses_request(&provider_request, &self.config.model, false);
 
-        let response = self
-            .client
-            .post(self.endpoint(WireStrategy::Responses))
-            .bearer_auth(&self.config.api_key)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| {
-                anyhow::Error::new(ProviderRequestError::Transport {
-                    message: format!("failed to send LLM request: {err}"),
-                })
-            })?;
-
-        let status = response.status();
-        let body = response.text().await.map_err(|err| {
+        let timeout_ms = self.runtime.stream_idle_timeout.as_millis() as u64;
+        let response = timeout(
+            self.runtime.stream_idle_timeout,
+            self.client
+                .post(self.endpoint(WireStrategy::Responses))
+                .bearer_auth(&self.config.api_key)
+                .json(&payload)
+                .send(),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::Error::new(ProviderRequestError::Timeout {
+                stage: "send",
+                timeout_ms,
+            })
+        })?
+        .map_err(|err| {
             anyhow::Error::new(ProviderRequestError::Transport {
-                message: format!("failed to read LLM body: {err}"),
+                message: format!("failed to send LLM request: {err}"),
             })
         })?;
+
+        let status = response.status();
+        let body = timeout(self.runtime.stream_idle_timeout, response.text())
+            .await
+            .map_err(|_| {
+                anyhow::Error::new(ProviderRequestError::Timeout {
+                    stage: "read body",
+                    timeout_ms,
+                })
+            })?
+            .map_err(|err| {
+                anyhow::Error::new(ProviderRequestError::Transport {
+                    message: format!("failed to read LLM body: {err}"),
+                })
+            })?;
         if !status.is_success() {
             return Err(anyhow::Error::new(Self::request_error_from_response(
                 status, body,
@@ -410,6 +448,7 @@ impl ChatModel for OpenAiCompatibleModel {
                 ProviderRequestError::Http { status, .. } if *status == 429 || *status >= 500 => {
                     ModelRetryDecision::retry(None)
                 }
+                ProviderRequestError::Timeout { .. } => ModelRetryDecision::retry(None),
                 ProviderRequestError::Transport { .. } => ModelRetryDecision::retry(None),
                 ProviderRequestError::Provider { retry_after_ms, .. } => {
                     ModelRetryDecision::retry(retry_after_ms.map(Duration::from_millis))
@@ -426,7 +465,8 @@ impl ChatModel for OpenAiCompatibleModel {
     fn classify_stream_error(&self, err: &anyhow::Error) -> ModelRetryDecision {
         if let Some(err) = err.downcast_ref::<ProviderStreamError>() {
             match err {
-                ProviderStreamError::FirstFrameTimeout
+                ProviderStreamError::RequestTimeout { .. }
+                | ProviderStreamError::FirstFrameTimeout
                 | ProviderStreamError::IdleTimeout
                 | ProviderStreamError::ClosedBeforeCompletion
                 | ProviderStreamError::Transport { .. } => ModelRetryDecision::retry(None),
@@ -509,6 +549,79 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn streaming_times_out_when_provider_never_returns_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("listener addr");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept client");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set read timeout");
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                let read = stream.read(&mut buf).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(1_500));
+        });
+
+        let model = OpenAiCompatibleModel::new(LlmConfig {
+            base_url: format!("http://{addr}/chat/completions"),
+            api_key: "test-key".to_string(),
+            model: "test-model".to_string(),
+            input_modalities: default_input_modalities(),
+            temperature: 0.0,
+            model_reasoning_effort: config::ReasoningEffort::Medium,
+            request_max_retries: 0,
+            stream_max_retries: 0,
+            stream_idle_timeout_ms: 1_000,
+        })
+        .expect("build model");
+
+        let mut observer = TestObserver::default();
+        let err = model
+            .complete_streaming(
+                ModelRequest {
+                    messages: vec![ResponseItem::User {
+                        content: agent_core::text_input_items("hello"),
+                    }],
+                    tools: Vec::new(),
+                    temperature: 0.0,
+                    reasoning_effort: None,
+                    tool_output_token_limit: ModelRequest::default_tool_output_token_limit(),
+                },
+                &mut observer,
+            )
+            .await
+            .expect_err("streaming should time out before response headers");
+
+        let stream_error = err
+            .downcast_ref::<ProviderStreamError>()
+            .expect("provider stream error");
+        assert!(matches!(
+            stream_error,
+            ProviderStreamError::RequestTimeout {
+                stage: "send",
+                timeout_ms: 1_000
+            }
+        ));
+        assert!(
+            err.to_string()
+                .contains("provider stream request timeout during send after 1000ms")
+        );
+
+        server.join().expect("server thread");
     }
 
     #[tokio::test]

@@ -3,6 +3,10 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderRequestError {
+    Timeout {
+        stage: &'static str,
+        timeout_ms: u64,
+    },
     Http {
         status: u16,
         body: String,
@@ -23,6 +27,12 @@ pub enum ProviderRequestError {
 impl fmt::Display for ProviderRequestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Timeout { stage, timeout_ms } => {
+                write!(
+                    f,
+                    "provider request timeout during {stage} after {timeout_ms}ms"
+                )
+            }
             Self::Http { status, body } => {
                 write!(f, "provider request http error {status}: {body}")
             }
@@ -43,6 +53,10 @@ impl std::error::Error for ProviderRequestError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderStreamError {
+    RequestTimeout {
+        stage: &'static str,
+        timeout_ms: u64,
+    },
     FirstFrameTimeout,
     IdleTimeout,
     ClosedBeforeCompletion,
@@ -66,6 +80,12 @@ pub enum ProviderStreamError {
 impl fmt::Display for ProviderStreamError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RequestTimeout { stage, timeout_ms } => {
+                write!(
+                    f,
+                    "provider stream request timeout during {stage} after {timeout_ms}ms"
+                )
+            }
             Self::FirstFrameTimeout => f.write_str("provider stream first-frame timeout"),
             Self::IdleTimeout => f.write_str("provider stream idle timeout"),
             Self::ClosedBeforeCompletion => f.write_str("provider stream closed before completion"),
