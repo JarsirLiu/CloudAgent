@@ -16,3 +16,9 @@ model = "gpt-4.1-mini"
 temperature = 0.2
 model_reasoning_effort = "medium"
 system_prompt = "You are CloudAgent running inside Feishu. Give concise, practical answers in Chinese unless the user asks otherwise."
+
+[runtime]
+# If omitted, automatic compaction uses model_context_window * context_compaction_trigger_ratio.
+# model_auto_compact_token_limit = 180000
+# "total" matches Codex default; "body_after_prefix" counts only growth after compaction.
+model_auto_compact_token_limit_scope = "total"

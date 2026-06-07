@@ -4,7 +4,7 @@ use agent_core::context::AgentContext;
 use agent_core::host::{AgentHost, AgentHostParts, AgentMetadata};
 use agent_core::model::{ChatModel, ChatModelFactory, ModelProviderSettings, ReloadableChatModel};
 use agent_core::state::AgentState;
-use agent_core::turn::{ExecutionPolicy, RegularTurnSettings};
+use agent_core::turn::{AutoCompactTokenLimitScope, ExecutionPolicy, RegularTurnSettings};
 use agent_memory::LongTermMemoryFacade;
 use agent_model_provider::OpenAiCompatibleModel;
 use agent_tools::{ToolRegistry, ToolRegistryOptions};
@@ -46,6 +46,16 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         pre_llm_filter_enabled: config.cli.pre_llm_filter_enabled,
         max_tool_roundtrips: policy.max_tool_roundtrips,
         model_context_window: config.runtime.model_context_window,
+        model_auto_compact_token_limit: config.runtime.model_auto_compact_token_limit,
+        model_auto_compact_token_limit_scope: match config
+            .runtime
+            .model_auto_compact_token_limit_scope
+        {
+            config::AutoCompactTokenLimitScope::Total => AutoCompactTokenLimitScope::Total,
+            config::AutoCompactTokenLimitScope::BodyAfterPrefix => {
+                AutoCompactTokenLimitScope::BodyAfterPrefix
+            }
+        },
         context_compaction_trigger_ratio: config.runtime.context_compaction_trigger_ratio,
         context_compaction_request_overhead_tokens: config
             .runtime

@@ -50,6 +50,14 @@ impl FromStr for ReasoningEffort {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoCompactTokenLimitScope {
+    #[default]
+    Total,
+    BodyAfterPrefix,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub workspace_root: PathBuf,
@@ -83,6 +91,8 @@ pub struct RuntimeConfig {
     pub skills_enabled: bool,
     pub skill_roots: Vec<PathBuf>,
     pub model_context_window: u64,
+    pub model_auto_compact_token_limit: Option<usize>,
+    pub model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope,
     pub context_compaction_trigger_ratio: f32,
     pub context_compaction_target_tokens: usize,
     pub context_compaction_request_overhead_tokens: usize,
@@ -161,6 +171,8 @@ struct PartialRuntimeConfig {
     skills_enabled: Option<bool>,
     skill_roots: Option<Vec<PathBuf>>,
     model_context_window: Option<u64>,
+    model_auto_compact_token_limit: Option<Option<usize>>,
+    model_auto_compact_token_limit_scope: Option<AutoCompactTokenLimitScope>,
     context_compaction_trigger_ratio: Option<f32>,
     context_compaction_target_tokens: Option<usize>,
     context_compaction_request_overhead_tokens: Option<usize>,
@@ -281,6 +293,8 @@ impl AgentConfig {
                 skills_enabled: true,
                 skill_roots: Vec::new(),
                 model_context_window: 258_000,
+                model_auto_compact_token_limit: None,
+                model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
                 context_compaction_trigger_ratio: 0.90,
                 context_compaction_target_tokens: 36_000,
                 context_compaction_request_overhead_tokens: 28_000,
@@ -384,6 +398,12 @@ impl AgentConfig {
             }
             if let Some(value) = runtime.model_context_window {
                 self.runtime.model_context_window = value.max(2_048);
+            }
+            if let Some(value) = runtime.model_auto_compact_token_limit {
+                self.runtime.model_auto_compact_token_limit = value.map(|limit| limit.max(1));
+            }
+            if let Some(value) = runtime.model_auto_compact_token_limit_scope {
+                self.runtime.model_auto_compact_token_limit_scope = value;
             }
             if let Some(value) = runtime.context_compaction_trigger_ratio {
                 self.runtime.context_compaction_trigger_ratio = value.clamp(0.5, 0.98);
@@ -581,6 +601,15 @@ impl AgentConfig {
             && let Ok(parsed) = value.parse::<u64>()
         {
             self.runtime.model_context_window = parsed.max(2_048);
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_MODEL_AUTO_COMPACT_TOKEN_LIMIT")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.model_auto_compact_token_limit = Some(parsed.max(1));
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_MODEL_AUTO_COMPACT_TOKEN_LIMIT_SCOPE") {
+            self.runtime.model_auto_compact_token_limit_scope =
+                parse_auto_compact_token_limit_scope(&value);
         }
         if let Ok(value) = env::var("CLOUDAGENT_CONTEXT_COMPACTION_TRIGGER_RATIO")
             && let Ok(parsed) = value.parse::<f32>()
@@ -925,6 +954,13 @@ fn parse_memory_mode(value: &str) -> MemoryMode {
         "basic" => MemoryMode::Basic,
         "evolve" => MemoryMode::Evolve,
         _ => MemoryMode::Off,
+    }
+}
+
+fn parse_auto_compact_token_limit_scope(value: &str) -> AutoCompactTokenLimitScope {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "body_after_prefix" | "body-after-prefix" => AutoCompactTokenLimitScope::BodyAfterPrefix,
+        _ => AutoCompactTokenLimitScope::Total,
     }
 }
 

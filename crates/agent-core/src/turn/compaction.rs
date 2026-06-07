@@ -56,7 +56,8 @@ pub enum CompactionMode {
         minimum_history_tokens: usize,
     },
     Automatic {
-        estimated_total_tokens: usize,
+        _estimated_total_tokens: usize,
+        token_limit_reached: bool,
         continuation: CompactionContinuation,
     },
 }
@@ -110,14 +111,10 @@ where
             minimum_history_tokens.max(1)
         }
         CompactionMode::Automatic {
-            estimated_total_tokens,
+            token_limit_reached,
             ..
         } => {
-            let trigger_tokens = ((settings.model_context_window as f32)
-                * settings.context_compaction_trigger_ratio)
-                as usize;
-            let available_history_tokens = trigger_tokens.max(1);
-            if estimated_total_tokens <= available_history_tokens {
+            if !token_limit_reached {
                 return Ok(None);
             }
             1

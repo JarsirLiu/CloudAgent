@@ -7,19 +7,14 @@ use crate::skill::SkillRuntime;
 use crate::state::ActiveTurnHandle;
 use crate::tool::{RegularTurnToolExposure, ToolCall, ToolSpec};
 use crate::turn::ModelRequestShapeAudit;
-use crate::turn::{EventMsg, ServerRequest, ServerRequestDecision};
+use crate::turn::token_usage::RestoredTurnTokenState;
+use crate::turn::{AutoCompactTokenLimitScope, EventMsg, ServerRequest, ServerRequestDecision};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::future::Future;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RestoredBudgetBaseline {
-    pub sdk_total_tokens: usize,
-    pub request_estimated_tokens: usize,
-}
 
 #[derive(Clone, Debug)]
 pub struct RegularTurnSettings {
@@ -29,6 +24,8 @@ pub struct RegularTurnSettings {
     pub pre_llm_filter_enabled: bool,
     pub max_tool_roundtrips: Option<usize>,
     pub model_context_window: u64,
+    pub model_auto_compact_token_limit: Option<usize>,
+    pub model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope,
     pub context_compaction_trigger_ratio: f32,
     pub context_compaction_request_overhead_tokens: usize,
     pub context_compaction_target_tokens: usize,
@@ -97,10 +94,10 @@ pub trait TurnHost: Send + Sync {
 
     async fn load_history(&self, conversation_id: &str) -> Result<ConversationHistory>;
     async fn history_from_rollout(&self, conversation_id: &str) -> Result<ConversationHistory>;
-    async fn restore_budget_baseline(
+    async fn restore_turn_token_state(
         &self,
         conversation_id: &str,
-    ) -> Result<Option<RestoredBudgetBaseline>>;
+    ) -> Result<Option<RestoredTurnTokenState>>;
     async fn save_history(&self, history: ConversationHistory) -> Result<()>;
     async fn persist_rollout_items(
         &self,

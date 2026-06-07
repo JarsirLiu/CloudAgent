@@ -2,45 +2,36 @@ use super::compaction::{
     CompactionContinuation, CompactionMode, maybe_compact_history_with_start_callback,
 };
 use super::loop_guard::LoopGuard;
+use super::token_usage::{RequestTokenBaseline, RestoredTurnTokenState, apply_signed_token_delta};
 use super::{
-    ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnOutcome, build_model_request_shape_audit,
+    AutoCompactPolicyInput, AutoCompactTokenLimitScope, AutoCompactWindow, ServerRequestHandler,
+    ToolBatchOutcome, TurnHost, TurnOutcome, auto_compact_token_status,
+    build_model_request_shape_audit,
 };
 use crate::context::{ContextFragment, ContextInjectionStrategy, MemoryBudgetSource};
 use crate::model::ReasoningDelta;
 use crate::skill::{render_skill_catalog, render_skill_injection};
 use crate::{
     ContextBudgetLogEntry, ContextFacade, ContextManager, FilterPolicy, ModelStreamObserver,
-    ModelUsage, RolloutItem, append_context_budget_log, emit_assistant_message_item, emit_event,
+    RolloutItem, append_context_budget_log, emit_assistant_message_item, emit_event,
 };
 use crate::{EventMsg, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState};
 use anyhow::Result;
 use std::collections::{BTreeMap, HashSet};
 use tokio_util::sync::CancellationToken;
 
-fn apply_signed_delta(base: usize, current: usize, previous: usize) -> usize {
-    if current >= previous {
-        base.saturating_add(current - previous)
-    } else {
-        base.saturating_sub(previous - current)
-    }
-}
-
 fn finish_reason_implies_tool_use(finish_reason: Option<&str>) -> bool {
     matches!(finish_reason, Some("tool_calls") | Some("tool_use"))
 }
 
-async fn restore_budget_baseline_from_host<H: TurnHost>(
+async fn restore_turn_token_state_from_host<H: TurnHost>(
     host: &H,
     conversation_id: &str,
-) -> Result<(Option<usize>, Option<usize>)> {
-    let restored = host.restore_budget_baseline(conversation_id).await?;
-    Ok(match restored {
-        Some(baseline) => (
-            Some(baseline.sdk_total_tokens),
-            Some(baseline.request_estimated_tokens),
-        ),
-        None => (None, None),
-    })
+) -> Result<RestoredTurnTokenState> {
+    Ok(host
+        .restore_turn_token_state(conversation_id)
+        .await?
+        .unwrap_or_default())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -83,13 +74,15 @@ pub async fn execute_regular_turn<H: TurnHost>(
         .into_iter()
         .map(|document| render_skill_injection(&document))
         .collect::<Vec<_>>();
-    let mut turn_total_usage = ModelUsage::default();
     let context_facade = ContextFacade::new();
     let filter_policy = FilterPolicy {
         enabled: settings.pre_llm_filter_enabled,
     };
-    let (mut last_sdk_context_tokens, mut last_request_estimated_tokens) =
-        restore_budget_baseline_from_host(host, conversation_id).await?;
+    let restored_token_state = restore_turn_token_state_from_host(host, conversation_id).await?;
+    let mut token_usage_state = restored_token_state.usage;
+    let mut request_baseline = restored_token_state.request_baseline;
+    let mut auto_compact_window =
+        AutoCompactWindow::from_snapshot(restored_token_state.auto_compact_window);
     let mut reasoning_item_seq = 0usize;
 
     let mut roundtrip_count = 0usize;
@@ -156,10 +149,12 @@ pub async fn execute_regular_turn<H: TurnHost>(
         );
         let candidate_request_tokens =
             context_facade.estimate_model_request_tokens(&candidate_request);
-        let estimated_total_tokens = match (last_sdk_context_tokens, last_request_estimated_tokens)
-        {
-            (Some(sdk_tokens), Some(previous_request_tokens)) => apply_signed_delta(
-                sdk_tokens,
+        let active_context_tokens_estimate = match (
+            request_baseline.server_context_tokens,
+            request_baseline.request_estimated_tokens,
+        ) {
+            (Some(server_tokens), Some(previous_request_tokens)) => apply_signed_token_delta(
+                server_tokens,
                 candidate_request_tokens,
                 previous_request_tokens,
             ),
@@ -170,14 +165,24 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 &context_manager.history().messages,
                 &settings.workspace_root,
             );
+        let active_context_tokens_for_compaction =
+            active_context_tokens_estimate.max(compaction_estimated_total_tokens);
+        let token_status = auto_compact_token_status(AutoCompactPolicyInput {
+            model_context_window: settings.model_context_window as usize,
+            trigger_ratio: settings.context_compaction_trigger_ratio,
+            configured_limit: settings.model_auto_compact_token_limit,
+            scope: settings.model_auto_compact_token_limit_scope,
+            active_context_tokens: active_context_tokens_for_compaction,
+            window: auto_compact_window.snapshot(),
+        });
 
         let compaction = maybe_compact_history_with_start_callback(
             host,
             context_manager.history_mut(),
             &cancellation_token,
             CompactionMode::Automatic {
-                estimated_total_tokens: estimated_total_tokens
-                    .max(compaction_estimated_total_tokens),
+                _estimated_total_tokens: token_status.active_context_tokens,
+                token_limit_reached: token_status.token_limit_reached,
                 continuation: compaction_continuation(roundtrip_count),
             },
             |start| {
@@ -187,7 +192,9 @@ pub async fn execute_regular_turn<H: TurnHost>(
                     EventMsg::ContextCompactionStarted {
                         turn_id: turn_id.to_string(),
                         continuation: start.continuation,
-                        estimated_tokens: estimated_total_tokens.max(start.estimated_history_tokens)
+                        estimated_tokens: token_status
+                            .active_context_tokens
+                            .max(start.estimated_history_tokens)
                             as u64,
                     },
                 );
@@ -195,6 +202,13 @@ pub async fn execute_regular_turn<H: TurnHost>(
         )
         .await?;
         if let Some(compacted) = compaction.as_ref() {
+            let post_context_tokens = compacted.post_context_tokens_estimate as usize;
+            request_baseline = RequestTokenBaseline {
+                server_context_tokens: Some(post_context_tokens),
+                request_estimated_tokens: Some(post_context_tokens),
+            };
+            auto_compact_window.start_next();
+            auto_compact_window.set_estimated_prefill(post_context_tokens);
             host.persist_rollout_items(
                 conversation_id,
                 &[RolloutItem::Compacted {
@@ -269,16 +283,14 @@ pub async fn execute_regular_turn<H: TurnHost>(
             filter_policy,
             &settings.workspace_root,
         );
-        let trigger_tokens = ((settings.model_context_window as f32)
-            * settings.context_compaction_trigger_ratio) as usize;
+        let trigger_tokens = token_status.limit_tokens;
         let overhead_now = context_facade.estimate_request_overhead_tokens(
             &context_manager.history().messages,
             &environment_context.render(),
             &tool_specs,
             settings.context_compaction_request_overhead_tokens,
         );
-        let available_history_tokens = trigger_tokens.max(1);
-        let compaction_triggered_now = estimated_total_tokens > available_history_tokens;
+        let compaction_triggered_now = token_status.token_limit_reached;
         let _ = append_context_budget_log(
             &settings.data_root_dir,
             &ContextBudgetLogEntry {
@@ -287,9 +299,9 @@ pub async fn execute_regular_turn<H: TurnHost>(
                 model_context_window: settings.model_context_window,
                 trigger_ratio: settings.context_compaction_trigger_ratio,
                 trigger_tokens,
-                estimated_total_tokens,
+                estimated_total_tokens: active_context_tokens_estimate,
                 filter_enabled: settings.pre_llm_filter_enabled,
-                sdk_total_tokens: last_sdk_context_tokens,
+                sdk_total_tokens: request_baseline.server_context_tokens,
                 history_tokens: history_tokens_now,
                 overhead_tokens: overhead_now,
                 memory_floor_tokens: settings.post_compact_memory_floor_tokens,
@@ -564,17 +576,26 @@ pub async fn execute_regular_turn<H: TurnHost>(
             tool_calls.len(),
         );
         if let Some(usage) = response.usage.clone() {
-            turn_total_usage.add_assign(&usage);
-            last_sdk_context_tokens = Some(usage.total_tokens as usize);
-            last_request_estimated_tokens = Some(final_budget.estimated_tokens);
+            token_usage_state
+                .append_server_usage(usage.clone(), Some(settings.model_context_window));
+            request_baseline = RequestTokenBaseline {
+                server_context_tokens: Some(usage.total_tokens as usize),
+                request_estimated_tokens: Some(final_budget.estimated_tokens),
+            };
+            if matches!(
+                settings.model_auto_compact_token_limit_scope,
+                AutoCompactTokenLimitScope::BodyAfterPrefix
+            ) {
+                auto_compact_window.ensure_server_observed_prefill_from_usage(&usage);
+            }
             emit_event(
                 &mut events,
                 on_event,
                 EventMsg::TokenUsageUpdated {
                     turn_id: turn_id.to_string(),
                     last_usage: usage,
-                    total_usage: turn_total_usage.clone(),
-                    model_context_window: Some(settings.model_context_window),
+                    total_usage: token_usage_state.total_usage.clone(),
+                    model_context_window: token_usage_state.model_context_window,
                     request_estimated_tokens: final_budget.estimated_tokens as u64,
                 },
             );
@@ -816,12 +837,12 @@ mod tests {
     use crate::tool::RegularTurnToolExposure;
     use crate::turn::compaction::{CompactionContinuation, CompactionMode, maybe_compact_history};
     use crate::turn::{
-        RegularTurnSettings, ServerRequest, ServerRequestDecision, ServerRequestHandler,
-        ToolBatchOutcome, TurnHost,
+        AutoCompactTokenLimitScope, RegularTurnSettings, ServerRequest, ServerRequestDecision,
+        ServerRequestHandler, ToolBatchOutcome, TurnHost,
     };
     use crate::{
         ContextFacade, ContextManager, ConversationHistory, EventMsg, FilterPolicy, ModelRequest,
-        ModelResponse, ModelStreamObserver, ModelUsage, RolloutItem, ToolCall, ToolExecutionPolicy,
+        ModelResponse, ModelStreamObserver, RolloutItem, ToolCall, ToolExecutionPolicy,
         ToolIdentity, ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind, TurnOutcome,
         TurnState,
     };
@@ -918,52 +939,6 @@ mod tests {
     }
 
     #[test]
-    fn latest_rollout_token_usage_event_carries_request_estimate() {
-        let items = [
-            RolloutItem::from(EventMsg::TokenUsageUpdated {
-                turn_id: "turn-1".to_string(),
-                last_usage: ModelUsage {
-                    total_tokens: 120,
-                    ..ModelUsage::default()
-                },
-                total_usage: ModelUsage {
-                    total_tokens: 120,
-                    ..ModelUsage::default()
-                },
-                model_context_window: Some(200_000),
-                request_estimated_tokens: 110,
-            }),
-            RolloutItem::from(EventMsg::TokenUsageUpdated {
-                turn_id: "turn-2".to_string(),
-                last_usage: ModelUsage {
-                    total_tokens: 240,
-                    ..ModelUsage::default()
-                },
-                total_usage: ModelUsage {
-                    total_tokens: 360,
-                    ..ModelUsage::default()
-                },
-                model_context_window: Some(200_000),
-                request_estimated_tokens: 222,
-            }),
-        ];
-
-        let restored = items.iter().rev().find_map(|item| match item {
-            RolloutItem::EventMsg {
-                event:
-                    EventMsg::TokenUsageUpdated {
-                        last_usage,
-                        request_estimated_tokens,
-                        ..
-                    },
-            } => Some((last_usage.total_tokens, *request_estimated_tokens)),
-            _ => None,
-        });
-
-        assert_eq!(restored, Some((240, 222)));
-    }
-
-    #[test]
     fn first_roundtrip_compaction_is_pre_turn_and_later_roundtrips_are_mid_turn() {
         assert_eq!(compaction_continuation(0), CompactionContinuation::PreTurn);
         assert_eq!(compaction_continuation(1), CompactionContinuation::PreTurn);
@@ -991,6 +966,8 @@ mod tests {
                     pre_llm_filter_enabled: false,
                     max_tool_roundtrips: Some(4),
                     model_context_window: 200_000,
+                    model_auto_compact_token_limit: None,
+                    model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
                     context_compaction_trigger_ratio: 0.9,
                     context_compaction_request_overhead_tokens: 1_000,
                     context_compaction_target_tokens: 36_000,
@@ -1103,10 +1080,10 @@ mod tests {
             unreachable!()
         }
 
-        async fn restore_budget_baseline(
+        async fn restore_turn_token_state(
             &self,
             _conversation_id: &str,
-        ) -> Result<Option<crate::turn::RestoredBudgetBaseline>> {
+        ) -> Result<Option<crate::turn::RestoredTurnTokenState>> {
             Ok(None)
         }
 
@@ -1376,7 +1353,8 @@ mod tests {
             &mut history.clone(),
             &CancellationToken::new(),
             CompactionMode::Automatic {
-                estimated_total_tokens: usize::MAX,
+                _estimated_total_tokens: usize::MAX,
+                token_limit_reached: true,
                 continuation: CompactionContinuation::PreTurn,
             },
         )
@@ -1390,7 +1368,8 @@ mod tests {
             &mut history,
             &CancellationToken::new(),
             CompactionMode::Automatic {
-                estimated_total_tokens: usize::MAX,
+                _estimated_total_tokens: usize::MAX,
+                token_limit_reached: true,
                 continuation: CompactionContinuation::MidTurn,
             },
         )
@@ -1427,7 +1406,8 @@ mod tests {
             &mut history,
             &cancellation_token,
             CompactionMode::Automatic {
-                estimated_total_tokens: usize::MAX,
+                _estimated_total_tokens: usize::MAX,
+                token_limit_reached: true,
                 continuation: CompactionContinuation::MidTurn,
             },
         )

@@ -73,13 +73,13 @@ pub use turn::{
     AgentTurnOutput, ApprovalPolicy, CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE,
     CommandApprovalRequest, CompactionContinuation, EventMsg, ExecutionPolicy,
     FileChangeApprovalRequest, ManualCompactionOutcome, ModelRetryStage, PermissionProfile,
-    RegularTurnSettings, RequestId, RestoredBudgetBaseline, ServerRequest, ServerRequestDecision,
-    ServerRequestDecisionKind, ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnId,
-    TurnItemDeltaKind, TurnItemKind, TurnLifecycleClass, TurnLifecyclePhase, TurnOutcome,
-    TurnPolicy, TurnState, UserTurnInput, chat, chat_with_approval, chat_with_approval_and_events,
-    compact_conversation, conversation_busy_error, emit_assistant_message_item, emit_event,
-    execute_regular_turn, next_turn_id, paginate_turns, run_manual_compaction,
-    run_turn_with_approval,
+    RegularTurnSettings, RequestId, RequestTokenBaseline, RestoredTurnTokenState, ServerRequest,
+    ServerRequestDecision, ServerRequestDecisionKind, ServerRequestHandler, TokenUsageState,
+    ToolBatchOutcome, TurnHost, TurnId, TurnItemDeltaKind, TurnItemKind, TurnLifecycleClass,
+    TurnLifecyclePhase, TurnOutcome, TurnPolicy, TurnState, UserTurnInput, chat,
+    chat_with_approval, chat_with_approval_and_events, compact_conversation,
+    conversation_busy_error, emit_assistant_message_item, emit_event, execute_regular_turn,
+    next_turn_id, paginate_turns, run_manual_compaction, run_turn_with_approval,
 };
 
 pub fn crate_name() -> &'static str {
