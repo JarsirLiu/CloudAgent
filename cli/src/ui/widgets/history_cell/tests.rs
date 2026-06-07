@@ -1,4 +1,3 @@
-
 use super::{
     ExplorationAggregate, HistoryCell, HistoryFormat, HistoryTone, line_display_width,
     tool_aggregation, user_message_style,

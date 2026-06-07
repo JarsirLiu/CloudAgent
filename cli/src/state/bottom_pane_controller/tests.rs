@@ -1,4 +1,3 @@
-
 use crate::app::TuiApp;
 use crate::state::NoticeLevel;
 use std::path::PathBuf;

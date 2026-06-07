@@ -1,4 +1,3 @@
-
 use super::*;
 use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::buffer::Buffer;

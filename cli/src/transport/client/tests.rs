@@ -1,4 +1,3 @@
-
 use super::{
     connect_local_node_once, create_local_node_client, existing_node_looks_unhealthy,
     wait_for_service,

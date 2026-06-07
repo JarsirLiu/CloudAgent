@@ -1,4 +1,3 @@
-
 use super::{render_markdown, render_plaintext};
 use ratatui::style::Color;
 use ratatui::style::Modifier;
