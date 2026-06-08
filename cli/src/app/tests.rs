@@ -257,7 +257,7 @@ fn completed_turn_history_merges_only_adjacent_agent_message_runs() {
 }
 
 #[test]
-fn rebuilt_completed_turn_keeps_final_assistant_after_tool_runs() {
+fn rebuilt_completed_turn_routes_finalized_history_to_scrollback() {
     let mut app = test_app();
     let history = vec![turn(
         "turn-1",
@@ -289,25 +289,25 @@ fn rebuilt_completed_turn_keeps_final_assistant_after_tool_runs() {
         ]
     );
 
+    assert!(
+        app.transcript_owner
+            .committed_cells_for_scrollback()
+            .iter()
+            .any(|cell| cell
+                .body()
+                .contains("Final analysis after checking both files."))
+    );
+
     let model = build_chat_surface_model(&mut app, 100, 40);
     let ChatSurfaceBody::Transcript(surface) = model.body else {
         panic!("expected transcript body");
     };
-    let rendered = surface
-        .lines
-        .iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>();
-    let last_non_empty = rendered
-        .iter()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .expect("transcript should contain visible lines");
-    assert!(last_non_empty.contains("Final analysis after checking both files."));
+    assert!(surface.lines.is_empty());
+    assert_eq!(surface.rendered_rows, 0);
 }
 
 #[test]
-fn replacing_history_resets_transcript_scroll_to_latest_tail() {
+fn replacing_history_resets_transcript_scroll_without_rehydrating_viewport_history() {
     let mut app = test_app();
     let history = vec![turn(
         "turn-1",
@@ -322,6 +322,14 @@ fn replacing_history_resets_transcript_scroll_to_latest_tail() {
 
     app.transcript_owner
         .rebuild_from_history_snapshot(&history, false);
+    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+        "assistant",
+        (0..10)
+            .map(|idx| format!("line {idx}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+    ));
     let initial_model = build_chat_surface_model(&mut app, 100, 4);
     let ChatSurfaceBody::Transcript(initial_surface) = initial_model.body else {
         panic!("expected transcript body");
@@ -332,7 +340,6 @@ fn replacing_history_resets_transcript_scroll_to_latest_tail() {
             .top_row_for_render(initial_surface.rendered_rows, 4),
         initial_surface.rendered_rows as u16 - 4
     );
-
     assert!(
         app.transcript_scroll
             .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
@@ -349,11 +356,8 @@ fn replacing_history_resets_transcript_scroll_to_latest_tail() {
     let ChatSurfaceBody::Transcript(replaced_surface) = replaced_model.body else {
         panic!("expected transcript body");
     };
-    assert_eq!(
-        app.transcript_scroll
-            .top_row_for_render(replaced_surface.rendered_rows, 4),
-        replaced_surface.rendered_rows as u16 - 4
-    );
+    assert_eq!(replaced_surface.rendered_rows, 0);
+    assert_eq!(app.transcript_scroll.top_row_for_render(0, 4), 0);
 }
 
 #[test]
@@ -1020,7 +1024,7 @@ fn chat_surface_model_renders_placeholder_before_first_delta() {
 }
 
 #[test]
-fn committed_history_without_active_cell_renders_in_transcript_body() {
+fn committed_history_without_active_cell_uses_scrollback_instead_of_viewport_body() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -1042,8 +1046,15 @@ fn committed_history_without_active_cell_renders_in_transcript_body() {
         .iter()
         .map(|line| line.to_string())
         .collect::<Vec<_>>();
-    assert!(rendered.iter().any(|line| line.contains("hello")));
-    assert_eq!(model.body_height, 1);
+    assert!(rendered.is_empty());
+    assert_eq!(model.body_height, 0);
+
+    assert!(
+        app.transcript_owner
+            .committed_cells_for_scrollback()
+            .iter()
+            .any(|cell| cell.body().contains("hello"))
+    );
 }
 
 #[test]
@@ -1063,7 +1074,7 @@ fn ctrl_v_uses_clipboard_shortcut_only_in_main_composer() {
 }
 
 #[test]
-fn committed_history_without_active_cell_counts_transcript_height() {
+fn committed_history_without_active_cell_keeps_viewport_at_bottom_pane_stack_height() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -1082,7 +1093,7 @@ fn committed_history_without_active_cell_counts_transcript_height() {
         .desired_height(app.current_mode(), 120)
         .max(1);
 
-    assert_eq!(desired, bottom_only.saturating_add(3));
+    assert_eq!(desired, bottom_only.saturating_add(2));
 }
 
 #[test]

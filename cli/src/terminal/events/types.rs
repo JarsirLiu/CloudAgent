@@ -1,8 +1,7 @@
-use crossterm::event::{KeyEvent, MouseEvent};
+use crossterm::event::KeyEvent;
 
 pub(crate) enum UiEvent {
     Key(KeyEvent),
-    Mouse(MouseEvent),
     Paste(String),
     Resize,
     Tick,

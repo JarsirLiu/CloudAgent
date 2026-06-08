@@ -2,9 +2,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use crossterm::event::{
-    Event as CEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event as CEvent, KeyCode, KeyEvent, KeyModifiers};
 
 use super::broker::EventBroker;
 use super::event_loop::map_crossterm_event;
@@ -19,22 +17,6 @@ fn maps_keyboard_events() {
     };
 
     assert_eq!(mapped, key);
-}
-
-#[test]
-fn maps_mouse_events() {
-    let mouse = MouseEvent {
-        kind: MouseEventKind::ScrollDown,
-        column: 4,
-        row: 8,
-        modifiers: KeyModifiers::NONE,
-    };
-
-    let Some(UiEvent::Mouse(mapped)) = map_crossterm_event(CEvent::Mouse(mouse)) else {
-        panic!("expected mouse event");
-    };
-
-    assert_eq!(mapped, mouse);
 }
 
 #[test]

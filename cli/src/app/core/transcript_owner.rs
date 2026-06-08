@@ -36,6 +36,7 @@ impl TranscriptOwner {
         self.active_cell_controller.live_cells()
     }
 
+    #[cfg(test)]
     pub(crate) fn active_cell(&self) -> Option<&HistoryCell> {
         self.active_cell_controller.active_cell()
     }
@@ -48,9 +49,12 @@ impl TranscriptOwner {
         !self.live_is_empty() || !self.committed_store.is_empty()
     }
 
+    pub(crate) fn committed_scrollback_revision(&self) -> u64 {
+        self.committed_store.revision()
+    }
+
     pub(crate) fn render_cache_key(&self, width: usize) -> TranscriptRenderCacheKey {
         TranscriptRenderCacheKey {
-            committed_revision: self.committed_store.revision(),
             active_revision: self.active_cell_controller.revision(),
             width,
         }
@@ -88,14 +92,12 @@ impl TranscriptOwner {
         self.committed_store.cells()
     }
 
-    pub(crate) fn transcript_cells_for_render(&self) -> Vec<HistoryCell> {
-        let mut cells = self.committed_store.cells();
-        if let Some(active_cell) = self.active_cell()
-            && !active_cell.body().trim().is_empty()
-        {
-            cells.push(active_cell.clone());
-        }
-        cells
+    pub(crate) fn committed_cells_for_scrollback(&self) -> Vec<HistoryCell> {
+        self.committed_store.cells()
+    }
+
+    pub(crate) fn live_cells_for_viewport(&self) -> Vec<HistoryCell> {
+        self.active_cell_controller.live_cells().to_vec()
     }
 
     pub(crate) fn rebuild_from_history_snapshot(

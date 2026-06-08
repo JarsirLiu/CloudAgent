@@ -34,7 +34,7 @@ impl TuiApp {
             transcript_render_cache: TranscriptRenderCache::default(),
             run_state,
             bottom_pane: BottomPaneController::new(),
-            terminal_projection: TerminalProjectionController,
+            terminal_projection: TerminalProjectionController::default(),
             suppress_next_reset_notice: false,
             welcome_animation_frame: 0,
             welcome_animation_pause_ticks: 0,

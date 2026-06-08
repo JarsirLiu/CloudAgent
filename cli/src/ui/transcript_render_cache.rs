@@ -3,7 +3,6 @@ use ratatui::text::Line;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TranscriptRenderCacheKey {
-    pub(crate) committed_revision: u64,
     pub(crate) active_revision: u64,
     pub(crate) width: usize,
 }

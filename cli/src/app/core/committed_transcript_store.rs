@@ -16,6 +16,10 @@ impl CommittedTranscriptStore {
         self.transcript.cells().is_empty()
     }
 
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub(crate) fn cells(&self) -> Vec<HistoryCell> {
         self.transcript.cells().to_vec()
     }
@@ -101,10 +105,6 @@ impl CommittedTranscriptStore {
             })
             .unwrap_or(false);
         cell.set_stream_continuation(is_agent_message && previous_was_agent_message);
-    }
-
-    pub(crate) fn revision(&self) -> u64 {
-        self.revision
     }
 
     fn bump_revision(&mut self) {

@@ -28,6 +28,13 @@ where
     ) -> Result<()> {
         self.terminal
             .ensure_viewport_height(projection.viewport_height)?;
+        if let Some(history_update) = projection.history_update {
+            if history_update.full_replay {
+                self.terminal.clear_for_history_replay()?;
+            }
+            self.terminal
+                .insert_history_lines(&history_update.lines, history_update.left_padding)?;
+        }
         self.terminal.draw(render)?;
         Ok(())
     }

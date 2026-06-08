@@ -4,7 +4,7 @@ use ratatui::backend::{Backend, WindowSize};
 use ratatui::buffer::Buffer;
 use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Rect, Size};
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 use std::io;
 use std::io::Write;
 use std::str;
@@ -144,4 +144,89 @@ fn bottom_aligned_viewport_stays_bottom_aligned_when_height_shrinks() {
 
     terminal.ensure_viewport_height(6).expect("shrunk height");
     assert_eq!(terminal.viewport_area, Rect::new(0, 24, 100, 6));
+}
+
+#[test]
+fn inserted_history_pushes_viewport_down_when_space_allows() {
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(
+        backend,
+        TerminalCapabilities {
+            color_depth: ColorDepth::NoColor,
+            supports_synchronized_update: false,
+            background_tone: BackgroundTone::Unknown,
+        },
+    )
+    .expect("terminal");
+
+    terminal.ensure_viewport_height(6).expect("height");
+    terminal.clear_for_history_replay().expect("clear replay");
+    assert_eq!(terminal.viewport_area, Rect::new(0, 24, 100, 6));
+    let replay_output = str::from_utf8(&terminal.backend.bytes).expect("utf8 output");
+    assert!(
+        replay_output.contains("\x1b[2J") && replay_output.contains("\x1b[3J"),
+        "full replay must clear visible rows and scrollback: {replay_output:?}"
+    );
+    terminal
+        .insert_history_lines(&[ratatui::text::Line::from("hello")], 4)
+        .expect("insert history");
+
+    assert_eq!(terminal.viewport_area, Rect::new(0, 24, 100, 6));
+    let output = str::from_utf8(&terminal.backend.bytes).expect("utf8 output");
+    assert!(
+        output.contains("\x1b[5G") && output.contains("hello"),
+        "history should be written at padded column: {output:?}"
+    );
+}
+
+#[test]
+fn inserted_history_does_not_write_through_viewport_without_history_region() {
+    let backend = TestBackend::new(100, 10);
+    let mut terminal = Terminal::new(
+        backend,
+        TerminalCapabilities {
+            color_depth: ColorDepth::NoColor,
+            supports_synchronized_update: false,
+            background_tone: BackgroundTone::Unknown,
+        },
+    )
+    .expect("terminal");
+
+    terminal.set_viewport_area(Rect::new(0, 0, 100, 10));
+    terminal
+        .insert_history_lines(&[ratatui::text::Line::from("hello")], 4)
+        .expect("insert history");
+
+    let output = str::from_utf8(&terminal.backend.bytes).expect("utf8 output");
+    assert!(
+        !output.contains("hello"),
+        "history should not be written through the viewport: {output:?}"
+    );
+}
+
+#[test]
+fn inserted_history_preserves_line_background_style() {
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(
+        backend,
+        TerminalCapabilities {
+            color_depth: ColorDepth::TrueColor,
+            supports_synchronized_update: false,
+            background_tone: BackgroundTone::Unknown,
+        },
+    )
+    .expect("terminal");
+
+    terminal.ensure_viewport_height(6).expect("height");
+    let line =
+        ratatui::text::Line::from("hello").style(Style::default().bg(Color::Rgb(26, 34, 50)));
+    terminal
+        .insert_history_lines(&[line], 4)
+        .expect("insert history");
+
+    let output = str::from_utf8(&terminal.backend.bytes).expect("utf8 output");
+    assert!(
+        output.contains("48;2;26;34;50m"),
+        "history should preserve line background style: {output:?}"
+    );
 }

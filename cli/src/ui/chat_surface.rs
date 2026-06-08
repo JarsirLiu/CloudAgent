@@ -37,7 +37,6 @@ pub(crate) struct ChatSurfaceLayout {
 }
 
 impl ChatSurface {
-    #[cfg(test)]
     pub(crate) fn transcript_render_metrics_for_area(area: Rect) -> TranscriptRenderMetrics {
         transcript_surface_layout(area).render_metrics
     }

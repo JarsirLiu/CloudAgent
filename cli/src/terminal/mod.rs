@@ -5,17 +5,11 @@ pub mod events;
 mod keyboard_modes;
 
 use anyhow::Result;
-use crossterm::Command;
 use crossterm::SynchronizedUpdate;
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
-use std::fmt;
 use std::io::{self, IsTerminal, stdout};
 use std::panic;
 use std::sync::Once;
@@ -35,6 +29,13 @@ pub(crate) struct TerminalGuard {
 
 pub(crate) struct PreparedHistoryProjection {
     pub(crate) viewport_height: u16,
+    pub(crate) history_update: Option<HistoryProjectionUpdate>,
+}
+
+pub(crate) struct HistoryProjectionUpdate {
+    pub(crate) lines: Vec<ratatui::text::Line<'static>>,
+    pub(crate) full_replay: bool,
+    pub(crate) left_padding: usize,
 }
 
 pub(crate) fn init() -> Result<TerminalGuard> {
@@ -49,13 +50,7 @@ pub(crate) fn init() -> Result<TerminalGuard> {
     let mut stdout = io::stdout();
     let init_result = (|| -> Result<TerminalGuard> {
         prepare_terminal_color_output();
-        execute!(
-            stdout,
-            EnterAlternateScreen,
-            EnableAlternateScroll,
-            EnableBracketedPaste,
-            EnableMouseCapture
-        )?;
+        execute!(stdout, EnableBracketedPaste)?;
         keyboard_modes::enable_keyboard_enhancement();
         flush_terminal_input_buffer();
         let backend = CrosstermBackend::new(io::stdout());
@@ -96,58 +91,10 @@ fn flush_terminal_input_buffer() {
 fn flush_terminal_input_buffer() {}
 
 pub(crate) fn restore() -> Result<()> {
-    let _ = execute!(
-        io::stdout(),
-        DisableBracketedPaste,
-        DisableMouseCapture,
-        DisableAlternateScroll,
-        LeaveAlternateScreen
-    );
+    let _ = execute!(io::stdout(), DisableBracketedPaste);
     keyboard_modes::restore_keyboard_enhancement_stack();
     disable_raw_mode()?;
     Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EnableAlternateScroll;
-
-impl Command for EnableAlternateScroll {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        write!(f, "\x1b[?1007h")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        Err(io::Error::other(
-            "EnableAlternateScroll requires ANSI execution",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DisableAlternateScroll;
-
-impl Command for DisableAlternateScroll {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        write!(f, "\x1b[?1007l")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        Err(io::Error::other(
-            "DisableAlternateScroll requires ANSI execution",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
 }
 
 pub fn install_panic_hook() {

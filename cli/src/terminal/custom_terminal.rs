@@ -3,7 +3,7 @@ use std::io;
 use std::io::Write;
 
 use anyhow::Result;
-use crossterm::cursor::MoveTo;
+use crossterm::cursor::{MoveTo, MoveToColumn};
 use crossterm::queue;
 use crossterm::style::{
     Attribute, Color as CrosstermColor, Colors, Print, SetAttribute, SetBackgroundColor, SetColors,
@@ -14,6 +14,7 @@ use ratatui::backend::Backend;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::{Color, Modifier};
+use ratatui::text::Line;
 use ratatui::widgets::Widget;
 
 use crate::terminal::color_compat::{TerminalCapabilities, adapt_bg, adapt_color};
@@ -164,6 +165,69 @@ where
         Ok(())
     }
 
+    pub(crate) fn clear_for_history_replay(&mut self) -> io::Result<()> {
+        queue!(
+            self.backend,
+            Clear(CrosstermClearType::All),
+            Clear(CrosstermClearType::Purge),
+            MoveTo(0, 0)
+        )?;
+        self.current_buffer_mut().reset();
+        self.previous_buffer_mut().reset();
+        std::io::Write::flush(&mut self.backend)?;
+        Ok(())
+    }
+
+    pub(crate) fn insert_history_lines(
+        &mut self,
+        lines: &[Line<'static>],
+        left_padding: usize,
+    ) -> io::Result<()> {
+        if lines.is_empty() || self.viewport_area.height == 0 || self.viewport_area.top() == 0 {
+            return Ok(());
+        }
+
+        let screen_size = self.size()?;
+        let left_padding = left_padding.min(screen_size.width.saturating_sub(1) as usize) as u16;
+        let mut area = self.viewport_area;
+        let inserted_rows = lines.len().min(u16::MAX as usize) as u16;
+        let last_cursor_pos = self.last_known_cursor_pos;
+
+        if area.bottom() < screen_size.height {
+            let scroll_amount = inserted_rows.min(screen_size.height - area.bottom());
+            let top_1based = area.top() + 1;
+            let writer = self.backend_mut();
+            queue!(writer, SetScrollRegion(top_1based..screen_size.height))?;
+            queue!(writer, MoveTo(0, area.top()))?;
+            for _ in 0..scroll_amount {
+                queue!(writer, Print("\x1bM"))?;
+            }
+            queue!(writer, ResetScrollRegion)?;
+            area.y = area.y.saturating_add(scroll_amount);
+        }
+
+        let cursor_top = area.top().saturating_sub(1);
+        let capabilities = self.capabilities;
+        let writer = self.backend_mut();
+        queue!(writer, SetScrollRegion(1..area.top()))?;
+        queue!(writer, MoveTo(0, cursor_top))?;
+        for line in lines {
+            queue!(
+                writer,
+                Print("\r\n"),
+                Clear(CrosstermClearType::UntilNewLine),
+                MoveToColumn(left_padding)
+            )?;
+            write_history_line(writer, line, capabilities)?;
+        }
+        queue!(writer, ResetScrollRegion)?;
+        queue!(writer, MoveTo(last_cursor_pos.x, last_cursor_pos.y))?;
+        std::io::Write::flush(writer)?;
+
+        self.set_viewport_area(area);
+        Ok(())
+    }
+
     fn swap_buffers(&mut self) {
         self.previous_buffer_mut().reset();
         self.current = 1 - self.current;
@@ -236,6 +300,44 @@ where
         std::io::Write::flush(writer)?;
         Ok(())
     }
+}
+
+fn write_history_line<W: Write>(
+    writer: &mut W,
+    line: &Line<'_>,
+    capabilities: TerminalCapabilities,
+) -> io::Result<()> {
+    let line_fg = line.style.fg.unwrap_or(Color::Reset);
+    let line_bg = line.style.bg.unwrap_or(Color::Reset);
+    queue!(
+        writer,
+        SetColors(Colors::new(
+            adapt_color(line_fg, capabilities).into(),
+            adapt_bg(line_bg, capabilities).into()
+        ))
+    )?;
+    for span in &line.spans {
+        let style = span.style.patch(line.style);
+        let modifier = style.add_modifier - style.sub_modifier;
+        queue_modifier_diff(writer, Modifier::empty(), modifier)?;
+        let fg = style.fg.unwrap_or(line_fg);
+        let bg = style.bg.unwrap_or(line_bg);
+        queue!(
+            writer,
+            SetColors(Colors::new(
+                adapt_color(fg, capabilities).into(),
+                adapt_bg(bg, capabilities).into()
+            )),
+            Print(span.content.as_ref())
+        )?;
+        queue_modifier_diff(writer, modifier, Modifier::empty())?;
+    }
+    queue!(
+        writer,
+        SetForegroundColor(CrosstermColor::Reset),
+        SetBackgroundColor(CrosstermColor::Reset),
+        SetAttribute(Attribute::Reset)
+    )
 }
 
 impl<B> Drop for Terminal<B>

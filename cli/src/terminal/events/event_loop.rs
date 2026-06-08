@@ -62,7 +62,6 @@ pub(super) fn map_crossterm_event(event: CEvent) -> Option<UiEvent> {
     match event {
         CEvent::Key(key) => Some(UiEvent::Key(key)),
         CEvent::Paste(text) => Some(UiEvent::Paste(text)),
-        CEvent::Mouse(mouse) => Some(UiEvent::Mouse(mouse)),
         CEvent::Resize(_, _) => Some(UiEvent::Resize),
         _ => None,
     }

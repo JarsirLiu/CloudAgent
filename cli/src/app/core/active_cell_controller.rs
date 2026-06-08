@@ -52,11 +52,11 @@ impl ActiveCellController {
         self.bump_revision();
     }
 
-    #[cfg(test)]
     pub(crate) fn live_cells(&self) -> &[HistoryCell] {
         self.live_transcript.cells()
     }
 
+    #[cfg(test)]
     pub(crate) fn active_cell(&self) -> Option<&HistoryCell> {
         self.live_transcript.cells().last()
     }

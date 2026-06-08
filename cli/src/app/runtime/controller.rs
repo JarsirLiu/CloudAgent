@@ -66,12 +66,6 @@ impl RuntimeController {
                 frame_requester.schedule_frame();
                 RuntimeControl::Continue
             }
-            UiEvent::Mouse(mouse) => {
-                if app.transcript_scroll.handle_mouse(mouse) {
-                    frame_requester.schedule_frame();
-                }
-                RuntimeControl::Continue
-            }
             UiEvent::Resize => {
                 frame_requester.schedule_frame();
                 RuntimeControl::Continue
