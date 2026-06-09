@@ -1,4 +1,3 @@
-use crate::input::intent::ComposerIntent;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
@@ -33,9 +32,7 @@ impl BottomPaneView for WeixinBindingView {
             return BottomPaneViewAction::None;
         }
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Composer(
-                ComposerIntent::GatewaySelect(self.model.platform.clone()),
-            ),
+            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Back,
             _ => BottomPaneViewAction::None,
         }
     }

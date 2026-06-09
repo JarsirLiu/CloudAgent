@@ -71,15 +71,44 @@ async fn reload_gateway_panel(
         }
     };
     if platform == "weixin" {
-        app.bottom_pane.set_gateway_edit_panel_with_weixin_login(
-            status.platform,
-            config,
-            weixin_login,
-        );
+        app.bottom_pane
+            .replace_gateway_edit_panel_with_weixin_login(status.platform, config, weixin_login);
     } else {
         app.bottom_pane
-            .set_gateway_edit_panel(status.platform, config);
+            .replace_gateway_edit_panel(status.platform, config);
     }
+    Ok(false)
+}
+
+async fn push_gateway_panel(
+    app: &mut TuiApp,
+    client: &AppServerClient,
+    platform: &str,
+) -> Result<bool> {
+    let status = match client.request_platform_status_typed(platform).await {
+        Ok(status) => status,
+        Err(err) => {
+            show_local_notice(
+                app,
+                NoticeLevel::Error,
+                platform_request_notice("load platform status", &err),
+            );
+            return Ok(false);
+        }
+    };
+    let config = match client.request_platform_config_typed(platform).await {
+        Ok(config) => config,
+        Err(err) => {
+            show_local_notice(
+                app,
+                NoticeLevel::Error,
+                platform_request_notice("load platform config", &err),
+            );
+            return Ok(false);
+        }
+    };
+    app.bottom_pane
+        .push_gateway_edit_panel(status.platform, config);
     Ok(false)
 }
 
@@ -383,7 +412,7 @@ pub(crate) async fn handle_tui_input(
             return Ok(false);
         }
         ParsedInput::LocalGatewaySelect(platform) => {
-            return reload_gateway_panel(app, client, &platform, None).await;
+            return push_gateway_panel(app, client, &platform).await;
         }
         ParsedInput::LocalGatewayWeixinLoginStart(platform) => {
             let response = match client.start_weixin_login_typed().await {
@@ -418,7 +447,7 @@ pub(crate) async fn handle_tui_input(
                 next_poll_at: std::time::Instant::now() + std::time::Duration::from_secs(2),
             });
             app.bottom_pane
-                .set_weixin_binding_view(WeixinBindingViewModel {
+                .push_weixin_binding_view(WeixinBindingViewModel {
                     platform,
                     session_id: response.session_id,
                     qr_url: response.qr_url,
@@ -476,7 +505,7 @@ pub(crate) async fn handle_tui_input(
                         }
                     };
                     app.bottom_pane
-                        .set_gateway_edit_panel(status.platform, config);
+                        .replace_parent_with_gateway_edit_panel(status.platform, config);
                     return Ok(false);
                 }
                 "pending" => {
@@ -488,7 +517,7 @@ pub(crate) async fn handle_tui_input(
                         next_poll_at: std::time::Instant::now() + std::time::Duration::from_secs(2),
                     });
                     app.bottom_pane
-                        .set_weixin_binding_view(WeixinBindingViewModel {
+                        .replace_weixin_binding_view(WeixinBindingViewModel {
                             platform,
                             session_id,
                             qr_url,
@@ -573,7 +602,7 @@ pub(crate) async fn handle_tui_input(
                 }
             };
             app.bottom_pane
-                .set_gateway_edit_panel(status.platform, config);
+                .replace_gateway_edit_panel(status.platform, config);
             show_local_notice(
                 app,
                 NoticeLevel::Info,

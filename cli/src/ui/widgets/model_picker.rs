@@ -61,7 +61,7 @@ impl BottomPaneView for ModelPicker {
             KeyCode::Enter => BottomPaneViewAction::Composer(ComposerIntent::Model(
                 self.models.get(self.selected).cloned().unwrap_or_default(),
             )),
-            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Close,
+            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Cancel,
             _ => BottomPaneViewAction::None,
         }
     }

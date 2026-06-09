@@ -32,7 +32,14 @@ pub(crate) struct StatusViewModel {
 pub(crate) struct BottomPaneController {
     runtime: BottomPaneRuntimeState,
     input_pane: InputPane,
-    pending_session_picker: Option<SessionPickerMode>,
+    pending_session_picker: Option<PendingSessionPicker>,
+    next_session_picker_generation: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PendingSessionPicker {
+    mode: SessionPickerMode,
+    generation: u64,
 }
 
 impl BottomPaneController {
@@ -41,6 +48,7 @@ impl BottomPaneController {
             runtime: BottomPaneRuntimeState::default(),
             input_pane: InputPane::new(),
             pending_session_picker: None,
+            next_session_picker_generation: 1,
         }
     }
 
@@ -133,6 +141,10 @@ impl BottomPaneController {
         self.input_pane.composer_is_empty()
     }
 
+    pub(crate) fn no_modal_or_popup_active(&self) -> bool {
+        self.input_pane.no_modal_or_popup_active()
+    }
+
     pub(crate) fn attach_image(&mut self, path: PathBuf) -> bool {
         self.input_pane.attach_image(path)
     }
@@ -222,7 +234,10 @@ impl BottomPaneController {
     }
 
     pub(crate) fn request_session_picker(&mut self, mode: SessionPickerMode) {
-        self.pending_session_picker = Some(mode);
+        let generation = self.next_session_picker_generation;
+        self.next_session_picker_generation = self.next_session_picker_generation.saturating_add(1);
+        self.pending_session_picker = Some(PendingSessionPicker { mode, generation });
+        self.input_pane.set_session_picker_loading(generation, mode);
     }
 
     pub(crate) fn present_requested_session_picker(
@@ -230,10 +245,16 @@ impl BottomPaneController {
         sessions: Vec<ConversationSummary>,
         active_conversation_id: &str,
     ) -> bool {
-        let Some(mode) = self.pending_session_picker.take() else {
+        let Some(pending) = self.pending_session_picker.take() else {
             return false;
         };
-        self.set_session_picker(sessions, active_conversation_id, mode);
+        if !self
+            .input_pane
+            .is_session_picker_loading(pending.generation)
+        {
+            return false;
+        }
+        self.set_session_picker(sessions, active_conversation_id, pending.mode);
         true
     }
 
@@ -265,26 +286,47 @@ impl BottomPaneController {
         self.input_pane.set_gateway_list_panel(entries);
     }
 
-    pub(crate) fn set_gateway_edit_panel(
+    pub(crate) fn push_gateway_edit_panel(
         &mut self,
         entry: PlatformControlEntry,
         config: PlatformConfigResponse,
     ) {
-        self.input_pane.set_gateway_edit_panel(entry, config);
+        self.input_pane.push_gateway_edit_panel(entry, config);
     }
 
-    pub(crate) fn set_gateway_edit_panel_with_weixin_login(
+    pub(crate) fn replace_gateway_edit_panel(
+        &mut self,
+        entry: PlatformControlEntry,
+        config: PlatformConfigResponse,
+    ) {
+        self.input_pane.replace_gateway_edit_panel(entry, config);
+    }
+
+    pub(crate) fn replace_parent_with_gateway_edit_panel(
+        &mut self,
+        entry: PlatformControlEntry,
+        config: PlatformConfigResponse,
+    ) {
+        self.input_pane
+            .replace_parent_with_gateway_edit_panel(entry, config);
+    }
+
+    pub(crate) fn replace_gateway_edit_panel_with_weixin_login(
         &mut self,
         entry: PlatformControlEntry,
         config: PlatformConfigResponse,
         session: Option<WeixinLoginSessionView>,
     ) {
         self.input_pane
-            .set_gateway_edit_panel_with_weixin_login(entry, config, session);
+            .replace_gateway_edit_panel_with_weixin_login(entry, config, session);
     }
 
-    pub(crate) fn set_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
-        self.input_pane.set_weixin_binding_view(model);
+    pub(crate) fn push_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
+        self.input_pane.push_weixin_binding_view(model);
+    }
+
+    pub(crate) fn replace_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
+        self.input_pane.replace_weixin_binding_view(model);
     }
 
     pub(crate) fn dismiss_server_request(&mut self, request_id: &RequestId) {

@@ -19,6 +19,7 @@ pub mod reasoning_picker;
 pub mod server_request_model;
 pub mod server_request_overlay;
 pub mod session_picker;
+pub mod session_picker_loading;
 pub mod text_effects;
 pub mod textarea;
 pub mod weixin_binding_view;

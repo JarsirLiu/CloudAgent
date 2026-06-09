@@ -6,11 +6,19 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ViewCompletion {
+    Accepted,
+    Cancelled,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum BottomPaneViewAction {
     None,
-    Close,
+    Cancel,
+    Back,
     Composer(ComposerIntent),
+    ComposerWithoutDismiss(ComposerIntent),
     ServerRequestSubmit {
         request_id: RequestId,
         decision: ServerRequestDecisionKind,
@@ -23,7 +31,7 @@ pub(crate) trait BottomPaneView {
         if matches!(key.kind, KeyEventKind::Press)
             && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
         {
-            return BottomPaneViewAction::Close;
+            return BottomPaneViewAction::Cancel;
         }
         BottomPaneViewAction::None
     }
@@ -50,6 +58,20 @@ pub(crate) trait BottomPaneView {
         false
     }
 
+    fn completion(&self) -> Option<ViewCompletion> {
+        None
+    }
+
+    fn dismiss_after_child_accept(&self) -> bool {
+        false
+    }
+
+    fn clear_dismiss_after_child_accept(&mut self) {}
+
+    fn prefer_esc_to_handle_key_event(&self) -> bool {
+        false
+    }
+
     fn try_consume_server_request(
         &mut self,
         request: ServerRequestInlineState,
@@ -70,6 +92,14 @@ pub(crate) trait BottomPaneView {
     }
 
     fn is_model_picker_loading(&self) -> bool {
+        false
+    }
+
+    fn is_session_picker(&self) -> bool {
+        false
+    }
+
+    fn is_session_picker_loading(&self, _generation: u64) -> bool {
         false
     }
 }

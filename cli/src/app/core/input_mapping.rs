@@ -37,6 +37,7 @@ impl TuiApp {
 
         if matches_ctrl_char(key, 'd') {
             if self.current_mode() == agent_protocol::FrontendMode::Idle
+                && self.bottom_pane.no_modal_or_popup_active()
                 && self.bottom_pane.composer_is_empty()
             {
                 self.run_state.should_exit = true;
@@ -45,7 +46,7 @@ impl TuiApp {
             return None;
         }
 
-        if matches_ctrl_char(key, 't') {
+        if matches_ctrl_char(key, 't') && self.bottom_pane.no_modal_or_popup_active() {
             self.run_state.expand_tool_details = !self.run_state.expand_tool_details;
             self.transcript_owner
                 .set_expand_details(self.run_state.expand_tool_details);
@@ -59,7 +60,8 @@ impl TuiApp {
             );
             return None;
         }
-        if self.bottom_pane.should_capture_global_paste_shortcut()
+        if self.bottom_pane.no_modal_or_popup_active()
+            && self.bottom_pane.should_capture_global_paste_shortcut()
             && matches_image_paste_shortcut(key)
         {
             return Some(ParsedInput::LocalImagePaste);
@@ -203,7 +205,7 @@ impl TuiApp {
             return false;
         }
         if self.current_mode() != agent_protocol::FrontendMode::Idle {
-            return true;
+            return self.bottom_pane.no_modal_or_popup_active();
         }
         matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
             || (self.bottom_pane.composer_is_empty()

@@ -74,7 +74,7 @@ impl BottomPaneView for SessionPicker {
                     })
                 })
                 .unwrap_or(BottomPaneViewAction::None),
-            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Close,
+            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Cancel,
             _ => BottomPaneViewAction::None,
         }
     }
@@ -132,6 +132,10 @@ impl BottomPaneView for SessionPicker {
             height += 2;
         }
         height
+    }
+
+    fn is_session_picker(&self) -> bool {
+        true
     }
 }
 

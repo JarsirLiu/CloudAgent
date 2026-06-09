@@ -1,5 +1,9 @@
 use crate::app::TuiApp;
 use crate::state::NoticeLevel;
+use crate::ui::widgets::input_pane::InputPaneAction;
+use crate::ui::widgets::session_picker::SessionPickerMode;
+use agent_core::ConversationSummary;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 
 fn test_app() -> TuiApp {
@@ -30,6 +34,53 @@ fn running_snapshot(conversation_id: &str) -> agent_protocol::ConversationViewSn
         message_count: 0,
         updated_at_ms: 0,
     }
+}
+
+fn summary(id: &str) -> ConversationSummary {
+    ConversationSummary {
+        conversation_id: id.to_string(),
+        title: Some(id.to_string()),
+        message_count: 1,
+        updated_at_ms: 1,
+    }
+}
+
+#[test]
+fn requested_session_picker_opens_after_loading_view_remains_active() {
+    let mut app = test_app();
+    app.bottom_pane
+        .request_session_picker(SessionPickerMode::Switch);
+
+    assert!(!app.bottom_pane.no_modal_or_popup_active());
+    assert!(
+        app.bottom_pane
+            .present_requested_session_picker(vec![summary("default")], "default")
+    );
+    assert!(!app.bottom_pane.no_modal_or_popup_active());
+}
+
+#[test]
+fn cancelled_session_picker_loading_ignores_late_response() {
+    let mut app = test_app();
+    app.bottom_pane
+        .request_session_picker(SessionPickerMode::Switch);
+
+    let action = app
+        .bottom_pane
+        .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+    assert!(matches!(
+        action,
+        Some(InputPaneAction::Composer(
+            crate::input::intent::ComposerIntent::None
+        ))
+    ));
+    assert!(app.bottom_pane.no_modal_or_popup_active());
+    assert!(
+        !app.bottom_pane
+            .present_requested_session_picker(vec![summary("default")], "default")
+    );
+    assert!(app.bottom_pane.no_modal_or_popup_active());
 }
 
 #[test]

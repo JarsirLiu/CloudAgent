@@ -1,3 +1,4 @@
+pub(crate) mod bottom_pane_navigation;
 pub mod chat_surface;
 pub mod chat_surface_model;
 pub mod transcript_line_builder;

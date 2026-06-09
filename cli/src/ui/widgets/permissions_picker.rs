@@ -50,7 +50,7 @@ impl BottomPaneView for PermissionsPicker {
             KeyCode::Enter => BottomPaneViewAction::Composer(ComposerIntent::Permissions(
                 self.options[self.selected].mode.to_string(),
             )),
-            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Close,
+            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Cancel,
             _ => BottomPaneViewAction::None,
         }
     }

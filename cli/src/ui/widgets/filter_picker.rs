@@ -43,7 +43,7 @@ impl BottomPaneView for FilterPicker {
             KeyCode::Enter => BottomPaneViewAction::Composer(ComposerIntent::Filter(
                 self.options[self.selected].to_string(),
             )),
-            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Close,
+            KeyCode::Esc | KeyCode::Char('q') => BottomPaneViewAction::Cancel,
             _ => BottomPaneViewAction::None,
         }
     }

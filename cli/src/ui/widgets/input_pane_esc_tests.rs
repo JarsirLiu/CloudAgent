@@ -87,6 +87,29 @@ fn esc_closes_session_picker_without_interrupting() {
     assert!(!pane.requires_action());
 }
 
+fn enter_key() -> KeyEvent {
+    KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    }
+}
+
+#[test]
+fn esc_closes_session_picker_loading_without_interrupting() {
+    let mut pane = InputPane::new();
+    pane.set_session_picker_loading(1, SessionPickerMode::Switch);
+
+    let action = pane.handle_key(esc_key());
+
+    assert!(matches!(
+        action,
+        Some(InputPaneAction::Composer(ComposerIntent::None))
+    ));
+    assert!(!pane.is_session_picker_loading(1));
+}
+
 #[test]
 fn esc_closes_gateway_list_without_interrupting() {
     let mut pane = InputPane::new();
@@ -110,7 +133,14 @@ fn esc_closes_gateway_list_without_interrupting() {
 #[test]
 fn esc_returns_from_gateway_edit_to_gateway_list() {
     let mut pane = InputPane::new();
-    pane.set_gateway_edit_panel(
+    pane.set_gateway_list_panel(vec![PlatformControlEntry {
+        platform: "weixin".to_string(),
+        enabled: false,
+        configured: false,
+        managed_by: "local".to_string(),
+        updated_at_ms: 1,
+    }]);
+    pane.push_gateway_edit_panel(
         PlatformControlEntry {
             platform: "weixin".to_string(),
             enabled: false,
@@ -129,14 +159,72 @@ fn esc_returns_from_gateway_edit_to_gateway_list() {
 
     assert!(matches!(
         action,
-        Some(InputPaneAction::Composer(ComposerIntent::Gateway))
+        Some(InputPaneAction::Composer(ComposerIntent::None))
     ));
+    assert!(!pane.no_modal_or_popup_active());
+}
+
+#[test]
+fn gateway_select_keeps_list_parent_for_edit_back_navigation() {
+    let mut pane = InputPane::new();
+    let entry = PlatformControlEntry {
+        platform: "weixin".to_string(),
+        enabled: false,
+        configured: false,
+        managed_by: "local".to_string(),
+        updated_at_ms: 1,
+    };
+    pane.set_gateway_list_panel(vec![entry.clone()]);
+
+    let action = pane.handle_key(enter_key());
+    assert!(matches!(
+        action,
+        Some(InputPaneAction::Composer(ComposerIntent::GatewaySelect(platform)))
+        if platform == "weixin"
+    ));
+
+    pane.push_gateway_edit_panel(
+        entry,
+        PlatformConfigResponse {
+            platform: "weixin".to_string(),
+            configured: false,
+            fields: Vec::new(),
+        },
+    );
+    let action = pane.handle_key(esc_key());
+
+    assert!(matches!(
+        action,
+        Some(InputPaneAction::Composer(ComposerIntent::None))
+    ));
+    assert!(!pane.no_modal_or_popup_active());
 }
 
 #[test]
 fn esc_returns_from_weixin_binding_to_gateway_page() {
     let mut pane = InputPane::new();
-    pane.set_weixin_binding_view(WeixinBindingViewModel {
+    pane.set_gateway_list_panel(vec![PlatformControlEntry {
+        platform: "weixin".to_string(),
+        enabled: false,
+        configured: false,
+        managed_by: "local".to_string(),
+        updated_at_ms: 1,
+    }]);
+    pane.push_gateway_edit_panel(
+        PlatformControlEntry {
+            platform: "weixin".to_string(),
+            enabled: false,
+            configured: false,
+            managed_by: "local".to_string(),
+            updated_at_ms: 1,
+        },
+        PlatformConfigResponse {
+            platform: "weixin".to_string(),
+            configured: false,
+            fields: Vec::new(),
+        },
+    );
+    pane.push_weixin_binding_view(WeixinBindingViewModel {
         platform: "weixin".to_string(),
         session_id: "session-1".to_string(),
         qr_url: "https://example.com/qr".to_string(),
@@ -147,7 +235,7 @@ fn esc_returns_from_weixin_binding_to_gateway_page() {
 
     assert!(matches!(
         action,
-        Some(InputPaneAction::Composer(ComposerIntent::GatewaySelect(platform)))
-        if platform == "weixin"
+        Some(InputPaneAction::Composer(ComposerIntent::None))
     ));
+    assert!(!pane.no_modal_or_popup_active());
 }

@@ -83,7 +83,7 @@ impl BottomPaneView for ConfigPanel {
                 }
                 self.move_selection(self.selected + 1);
             }
-            KeyCode::Esc => return BottomPaneViewAction::Close,
+            KeyCode::Esc => return BottomPaneViewAction::Cancel,
             _ => {}
         }
         BottomPaneViewAction::None

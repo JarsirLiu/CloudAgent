@@ -1,6 +1,7 @@
 use crate::input::intent::ComposerIntent;
 use crate::terminal::Frame;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::bottom_pane_navigation::{BottomPaneNavigator, NavigationKeyResult};
+use crate::ui::widgets::bottom_pane_view::BottomPaneViewAction;
 use crate::ui::widgets::chat_composer::ChatComposer;
 use crate::ui::widgets::config_panel::ConfigPanel;
 use crate::ui::widgets::filter_picker::FilterPicker;
@@ -14,6 +15,7 @@ use crate::ui::widgets::reasoning_picker::ReasoningPicker;
 pub(crate) use crate::ui::widgets::server_request_model::ServerRequestInlineState;
 use crate::ui::widgets::server_request_overlay::ServerRequestOverlay;
 use crate::ui::widgets::session_picker::{SessionPicker, SessionPickerMode};
+use crate::ui::widgets::session_picker_loading::SessionPickerLoading;
 use crate::ui::widgets::weixin_binding_view::{WeixinBindingView, WeixinBindingViewModel};
 use agent_core::ConversationSummary;
 use agent_core::InputItem;
@@ -31,7 +33,7 @@ use std::time::Duration;
 
 pub struct InputPane {
     composer: ChatComposer,
-    view_stack: Vec<Box<dyn BottomPaneView>>,
+    navigator: BottomPaneNavigator,
 }
 
 pub(crate) enum InputPaneAction {
@@ -72,55 +74,31 @@ impl InputPane {
     pub fn new() -> Self {
         Self {
             composer: ChatComposer::new(),
-            view_stack: Vec::new(),
+            navigator: BottomPaneNavigator::new(),
         }
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
-        if let Some(view) = self.view_stack.last_mut() {
-            let view_requires_action = view.requires_action();
-            match view.handle_key_event(key) {
-                BottomPaneViewAction::None => {
-                    // The view did not consume this key.
-                    // Only action-required overlays may fall through to global Esc interrupt.
-                    if key.code != KeyCode::Esc
-                        || !key.modifiers.is_empty()
-                        || !view_requires_action
-                    {
-                        if view.is_complete() {
-                            self.view_stack.pop();
-                        }
-                        return None;
-                    }
-                }
-                BottomPaneViewAction::Close => {
-                    self.view_stack.pop();
-                    return Some(InputPaneAction::Composer(ComposerIntent::None));
-                }
-                BottomPaneViewAction::Composer(intent) => {
-                    if !matches!(intent, ComposerIntent::None) {
-                        self.view_stack.pop();
-                        return Some(InputPaneAction::Composer(intent));
-                    }
-                }
-                BottomPaneViewAction::ServerRequestSubmit {
+        match self.navigator.handle_key(key) {
+            NavigationKeyResult::NoActiveView => {}
+            NavigationKeyResult::Consumed => {
+                return Some(InputPaneAction::Composer(ComposerIntent::None));
+            }
+            NavigationKeyResult::Composer(intent) => {
+                return Some(InputPaneAction::Composer(intent));
+            }
+            NavigationKeyResult::ServerRequestSubmit {
+                request_id,
+                decision,
+                reason,
+            } => {
+                return Some(InputPaneAction::ServerRequestSubmit {
                     request_id,
                     decision,
                     reason,
-                } => {
-                    if view.is_complete() {
-                        self.view_stack.pop();
-                    }
-                    return Some(InputPaneAction::ServerRequestSubmit {
-                        request_id,
-                        decision,
-                        reason,
-                    });
-                }
+                });
             }
-            if view.is_complete() {
-                self.view_stack.pop();
-            }
+            NavigationKeyResult::FallthroughEscFromActionRequiredView => {}
         }
 
         if key.code == KeyCode::Esc && key.modifiers.is_empty() {
@@ -148,8 +126,7 @@ impl InputPane {
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> Option<InputPaneAction> {
-        if let Some(view) = self.view_stack.last_mut() {
-            let action = view.handle_paste(text);
+        if let Some(action) = self.navigator.handle_paste(text) {
             return match action {
                 BottomPaneViewAction::Composer(intent) => Some(InputPaneAction::Composer(intent)),
                 _ => None,
@@ -159,11 +136,11 @@ impl InputPane {
     }
 
     pub(crate) fn composer_has_selection(&self) -> bool {
-        self.view_stack.is_empty() && self.composer.has_selection()
+        self.navigator.is_empty() && self.composer.has_selection()
     }
 
     pub(crate) fn should_capture_global_paste_shortcut(&self) -> bool {
-        if let Some(view) = self.view_stack.last() {
+        if let Some(view) = self.navigator.active_view() {
             view.should_capture_global_paste_shortcut()
         } else {
             true
@@ -171,7 +148,7 @@ impl InputPane {
     }
 
     pub(crate) fn attach_image(&mut self, path: PathBuf) -> bool {
-        if self.view_stack.is_empty() {
+        if self.navigator.is_empty() {
             self.composer.attach_image(path);
             true
         } else {
@@ -180,7 +157,7 @@ impl InputPane {
     }
 
     pub(crate) fn attach_skill(&mut self, name: String, path: String) -> bool {
-        if self.view_stack.is_empty() {
+        if self.navigator.is_empty() {
             self.composer.attach_skill(name, path);
             true
         } else {
@@ -201,11 +178,11 @@ impl InputPane {
     }
 
     pub(crate) fn handle_tick(&mut self) -> bool {
-        self.view_stack.is_empty() && self.composer.flush_paste_burst_if_due()
+        self.navigator.is_empty() && self.composer.flush_paste_burst_if_due()
     }
 
     pub(crate) fn next_paste_flush_delay(&self) -> Option<Duration> {
-        if self.view_stack.is_empty() {
+        if self.navigator.is_empty() {
             self.composer.next_paste_flush_delay()
         } else {
             None
@@ -225,8 +202,8 @@ impl InputPane {
         hint_meta: &str,
     ) -> InputPaneRenderResult {
         if self
-            .view_stack
-            .last()
+            .navigator
+            .active_view()
             .is_some_and(|view| view.requires_action())
         {
             let (widget, lines_before_composer, _) = self.render_request_view(
@@ -295,7 +272,7 @@ impl InputPane {
 
         let mut lines_before_composer = 1u16;
 
-        if let Some(view) = self.view_stack.last() {
+        if let Some(view) = self.navigator.active_view() {
             lines.push(Line::raw(""));
             lines_before_composer += 1;
             let view_lines = view.render_lines(area_width.saturating_sub(2));
@@ -331,8 +308,8 @@ impl InputPane {
         area_width: u16,
     ) -> (Vec<Line<'static>>, u16) {
         if self
-            .view_stack
-            .last()
+            .navigator
+            .active_view()
             .is_some_and(|view| view.requires_action())
         {
             let (widget, lines_before, _) =
@@ -358,7 +335,7 @@ impl InputPane {
 
     pub fn desired_height(&self, mode: FrontendMode, area_width: u16) -> u16 {
         let inner_width = area_width.saturating_sub(2) as usize;
-        if let Some(view) = self.view_stack.last()
+        if let Some(view) = self.navigator.active_view()
             && view.requires_action()
         {
             return (4 + view.desired_height(area_width.saturating_sub(2))).max(7);
@@ -389,7 +366,7 @@ impl InputPane {
             width: area.width.saturating_sub(2),
             height: area.height.saturating_sub(lines_before + 2),
         };
-        if let Some(view) = self.view_stack.last() {
+        if let Some(view) = self.navigator.active_view() {
             let view_area = Rect {
                 x: area.x.saturating_add(1),
                 y: area.y.saturating_add(3),
@@ -402,7 +379,7 @@ impl InputPane {
     }
 
     pub fn clear_views(&mut self) {
-        self.view_stack.clear();
+        self.navigator.clear();
     }
 
     pub fn clear_composer(&mut self) {
@@ -410,12 +387,12 @@ impl InputPane {
     }
 
     pub fn restore_composer_submission(&mut self, content: &[InputItem]) {
-        self.view_stack.clear();
+        self.navigator.clear();
         self.composer.restore_submission(content);
     }
 
     pub(crate) fn set_server_request(&mut self, request: ServerRequestInlineState) {
-        let request = if let Some(view) = self.view_stack.last_mut() {
+        let request = if let Some(view) = self.navigator.active_view_mut() {
             match view.try_consume_server_request(request) {
                 Some(request) => request,
                 None => return,
@@ -424,13 +401,12 @@ impl InputPane {
             request
         };
 
-        self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(ServerRequestOverlay::new(request)));
+        self.navigator
+            .replace(Box::new(ServerRequestOverlay::new(request)));
     }
 
     pub fn clear_server_request(&mut self) {
-        self.view_stack.clear();
+        self.navigator.clear();
     }
 
     pub fn set_session_picker(
@@ -439,8 +415,7 @@ impl InputPane {
         active_conversation_id: &str,
         mode: SessionPickerMode,
     ) {
-        self.view_stack.clear();
-        self.view_stack.push(Box::new(SessionPicker::new(
+        self.navigator.replace(Box::new(SessionPicker::new(
             sessions,
             active_conversation_id,
             mode,
@@ -448,119 +423,136 @@ impl InputPane {
     }
 
     pub fn clear_session_picker(&mut self) {
-        self.view_stack.retain(|view| {
-            !view
-                .render_lines(80)
-                .first()
-                .map(|line| line.to_string().contains("Session Picker"))
-                .unwrap_or(false)
-        });
+        self.navigator.retain(|view| !view.is_session_picker());
+    }
+
+    pub fn set_session_picker_loading(&mut self, generation: u64, mode: SessionPickerMode) {
+        self.navigator
+            .replace(Box::new(SessionPickerLoading::new(generation, mode)));
+    }
+
+    pub fn is_session_picker_loading(&self, generation: u64) -> bool {
+        self.navigator
+            .active_view()
+            .is_some_and(|view| view.is_session_picker_loading(generation))
     }
 
     pub fn set_filter_picker(&mut self) {
-        self.view_stack.clear();
-        self.view_stack.push(Box::new(FilterPicker::new()));
+        self.navigator.replace(Box::new(FilterPicker::new()));
     }
 
     pub fn set_help_view(&mut self) {
-        self.view_stack.clear();
-        self.view_stack.push(Box::new(HelpView::new()));
+        self.navigator.replace(Box::new(HelpView::new()));
     }
 
     pub fn set_permissions_picker(&mut self, current: &str) {
-        self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(PermissionsPicker::new(current)));
+        self.navigator
+            .replace(Box::new(PermissionsPicker::new(current)));
     }
 
     pub fn set_reasoning_picker(&mut self, current: ReasoningEffort) {
-        self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(ReasoningPicker::new(current)));
+        self.navigator
+            .replace(Box::new(ReasoningPicker::new(current)));
     }
 
     pub fn set_model_picker(&mut self, current: String, models: Vec<String>) {
-        self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(ModelPicker::new(current, models)));
+        self.navigator
+            .replace(Box::new(ModelPicker::new(current, models)));
     }
 
     pub fn set_model_picker_loading(&mut self, current: String) {
-        self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(ModelPickerLoading::new(current)));
+        self.navigator
+            .replace(Box::new(ModelPickerLoading::new(current)));
     }
 
     pub fn is_model_picker_loading(&self) -> bool {
-        self.view_stack
-            .last()
+        self.navigator
+            .active_view()
             .is_some_and(|view| view.is_model_picker_loading())
     }
 
     pub fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {
-        self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(ConfigPanel::new(api_key, base_url, model)));
+        self.navigator
+            .replace(Box::new(ConfigPanel::new(api_key, base_url, model)));
     }
 
     pub fn set_gateway_list_panel(&mut self, entries: Vec<PlatformControlEntry>) {
-        self.view_stack.clear();
-        self.view_stack.push(Box::new(GatewayPanel::list(entries)));
+        self.navigator
+            .replace(Box::new(GatewayPanel::list(entries)));
     }
 
-    pub fn set_gateway_edit_panel(
+    pub fn push_gateway_edit_panel(
         &mut self,
         entry: PlatformControlEntry,
         config: PlatformConfigResponse,
     ) {
-        self.view_stack.clear();
-        self.view_stack
+        self.navigator
             .push(Box::new(GatewayPanel::edit(entry, config, None)));
     }
 
-    pub fn set_gateway_edit_panel_with_weixin_login(
+    pub fn replace_gateway_edit_panel(
+        &mut self,
+        entry: PlatformControlEntry,
+        config: PlatformConfigResponse,
+    ) {
+        self.navigator
+            .replace_active(Box::new(GatewayPanel::edit(entry, config, None)));
+    }
+
+    pub fn replace_parent_with_gateway_edit_panel(
+        &mut self,
+        entry: PlatformControlEntry,
+        config: PlatformConfigResponse,
+    ) {
+        self.navigator
+            .replace_parent_after_child(Box::new(GatewayPanel::edit(entry, config, None)));
+    }
+
+    pub fn replace_gateway_edit_panel_with_weixin_login(
         &mut self,
         entry: PlatformControlEntry,
         config: PlatformConfigResponse,
         session: Option<WeixinLoginSessionView>,
     ) {
-        self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(GatewayPanel::edit(entry, config, session)));
+        self.navigator
+            .replace_active(Box::new(GatewayPanel::edit(entry, config, session)));
     }
 
-    pub fn set_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
-        self.view_stack.clear();
-        self.view_stack
-            .push(Box::new(WeixinBindingView::new(model)));
+    pub fn push_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
+        self.navigator.push(Box::new(WeixinBindingView::new(model)));
+    }
+
+    pub fn replace_weixin_binding_view(&mut self, model: WeixinBindingViewModel) {
+        self.navigator
+            .replace_active(Box::new(WeixinBindingView::new(model)));
     }
 
     pub fn dismiss_server_request(&mut self, request_id: &RequestId) {
-        let Some(view) = self.view_stack.last_mut() else {
-            return;
-        };
-        if !view.dismiss_server_request(request_id) {
-            return;
-        }
-        if view.is_complete() {
-            self.view_stack.pop();
-        }
+        self.navigator.dismiss_server_request(request_id);
     }
 
     pub fn active_server_request_id(&self) -> Option<RequestId> {
-        self.view_stack
-            .last()
+        self.navigator
+            .active_view()
             .and_then(|view| view.active_server_request_id().cloned())
     }
 
     pub fn requires_action(&self) -> bool {
-        self.view_stack
-            .last()
+        self.navigator
+            .active_view()
             .is_some_and(|view| view.requires_action())
     }
 
     pub fn composer_is_empty(&self) -> bool {
-        self.view_stack.is_empty() && self.composer.is_empty()
+        self.navigator.is_empty() && self.composer.is_empty()
+    }
+
+    pub(crate) fn has_modal_or_popup_active(&self) -> bool {
+        self.navigator.has_active_view() || self.composer.has_completion_menu()
+    }
+
+    pub(crate) fn no_modal_or_popup_active(&self) -> bool {
+        !self.has_modal_or_popup_active()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -576,7 +568,7 @@ impl InputPane {
         inner_width: usize,
     ) -> InputPaneSnapshot {
         let composer = self.composer.render(mode, inner_width);
-        let completion_lines = if let Some(view) = self.view_stack.last() {
+        let completion_lines = if let Some(view) = self.navigator.active_view() {
             view.render_lines(area.width.saturating_sub(2))
         } else {
             composer.completion_lines.clone()

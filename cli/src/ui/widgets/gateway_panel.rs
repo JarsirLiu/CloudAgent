@@ -161,12 +161,12 @@ impl BottomPaneView for GatewayPanel {
                 KeyCode::BackTab => self.move_selection(-1),
                 KeyCode::Enter => {
                     if let Some(entry) = entries.get(*selected) {
-                        return BottomPaneViewAction::Composer(ComposerIntent::GatewaySelect(
-                            entry.platform.clone(),
-                        ));
+                        return BottomPaneViewAction::ComposerWithoutDismiss(
+                            ComposerIntent::GatewaySelect(entry.platform.clone()),
+                        );
                     }
                 }
-                KeyCode::Esc => return BottomPaneViewAction::Close,
+                KeyCode::Esc => return BottomPaneViewAction::Cancel,
                 _ => {}
             },
             GatewayPanelMode::Edit {
@@ -219,7 +219,7 @@ impl BottomPaneView for GatewayPanel {
                     if *selected == toggle_index {
                         if platform == "weixin" && !*enabled && !*configured {
                             if let Some(session) = weixin_login.clone() {
-                                return BottomPaneViewAction::Composer(
+                                return BottomPaneViewAction::ComposerWithoutDismiss(
                                     ComposerIntent::GatewayWeixinLoginCheck {
                                         platform: platform.clone(),
                                         session_id: session.session_id,
@@ -227,31 +227,35 @@ impl BottomPaneView for GatewayPanel {
                                     },
                                 );
                             }
-                            return BottomPaneViewAction::Composer(
+                            return BottomPaneViewAction::ComposerWithoutDismiss(
                                 ComposerIntent::GatewayWeixinLoginStart {
                                     platform: platform.clone(),
                                 },
                             );
                         }
-                        return BottomPaneViewAction::Composer(ComposerIntent::GatewaySave {
-                            platform: platform.clone(),
-                            enabled: !*enabled,
-                            updates: Self::collect_updates(fields),
-                        });
+                        return BottomPaneViewAction::ComposerWithoutDismiss(
+                            ComposerIntent::GatewaySave {
+                                platform: platform.clone(),
+                                enabled: !*enabled,
+                                updates: Self::collect_updates(fields),
+                            },
+                        );
                     } else if platform != "weixin" && *selected == save_index {
                         let updates = Self::collect_updates(fields);
-                        return BottomPaneViewAction::Composer(ComposerIntent::GatewaySave {
-                            platform: platform.clone(),
-                            enabled: *enabled,
-                            updates,
-                        });
+                        return BottomPaneViewAction::ComposerWithoutDismiss(
+                            ComposerIntent::GatewaySave {
+                                platform: platform.clone(),
+                                enabled: *enabled,
+                                updates,
+                            },
+                        );
                     } else if *selected == back_index {
-                        return BottomPaneViewAction::Composer(ComposerIntent::Gateway);
+                        return BottomPaneViewAction::Back;
                     } else {
                         self.move_selection(1);
                     }
                 }
-                KeyCode::Esc => return BottomPaneViewAction::Composer(ComposerIntent::Gateway),
+                KeyCode::Esc => return BottomPaneViewAction::Back,
                 _ => {}
             },
         }
@@ -534,7 +538,7 @@ mod tests {
 
         assert!(matches!(
             action,
-            BottomPaneViewAction::Composer(ComposerIntent::GatewaySelect(platform))
+            BottomPaneViewAction::ComposerWithoutDismiss(ComposerIntent::GatewaySelect(platform))
             if platform == "feishu"
         ));
     }
@@ -580,7 +584,7 @@ mod tests {
 
         assert!(matches!(
             action,
-            BottomPaneViewAction::Composer(ComposerIntent::GatewaySave {
+            BottomPaneViewAction::ComposerWithoutDismiss(ComposerIntent::GatewaySave {
                 platform,
                 enabled: true,
                 updates,
@@ -621,7 +625,7 @@ mod tests {
 
         assert!(matches!(
             action,
-            BottomPaneViewAction::Composer(ComposerIntent::GatewaySave {
+            BottomPaneViewAction::ComposerWithoutDismiss(ComposerIntent::GatewaySave {
                 platform,
                 enabled: true,
                 updates,
@@ -668,7 +672,7 @@ mod tests {
 
         assert!(matches!(
             action,
-            BottomPaneViewAction::Composer(ComposerIntent::GatewaySave {
+            BottomPaneViewAction::ComposerWithoutDismiss(ComposerIntent::GatewaySave {
                 platform,
                 enabled: true,
                 updates,
