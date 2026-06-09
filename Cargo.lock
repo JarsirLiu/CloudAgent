@@ -467,6 +467,7 @@ dependencies = [
  "agent-tools",
  "anyhow",
  "arboard",
+ "async-trait",
  "blake3",
  "chrono",
  "config",

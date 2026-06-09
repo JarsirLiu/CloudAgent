@@ -11,6 +11,7 @@ pub mod help_view;
 pub mod history_cell;
 pub mod input_pane;
 pub mod model_picker;
+pub mod model_picker_loading;
 pub mod paste_burst;
 pub mod paste_echo_guard;
 pub mod permissions_picker;

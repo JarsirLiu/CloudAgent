@@ -68,4 +68,8 @@ pub(crate) trait BottomPaneView {
     fn requires_action(&self) -> bool {
         false
     }
+
+    fn is_model_picker_loading(&self) -> bool {
+        false
+    }
 }

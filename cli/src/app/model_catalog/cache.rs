@@ -29,7 +29,7 @@ impl ModelCatalogCacheManager {
         }))
     }
 
-    pub(crate) async fn load_fresh(&self) -> Result<Option<ModelCatalogCacheEntry>> {
+    async fn load_fresh(&self) -> Result<Option<ModelCatalogCacheEntry>> {
         let Some(entry) = self.load().await else {
             return Ok(None);
         };
@@ -49,8 +49,22 @@ impl ModelCatalogCacheManager {
         Ok(None)
     }
 
-    pub(crate) async fn load_any(&self) -> Result<Option<ModelCatalogCacheEntry>> {
+    async fn load_any(&self) -> Result<Option<ModelCatalogCacheEntry>> {
         Ok(self.load().await)
+    }
+
+    pub(crate) async fn load_fresh_catalog(&self) -> Result<Option<ModelCatalog>> {
+        Ok(self
+            .load_fresh()
+            .await?
+            .map(ModelCatalogCacheEntry::into_catalog))
+    }
+
+    pub(crate) async fn load_any_catalog(&self) -> Result<Option<ModelCatalog>> {
+        Ok(self
+            .load_any()
+            .await?
+            .map(ModelCatalogCacheEntry::into_catalog))
     }
 
     pub(crate) async fn store(&self, catalog: &ModelCatalog) {
@@ -58,10 +72,6 @@ impl ModelCatalogCacheManager {
         if let Err(err) = self.save(&entry).await {
             error!("failed to write model catalog cache: {err}");
         }
-    }
-
-    pub(crate) fn cache_path(&self) -> &PathBuf {
-        &self.cache_path
     }
 
     async fn load(&self) -> Option<ModelCatalogCacheEntry> {

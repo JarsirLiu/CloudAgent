@@ -1,5 +1,6 @@
 use crate::app::TuiApp;
 use crate::app::runtime::controller::{RuntimeControl, RuntimeController};
+use crate::app::runtime::lifecycle::start_model_catalog_prewarm;
 use crate::app::runtime::terminal_projection::draw_with_terminal_projection;
 use crate::terminal::{TerminalGuard, spawn_tui_event_loop};
 use agent_app_server_client::AppServerClient;
@@ -9,6 +10,7 @@ pub(crate) async fn run_tui_event_loop(
     app: &mut TuiApp,
     client: &mut AppServerClient,
 ) -> Result<()> {
+    start_model_catalog_prewarm(app);
     let mut terminal = TerminalGuard::new()?;
     let (mut events, frame_requester, _event_loop_controller) = spawn_tui_event_loop();
     let mut controller = RuntimeController::new();

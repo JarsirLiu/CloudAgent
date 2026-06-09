@@ -1,11 +1,21 @@
 use crate::app::TuiApp;
 use crate::app::conversation::actions::handle_tui_input;
+use crate::app::llm_config::UserLlmSettings;
+use crate::app::model_catalog::ModelCatalogSnapshotState;
 use crate::app::runtime::display::{should_animate_live_status, should_animate_welcome};
+use crate::state::NoticeLevel;
 use crate::state::reducer::UiInputEvent;
 use agent_app_server_client::AppServerClient;
 use std::time::{Duration, Instant};
 
 const SKILL_REFRESH_RETRY_DELAY: Duration = Duration::from_secs(2);
+
+pub(crate) fn start_model_catalog_prewarm(app: &TuiApp) {
+    let Ok(cfg) = UserLlmSettings::load(&app.workspace_root) else {
+        return;
+    };
+    app.model_catalog.spawn_prewarm(cfg.base_url, cfg.api_key);
+}
 
 pub(crate) fn pause_welcome_animation_for_input(app: &mut TuiApp) {
     app.welcome_animation_pause_ticks = 8;
@@ -13,6 +23,7 @@ pub(crate) fn pause_welcome_animation_for_input(app: &mut TuiApp) {
 
 pub(crate) async fn handle_animation_tick(app: &mut TuiApp, client: &AppServerClient) -> bool {
     let mut needs_redraw = false;
+    needs_redraw |= sync_model_catalog_runtime(app).await;
     if app.run_state.pending_skills_refresh
         && app
             .run_state
@@ -61,4 +72,37 @@ pub(crate) async fn handle_animation_tick(app: &mut TuiApp, client: &AppServerCl
         return true;
     }
     needs_redraw
+}
+
+async fn sync_model_catalog_runtime(app: &mut TuiApp) -> bool {
+    let (version, state) = app.model_catalog.snapshot_with_version().await;
+    if version == app.run_state.seen_model_catalog_version {
+        return false;
+    }
+    app.run_state.seen_model_catalog_version = version;
+
+    let loading_picker_visible = app.bottom_pane.is_model_picker_loading();
+    let ModelCatalogSnapshotState::Ready(snapshot) = state else {
+        if let ModelCatalogSnapshotState::Failed(message) = state
+            && loading_picker_visible
+        {
+            app.bottom_pane.clear_views();
+            app.bottom_pane.show_transient_notice(
+                NoticeLevel::Error,
+                format!("Failed to load model list: {message}"),
+            );
+            return true;
+        }
+        return loading_picker_visible;
+    };
+    if !loading_picker_visible {
+        return false;
+    }
+
+    let Ok(cfg) = UserLlmSettings::load(&app.workspace_root) else {
+        return false;
+    };
+    app.bottom_pane
+        .set_model_picker(cfg.model, snapshot.catalog.models);
+    true
 }

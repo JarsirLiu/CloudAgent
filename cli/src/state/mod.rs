@@ -34,6 +34,7 @@ pub struct RunState {
     pub(crate) weixin_binding: Option<WeixinBindingState>,
     pub(crate) pending_skills_refresh: bool,
     pub(crate) next_skills_refresh_at: Option<Instant>,
+    pub(crate) seen_model_catalog_version: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +65,7 @@ impl RunState {
             weixin_binding: None,
             pending_skills_refresh: false,
             next_skills_refresh_at: None,
+            seen_model_catalog_version: 0,
         }
     }
 }

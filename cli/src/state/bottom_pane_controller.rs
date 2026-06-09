@@ -249,6 +249,14 @@ impl BottomPaneController {
         self.input_pane.set_model_picker(current, models);
     }
 
+    pub(crate) fn set_model_picker_loading(&mut self, current: String) {
+        self.input_pane.set_model_picker_loading(current);
+    }
+
+    pub(crate) fn is_model_picker_loading(&self) -> bool {
+        self.input_pane.is_model_picker_loading()
+    }
+
     pub(crate) fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {
         self.input_pane.set_config_panel(api_key, base_url, model);
     }

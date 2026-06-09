@@ -8,6 +8,7 @@ use crate::ui::widgets::footer::{hint_line, status_line};
 use crate::ui::widgets::gateway_panel::{GatewayPanel, WeixinLoginSessionView};
 use crate::ui::widgets::help_view::HelpView;
 use crate::ui::widgets::model_picker::ModelPicker;
+use crate::ui::widgets::model_picker_loading::ModelPickerLoading;
 use crate::ui::widgets::permissions_picker::PermissionsPicker;
 use crate::ui::widgets::reasoning_picker::ReasoningPicker;
 pub(crate) use crate::ui::widgets::server_request_model::ServerRequestInlineState;
@@ -482,6 +483,18 @@ impl InputPane {
         self.view_stack.clear();
         self.view_stack
             .push(Box::new(ModelPicker::new(current, models)));
+    }
+
+    pub fn set_model_picker_loading(&mut self, current: String) {
+        self.view_stack.clear();
+        self.view_stack
+            .push(Box::new(ModelPickerLoading::new(current)));
+    }
+
+    pub fn is_model_picker_loading(&self) -> bool {
+        self.view_stack
+            .last()
+            .is_some_and(|view| view.is_model_picker_loading())
     }
 
     pub fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {

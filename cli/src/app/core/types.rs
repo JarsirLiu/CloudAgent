@@ -1,5 +1,6 @@
 use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::core::transcript_scroll::TranscriptScroll;
+use crate::app::model_catalog::ModelCatalogRuntime;
 use crate::app::runtime::terminal_projection::TerminalProjectionController;
 use crate::state::RunState;
 use crate::state::bottom_pane_controller::BottomPaneController;
@@ -62,6 +63,7 @@ pub(crate) struct TuiApp {
     pub(crate) run_state: RunState,
     pub(crate) bottom_pane: BottomPaneController,
     pub(crate) terminal_projection: TerminalProjectionController,
+    pub(crate) model_catalog: ModelCatalogRuntime,
     pub(crate) suppress_next_reset_notice: bool,
     pub(crate) welcome_animation_frame: u64,
     pub(crate) welcome_animation_pause_ticks: u8,

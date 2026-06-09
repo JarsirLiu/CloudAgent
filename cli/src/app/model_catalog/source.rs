@@ -1,44 +1,23 @@
-mod cache;
-
+use crate::app::model_catalog::ModelCatalog;
 use anyhow::{Context, Result, anyhow};
-use cache::ModelCatalogCacheManager;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue};
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::time::Duration;
-use tracing::warn;
 use url::Url;
 
-const MODEL_CATALOG_CACHE_TTL: Duration = Duration::from_secs(300);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ModelCatalog {
-    pub(crate) source_url: String,
-    pub(crate) models: Vec<String>,
-}
-
-pub(crate) async fn fetch_model_catalog(base_url: &str, api_key: &str) -> Result<ModelCatalog> {
+pub(crate) async fn fetch_model_catalog_from_network(
+    base_url: &str,
+    api_key: &str,
+) -> Result<ModelCatalog> {
     let candidate_urls = candidate_model_urls(base_url)?;
-    let cache = ModelCatalogCacheManager::new(base_url, api_key, MODEL_CATALOG_CACHE_TTL)?;
-
-    if let Some(cache) = cache.as_ref()
-        && let Some(entry) = cache.load_fresh().await?
-    {
-        return Ok(entry.into_catalog());
-    }
-
     let mut last_error = None;
     for candidate in candidate_urls {
         match fetch_models_once(&candidate, api_key).await {
             Ok(models) if !models.is_empty() => {
-                let catalog = ModelCatalog {
+                return Ok(ModelCatalog {
                     source_url: candidate,
                     models,
-                };
-                if let Some(cache) = cache.as_ref() {
-                    cache.store(&catalog).await;
-                }
-                return Ok(catalog);
+                });
             }
             Ok(_) => {
                 last_error = Some(format!("`{candidate}` returned no models"));
@@ -49,24 +28,14 @@ pub(crate) async fn fetch_model_catalog(base_url: &str, api_key: &str) -> Result
         }
     }
 
-    if let Some(cache) = cache.as_ref()
-        && let Some(entry) = cache.load_any().await?
-    {
-        warn!(
-            cache_path = %cache.cache_path().display(),
-            "model catalog cache: serving stale cache after fetch failure"
-        );
-        return Ok(entry.into_catalog());
-    }
-
     Err(anyhow!(
         "Unable to load a model list from the configured Base URL. {}",
         last_error.unwrap_or_else(|| "No compatible `/models` endpoint was found.".to_string())
     ))
 }
 
-fn candidate_model_urls(base_url: &str) -> Result<Vec<String>> {
-    let parsed = Url::parse(base_url).context("Base URL is not a valid URL")?; // keep user-facing error clear
+pub(crate) fn candidate_model_urls(base_url: &str) -> Result<Vec<String>> {
+    let parsed = Url::parse(base_url).context("Base URL is not a valid URL")?;
     let mut candidates = Vec::new();
     let mut seen = BTreeSet::new();
     let mut bases = vec![parsed.clone()];
@@ -157,37 +126,29 @@ async fn fetch_models_once(url: &str, api_key: &str) -> Result<Vec<String>> {
     parse_model_ids(&body).context("response body did not contain a compatible model list")
 }
 
-fn parse_model_ids(body: &str) -> Result<Vec<String>> {
+pub(crate) fn parse_model_ids(body: &str) -> Result<Vec<String>> {
     let value: Value = serde_json::from_str(body).context("invalid JSON response")?;
     let mut models = Vec::new();
     if let Some(data) = value.get("data").and_then(Value::as_array) {
-        for item in data {
-            if let Some(id) = item.get("id").and_then(Value::as_str) {
-                models.push(id.to_string());
-            } else if let Some(id) = item.as_str() {
-                models.push(id.to_string());
-            }
-        }
+        collect_model_ids(data, &mut models);
     } else if let Some(models_array) = value.get("models").and_then(Value::as_array) {
-        for item in models_array {
-            if let Some(id) = item.get("id").and_then(Value::as_str) {
-                models.push(id.to_string());
-            } else if let Some(id) = item.as_str() {
-                models.push(id.to_string());
-            }
-        }
+        collect_model_ids(models_array, &mut models);
     } else if let Some(array) = value.as_array() {
-        for item in array {
-            if let Some(id) = item.get("id").and_then(Value::as_str) {
-                models.push(id.to_string());
-            } else if let Some(id) = item.as_str() {
-                models.push(id.to_string());
-            }
-        }
+        collect_model_ids(array, &mut models);
     }
     models.sort();
     models.dedup();
     Ok(models)
+}
+
+fn collect_model_ids(items: &[Value], models: &mut Vec<String>) {
+    for item in items {
+        if let Some(id) = item.get("id").and_then(Value::as_str) {
+            models.push(id.to_string());
+        } else if let Some(id) = item.as_str() {
+            models.push(id.to_string());
+        }
+    }
 }
 
 fn truncate_body(body: &str) -> String {
@@ -202,47 +163,4 @@ fn truncate_body(body: &str) -> String {
     }
     out.push('…');
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{candidate_model_urls, parse_model_ids};
-
-    #[test]
-    fn candidate_urls_cover_v1_and_known_compat_paths() {
-        assert_eq!(
-            candidate_model_urls("https://api.openai.com/v1").expect("urls"),
-            vec![
-                "https://api.openai.com/v1/models".to_string(),
-                "https://api.openai.com/models".to_string(),
-            ]
-        );
-
-        assert_eq!(
-            candidate_model_urls("https://example.com/openai/chat/completions").expect("urls"),
-            vec![
-                "https://example.com/openai/chat/completions/models".to_string(),
-                "https://example.com/openai/chat/completions/v1/models".to_string(),
-                "https://example.com/openai/models".to_string(),
-                "https://example.com/openai/v1/models".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn parse_model_ids_accepts_openai_shape() {
-        let models =
-            parse_model_ids(r#"{"object":"list","data":[{"id":"gpt-4.1"},{"id":"gpt-4.1-mini"}]}"#)
-                .expect("models");
-        assert_eq!(
-            models,
-            vec!["gpt-4.1".to_string(), "gpt-4.1-mini".to_string()]
-        );
-    }
-
-    #[test]
-    fn parse_model_ids_accepts_plain_array() {
-        let models = parse_model_ids(r#"["foo","bar"]"#).expect("models");
-        assert_eq!(models, vec!["bar".to_string(), "foo".to_string()]);
-    }
 }

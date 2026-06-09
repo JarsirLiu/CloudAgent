@@ -1,5 +1,6 @@
 use crate::app::TuiApp;
 use crate::app::core::transcript_owner::TranscriptOwner;
+use crate::app::model_catalog::ModelCatalogRuntime;
 use crate::app::runtime::terminal_projection::TerminalProjectionController;
 use crate::state::RunState;
 use crate::state::bottom_pane_controller::BottomPaneController;
@@ -35,6 +36,7 @@ impl TuiApp {
             run_state,
             bottom_pane: BottomPaneController::new(),
             terminal_projection: TerminalProjectionController::default(),
+            model_catalog: ModelCatalogRuntime::new(),
             suppress_next_reset_notice: false,
             welcome_animation_frame: 0,
             welcome_animation_pause_ticks: 0,

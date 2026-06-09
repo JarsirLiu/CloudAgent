@@ -7,7 +7,9 @@ use crate::app::conversation::facade as conversation_facade;
 use crate::app::conversation::image_paste::handle_clipboard_paste;
 use crate::app::effects::copy_text_to_clipboard;
 use crate::app::llm_config::{UserLlmSettings, save_user_llm_settings};
-use crate::app::model_catalog::fetch_model_catalog;
+use crate::app::model_catalog::{
+    ModelCatalogSnapshot, ModelCatalogSnapshotState, ModelCatalogSource,
+};
 use crate::state::NoticeLevel;
 use crate::state::WeixinBindingState;
 use crate::state::reducer::ServerAction;
@@ -160,6 +162,9 @@ pub(crate) async fn handle_tui_input(
                 return Ok(false);
             }
             save_user_llm_settings(&api_key, &base_url, &model, ReasoningEffort::Medium)?;
+            app.model_catalog.reset().await;
+            app.model_catalog
+                .spawn_prewarm(base_url.clone(), api_key.clone());
             if let Err(err) = client.send_command(AppClientCommand::ReloadLlmConfig {
                 api_key: api_key.clone(),
                 base_url: base_url.clone(),
@@ -211,21 +216,25 @@ pub(crate) async fn handle_tui_input(
             let trimmed = model.trim();
             if trimmed.is_empty() {
                 let cfg = UserLlmSettings::load(&app.workspace_root)?;
-                match fetch_model_catalog(&cfg.base_url, &cfg.api_key).await {
-                    Ok(catalog) => {
+                match app
+                    .model_catalog
+                    .load_for_picker(cfg.base_url.clone(), cfg.api_key.clone())
+                    .await
+                {
+                    ModelCatalogSnapshotState::Ready(snapshot) => {
                         app.bottom_pane
-                            .set_model_picker(cfg.model.clone(), catalog.models.clone());
+                            .set_model_picker(cfg.model.clone(), snapshot.catalog.models.clone());
                         show_local_notice(
                             app,
                             NoticeLevel::Info,
-                            format!(
-                                "Loaded {} models from {}",
-                                catalog.models.len(),
-                                catalog.source_url
-                            ),
+                            format_model_catalog_notice(&snapshot),
                         );
                     }
-                    Err(err) => {
+                    ModelCatalogSnapshotState::Loading | ModelCatalogSnapshotState::Empty => {
+                        app.bottom_pane.set_model_picker_loading(cfg.model.clone());
+                        show_local_notice(app, NoticeLevel::Info, "Loading model list...");
+                    }
+                    ModelCatalogSnapshotState::Failed(err) => {
                         show_local_notice(
                             app,
                             NoticeLevel::Error,
@@ -725,6 +734,20 @@ pub(crate) async fn handle_tui_input(
         }
     }
     Ok(false)
+}
+
+fn format_model_catalog_notice(snapshot: &ModelCatalogSnapshot) -> String {
+    let source = match snapshot.source {
+        ModelCatalogSource::Memory => "memory",
+        ModelCatalogSource::FreshCache => "cache",
+        ModelCatalogSource::StaleCache => "stale cache",
+        ModelCatalogSource::Network => snapshot.catalog.source_url.as_str(),
+    };
+    format!(
+        "Loaded {} models from {}",
+        snapshot.catalog.models.len(),
+        source
+    )
 }
 
 pub(crate) async fn load_older_history_page_if_available(
