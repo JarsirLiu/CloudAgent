@@ -2,6 +2,7 @@ mod color_compat;
 pub mod custom_terminal;
 mod draw_coordinator;
 pub mod events;
+mod history_replay;
 mod keyboard_modes;
 
 use anyhow::Result;
@@ -19,6 +20,7 @@ use color_compat::{TerminalCapabilities, prepare_terminal_color_output};
 pub(crate) use custom_terminal::Frame;
 use draw_coordinator::DrawCoordinator;
 pub(crate) use events::{FrameRequester, UiEvent, spawn_tui_event_loop};
+pub(crate) use history_replay::{HistoryReplayBatch, HistoryReplayMode};
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 
@@ -29,13 +31,7 @@ pub(crate) struct TerminalGuard {
 
 pub(crate) struct PreparedHistoryProjection {
     pub(crate) viewport_height: u16,
-    pub(crate) history_update: Option<HistoryProjectionUpdate>,
-}
-
-pub(crate) struct HistoryProjectionUpdate {
-    pub(crate) lines: Vec<ratatui::text::Line<'static>>,
-    pub(crate) full_replay: bool,
-    pub(crate) left_padding: usize,
+    pub(crate) history_update: Option<HistoryReplayBatch>,
 }
 
 pub(crate) fn init() -> Result<TerminalGuard> {

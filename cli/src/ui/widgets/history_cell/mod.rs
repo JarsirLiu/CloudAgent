@@ -626,6 +626,9 @@ impl Transcript {
 }
 
 fn render_user(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    if cell.body().trim().is_empty() {
+        return Vec::new();
+    }
     let inner = width.saturating_sub(2).max(8);
     let style = user_message_style();
     let text_style = style

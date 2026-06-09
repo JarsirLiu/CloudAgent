@@ -183,6 +183,27 @@ fn user_cells_apply_full_width_background() {
 }
 
 #[test]
+fn user_cells_do_not_emit_internal_padding_rows() {
+    let cell = HistoryCell::user("hello");
+
+    let rendered = cell.to_transcript_lines(24);
+    let plain = rendered
+        .iter()
+        .map(|line| line.to_string().trim_end().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(plain, vec!["› hello"]);
+}
+
+#[test]
+fn empty_user_cells_do_not_render() {
+    let cell = HistoryCell::user("   \n");
+
+    assert!(cell.to_transcript_lines(24).is_empty());
+    assert!(cell.to_live_transcript_lines(24).is_empty());
+}
+
+#[test]
 fn exploration_cells_render_summary_with_nested_details() {
     let mut aggregate = ExplorationAggregate::new("file search `cli`".to_string());
     aggregate.searches = 8;

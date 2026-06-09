@@ -7,6 +7,7 @@ use crate::app::core::transcript_owner::TranscriptOwner;
 use crate::app::runtime::display::should_show_welcome;
 use crate::ui::chat_surface::ChatSurface;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
+use crate::ui::transcript_line_builder::{TranscriptLineOptions, build_transcript_lines};
 use agent_core::{
     CommandExecutionStatus, ConversationTurn, InputItem, ReadFileEntry, ReadFileStatus,
     SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
@@ -304,6 +305,50 @@ fn rebuilt_completed_turn_routes_finalized_history_to_scrollback() {
     };
     assert!(surface.lines.is_empty());
     assert_eq!(surface.rendered_rows, 0);
+}
+
+#[test]
+fn local_pending_user_and_rebuilt_committed_user_render_consistently() {
+    let mut live_app = test_app();
+    live_app
+        .transcript_owner
+        .start_local_user(local_input("copy this exact text"), false);
+    let pending_cells = live_app.transcript_owner.pending_history_cells();
+    let pending_lines =
+        build_transcript_lines(&pending_cells, TranscriptLineOptions::scrollback(80, None)).lines;
+
+    let mut rebuilt_app = test_app();
+    let history = vec![turn(
+        "turn-1",
+        TurnState::Completed,
+        vec![user("u1", "copy this exact text")],
+    )];
+    rebuilt_app
+        .transcript_owner
+        .rebuild_from_history_snapshot(&history, false);
+    let committed_cells = rebuilt_app
+        .transcript_owner
+        .committed_cells_for_scrollback();
+    let committed_lines = build_transcript_lines(
+        &committed_cells,
+        TranscriptLineOptions::scrollback(80, None),
+    )
+    .lines;
+
+    let pending_text = pending_lines
+        .iter()
+        .map(|line| line.to_string().trim_end().to_string())
+        .collect::<Vec<_>>();
+    let committed_text = committed_lines
+        .iter()
+        .map(|line| line.to_string().trim_end().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(pending_text, committed_text);
+    assert_eq!(
+        pending_lines.first().and_then(|line| line.style.bg),
+        committed_lines.first().and_then(|line| line.style.bg)
+    );
 }
 
 #[test]
