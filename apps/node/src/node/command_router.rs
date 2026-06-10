@@ -9,10 +9,11 @@ use agent_core::conversation_busy_error;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
     CommandExecutionContext, ConversationHistoryPageResponse, ConversationHistoryResponse,
-    ConversationListResponse, ConversationViewResponse, JsonRpcErrorPayload, JsonRpcMessage,
-    JsonRpcRequest, NodeStatusResponse, NodeStopResponse, PlatformConfigResponse,
-    PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
-    RequestId, SkillsListResponse, WeixinLoginStartResponse, WeixinLoginStatusResponse,
+    ConversationListPageResponse, ConversationListResponse, ConversationViewResponse,
+    JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
+    PlatformConfigResponse, PlatformControlListResponse, PlatformControlStatusResponse,
+    PlatformControlUpdateResponse, RequestId, SkillsListResponse, WeixinLoginStartResponse,
+    WeixinLoginStatusResponse,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
@@ -286,6 +287,9 @@ where
             read_conversation_list(runtime, session.worker_scope_key(), &target_conversation)
                 .await?,
         )?,
+        AppClientCommand::ListConversationsPage { cursor, limit } => serde_json::to_value(
+            read_conversation_list_page(runtime, cursor.clone(), *limit).await?,
+        )?,
         AppClientCommand::ListPlatforms => serde_json::to_value(runtime.platforms().list().await)?,
         AppClientCommand::GetNodeStatus => serde_json::to_value(runtime.status().await)?,
         AppClientCommand::StopNode => {
@@ -366,6 +370,13 @@ fn typed_request_from_command(
 ) -> Option<JsonRpcRequest> {
     let (method, params) = match command {
         AppClientCommand::ListConversations => ("conversation/list", serde_json::Value::Null),
+        AppClientCommand::ListConversationsPage { cursor, limit } => (
+            "conversation/listPage",
+            serde_json::json!({
+                "cursor": cursor,
+                "limit": limit,
+            }),
+        ),
         AppClientCommand::ListPlatforms => ("platform/list", serde_json::Value::Null),
         AppClientCommand::GetNodeStatus => ("node/status", serde_json::Value::Null),
         AppClientCommand::StopNode => ("node/stop", serde_json::Value::Null),
@@ -513,24 +524,76 @@ async fn conversation_list_notification(
     active_conversation_id: &str,
     runtime: &NodeRuntime,
 ) -> Option<AppServerMessage> {
-    if !matches!(rpc, JsonRpcMessage::Notification(_))
-        || !matches!(command, AppClientCommand::ListConversations)
-    {
+    if !matches!(rpc, JsonRpcMessage::Notification(_)) {
         return None;
     }
-    Some(AppServerMessage::Notification(
-        AppServerNotification::ConversationList {
-            conversation_id: active_conversation_id.to_string(),
-            conversations: read_conversation_list(
-                runtime,
-                active_conversation_id,
-                active_conversation_id,
-            )
-            .await
-            .ok()?
-            .conversations,
-        },
-    ))
+
+    match command {
+        AppClientCommand::ListConversations => Some(AppServerMessage::Notification(
+            AppServerNotification::ConversationList {
+                conversation_id: active_conversation_id.to_string(),
+                conversations: read_conversation_list(
+                    runtime,
+                    active_conversation_id,
+                    active_conversation_id,
+                )
+                .await
+                .ok()?
+                .conversations,
+            },
+        )),
+        AppClientCommand::ListConversationsPage { cursor, limit } => {
+            let page = read_conversation_list_page(runtime, cursor.clone(), *limit)
+                .await
+                .ok()?;
+            Some(AppServerMessage::Notification(
+                AppServerNotification::ConversationListPage {
+                    conversation_id: active_conversation_id.to_string(),
+                    conversations: page.conversations,
+                    has_more: page.has_more,
+                    next_cursor: page.next_cursor,
+                },
+            ))
+        }
+        _ => None,
+    }
+}
+
+async fn read_conversation_list_page(
+    runtime: &NodeRuntime,
+    cursor: Option<String>,
+    limit: usize,
+) -> Result<ConversationListPageResponse> {
+    let _ = runtime
+        .conversation_store()
+        .reconcile_missing_conversations(100)
+        .await;
+    match runtime
+        .conversation_store()
+        .list_conversations_page(cursor, limit)
+        .await
+    {
+        Ok(page) => {
+            runtime
+                .conversations()
+                .lock()
+                .await
+                .replace_from_summaries(&page.conversations);
+            Ok(ConversationListPageResponse {
+                conversations: page.conversations,
+                has_more: page.has_more,
+                next_cursor: page.next_cursor,
+            })
+        }
+        Err(_) => {
+            let conversations = runtime.conversations().lock().await.summaries();
+            Ok(ConversationListPageResponse {
+                conversations,
+                has_more: false,
+                next_cursor: None,
+            })
+        }
+    }
 }
 
 async fn read_conversation_list(
@@ -538,6 +601,10 @@ async fn read_conversation_list(
     _worker_scope_key: &str,
     _active_conversation_id: &str,
 ) -> Result<ConversationListResponse> {
+    let _ = runtime
+        .conversation_store()
+        .reconcile_missing_conversations(100)
+        .await;
     match runtime.conversation_store().list_conversations().await {
         Ok(conversations) => {
             let conversations = conversations
@@ -701,6 +768,15 @@ async fn sync_typed_read_registry(
                 conversations: response.conversations,
             })
         }
+        AppClientCommand::ListConversationsPage { .. } => {
+            let response: ConversationListPageResponse = serde_json::from_value(value.clone())?;
+            AppServerMessage::Notification(AppServerNotification::ConversationListPage {
+                conversation_id: conversation_id.to_string(),
+                conversations: response.conversations,
+                has_more: response.has_more,
+                next_cursor: response.next_cursor,
+            })
+        }
         AppClientCommand::RequestConversationHistoryPage { .. } => return Ok(()),
         _ => return Ok(()),
     };
@@ -764,7 +840,8 @@ fn command_name(command: &AppClientCommand) -> &'static str {
 fn command_requires_worker(command: &AppClientCommand) -> bool {
     !matches!(
         command,
-        AppClientCommand::ListPlatforms
+        AppClientCommand::ListConversationsPage { .. }
+            | AppClientCommand::ListPlatforms
             | AppClientCommand::GetPlatformStatus { .. }
             | AppClientCommand::GetPlatformConfig { .. }
             | AppClientCommand::SetPlatformEnabled { .. }
