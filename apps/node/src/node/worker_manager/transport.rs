@@ -20,6 +20,7 @@ pub(super) fn worker_command_name(command: &AppClientCommand) -> &'static str {
             "request_conversation_history_page"
         }
         AppClientCommand::ListConversations => "list_conversations",
+        AppClientCommand::ListConversationsPage { .. } => "list_conversations_page",
         AppClientCommand::ListSkills => "list_skills",
         AppClientCommand::ListOnlineNodes => "list_online_nodes",
         AppClientCommand::ListPlatforms => "list_platforms",
