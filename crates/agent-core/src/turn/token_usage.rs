@@ -47,21 +47,11 @@ pub struct RequestTokenBaseline {
     pub request_estimated_tokens: Option<usize>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RestoredTurnTokenState {
     pub usage: TokenUsageState,
     pub request_baseline: RequestTokenBaseline,
     pub auto_compact_window: AutoCompactWindowSnapshot,
-}
-
-impl Default for RestoredTurnTokenState {
-    fn default() -> Self {
-        Self {
-            usage: TokenUsageState::default(),
-            request_baseline: RequestTokenBaseline::default(),
-            auto_compact_window: AutoCompactWindowSnapshot::default(),
-        }
-    }
 }
 
 pub fn latest_turn_token_state_from_rollout_items(

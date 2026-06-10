@@ -139,10 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn replace_from_summaries_overwrites_stale_registry_entries() {
+    fn merge_from_summaries_overwrites_existing_entries() {
         let mut registry = ConversationRegistry::default();
-        registry.touch("stale");
-        registry.replace_from_summaries(&[ConversationSummary {
+        registry.touch("fresh");
+        registry.set_title("fresh", "Old".to_string());
+        registry.merge_from_summaries(&[ConversationSummary {
             conversation_id: "fresh".to_string(),
             title: Some("Fresh".to_string()),
             message_count: 3,
@@ -160,7 +161,7 @@ mod tests {
     #[test]
     fn merge_from_summaries_preserves_existing_entries() {
         let mut registry = ConversationRegistry::default();
-        registry.replace_from_summaries(&[ConversationSummary {
+        registry.merge_from_summaries(&[ConversationSummary {
             conversation_id: "first".to_string(),
             title: Some("First".to_string()),
             message_count: 1,

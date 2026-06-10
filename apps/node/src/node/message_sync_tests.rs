@@ -24,7 +24,7 @@ async fn test_runtime() -> NodeRuntime {
 }
 
 #[test]
-fn worker_conversation_list_replaces_shared_registry_state() {
+fn worker_conversation_list_merges_into_shared_registry_state() {
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     runtime.block_on(async {
         let runtime = test_runtime().await;
@@ -32,7 +32,7 @@ fn worker_conversation_list_replaces_shared_registry_state() {
 
         sync_registry_from_message(
             &runtime,
-            &AppServerMessage::Notification(AppServerNotification::ConversationList {
+            &AppServerMessage::Notification(AppServerNotification::ConversationListPage {
                 conversation_id: "conversation-1".to_string(),
                 conversations: vec![ConversationSummary {
                     conversation_id: "conversation-1".to_string(),
@@ -40,15 +40,25 @@ fn worker_conversation_list_replaces_shared_registry_state() {
                     message_count: 4,
                     updated_at_ms: 12,
                 }],
+                has_more: false,
+                next_cursor: None,
             }),
         )
         .await;
 
         let summaries = runtime.conversations().lock().await.summaries();
-        assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].conversation_id, "conversation-1");
-        assert_eq!(summaries[0].title.as_deref(), Some("Alpha"));
-        assert_eq!(summaries[0].message_count, 4);
+        assert_eq!(summaries.len(), 2);
+        let summary = summaries
+            .iter()
+            .find(|summary| summary.conversation_id == "conversation-1")
+            .expect("merged conversation summary");
+        assert_eq!(summary.title.as_deref(), Some("Alpha"));
+        assert_eq!(summary.message_count, 4);
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary.conversation_id == "stale")
+        );
     });
 }
 

@@ -634,7 +634,10 @@ mod tests {
             let envelope = AppClientCommandEnvelope::try_from(rpc).expect("command envelope");
             assert!(matches!(
                 envelope.command,
-                AppClientCommand::ListConversations
+                AppClientCommand::ListConversationsPage {
+                    cursor: None,
+                    limit: 25
+                }
             ));
 
             let payload = serde_json::to_string(&JsonRpcMessage::from(AppServerMessageEnvelope {
@@ -658,7 +661,10 @@ mod tests {
             .expect("connect client");
 
         client
-            .send_command(AppClientCommand::ListConversations)
+            .send_command(AppClientCommand::ListConversationsPage {
+                cursor: None,
+                limit: 25,
+            })
             .expect("send command");
 
         match client.next_event().await.expect("info event") {
@@ -1013,12 +1019,15 @@ mod tests {
                 .await
                 .expect("read list request")
                 .expect("list request payload");
-            let JsonRpcMessage::Request(JsonRpcRequest { id, method, .. }) =
+            let JsonRpcMessage::Request(JsonRpcRequest { id, method, params }) =
                 serde_json::from_str(&line).expect("conversation list jsonrpc")
             else {
                 panic!("expected list request");
             };
-            assert_eq!(method, "conversation/list");
+            assert_eq!(method, "conversation/listPage");
+            let params = params.expect("request params");
+            assert_eq!(params.get("cursor"), Some(&serde_json::Value::Null));
+            assert_eq!(params.get("limit"), Some(&serde_json::Value::from(25)));
 
             let response = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
                 id,
@@ -1030,7 +1039,9 @@ mod tests {
                             "message_count": 3,
                             "updated_at_ms": 42
                         }
-                    ]
+                    ],
+                    "has_more": false,
+                    "next_cursor": null
                 }),
             }))
             .expect("serialize list response");
@@ -1050,13 +1061,15 @@ mod tests {
             .expect("connect client");
         let request_handle = client.request_handle();
         let response = request_handle
-            .request_conversation_list()
+            .request_conversation_list_page(None, 25)
             .await
             .expect("conversation list response");
 
         assert_eq!(response.conversations.len(), 1);
         assert_eq!(response.conversations[0].conversation_id, "conversation-1");
         assert_eq!(response.conversations[0].title.as_deref(), Some("Alpha"));
+        assert!(!response.has_more);
+        assert_eq!(response.next_cursor, None);
         if let Some(event) = client.try_next_event() {
             assert!(
                 matches!(event, AppServerEvent::Disconnected { .. }),
@@ -1233,7 +1246,10 @@ mod tests {
             let envelope = AppClientCommandEnvelope::try_from(rpc).expect("command envelope");
             assert!(matches!(
                 envelope.command,
-                AppClientCommand::ListConversations
+                AppClientCommand::ListConversationsPage {
+                    cursor: None,
+                    limit: 25
+                }
             ));
             let context = envelope.context.expect("default command context");
             assert_eq!(context.workspace_root.as_deref(), Some("D:/repo-z"));
@@ -1255,7 +1271,10 @@ mod tests {
             .expect("connect client");
 
         client
-            .send_command(AppClientCommand::ListConversations)
+            .send_command(AppClientCommand::ListConversationsPage {
+                cursor: None,
+                limit: 25,
+            })
             .expect("send command");
 
         client.shutdown().await.expect("shutdown client");
@@ -1327,8 +1346,10 @@ mod tests {
             else {
                 panic!("expected typed request");
             };
-            assert_eq!(method, "conversation/list");
+            assert_eq!(method, "conversation/listPage");
             let params = params.expect("request params");
+            assert_eq!(params.get("cursor"), Some(&serde_json::Value::Null));
+            assert_eq!(params.get("limit"), Some(&serde_json::Value::from(25)));
             let context: CommandExecutionContext = serde_json::from_value(
                 params
                     .get("_context")
@@ -1342,7 +1363,11 @@ mod tests {
 
             let response = serde_json::to_string(&JsonRpcMessage::Response(JsonRpcResponse {
                 id,
-                result: serde_json::json!({ "conversations": [] }),
+                result: serde_json::json!({
+                    "conversations": [],
+                    "has_more": false,
+                    "next_cursor": null
+                }),
             }))
             .expect("serialize list response");
             write_half
@@ -1368,10 +1393,12 @@ mod tests {
 
         let response = client
             .request_handle()
-            .request_conversation_list()
+            .request_conversation_list_page(None, 25)
             .await
             .expect("conversation list");
         assert!(response.conversations.is_empty());
+        assert!(!response.has_more);
+        assert_eq!(response.next_cursor, None);
 
         client.shutdown().await.expect("shutdown client");
         server.await.expect("server task");

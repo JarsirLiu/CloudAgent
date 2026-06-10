@@ -52,10 +52,12 @@ fn requested_session_picker_opens_after_loading_view_remains_active() {
         .request_session_picker(SessionPickerMode::Switch);
 
     assert!(!app.bottom_pane.no_modal_or_popup_active());
-    assert!(
-        app.bottom_pane
-            .present_requested_session_picker(vec![summary("default")], "default")
-    );
+    assert!(app.bottom_pane.present_requested_session_picker_page(
+        vec![summary("default")],
+        "default",
+        false,
+        None
+    ));
     assert!(!app.bottom_pane.no_modal_or_popup_active());
 }
 
@@ -76,10 +78,12 @@ fn cancelled_session_picker_loading_ignores_late_response() {
         ))
     ));
     assert!(app.bottom_pane.no_modal_or_popup_active());
-    assert!(
-        !app.bottom_pane
-            .present_requested_session_picker(vec![summary("default")], "default")
-    );
+    assert!(!app.bottom_pane.present_requested_session_picker_page(
+        vec![summary("default")],
+        "default",
+        false,
+        None
+    ));
     assert!(app.bottom_pane.no_modal_or_popup_active());
 }
 

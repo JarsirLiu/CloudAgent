@@ -343,7 +343,10 @@ mod tests {
         );
 
         handle.sender().send_command_with_context(
-            AppClientCommand::ListConversations,
+            AppClientCommand::ListConversationsPage {
+                cursor: None,
+                limit: 25,
+            },
             Some(CommandExecutionContext {
                 session_id: Some("session-2".to_string()),
                 workspace_id: None,
@@ -359,7 +362,7 @@ mod tests {
         };
 
         match message {
-            AppServerMessage::Notification(AppServerNotification::ConversationList {
+            AppServerMessage::Notification(AppServerNotification::ConversationListPage {
                 conversations,
                 ..
             }) => {

@@ -84,7 +84,7 @@ pub(crate) async fn interrupt_turn(
         server_request_service::resolve_pending_for_interrupted_conversation(
             event_tx,
             state,
-            &view,
+            view,
             &conversation_id,
             "interrupted by client",
         )

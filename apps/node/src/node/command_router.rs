@@ -828,7 +828,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn switch_conversation_updates_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
@@ -1036,7 +1035,6 @@ mod tests {
         }
     }
 
-    #[test]
     #[tokio::test]
     async fn ensure_session_subscription_replaces_stale_receiver() {
         let runtime = test_runtime().await;

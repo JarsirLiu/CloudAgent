@@ -344,7 +344,10 @@ mod tests {
     fn typed_request_with_context(request_id: RequestId, workspace_root: String) -> JsonRpcRequest {
         let rpc = JsonRpcMessage::from(AppClientCommandEnvelope {
             request_id,
-            command: AppClientCommand::ListConversations,
+            command: AppClientCommand::ListConversationsPage {
+                cursor: None,
+                limit: 25,
+            },
             context: Some(CommandExecutionContext {
                 session_id: Some("session-9".to_string()),
                 workspace_id: None,
