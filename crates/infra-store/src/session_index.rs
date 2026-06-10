@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
 
@@ -9,13 +9,42 @@ const SCHEMA_V4: i32 = 4;
 const SCHEMA_V5: i32 = 5;
 const LATEST_SCHEMA_VERSION: i32 = SCHEMA_V5;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionIndexRow {
     pub conversation_id: String,
     pub title: Option<String>,
     pub message_count: usize,
     pub updated_at_ms: u64,
     pub archived: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionListCursor {
+    pub updated_at_ms: u64,
+    pub conversation_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionListPage {
+    pub rows: Vec<SessionIndexRow>,
+    pub has_more: bool,
+    pub next_cursor: Option<SessionListCursor>,
+}
+
+impl SessionListCursor {
+    pub fn encode(&self) -> String {
+        format!("{}:{}", self.updated_at_ms, self.conversation_id)
+    }
+
+    pub fn decode(value: &str) -> Result<Self> {
+        let (updated_at_ms, conversation_id) = value
+            .split_once(':')
+            .context("invalid session list cursor")?;
+        Ok(Self {
+            updated_at_ms: updated_at_ms.parse().context("invalid cursor timestamp")?,
+            conversation_id: conversation_id.to_string(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -239,6 +268,67 @@ pub fn list_sessions(db_path: &Path, project_root: &str) -> Result<Vec<SessionIn
     Ok(out)
 }
 
+pub fn list_sessions_page(
+    db_path: &Path,
+    project_root: &str,
+    cursor: Option<SessionListCursor>,
+    limit: usize,
+) -> Result<SessionListPage> {
+    let conn = open(db_path)?;
+    let page_limit = limit.max(1);
+    let query_limit = page_limit.saturating_add(1) as i64;
+    let mut stmt = conn.prepare(
+        r#"SELECT conversation_id, title, message_count, updated_at_ms, archived
+FROM sessions
+WHERE project_root=?1
+  AND archived=0
+  AND (
+    ?2 IS NULL
+    OR updated_at_ms < ?2
+    OR (updated_at_ms = ?2 AND conversation_id < ?3)
+  )
+ORDER BY updated_at_ms DESC, conversation_id DESC
+LIMIT ?4"#,
+    )?;
+    let cursor_updated_at_ms = cursor.as_ref().map(|cursor| cursor.updated_at_ms as i64);
+    let cursor_conversation_id = cursor
+        .as_ref()
+        .map(|cursor| cursor.conversation_id.as_str());
+    let mut rows = stmt.query(params![
+        project_root,
+        cursor_updated_at_ms,
+        cursor_conversation_id,
+        query_limit
+    ])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(SessionIndexRow {
+            conversation_id: row.get(0)?,
+            title: row.get(1)?,
+            message_count: row.get::<_, i64>(2)? as usize,
+            updated_at_ms: row.get::<_, i64>(3)? as u64,
+            archived: row.get::<_, i64>(4)? != 0,
+        });
+    }
+    let has_more = out.len() > page_limit;
+    if has_more {
+        out.truncate(page_limit);
+    }
+    let next_cursor = if has_more {
+        out.last().map(|row| SessionListCursor {
+            updated_at_ms: row.updated_at_ms,
+            conversation_id: row.conversation_id.clone(),
+        })
+    } else {
+        None
+    };
+    Ok(SessionListPage {
+        rows: out,
+        has_more,
+        next_cursor,
+    })
+}
+
 pub fn list_archived_sessions(db_path: &Path, project_root: &str) -> Result<Vec<SessionIndexRow>> {
     let conn = open(db_path)?;
     let mut stmt = conn.prepare(
@@ -290,6 +380,39 @@ pub fn delete_session(db_path: &Path, conversation_id: &str) -> Result<()> {
         params![conversation_id],
     )?;
     Ok(())
+}
+
+pub fn delete_sessions(db_path: &Path, conversation_ids: &[String]) -> Result<usize> {
+    if conversation_ids.is_empty() {
+        return Ok(0);
+    }
+    let mut conn = open(db_path)?;
+    let tx = conn.transaction()?;
+    let mut deleted = 0usize;
+    for conversation_id in conversation_ids {
+        deleted += tx.execute(
+            "DELETE FROM sessions WHERE conversation_id=?1",
+            params![conversation_id],
+        )?;
+        tx.execute(
+            "DELETE FROM project_active_session WHERE conversation_id=?1",
+            params![conversation_id],
+        )?;
+        tx.execute(
+            "DELETE FROM session_events WHERE conversation_id=?1",
+            params![conversation_id],
+        )?;
+        tx.execute(
+            "DELETE FROM approval_grants WHERE conversation_id=?1",
+            params![conversation_id],
+        )?;
+        tx.execute(
+            "DELETE FROM conversation_turn_index WHERE conversation_id=?1",
+            params![conversation_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(deleted)
 }
 
 pub fn replace_turn_index(

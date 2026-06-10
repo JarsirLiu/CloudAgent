@@ -36,6 +36,7 @@ fn handle_server_message(app: &mut TuiApp, message: &AppServerMessage) {
 fn should_apply_server_message(app: &TuiApp, message: &AppServerMessage) -> bool {
     match message {
         AppServerMessage::Notification(AppServerNotification::ConversationList { .. })
+        | AppServerMessage::Notification(AppServerNotification::ConversationListPage { .. })
         | AppServerMessage::Notification(AppServerNotification::ConversationSwitched { .. }) => {
             true
         }

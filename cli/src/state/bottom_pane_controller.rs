@@ -220,6 +220,16 @@ impl BottomPaneController {
             .set_session_picker(sessions, active_conversation_id, mode);
     }
 
+    pub(crate) fn append_session_page(
+        &mut self,
+        sessions: Vec<ConversationSummary>,
+        has_more: bool,
+        next_cursor: Option<String>,
+    ) -> bool {
+        self.input_pane
+            .append_session_page(sessions, has_more, next_cursor)
+    }
+
     pub(crate) fn clear_session_picker(&mut self) {
         self.input_pane.clear_session_picker();
         self.pending_session_picker = None;
@@ -255,6 +265,32 @@ impl BottomPaneController {
             return false;
         }
         self.set_session_picker(sessions, active_conversation_id, pending.mode);
+        true
+    }
+
+    pub(crate) fn present_requested_session_picker_page(
+        &mut self,
+        sessions: Vec<ConversationSummary>,
+        active_conversation_id: &str,
+        has_more: bool,
+        next_cursor: Option<String>,
+    ) -> bool {
+        let Some(pending) = self.pending_session_picker.take() else {
+            return false;
+        };
+        if !self
+            .input_pane
+            .is_session_picker_loading(pending.generation)
+        {
+            return false;
+        }
+        self.input_pane.set_session_picker_page(
+            sessions,
+            active_conversation_id,
+            pending.mode,
+            has_more,
+            next_cursor,
+        );
         true
     }
 

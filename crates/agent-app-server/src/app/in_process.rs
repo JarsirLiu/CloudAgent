@@ -309,6 +309,12 @@ mod tests {
         let runtime_b = test_runtime("workspace-cmd-b")?;
         runtime_a.create_conversation("conversation-a").await?;
         runtime_b.create_conversation("conversation-b").await?;
+        std::fs::write(
+            runtime_b
+                .conversation_store_dir()
+                .join("conversation-b.rollout.jsonl"),
+            "",
+        )?;
 
         let workspace_a = workspace_string(&runtime_a);
         let workspace_b = workspace_string(&runtime_b);

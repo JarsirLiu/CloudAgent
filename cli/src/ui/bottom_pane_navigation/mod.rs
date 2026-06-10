@@ -123,6 +123,9 @@ impl BottomPaneNavigator {
                     NavigationKeyResult::Consumed
                 }
             }
+            BottomPaneViewAction::LoadMoreSessions { cursor } => {
+                NavigationKeyResult::LoadMoreSessions { cursor }
+            }
             BottomPaneViewAction::ServerRequestSubmit {
                 request_id,
                 decision,

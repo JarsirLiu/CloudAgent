@@ -625,6 +625,12 @@ pub(crate) async fn handle_tui_input(
                 conversation_id: conversation_id.clone(),
             })?;
         }
+        ParsedInput::LocalSessionListNextPage { cursor } => {
+            client.send_command(AppClientCommand::ListConversationsPage {
+                cursor: Some(cursor),
+                limit: 25,
+            })?;
+        }
         ParsedInput::LocalConversationSwitch(target_conversation_id) => {
             app.bottom_pane.clear_session_picker();
             let trimmed = target_conversation_id.trim();
@@ -663,11 +669,10 @@ pub(crate) async fn handle_tui_input(
                 app.bottom_pane.request_session_picker(
                     crate::ui::widgets::session_picker::SessionPickerMode::Delete,
                 );
-                let response = client.request_conversation_list_typed().await?;
-                execute_server_action(
-                    app,
-                    ServerAction::SetConversationList(response.conversations),
-                );
+                client.send_command(AppClientCommand::ListConversationsPage {
+                    cursor: None,
+                    limit: 25,
+                })?;
                 return Ok(false);
             }
             client.send_command(AppClientCommand::DeleteConversation {
@@ -733,11 +738,10 @@ pub(crate) async fn handle_tui_input(
                     client.interrupt_turn(conversation_id)?
                 }
                 AppClientCommand::ListConversations => {
-                    let response = client.request_conversation_list_typed().await?;
-                    execute_server_action(
-                        app,
-                        ServerAction::SetConversationList(response.conversations),
-                    );
+                    client.send_command(AppClientCommand::ListConversationsPage {
+                        cursor: None,
+                        limit: 25,
+                    })?;
                 }
                 other => client.send_command(other)?,
             }
@@ -849,6 +853,35 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     match action {
         ServerAction::SetConversationList(conversations) => {
             app.handle_conversation_list(conversations);
+        }
+        ServerAction::SetConversationListPage {
+            conversations,
+            has_more,
+            next_cursor,
+        } => {
+            if app.bottom_pane.present_requested_session_picker_page(
+                conversations.clone(),
+                &app.conversation_id,
+                has_more,
+                next_cursor.clone(),
+            ) {
+                app.conversation_summaries = conversations;
+            } else if app.bottom_pane.append_session_page(
+                conversations.clone(),
+                has_more,
+                next_cursor,
+            ) {
+                for conversation in conversations.clone() {
+                    if app
+                        .conversation_summaries
+                        .iter()
+                        .any(|existing| existing.conversation_id == conversation.conversation_id)
+                    {
+                        continue;
+                    }
+                    app.conversation_summaries.push(conversation);
+                }
+            }
         }
         ServerAction::InvalidateSkillsCatalog => {
             app.run_state.pending_skills_refresh = true;

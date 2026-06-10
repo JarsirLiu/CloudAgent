@@ -1,10 +1,10 @@
 use crate::{AppServerConnectInfo, AppServerEvent, TypedRequestError};
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, CommandExecutionContext,
-    ConversationListResponse, JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage,
-    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId, SessionBootstrapContext,
-    TransportClientInfo, TransportInitializeCapabilities, TransportInitializeParams,
-    TransportInitializeResult,
+    ConversationListPageResponse, ConversationListResponse, JsonRpcError, JsonRpcErrorPayload,
+    JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId,
+    SessionBootstrapContext, TransportClientInfo, TransportInitializeCapabilities,
+    TransportInitializeParams, TransportInitializeResult,
 };
 use anyhow::{Context, Result, anyhow};
 use serde::de::DeserializeOwned;
@@ -228,6 +228,26 @@ impl RemoteAppServerRequestHandle {
             ),
             method: "conversation/list".to_string(),
             params: None,
+        })
+        .await
+        .map_err(anyhow::Error::from)
+    }
+
+    pub async fn request_conversation_list_page(
+        &self,
+        cursor: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationListPageResponse> {
+        self.request_typed(JsonRpcRequest {
+            id: RequestId::Integer(
+                self.request_counter
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ),
+            method: "conversation/listPage".to_string(),
+            params: Some(serde_json::json!({
+                "cursor": cursor,
+                "limit": limit
+            })),
         })
         .await
         .map_err(anyhow::Error::from)

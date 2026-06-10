@@ -7,8 +7,8 @@ use agent_core::{
 };
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
-    ConversationHistoryResponse, ConversationListResponse, ConversationViewResponse,
-    ConversationViewSnapshot, SkillsListResponse,
+    ConversationHistoryResponse, ConversationListPageResponse, ConversationListResponse,
+    ConversationViewResponse, ConversationViewSnapshot, SkillsListResponse,
 };
 use anyhow::Result;
 use std::sync::Arc;
@@ -26,6 +26,7 @@ pub(crate) async fn list_conversations(
             .notification_anchor_conversation_id("default")
             .to_string()
     };
+    reconcile_missing_for_list(runtime).await;
     let conversations = runtime.list_conversations().await?;
     send_notification(
         event_tx,
@@ -39,12 +40,56 @@ pub(crate) async fn list_conversations(
     Ok(())
 }
 
+pub(crate) async fn list_conversations_page(
+    runtime: &Arc<AgentHost>,
+    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
+    state: &Arc<Mutex<ServerState>>,
+    cursor: Option<String>,
+    limit: usize,
+) -> Result<()> {
+    let anchor_conversation_id = {
+        let state = state.lock().await;
+        state
+            .notification_anchor_conversation_id("default")
+            .to_string()
+    };
+    let page = read_conversation_list_page(runtime, state, cursor, limit).await?;
+    send_notification(
+        event_tx,
+        state,
+        AppServerNotification::ConversationListPage {
+            conversation_id: anchor_conversation_id,
+            conversations: page.conversations,
+            has_more: page.has_more,
+            next_cursor: page.next_cursor,
+        },
+    )
+    .await;
+    Ok(())
+}
+
 pub(crate) async fn read_conversation_list(
     runtime: &Arc<AgentHost>,
     _state: &Arc<Mutex<ServerState>>,
 ) -> Result<ConversationListResponse> {
+    reconcile_missing_for_list(runtime).await;
     Ok(ConversationListResponse {
         conversations: runtime.list_conversations().await?,
+    })
+}
+
+pub(crate) async fn read_conversation_list_page(
+    runtime: &Arc<AgentHost>,
+    _state: &Arc<Mutex<ServerState>>,
+    cursor: Option<String>,
+    limit: usize,
+) -> Result<ConversationListPageResponse> {
+    reconcile_missing_for_list(runtime).await;
+    let page = runtime.list_conversations_page(cursor, limit).await?;
+    Ok(ConversationListPageResponse {
+        conversations: page.conversations,
+        has_more: page.has_more,
+        next_cursor: page.next_cursor,
     })
 }
 
@@ -81,6 +126,22 @@ pub(crate) async fn request_conversation_history(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<()> {
+    if runtime
+        .purge_missing_conversation_if_needed(&conversation_id)
+        .await?
+    {
+        send_notification(
+            event_tx,
+            state,
+            AppServerNotification::Error {
+                conversation_id,
+                message: "Conversation data is missing; removed stale session metadata."
+                    .to_string(),
+            },
+        )
+        .await;
+        return Ok(());
+    }
     let active_listener = {
         let state = state.lock().await;
         state.active_listener(&conversation_id)
@@ -109,6 +170,12 @@ pub(crate) async fn read_conversation_history(
     state: &Arc<Mutex<ServerState>>,
     conversation_id: String,
 ) -> Result<ConversationHistoryResponse> {
+    if runtime
+        .purge_missing_conversation_if_needed(&conversation_id)
+        .await?
+    {
+        anyhow::bail!("conversation data is missing; removed stale session metadata");
+    }
     let active_listener = {
         let state = state.lock().await;
         state.active_listener(&conversation_id)
@@ -274,6 +341,22 @@ pub(crate) async fn switch_conversation(
     view: &ConversationWatchManager,
     conversation_id: String,
 ) -> Result<()> {
+    if runtime
+        .purge_missing_conversation_if_needed(&conversation_id)
+        .await?
+    {
+        send_notification(
+            event_tx,
+            state,
+            AppServerNotification::Error {
+                conversation_id,
+                message: "Conversation data is missing; removed stale session metadata."
+                    .to_string(),
+            },
+        )
+        .await;
+        return Ok(());
+    }
     session_state::apply_active_conversation(state, conversation_id.clone()).await;
     session_state::persist_active_conversation(runtime, state, &conversation_id).await;
     publish_switched_conversation_state(runtime, event_tx, state, view, &conversation_id).await?;
@@ -385,7 +468,11 @@ pub(crate) async fn delete_conversation(
         let guard = state.lock().await;
         guard.tracks_active_conversation() && guard.active_conversation_id() == conversation_id
     };
-    runtime.reset_conversation(&conversation_id).await?;
+    if was_active {
+        runtime.reset_conversation(&conversation_id).await?;
+    } else {
+        runtime.delete_conversation(&conversation_id).await?;
+    }
     if was_active {
         let next_conversation_id = runtime.create_conversation_with_timestamp_id().await?;
         session_state::apply_active_conversation(state, next_conversation_id.clone()).await;
@@ -421,6 +508,12 @@ pub(crate) async fn delete_conversation(
         .await;
     }
     Ok(())
+}
+
+async fn reconcile_missing_for_list(runtime: &Arc<AgentHost>) {
+    if let Err(err) = runtime.reconcile_missing_conversations(100).await {
+        tracing::debug!("failed to reconcile missing conversations: {err:#}");
+    }
 }
 
 pub(crate) async fn report_hub_mode_only_command(

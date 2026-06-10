@@ -6,6 +6,9 @@ pub(crate) enum NavigationKeyResult {
     NoActiveView,
     Consumed,
     Composer(ComposerIntent),
+    LoadMoreSessions {
+        cursor: String,
+    },
     ServerRequestSubmit {
         request_id: RequestId,
         decision: ServerRequestDecisionKind,

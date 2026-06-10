@@ -90,6 +90,13 @@ pub struct ConversationListResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConversationListPageResponse {
+    pub conversations: Vec<ConversationSummary>,
+    pub has_more: bool,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SkillsListResponse {
     pub skills: Vec<SkillMetadata>,
 }
@@ -257,6 +264,10 @@ pub enum AppClientCommand {
         limit: usize,
     },
     ListConversations,
+    ListConversationsPage {
+        cursor: Option<String>,
+        limit: usize,
+    },
     ListSkills,
     ListOnlineNodes,
     ListPlatforms,
@@ -343,6 +354,7 @@ impl AppClientCommand {
             | Self::SubscribeConversation { conversation_id }
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
             Self::ListConversations
+            | Self::ListConversationsPage { .. }
             | Self::ListSkills
             | Self::ListOnlineNodes
             | Self::ListPlatforms
@@ -521,6 +533,12 @@ pub enum AppServerNotification {
         conversation_id: String,
         conversations: Vec<ConversationSummary>,
     },
+    ConversationListPage {
+        conversation_id: String,
+        conversations: Vec<ConversationSummary>,
+        has_more: bool,
+        next_cursor: Option<String>,
+    },
     SkillsChanged {
         conversation_id: String,
     },
@@ -629,6 +647,9 @@ impl AppServerNotification {
             | Self::ConversationList {
                 conversation_id, ..
             }
+            | Self::ConversationListPage {
+                conversation_id, ..
+            }
             | Self::SkillsChanged {
                 conversation_id, ..
             }
@@ -724,6 +745,7 @@ pub fn classify_notification(
         | AppServerNotification::ConversationHistory { .. }
         | AppServerNotification::ConversationHistoryPage { .. }
         | AppServerNotification::ConversationList { .. }
+        | AppServerNotification::ConversationListPage { .. }
         | AppServerNotification::SkillsChanged { .. }
         | AppServerNotification::OnlineNodeList { .. }
         | AppServerNotification::ConversationSwitched { .. }

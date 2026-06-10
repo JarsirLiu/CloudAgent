@@ -19,6 +19,9 @@ pub(crate) enum BottomPaneViewAction {
     Back,
     Composer(ComposerIntent),
     ComposerWithoutDismiss(ComposerIntent),
+    LoadMoreSessions {
+        cursor: String,
+    },
     ServerRequestSubmit {
         request_id: RequestId,
         decision: ServerRequestDecisionKind,
@@ -100,6 +103,15 @@ pub(crate) trait BottomPaneView {
     }
 
     fn is_session_picker_loading(&self, _generation: u64) -> bool {
+        false
+    }
+
+    fn append_session_page(
+        &mut self,
+        _sessions: Vec<agent_core::ConversationSummary>,
+        _has_more: bool,
+        _next_cursor: Option<String>,
+    ) -> bool {
         false
     }
 }

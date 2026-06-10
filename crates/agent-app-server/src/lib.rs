@@ -132,6 +132,18 @@ async fn handle_stdio_request(
                 result: serde_json::to_value(result)?,
             })
         }
+        "conversation/listPage" => {
+            let params = request.params.clone().unwrap_or(serde_json::Value::Null);
+            let cursor = optional_value_field::<String>(&params, "cursor")?;
+            let limit = optional_value_field::<usize>(&params, "limit")?.unwrap_or(25);
+            let result =
+                session::service::read_conversation_list_page(&runtime, state, cursor, limit)
+                    .await?;
+            JsonRpcMessage::Response(JsonRpcResponse {
+                id: request_id,
+                result: serde_json::to_value(result)?,
+            })
+        }
         "skills/list" => {
             let result = session::service::read_skills_list(&runtime, state).await?;
             JsonRpcMessage::Response(JsonRpcResponse {

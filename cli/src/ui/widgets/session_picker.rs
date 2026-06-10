@@ -12,9 +12,13 @@ pub struct SessionPicker {
     sessions: Vec<ConversationSummary>,
     selected: usize,
     mode: SessionPickerMode,
+    has_more: bool,
+    next_cursor: Option<String>,
+    loading_more: bool,
 }
 
 const MAX_VISIBLE_SESSIONS: usize = 6;
+const LOAD_MORE_THRESHOLD: usize = 2;
 
 #[derive(Clone, Copy)]
 pub enum SessionPickerMode {
@@ -37,7 +41,23 @@ impl SessionPicker {
             sessions,
             selected,
             mode,
+            has_more: false,
+            next_cursor: None,
+            loading_more: false,
         }
+    }
+
+    pub fn new_page(
+        sessions: Vec<ConversationSummary>,
+        active_id: &str,
+        mode: SessionPickerMode,
+        has_more: bool,
+        next_cursor: Option<String>,
+    ) -> Self {
+        let mut picker = Self::new(sessions, active_id, mode);
+        picker.has_more = has_more;
+        picker.next_cursor = next_cursor;
+        picker
     }
 }
 
@@ -62,6 +82,10 @@ impl BottomPaneView for SessionPicker {
             KeyCode::Down => {
                 if self.selected + 1 < self.sessions.len() {
                     self.selected += 1;
+                }
+                if let Some(cursor) = self.next_page_cursor_if_needed() {
+                    self.loading_more = true;
+                    return BottomPaneViewAction::LoadMoreSessions { cursor };
                 }
                 BottomPaneViewAction::None
             }
@@ -119,6 +143,11 @@ impl BottomPaneView for SessionPicker {
         if end < self.sessions.len() {
             lines.push(Line::from("  ..."));
         }
+        if self.loading_more {
+            lines.push(Line::from("  Loading more sessions..."));
+        } else if self.has_more {
+            lines.push(Line::from("  more sessions below"));
+        }
         lines
     }
 
@@ -131,10 +160,37 @@ impl BottomPaneView for SessionPicker {
         if self.sessions.len() > MAX_VISIBLE_SESSIONS {
             height += 2;
         }
+        if self.loading_more || self.has_more {
+            height += 1;
+        }
         height
     }
 
     fn is_session_picker(&self) -> bool {
+        true
+    }
+
+    fn append_session_page(
+        &mut self,
+        sessions: Vec<ConversationSummary>,
+        has_more: bool,
+        next_cursor: Option<String>,
+    ) -> bool {
+        for session in sessions {
+            if self
+                .sessions
+                .iter()
+                .any(|existing| existing.conversation_id == session.conversation_id)
+            {
+                continue;
+            }
+            self.sessions.push(session);
+        }
+        self.sessions
+            .sort_by_key(|session| Reverse(session.updated_at_ms));
+        self.has_more = has_more;
+        self.next_cursor = next_cursor;
+        self.loading_more = false;
         true
     }
 }
@@ -153,6 +209,19 @@ impl SessionPicker {
         .min(self.sessions.len().saturating_sub(visible));
         (start, start + visible)
     }
+
+    fn next_page_cursor_if_needed(&self) -> Option<String> {
+        if self.loading_more || !self.has_more {
+            return None;
+        }
+        let cursor = self.next_cursor.clone()?;
+        let remaining = self.sessions.len().saturating_sub(self.selected + 1);
+        if remaining <= LOAD_MORE_THRESHOLD {
+            Some(cursor)
+        } else {
+            None
+        }
+    }
 }
 
 fn truncate_to_width(value: &str, width: usize) -> String {
@@ -170,3 +239,7 @@ fn truncate_to_width(value: &str, width: usize) -> String {
     out.push_str("...");
     out
 }
+
+#[cfg(test)]
+#[path = "session_picker_tests.rs"]
+mod tests;

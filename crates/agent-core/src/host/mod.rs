@@ -82,6 +82,16 @@ pub trait ConversationStoreBackend: Send + Sync {
     async fn delete_conversation(&self, conversation_id: &str) -> Result<()>;
     async fn delete_events(&self, conversation_id: &str) -> Result<()>;
     async fn list_conversations(&self) -> Result<Vec<ConversationSummary>>;
+    async fn list_conversations_page(
+        &self,
+        cursor: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationListPage>;
+    async fn reconcile_missing_conversations(
+        &self,
+        limit: usize,
+    ) -> Result<ConversationReconcileReport>;
+    async fn purge_missing_conversation_if_needed(&self, conversation_id: &str) -> Result<bool>;
     async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()>;
     async fn load_active_conversation(&self) -> Result<Option<String>>;
     async fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()>;
@@ -99,6 +109,18 @@ pub trait ConversationStoreBackend: Send + Sync {
 pub struct RolloutItemsPage {
     pub items: Vec<RolloutItem>,
     pub has_more: bool,
+}
+
+pub struct ConversationListPage {
+    pub conversations: Vec<ConversationSummary>,
+    pub has_more: bool,
+    pub next_cursor: Option<String>,
+}
+
+pub struct ConversationReconcileReport {
+    pub checked: usize,
+    pub removed: Vec<String>,
+    pub truncated: bool,
 }
 
 #[async_trait]

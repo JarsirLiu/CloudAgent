@@ -67,6 +67,9 @@ impl TuiApp {
             return Some(ParsedInput::LocalImagePaste);
         }
         match self.bottom_pane.handle_key(key)? {
+            InputPaneAction::LoadMoreSessions { cursor } => {
+                Some(ParsedInput::LocalSessionListNextPage { cursor })
+            }
             InputPaneAction::Composer(ComposerIntent::Submit(content)) => {
                 Some(ParsedInput::Command(AppClientCommand::SubmitTurn(
                     agent_protocol::UserTurnInput {

@@ -5,9 +5,9 @@ mod stdio;
 use agent_core::ServerRequestDecision;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
-    ConversationHistoryResponse, ConversationListResponse, ConversationViewResponse,
-    JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
-    NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
+    ConversationHistoryResponse, ConversationListPageResponse, ConversationListResponse,
+    ConversationViewResponse, JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse,
+    NodeStopResponse, NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
     RequestId, SelectTargetNodeResponse, SessionBootstrapContext, SkillsListResponse,
     UserTurnInput, WeixinLoginStartResponse, WeixinLoginStatusResponse, classify_notification,
@@ -136,6 +136,16 @@ impl AppServerClient {
     ) -> Result<ConversationListResponse, TypedRequestError> {
         self.request_handle()
             .request_conversation_list_typed()
+            .await
+    }
+
+    pub async fn request_conversation_list_page_typed(
+        &self,
+        cursor: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationListPageResponse, TypedRequestError> {
+        self.request_handle()
+            .request_conversation_list_page_typed(cursor, limit)
             .await
     }
 
@@ -379,6 +389,22 @@ impl AppServerRequestHandle {
             id: next_request_id(),
             method: "conversation/list".to_string(),
             params: None,
+        })
+        .await
+    }
+
+    pub async fn request_conversation_list_page_typed(
+        &self,
+        cursor: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationListPageResponse, TypedRequestError> {
+        self.request_typed(JsonRpcRequest {
+            id: next_request_id(),
+            method: "conversation/listPage".to_string(),
+            params: Some(serde_json::json!({
+                "cursor": cursor,
+                "limit": limit
+            })),
         })
         .await
     }

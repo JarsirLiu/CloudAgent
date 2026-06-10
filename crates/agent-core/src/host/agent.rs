@@ -159,6 +159,12 @@ impl AgentHost {
         self.store.delete_events(conversation_id).await
     }
 
+    pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.state.remove_conversation(conversation_id).await;
+        self.store.delete_conversation(conversation_id).await?;
+        self.store.delete_events(conversation_id).await
+    }
+
     pub async fn create_conversation(&self, conversation_id: &str) -> Result<()> {
         self.store.create_conversation(conversation_id).await
     }
@@ -183,6 +189,30 @@ impl AgentHost {
 
     pub async fn list_conversations(&self) -> Result<Vec<ConversationSummary>> {
         self.store.list_conversations().await
+    }
+
+    pub async fn list_conversations_page(
+        &self,
+        cursor: Option<String>,
+        limit: usize,
+    ) -> Result<crate::host::ConversationListPage> {
+        self.store.list_conversations_page(cursor, limit).await
+    }
+
+    pub async fn reconcile_missing_conversations(
+        &self,
+        limit: usize,
+    ) -> Result<crate::host::ConversationReconcileReport> {
+        self.store.reconcile_missing_conversations(limit).await
+    }
+
+    pub async fn purge_missing_conversation_if_needed(
+        &self,
+        conversation_id: &str,
+    ) -> Result<bool> {
+        self.store
+            .purge_missing_conversation_if_needed(conversation_id)
+            .await
     }
 
     pub fn list_skills(&self) -> Vec<crate::SkillMetadata> {

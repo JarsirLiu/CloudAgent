@@ -1,7 +1,9 @@
 use agent_core::EventMsg;
 use agent_core::approval::ApprovalGrantStoreBackend;
 use agent_core::conversation::{ConversationSummary, ResponseItem, input_items_are_blank};
-use agent_core::host::{ConversationStoreBackend, RolloutItemsPage};
+use agent_core::host::{
+    ConversationListPage, ConversationReconcileReport, ConversationStoreBackend, RolloutItemsPage,
+};
 use agent_core::projection::conversation_history_from_rollout_items;
 use agent_core::rollout::RolloutItem;
 use agent_core::tool::ApprovalGrantKey;
@@ -35,6 +37,20 @@ pub struct StoredConversationSummary {
     pub message_count: usize,
     pub updated_at_ms: u64,
     pub archived: bool,
+}
+
+fn stored_summaries_to_protocol(
+    summaries: Vec<StoredConversationSummary>,
+) -> Vec<ConversationSummary> {
+    summaries
+        .into_iter()
+        .map(|summary| ConversationSummary {
+            conversation_id: summary.conversation_id,
+            title: summary.title,
+            message_count: summary.message_count,
+            updated_at_ms: summary.updated_at_ms,
+        })
+        .collect()
 }
 
 struct RolloutTurnChunk {
@@ -89,16 +105,28 @@ impl ConversationStoreBackend for JsonConversationStore {
     }
 
     async fn list_conversations(&self) -> Result<Vec<ConversationSummary>> {
-        Ok(JsonConversationStore::list_conversations(self)
-            .await?
-            .into_iter()
-            .map(|summary| ConversationSummary {
-                conversation_id: summary.conversation_id,
-                title: summary.title,
-                message_count: summary.message_count,
-                updated_at_ms: summary.updated_at_ms,
-            })
-            .collect())
+        Ok(stored_summaries_to_protocol(
+            JsonConversationStore::list_conversations(self).await?,
+        ))
+    }
+
+    async fn list_conversations_page(
+        &self,
+        cursor: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationListPage> {
+        JsonConversationStore::list_conversations_page(self, cursor, limit).await
+    }
+
+    async fn reconcile_missing_conversations(
+        &self,
+        limit: usize,
+    ) -> Result<ConversationReconcileReport> {
+        JsonConversationStore::reconcile_missing_conversations(self, limit).await
+    }
+
+    async fn purge_missing_conversation_if_needed(&self, conversation_id: &str) -> Result<bool> {
+        JsonConversationStore::purge_missing_conversation_if_needed(self, conversation_id).await
     }
 
     async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {
@@ -381,6 +409,101 @@ impl JsonConversationStore {
         .collect())
     }
 
+    pub async fn list_conversations_page(
+        &self,
+        cursor: Option<String>,
+        limit: usize,
+    ) -> Result<ConversationListPage> {
+        let cursor = cursor
+            .as_deref()
+            .map(session_index::SessionListCursor::decode)
+            .transpose()?;
+        let page = session_index::list_sessions_page(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+            cursor,
+            limit,
+        )?;
+        let summaries = page
+            .rows
+            .into_iter()
+            .filter(|row| {
+                !should_hide_empty_placeholder_row(
+                    &row.conversation_id,
+                    row.message_count,
+                    row.title.as_deref(),
+                )
+            })
+            .map(|row| StoredConversationSummary {
+                conversation_id: row.conversation_id,
+                title: row.title,
+                message_count: row.message_count,
+                updated_at_ms: row.updated_at_ms,
+                archived: row.archived,
+            })
+            .collect();
+        Ok(ConversationListPage {
+            conversations: stored_summaries_to_protocol(summaries),
+            has_more: page.has_more,
+            next_cursor: page.next_cursor.map(|cursor| cursor.encode()),
+        })
+    }
+
+    pub async fn purge_missing_conversation_if_needed(
+        &self,
+        conversation_id: &str,
+    ) -> Result<bool> {
+        if self.rollout_exists(conversation_id) {
+            return Ok(false);
+        }
+        let row = session_index::list_sessions(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+        )?
+        .into_iter()
+        .find(|row| row.conversation_id == conversation_id);
+        if row.as_ref().is_none_or(|row| {
+            should_hide_empty_placeholder_row(
+                &row.conversation_id,
+                row.message_count,
+                row.title.as_deref(),
+            )
+        }) {
+            return Ok(false);
+        }
+        session_index::delete_session(&session_index::db_path(&self.root), conversation_id)?;
+        Ok(true)
+    }
+
+    pub async fn reconcile_missing_conversations(
+        &self,
+        limit: usize,
+    ) -> Result<ConversationReconcileReport> {
+        let limit = limit.max(1);
+        let rows = session_index::list_sessions(
+            &session_index::db_path(&self.root),
+            &self.root.to_string_lossy(),
+        )?;
+        let truncated = rows.len() > limit;
+        let mut removed = Vec::new();
+        for row in rows.iter().take(limit) {
+            if !should_hide_empty_placeholder_row(
+                &row.conversation_id,
+                row.message_count,
+                row.title.as_deref(),
+            ) && !self.rollout_exists(&row.conversation_id)
+            {
+                removed.push(row.conversation_id.clone());
+            }
+        }
+        session_index::delete_sessions(&session_index::db_path(&self.root), &removed)?;
+        Ok(ConversationReconcileReport {
+            checked: rows.len().min(limit),
+            removed,
+            truncated,
+        })
+    }
+
     pub async fn mark_active_conversation(&self, conversation_id: &str) -> Result<()> {
         let now = now_ms();
         session_index::mark_active(
@@ -448,6 +571,11 @@ impl JsonConversationStore {
             return legacy;
         }
         canonical
+    }
+
+    fn rollout_exists(&self, conversation_id: &str) -> bool {
+        self.canonical_rollout_path(conversation_id).exists()
+            || self.legacy_rollout_path(conversation_id).exists()
     }
 
     fn canonical_rollout_path(&self, conversation_id: &str) -> PathBuf {
@@ -1471,3 +1599,7 @@ mod tests {
         assert!(!is_timestamp_conversation_id("20260531-181152-ab3f-extra"));
     }
 }
+
+#[cfg(test)]
+#[path = "session_list_optimization_tests.rs"]
+mod session_list_optimization_tests;

@@ -38,6 +38,9 @@ pub struct InputPane {
 
 pub(crate) enum InputPaneAction {
     Composer(ComposerIntent),
+    LoadMoreSessions {
+        cursor: String,
+    },
     ServerRequestSubmit {
         request_id: RequestId,
         decision: ServerRequestDecisionKind,
@@ -86,6 +89,9 @@ impl InputPane {
             }
             NavigationKeyResult::Composer(intent) => {
                 return Some(InputPaneAction::Composer(intent));
+            }
+            NavigationKeyResult::LoadMoreSessions { cursor } => {
+                return Some(InputPaneAction::LoadMoreSessions { cursor });
             }
             NavigationKeyResult::ServerRequestSubmit {
                 request_id,
@@ -420,6 +426,34 @@ impl InputPane {
             active_conversation_id,
             mode,
         )));
+    }
+
+    pub fn set_session_picker_page(
+        &mut self,
+        sessions: Vec<ConversationSummary>,
+        active_conversation_id: &str,
+        mode: SessionPickerMode,
+        has_more: bool,
+        next_cursor: Option<String>,
+    ) {
+        self.navigator.replace(Box::new(SessionPicker::new_page(
+            sessions,
+            active_conversation_id,
+            mode,
+            has_more,
+            next_cursor,
+        )));
+    }
+
+    pub fn append_session_page(
+        &mut self,
+        sessions: Vec<ConversationSummary>,
+        has_more: bool,
+        next_cursor: Option<String>,
+    ) -> bool {
+        self.navigator
+            .active_view_mut()
+            .is_some_and(|view| view.append_session_page(sessions, has_more, next_cursor))
     }
 
     pub fn clear_session_picker(&mut self) {

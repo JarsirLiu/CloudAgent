@@ -197,6 +197,10 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
             limit: optional_value_field(params, "limit")?.unwrap_or(30),
         }),
         "conversation/list" => Ok(AppClientCommand::ListConversations),
+        "conversation/listPage" => Ok(AppClientCommand::ListConversationsPage {
+            cursor: optional_value_field(params.clone(), "cursor")?,
+            limit: optional_value_field(params, "limit")?.unwrap_or(25),
+        }),
         "skills/list" => Ok(AppClientCommand::ListSkills),
         "hub/node/list" => Ok(AppClientCommand::ListOnlineNodes),
         "platform/list" => Ok(AppClientCommand::ListPlatforms),
@@ -308,6 +312,13 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
             }),
         ),
         AppClientCommand::ListConversations => ("conversation/list", Value::Null),
+        AppClientCommand::ListConversationsPage { cursor, limit } => (
+            "conversation/listPage",
+            serde_json::json!({
+                "cursor": cursor,
+                "limit": limit
+            }),
+        ),
         AppClientCommand::ListSkills => ("skills/list", Value::Null),
         AppClientCommand::ListOnlineNodes => ("hub/node/list", Value::Null),
         AppClientCommand::ListPlatforms => ("platform/list", Value::Null),
@@ -498,6 +509,10 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "conversation/list",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
+        AppServerNotification::ConversationListPage { .. } => (
+            "conversation/listPage",
+            serde_json::to_value(notification).unwrap_or(Value::Null),
+        ),
         AppServerNotification::SkillsChanged { .. } => (
             "skills/changed",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -584,6 +599,7 @@ fn parse_server_notification(
         | "conversation/turnSnapshot"
         | "conversation/historyPage"
         | "conversation/list"
+        | "conversation/listPage"
         | "skills/changed"
         | "hub/node/list"
         | "conversation/switched"
@@ -657,8 +673,8 @@ where
 mod tests {
     use super::*;
     use agent_core::{
-        ApprovalPolicy, CommandApprovalRequest, InputItem, ModelUsage, PermissionProfile,
-        ServerRequestDecision, TranscriptItem,
+        ApprovalPolicy, CommandApprovalRequest, ConversationSummary, InputItem, ModelUsage,
+        PermissionProfile, ServerRequestDecision, TranscriptItem,
     };
 
     #[test]
@@ -835,6 +851,49 @@ mod tests {
                     snapshot.status,
                     ConversationViewStatus::Active { .. }
                 ));
+            }
+            other => panic!("unexpected notification: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn conversation_list_page_roundtrips_through_jsonrpc_notification() {
+        let message = AppServerMessageEnvelope {
+            message: AppServerMessage::Notification(AppServerNotification::ConversationListPage {
+                conversation_id: "default".to_string(),
+                conversations: vec![ConversationSummary {
+                    conversation_id: "session-1".to_string(),
+                    title: Some("hello".to_string()),
+                    message_count: 3,
+                    updated_at_ms: 42,
+                }],
+                has_more: true,
+                next_cursor: Some("42:session-1".to_string()),
+            }),
+            event_seq: Some(9),
+        };
+
+        let JsonRpcMessage::Notification(notification) = JsonRpcMessage::from(message) else {
+            panic!("expected notification");
+        };
+        assert_eq!(notification.method, "conversation/listPage");
+
+        let reparsed =
+            AppServerMessageEnvelope::try_from(JsonRpcMessage::Notification(notification))
+                .expect("reparse");
+        assert_eq!(reparsed.event_seq, Some(9));
+        match reparsed.message {
+            AppServerMessage::Notification(AppServerNotification::ConversationListPage {
+                conversation_id,
+                conversations,
+                has_more,
+                next_cursor,
+            }) => {
+                assert_eq!(conversation_id, "default");
+                assert_eq!(conversations.len(), 1);
+                assert_eq!(conversations[0].conversation_id, "session-1");
+                assert!(has_more);
+                assert_eq!(next_cursor.as_deref(), Some("42:session-1"));
             }
             other => panic!("unexpected notification: {other:?}"),
         }

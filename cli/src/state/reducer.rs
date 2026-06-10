@@ -21,6 +21,9 @@ pub(crate) enum TurnDispatch {
 #[derive(Debug, Clone)]
 pub(crate) enum UiInputEvent {
     Command(AppClientCommand),
+    LocalSessionListNextPage {
+        cursor: String,
+    },
     LocalConversationCreate(String),
     LocalConversationSwitch(String),
     LocalConversationTitle(String),
@@ -71,6 +74,11 @@ pub(crate) struct ServerMessageReduce {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ServerAction {
     SetConversationList(Vec<ConversationSummary>),
+    SetConversationListPage {
+        conversations: Vec<ConversationSummary>,
+        has_more: bool,
+        next_cursor: Option<String>,
+    },
     InvalidateSkillsCatalog,
     SetConversationView(ConversationViewSnapshot),
     SwitchConversation(String),
@@ -237,6 +245,18 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             AppServerNotification::ConversationList { conversations, .. } => {
                 actions.push(ServerAction::SetConversationList(conversations.clone()));
+            }
+            AppServerNotification::ConversationListPage {
+                conversations,
+                has_more,
+                next_cursor,
+                ..
+            } => {
+                actions.push(ServerAction::SetConversationListPage {
+                    conversations: conversations.clone(),
+                    has_more: *has_more,
+                    next_cursor: next_cursor.clone(),
+                });
             }
             AppServerNotification::SkillsChanged { .. } => {
                 actions.push(ServerAction::InvalidateSkillsCatalog);
