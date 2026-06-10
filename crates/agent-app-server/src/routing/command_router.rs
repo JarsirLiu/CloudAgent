@@ -262,9 +262,6 @@ pub(crate) async fn handle_command(
             )
             .await?;
         }
-        AppClientCommand::ListConversations => {
-            session_service::list_conversations(&runtime, event_tx, state).await?;
-        }
         AppClientCommand::ListConversationsPage { cursor, limit } => {
             session_service::list_conversations_page(&runtime, event_tx, state, cursor, limit)
                 .await?;

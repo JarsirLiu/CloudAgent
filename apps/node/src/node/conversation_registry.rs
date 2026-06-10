@@ -30,21 +30,18 @@ impl ConversationRegistry {
         }
     }
 
-    pub(crate) fn replace_from_summaries(&mut self, summaries: &[ConversationSummary]) {
-        self.known_conversations = summaries
-            .iter()
-            .map(|summary| {
-                (
-                    summary.conversation_id.clone(),
-                    ConversationMeta {
-                        conversation_id: summary.conversation_id.clone(),
-                        title: summary.title.clone(),
-                        message_count: summary.message_count,
-                        updated_at_ms: summary.updated_at_ms,
-                    },
-                )
-            })
-            .collect();
+    pub(crate) fn merge_from_summaries(&mut self, summaries: &[ConversationSummary]) {
+        for summary in summaries {
+            self.known_conversations.insert(
+                summary.conversation_id.clone(),
+                ConversationMeta {
+                    conversation_id: summary.conversation_id.clone(),
+                    title: summary.title.clone(),
+                    message_count: summary.message_count,
+                    updated_at_ms: summary.updated_at_ms,
+                },
+            );
+        }
     }
 
     pub(crate) fn update_from_history(
@@ -158,6 +155,28 @@ mod tests {
         assert_eq!(summaries[0].title.as_deref(), Some("Fresh"));
         assert_eq!(summaries[0].message_count, 3);
         assert_eq!(summaries[0].updated_at_ms, 42);
+    }
+
+    #[test]
+    fn merge_from_summaries_preserves_existing_entries() {
+        let mut registry = ConversationRegistry::default();
+        registry.replace_from_summaries(&[ConversationSummary {
+            conversation_id: "first".to_string(),
+            title: Some("First".to_string()),
+            message_count: 1,
+            updated_at_ms: 10,
+        }]);
+        registry.merge_from_summaries(&[ConversationSummary {
+            conversation_id: "second".to_string(),
+            title: Some("Second".to_string()),
+            message_count: 2,
+            updated_at_ms: 20,
+        }]);
+
+        let summaries = registry.summaries();
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].conversation_id, "second");
+        assert_eq!(summaries[1].conversation_id, "first");
     }
 
     #[test]

@@ -1,10 +1,10 @@
 use crate::{AppServerConnectInfo, AppServerEvent, TypedRequestError};
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessageEnvelope, CommandExecutionContext,
-    ConversationListPageResponse, ConversationListResponse, JsonRpcError, JsonRpcErrorPayload,
-    JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId,
-    SessionBootstrapContext, TransportClientInfo, TransportInitializeCapabilities,
-    TransportInitializeParams, TransportInitializeResult,
+    ConversationListPageResponse, JsonRpcError, JsonRpcErrorPayload, JsonRpcMessage,
+    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId, SessionBootstrapContext,
+    TransportClientInfo, TransportInitializeCapabilities, TransportInitializeParams,
+    TransportInitializeResult,
 };
 use anyhow::{Context, Result, anyhow};
 use serde::de::DeserializeOwned;
@@ -220,19 +220,6 @@ impl RemoteAppServerRequestHandle {
             .map_err(|_| anyhow!("remote app server command channel is closed"))
     }
 
-    pub async fn request_conversation_list(&self) -> Result<ConversationListResponse> {
-        self.request_typed(JsonRpcRequest {
-            id: RequestId::Integer(
-                self.request_counter
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            ),
-            method: "conversation/list".to_string(),
-            params: None,
-        })
-        .await
-        .map_err(anyhow::Error::from)
-    }
-
     pub async fn request_conversation_list_page(
         &self,
         cursor: Option<String>,
@@ -302,7 +289,7 @@ impl RemoteAppServerRequestHandle {
 async fn write_outbound_messages_to<W>(
     writer: &mut W,
     command_rx: &mut mpsc::UnboundedReceiver<RemoteOutbound>,
-    request_counter: Arc<AtomicI64>,
+    _request_counter: Arc<AtomicI64>,
     pending_requests: SharedPendingRequests,
 ) -> Result<()>
 where
@@ -312,13 +299,13 @@ where
         match outbound {
             RemoteOutbound::Command { command, context } => {
                 let envelope = AppClientCommandEnvelope {
-                    request_id: RequestId::Integer(
-                        request_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-                    ),
+                    request_id: RequestId::Integer(0),
                     command,
                     context,
                 };
-                let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
+                let payload = serde_json::to_string(&JsonRpcMessage::Notification(
+                    envelope.into_notification(),
+                ))?;
                 writer.write_all(payload.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
                 writer.flush().await?;

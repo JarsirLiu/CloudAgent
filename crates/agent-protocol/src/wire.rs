@@ -35,8 +35,19 @@ impl TryFrom<JsonRpcMessage> for AppClientCommandEnvelope {
 
 impl From<AppClientCommandEnvelope> for JsonRpcMessage {
     fn from(envelope: AppClientCommandEnvelope) -> Self {
-        let (method, mut params) = command_method_and_params(&envelope.command);
-        if let Some(context) = envelope.context {
+        JsonRpcMessage::Request(envelope.into_request())
+    }
+}
+
+impl AppClientCommandEnvelope {
+    pub fn into_request(self) -> JsonRpcRequest {
+        let AppClientCommandEnvelope {
+            request_id,
+            command,
+            context,
+        } = self;
+        let (method, mut params) = command_method_and_params(&command);
+        if let Some(context) = context {
             if !params.is_object() {
                 params = serde_json::json!({});
             }
@@ -47,11 +58,19 @@ impl From<AppClientCommandEnvelope> for JsonRpcMessage {
                 );
             }
         }
-        JsonRpcMessage::Request(JsonRpcRequest {
-            id: envelope.request_id,
+        JsonRpcRequest {
+            id: request_id,
             method: method.to_string(),
             params: Some(params),
-        })
+        }
+    }
+
+    pub fn into_notification(self) -> JsonRpcNotification {
+        let request = self.into_request();
+        JsonRpcNotification {
+            method: request.method,
+            params: request.params,
+        }
     }
 }
 
@@ -196,7 +215,6 @@ fn parse_command(method: &str, params: Option<Value>) -> anyhow::Result<AppClien
             before_turn_id: optional_value_field(params.clone(), "before_turn_id")?,
             limit: optional_value_field(params, "limit")?.unwrap_or(30),
         }),
-        "conversation/list" => Ok(AppClientCommand::ListConversations),
         "conversation/listPage" => Ok(AppClientCommand::ListConversationsPage {
             cursor: optional_value_field(params.clone(), "cursor")?,
             limit: optional_value_field(params, "limit")?.unwrap_or(25),
@@ -311,7 +329,6 @@ fn command_method_and_params(command: &AppClientCommand) -> (&'static str, Value
                 "limit": limit
             }),
         ),
-        AppClientCommand::ListConversations => ("conversation/list", Value::Null),
         AppClientCommand::ListConversationsPage { cursor, limit } => (
             "conversation/listPage",
             serde_json::json!({
@@ -505,10 +522,6 @@ fn notification_method_and_params(notification: &AppServerNotification) -> (&'st
             "conversation/historyPage",
             serde_json::to_value(notification).unwrap_or(Value::Null),
         ),
-        AppServerNotification::ConversationList { .. } => (
-            "conversation/list",
-            serde_json::to_value(notification).unwrap_or(Value::Null),
-        ),
         AppServerNotification::ConversationListPage { .. } => (
             "conversation/listPage",
             serde_json::to_value(notification).unwrap_or(Value::Null),
@@ -598,7 +611,6 @@ fn parse_server_notification(
         | "conversation/history"
         | "conversation/turnSnapshot"
         | "conversation/historyPage"
-        | "conversation/list"
         | "conversation/listPage"
         | "skills/changed"
         | "hub/node/list"

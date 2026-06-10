@@ -84,12 +84,6 @@ pub struct OnlineNodeSummary {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConversationListResponse {
-    // Typed read surface for conversation index bootstrap / explicit refresh.
-    pub conversations: Vec<ConversationSummary>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConversationListPageResponse {
     pub conversations: Vec<ConversationSummary>,
     pub has_more: bool,
@@ -263,7 +257,6 @@ pub enum AppClientCommand {
         before_turn_id: Option<String>,
         limit: usize,
     },
-    ListConversations,
     ListConversationsPage {
         cursor: Option<String>,
         limit: usize,
@@ -353,8 +346,7 @@ impl AppClientCommand {
             | Self::DeleteConversation { conversation_id }
             | Self::SubscribeConversation { conversation_id }
             | Self::UnsubscribeConversation { conversation_id } => Some(conversation_id),
-            Self::ListConversations
-            | Self::ListConversationsPage { .. }
+            Self::ListConversationsPage { .. }
             | Self::ListSkills
             | Self::ListOnlineNodes
             | Self::ListPlatforms
@@ -527,12 +519,6 @@ pub enum AppServerNotification {
         has_more: bool,
         next_before_turn_id: Option<String>,
     },
-    // Incremental/state-sync notification only. Typed conversation/list remains the
-    // authoritative bootstrap/read path.
-    ConversationList {
-        conversation_id: String,
-        conversations: Vec<ConversationSummary>,
-    },
     ConversationListPage {
         conversation_id: String,
         conversations: Vec<ConversationSummary>,
@@ -644,9 +630,6 @@ impl AppServerNotification {
             | Self::ConversationHistoryPage {
                 conversation_id, ..
             }
-            | Self::ConversationList {
-                conversation_id, ..
-            }
             | Self::ConversationListPage {
                 conversation_id, ..
             }
@@ -744,7 +727,6 @@ pub fn classify_notification(
         | AppServerNotification::InterruptResult { .. }
         | AppServerNotification::ConversationHistory { .. }
         | AppServerNotification::ConversationHistoryPage { .. }
-        | AppServerNotification::ConversationList { .. }
         | AppServerNotification::ConversationListPage { .. }
         | AppServerNotification::SkillsChanged { .. }
         | AppServerNotification::OnlineNodeList { .. }

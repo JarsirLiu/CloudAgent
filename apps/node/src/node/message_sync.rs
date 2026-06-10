@@ -46,8 +46,8 @@ pub(crate) async fn sync_registry_from_message(runtime: &NodeRuntime, message: &
 
     let mut registry = runtime.conversations().lock().await;
     match notification {
-        AppServerNotification::ConversationList { conversations, .. } => {
-            registry.replace_from_summaries(conversations);
+        AppServerNotification::ConversationListPage { conversations, .. } => {
+            registry.merge_from_summaries(conversations);
         }
         AppServerNotification::ConversationHistory {
             conversation_id,

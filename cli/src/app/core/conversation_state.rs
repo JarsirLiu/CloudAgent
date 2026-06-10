@@ -7,7 +7,7 @@ use crate::state::bottom_pane_controller::BottomPaneController;
 use crate::state::reducer::TurnDispatch;
 use crate::ui::transcript_render_cache::TranscriptRenderCache;
 use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
-use agent_core::conversation::{ConversationSummary, InputItem};
+use agent_core::conversation::InputItem;
 use agent_core::turn::{ModelRetryStage, TurnItemKind};
 use agent_protocol::{
     ConversationActiveFlag, ConversationViewSnapshot, ConversationViewStatus, FrontendMode,
@@ -80,16 +80,6 @@ impl TuiApp {
     pub(crate) fn switch_conversation(&mut self, conversation_id: String) {
         self.conversation_id = conversation_id;
         self.reset_local_view();
-    }
-
-    pub(crate) fn handle_conversation_list(
-        &mut self,
-        conversation_summaries: Vec<ConversationSummary>,
-    ) {
-        self.conversation_summaries = conversation_summaries.clone();
-        let _ = self
-            .bottom_pane
-            .present_requested_session_picker(conversation_summaries, &self.conversation_id);
     }
 
     pub(crate) fn on_server_turn_started(&mut self) {

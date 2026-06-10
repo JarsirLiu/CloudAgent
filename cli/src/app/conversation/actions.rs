@@ -737,12 +737,6 @@ pub(crate) async fn handle_tui_input(
                 AppClientCommand::InterruptTurn { conversation_id } => {
                     client.interrupt_turn(conversation_id)?
                 }
-                AppClientCommand::ListConversations => {
-                    client.send_command(AppClientCommand::ListConversationsPage {
-                        cursor: None,
-                        limit: 25,
-                    })?;
-                }
                 other => client.send_command(other)?,
             }
         }
@@ -851,9 +845,6 @@ fn decision_label(decision: &ServerRequestDecisionKind) -> &'static str {
 
 pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     match action {
-        ServerAction::SetConversationList(conversations) => {
-            app.handle_conversation_list(conversations);
-        }
         ServerAction::SetConversationListPage {
             conversations,
             has_more,

@@ -33,8 +33,14 @@ pub(crate) async fn submit_turn(
         .await
         .unwrap_or(false);
     if created_conversation {
-        let _ = session_service::list_conversations(&runtime, &services.event_tx, &services.state)
-            .await;
+        let _ = session_service::list_conversations_page(
+            &runtime,
+            &services.event_tx,
+            &services.state,
+            None,
+            25,
+        )
+        .await;
     }
     session_service::maybe_spawn_auto_title_job(
         runtime.clone(),

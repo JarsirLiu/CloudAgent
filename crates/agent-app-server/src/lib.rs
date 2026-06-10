@@ -125,13 +125,6 @@ async fn handle_stdio_request(
     let runtime = runtime_for_request(runtime_manager, &request)?;
     let request_id = request.id.clone();
     let response = match request.method.as_str() {
-        "conversation/list" => {
-            let result = session::service::read_conversation_list(&runtime, state).await?;
-            JsonRpcMessage::Response(JsonRpcResponse {
-                id: request_id,
-                result: serde_json::to_value(result)?,
-            })
-        }
         "conversation/listPage" => {
             let params = request.params.clone().unwrap_or(serde_json::Value::Null);
             let cursor = optional_value_field::<String>(&params, "cursor")?;

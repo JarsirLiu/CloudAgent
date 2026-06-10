@@ -7,38 +7,13 @@ use agent_core::{
 };
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
-    ConversationHistoryResponse, ConversationListPageResponse, ConversationListResponse,
-    ConversationViewResponse, ConversationViewSnapshot, SkillsListResponse,
+    ConversationHistoryResponse, ConversationListPageResponse, ConversationViewResponse,
+    ConversationViewSnapshot, SkillsListResponse,
 };
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task;
-
-pub(crate) async fn list_conversations(
-    runtime: &Arc<AgentHost>,
-    event_tx: &mpsc::UnboundedSender<AppServerMessage>,
-    state: &Arc<Mutex<ServerState>>,
-) -> Result<()> {
-    let anchor_conversation_id = {
-        let state = state.lock().await;
-        state
-            .notification_anchor_conversation_id("default")
-            .to_string()
-    };
-    reconcile_missing_for_list(runtime).await;
-    let conversations = runtime.list_conversations().await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationList {
-            conversation_id: anchor_conversation_id,
-            conversations,
-        },
-    )
-    .await;
-    Ok(())
-}
 
 pub(crate) async fn list_conversations_page(
     runtime: &Arc<AgentHost>,
@@ -66,16 +41,6 @@ pub(crate) async fn list_conversations_page(
     )
     .await;
     Ok(())
-}
-
-pub(crate) async fn read_conversation_list(
-    runtime: &Arc<AgentHost>,
-    _state: &Arc<Mutex<ServerState>>,
-) -> Result<ConversationListResponse> {
-    reconcile_missing_for_list(runtime).await;
-    Ok(ConversationListResponse {
-        conversations: runtime.list_conversations().await?,
-    })
 }
 
 pub(crate) async fn read_conversation_list_page(
@@ -360,16 +325,6 @@ pub(crate) async fn switch_conversation(
     session_state::apply_active_conversation(state, conversation_id.clone()).await;
     session_state::persist_active_conversation(runtime, state, &conversation_id).await;
     publish_switched_conversation_state(runtime, event_tx, state, view, &conversation_id).await?;
-    let conversations = runtime.list_conversations().await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationList {
-            conversation_id,
-            conversations,
-        },
-    )
-    .await;
     Ok(())
 }
 
@@ -392,16 +347,6 @@ pub(crate) async fn archive_conversation(
         publish_switched_conversation_state(runtime, event_tx, state, view, &active_session_id)
             .await?;
     }
-    let conversations = runtime.list_conversations().await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationList {
-            conversation_id: active_session_id.clone(),
-            conversations,
-        },
-    )
-    .await;
     if active_session_id != conversation_id && !switched_active {
         send_notification(
             event_tx,
@@ -486,16 +431,6 @@ pub(crate) async fn delete_conversation(
             .notification_anchor_conversation_id(&conversation_id)
             .to_string()
     };
-    let conversations = runtime.list_conversations().await?;
-    send_notification(
-        event_tx,
-        state,
-        AppServerNotification::ConversationList {
-            conversation_id: active_session_id.clone(),
-            conversations,
-        },
-    )
-    .await;
     if !was_active {
         send_notification(
             event_tx,
@@ -593,7 +528,7 @@ pub(crate) async fn maybe_spawn_auto_title_job(
                     .await
                     .is_ok()
             {
-                let _ = list_conversations(&runtime, &event_tx, &state).await;
+                let _ = list_conversations_page(&runtime, &event_tx, &state, None, 25).await;
             }
         }
         state.lock().await.finish_title_job(&conversation_id);

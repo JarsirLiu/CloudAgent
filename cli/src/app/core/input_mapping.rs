@@ -97,7 +97,12 @@ impl TuiApp {
                 self.bottom_pane.request_session_picker(
                     crate::ui::widgets::session_picker::SessionPickerMode::Switch,
                 );
-                Some(ParsedInput::Command(AppClientCommand::ListConversations))
+                Some(ParsedInput::Command(
+                    AppClientCommand::ListConversationsPage {
+                        cursor: None,
+                        limit: 25,
+                    },
+                ))
             }
             InputPaneAction::Composer(ComposerIntent::NewConversation(conversation_id)) => {
                 Some(ParsedInput::LocalConversationCreate(conversation_id))

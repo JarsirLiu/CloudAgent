@@ -5,9 +5,9 @@ mod stdio;
 use agent_core::ServerRequestDecision;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, ConversationHistoryPageResponse,
-    ConversationHistoryResponse, ConversationListPageResponse, ConversationListResponse,
-    ConversationViewResponse, JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse,
-    NodeStopResponse, NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
+    ConversationHistoryResponse, ConversationListPageResponse, ConversationViewResponse,
+    JsonRpcErrorPayload, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
+    NotificationDelivery, OnlineNodeListResponse, PlatformConfigResponse,
     PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
     RequestId, SelectTargetNodeResponse, SessionBootstrapContext, SkillsListResponse,
     UserTurnInput, WeixinLoginStartResponse, WeixinLoginStatusResponse, classify_notification,
@@ -129,24 +129,6 @@ impl AppServerClient {
             Self::InProcess(client) => client.request_typed(request).await,
             Self::Remote(client) => client.request_typed(request).await,
         }
-    }
-
-    pub async fn request_conversation_list_typed(
-        &self,
-    ) -> Result<ConversationListResponse, TypedRequestError> {
-        self.request_handle()
-            .request_conversation_list_typed()
-            .await
-    }
-
-    pub async fn request_conversation_list_page_typed(
-        &self,
-        cursor: Option<String>,
-        limit: usize,
-    ) -> Result<ConversationListPageResponse, TypedRequestError> {
-        self.request_handle()
-            .request_conversation_list_page_typed(cursor, limit)
-            .await
     }
 
     pub async fn request_skills_list_typed(&self) -> Result<SkillsListResponse, TypedRequestError> {
@@ -311,10 +293,6 @@ impl AppServerClient {
         })
     }
 
-    pub fn list_conversations(&self) -> Result<()> {
-        self.send_command(agent_protocol::AppClientCommand::ListConversations)
-    }
-
     pub fn request_conversation_history(&self, conversation_id: impl Into<String>) -> Result<()> {
         self.send_command(
             agent_protocol::AppClientCommand::RequestConversationHistory {
@@ -380,17 +358,6 @@ impl AppServerRequestHandle {
             Self::InProcess(handle) => handle.request_typed(request).await,
             Self::Remote(handle) => handle.request_typed(request).await,
         }
-    }
-
-    pub async fn request_conversation_list_typed(
-        &self,
-    ) -> Result<ConversationListResponse, TypedRequestError> {
-        self.request_typed(JsonRpcRequest {
-            id: next_request_id(),
-            method: "conversation/list".to_string(),
-            params: None,
-        })
-        .await
     }
 
     pub async fn request_conversation_list_page_typed(
@@ -651,10 +618,6 @@ impl AppServerRequestHandle {
         self.send_command(agent_protocol::AppClientCommand::InterruptTurn {
             conversation_id: conversation_id.into(),
         })
-    }
-
-    pub fn list_conversations(&self) -> Result<()> {
-        self.send_command(agent_protocol::AppClientCommand::ListConversations)
     }
 
     pub fn request_conversation_history(&self, conversation_id: impl Into<String>) -> Result<()> {

@@ -3,17 +3,16 @@ use crate::node::message_sync::{
     write_jsonrpc_response,
 };
 use crate::node::runtime::NodeRuntime;
+use crate::node::session_listing;
 use crate::node::session_state::NodeSessionState;
-use agent_core::conversation::ConversationSummary;
 use agent_core::conversation_busy_error;
 use agent_protocol::{
     AppClientCommand, AppClientCommandEnvelope, AppServerMessage, AppServerNotification,
     CommandExecutionContext, ConversationHistoryPageResponse, ConversationHistoryResponse,
-    ConversationListPageResponse, ConversationListResponse, ConversationViewResponse,
-    JsonRpcErrorPayload, JsonRpcMessage, JsonRpcRequest, NodeStatusResponse, NodeStopResponse,
-    PlatformConfigResponse, PlatformControlListResponse, PlatformControlStatusResponse,
-    PlatformControlUpdateResponse, RequestId, SkillsListResponse, WeixinLoginStartResponse,
-    WeixinLoginStatusResponse,
+    ConversationListPageResponse, ConversationViewResponse, JsonRpcErrorPayload, JsonRpcMessage,
+    JsonRpcRequest, NodeStatusResponse, NodeStopResponse, PlatformConfigResponse,
+    PlatformControlListResponse, PlatformControlStatusResponse, PlatformControlUpdateResponse,
+    RequestId, SkillsListResponse, WeixinLoginStartResponse, WeixinLoginStatusResponse,
 };
 use anyhow::{Context, Result};
 use tokio::io::AsyncWrite;
@@ -66,7 +65,7 @@ where
         return Ok(true);
     }
 
-    if let Some(message) = conversation_list_notification(
+    if let Some(message) = session_listing::notification_for_command(
         &rpc,
         &envelope.command,
         session.active_conversation_id(),
@@ -283,12 +282,8 @@ where
     }
 
     let result = match &envelope.command {
-        AppClientCommand::ListConversations => serde_json::to_value(
-            read_conversation_list(runtime, session.worker_scope_key(), &target_conversation)
-                .await?,
-        )?,
         AppClientCommand::ListConversationsPage { cursor, limit } => serde_json::to_value(
-            read_conversation_list_page(runtime, cursor.clone(), *limit).await?,
+            session_listing::read_conversation_list_page(runtime, cursor.clone(), *limit).await?,
         )?,
         AppClientCommand::ListPlatforms => serde_json::to_value(runtime.platforms().list().await)?,
         AppClientCommand::GetNodeStatus => serde_json::to_value(runtime.status().await)?,
@@ -369,7 +364,6 @@ fn typed_request_from_command(
     request_id: &RequestId,
 ) -> Option<JsonRpcRequest> {
     let (method, params) = match command {
-        AppClientCommand::ListConversations => ("conversation/list", serde_json::Value::Null),
         AppClientCommand::ListConversationsPage { cursor, limit } => (
             "conversation/listPage",
             serde_json::json!({
@@ -518,119 +512,6 @@ async fn conversation_busy_rejection(
     }
 }
 
-async fn conversation_list_notification(
-    rpc: &JsonRpcMessage,
-    command: &AppClientCommand,
-    active_conversation_id: &str,
-    runtime: &NodeRuntime,
-) -> Option<AppServerMessage> {
-    if !matches!(rpc, JsonRpcMessage::Notification(_)) {
-        return None;
-    }
-
-    match command {
-        AppClientCommand::ListConversations => Some(AppServerMessage::Notification(
-            AppServerNotification::ConversationList {
-                conversation_id: active_conversation_id.to_string(),
-                conversations: read_conversation_list(
-                    runtime,
-                    active_conversation_id,
-                    active_conversation_id,
-                )
-                .await
-                .ok()?
-                .conversations,
-            },
-        )),
-        AppClientCommand::ListConversationsPage { cursor, limit } => {
-            let page = read_conversation_list_page(runtime, cursor.clone(), *limit)
-                .await
-                .ok()?;
-            Some(AppServerMessage::Notification(
-                AppServerNotification::ConversationListPage {
-                    conversation_id: active_conversation_id.to_string(),
-                    conversations: page.conversations,
-                    has_more: page.has_more,
-                    next_cursor: page.next_cursor,
-                },
-            ))
-        }
-        _ => None,
-    }
-}
-
-async fn read_conversation_list_page(
-    runtime: &NodeRuntime,
-    cursor: Option<String>,
-    limit: usize,
-) -> Result<ConversationListPageResponse> {
-    let _ = runtime
-        .conversation_store()
-        .reconcile_missing_conversations(100)
-        .await;
-    match runtime
-        .conversation_store()
-        .list_conversations_page(cursor, limit)
-        .await
-    {
-        Ok(page) => {
-            runtime
-                .conversations()
-                .lock()
-                .await
-                .replace_from_summaries(&page.conversations);
-            Ok(ConversationListPageResponse {
-                conversations: page.conversations,
-                has_more: page.has_more,
-                next_cursor: page.next_cursor,
-            })
-        }
-        Err(_) => {
-            let conversations = runtime.conversations().lock().await.summaries();
-            Ok(ConversationListPageResponse {
-                conversations,
-                has_more: false,
-                next_cursor: None,
-            })
-        }
-    }
-}
-
-async fn read_conversation_list(
-    runtime: &NodeRuntime,
-    _worker_scope_key: &str,
-    _active_conversation_id: &str,
-) -> Result<ConversationListResponse> {
-    let _ = runtime
-        .conversation_store()
-        .reconcile_missing_conversations(100)
-        .await;
-    match runtime.conversation_store().list_conversations().await {
-        Ok(conversations) => {
-            let conversations = conversations
-                .into_iter()
-                .filter(|summary| !summary.archived)
-                .map(|summary| ConversationSummary {
-                    conversation_id: summary.conversation_id,
-                    title: summary.title,
-                    message_count: summary.message_count,
-                    updated_at_ms: summary.updated_at_ms,
-                })
-                .collect::<Vec<_>>();
-            runtime
-                .conversations()
-                .lock()
-                .await
-                .replace_from_summaries(&conversations);
-            Ok(ConversationListResponse { conversations })
-        }
-        Err(_) => {
-            let conversations = runtime.conversations().lock().await.summaries();
-            Ok(ConversationListResponse { conversations })
-        }
-    }
-}
-
 async fn sync_typed_read_registry(
     runtime: &NodeRuntime,
     command: &AppClientCommand,
@@ -761,21 +642,9 @@ async fn sync_typed_read_registry(
                 snapshot: response.snapshot,
             })
         }
-        AppClientCommand::ListConversations => {
-            let response: ConversationListResponse = serde_json::from_value(value.clone())?;
-            AppServerMessage::Notification(AppServerNotification::ConversationList {
-                conversation_id: conversation_id.to_string(),
-                conversations: response.conversations,
-            })
-        }
         AppClientCommand::ListConversationsPage { .. } => {
             let response: ConversationListPageResponse = serde_json::from_value(value.clone())?;
-            AppServerMessage::Notification(AppServerNotification::ConversationListPage {
-                conversation_id: conversation_id.to_string(),
-                conversations: response.conversations,
-                has_more: response.has_more,
-                next_cursor: response.next_cursor,
-            })
+            session_listing::notification_from_page_response(conversation_id, response)
         }
         AppClientCommand::RequestConversationHistoryPage { .. } => return Ok(()),
         _ => return Ok(()),
@@ -810,7 +679,6 @@ fn command_name(command: &AppClientCommand) -> &'static str {
         AppClientCommand::RequestConversationHistoryPage { .. } => {
             "request_conversation_history_page"
         }
-        AppClientCommand::ListConversations => "list_conversations",
         AppClientCommand::ListConversationsPage { .. } => "list_conversations_page",
         AppClientCommand::ListSkills => "list_skills",
         AppClientCommand::ListOnlineNodes => "list_online_nodes",
@@ -899,8 +767,7 @@ pub(crate) async fn target_conversation_id(
             session.unsubscribe_conversation(conversation_id);
             conversation_id.clone()
         }
-        AppClientCommand::ListConversations
-        | AppClientCommand::ListConversationsPage { .. }
+        AppClientCommand::ListConversationsPage { .. }
         | AppClientCommand::ListSkills
         | AppClientCommand::ListOnlineNodes
         | AppClientCommand::ListPlatforms
@@ -921,12 +788,10 @@ pub(crate) async fn target_conversation_id(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        conversation_list_notification, ensure_session_subscription, handle_command_message,
-        read_conversation_list, target_conversation_id,
-    };
+    use super::{ensure_session_subscription, handle_command_message, target_conversation_id};
     use crate::node::platform::PlatformManager;
     use crate::node::runtime::NodeRuntime;
+    use crate::node::session_listing;
     use crate::node::session_state::NodeSessionState;
     use crate::node::test_support::{test_worker_program, unique_temp_path};
     use crate::node::worker_manager::{NodeEvent, WorkerManager};
@@ -963,23 +828,6 @@ mod tests {
     }
 
     #[test]
-    fn list_conversations_routes_to_active_conversation() {
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        runtime.block_on(async {
-            let runtime = test_runtime().await;
-            let mut session = NodeSessionState::new("conversation-1", "session-1");
-            assert_eq!(
-                target_conversation_id(
-                    &mut session,
-                    &runtime,
-                    &AppClientCommand::ListConversations,
-                )
-                .await,
-                "conversation-1"
-            );
-        });
-    }
-
     #[test]
     fn switch_conversation_updates_active_conversation() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
@@ -1000,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn list_conversations_prefers_shared_store_over_registry_noise() {
+    fn list_conversations_page_prefers_shared_store_over_registry_noise() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
             let runtime = test_runtime().await;
@@ -1024,12 +872,18 @@ mod tests {
                 .await
                 .expect("append shared conversation event");
 
-            let message = conversation_list_notification(
+            let message = session_listing::notification_for_command(
                 &JsonRpcMessage::Notification(JsonRpcNotification {
-                    method: "conversation/list".to_string(),
-                    params: None,
+                    method: "conversation/listPage".to_string(),
+                    params: Some(serde_json::json!({
+                        "cursor": null,
+                        "limit": 25
+                    })),
                 }),
-                &AppClientCommand::ListConversations,
+                &AppClientCommand::ListConversationsPage {
+                    cursor: None,
+                    limit: 25,
+                },
                 "conversation-1",
                 &runtime,
             )
@@ -1037,9 +891,10 @@ mod tests {
             .expect("conversation list message");
 
             match message {
-                AppServerMessage::Notification(AppServerNotification::ConversationList {
+                AppServerMessage::Notification(AppServerNotification::ConversationListPage {
                     conversation_id,
                     conversations,
+                    ..
                 }) => {
                     assert_eq!(conversation_id, "conversation-1");
                     assert!(
@@ -1056,17 +911,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_registry_still_returns_a_typed_conversation_list_result() {
+    fn empty_registry_still_returns_a_typed_conversation_list_page_result() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
             let runtime = test_runtime().await;
-            let response = read_conversation_list(&runtime, "session-1", "conversation-1").await;
+            let response = session_listing::read_conversation_list_page(&runtime, None, 25).await;
             assert!(response.is_ok());
         });
     }
 
     #[test]
-    fn list_conversations_reads_from_shared_store_across_sources() {
+    fn list_conversations_page_reads_from_shared_store_across_sources() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
             let runtime = test_runtime().await;
@@ -1085,7 +940,7 @@ mod tests {
                 .await
                 .expect("append shared conversation event");
 
-            let response = read_conversation_list(&runtime, "local:cli", "conversation-1")
+            let response = session_listing::read_conversation_list_page(&runtime, None, 25)
                 .await
                 .expect("conversation list");
 
@@ -1182,17 +1037,6 @@ mod tests {
     }
 
     #[test]
-    fn typed_request_from_list_conversations_uses_jsonrpc_list_method() {
-        let request = super::typed_request_from_command(
-            &AppClientCommand::ListConversations,
-            &RequestId::Integer(5),
-        )
-        .expect("typed request");
-        assert_eq!(request.id, RequestId::Integer(5));
-        assert_eq!(request.method, "conversation/list");
-        assert!(request.params.is_some());
-    }
-
     #[tokio::test]
     async fn ensure_session_subscription_replaces_stale_receiver() {
         let runtime = test_runtime().await;

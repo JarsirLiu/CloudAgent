@@ -73,7 +73,6 @@ pub(crate) struct ServerMessageReduce {
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ServerAction {
-    SetConversationList(Vec<ConversationSummary>),
     SetConversationListPage {
         conversations: Vec<ConversationSummary>,
         has_more: bool,
@@ -242,9 +241,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     item_id: item.id().to_string(),
                     item: item.clone(),
                 });
-            }
-            AppServerNotification::ConversationList { conversations, .. } => {
-                actions.push(ServerAction::SetConversationList(conversations.clone()));
             }
             AppServerNotification::ConversationListPage {
                 conversations,

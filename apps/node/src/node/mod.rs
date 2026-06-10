@@ -7,6 +7,7 @@ mod message_sync;
 mod platform;
 mod runtime;
 mod server;
+mod session_listing;
 mod session_state;
 mod source;
 #[cfg(test)]

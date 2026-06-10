@@ -10,7 +10,6 @@ use std::ffi::OsString;
 use std::io::{self, ErrorKind};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -84,16 +83,10 @@ impl StdioAppServerClient {
 
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_CAPACITY);
-        let request_counter = Arc::new(AtomicI64::new(1));
         let pending_requests = Arc::new(Mutex::new(PendingRequestMap::new()));
         let stderr_buffer = Arc::new(Mutex::new(String::new()));
 
-        tokio::spawn(write_commands(
-            stdin,
-            command_rx,
-            request_counter.clone(),
-            pending_requests.clone(),
-        ));
+        tokio::spawn(write_commands(stdin, command_rx, pending_requests.clone()));
         tokio::spawn(read_stderr(stderr, stderr_buffer.clone()));
         let reader_task = tokio::spawn(read_events(
             stdout,
@@ -242,22 +235,14 @@ fn configure_background_stdio_child(_command: &mut Command) {
 async fn write_commands(
     mut stdin: ChildStdin,
     mut command_rx: mpsc::UnboundedReceiver<StdioOutbound>,
-    request_counter: Arc<AtomicI64>,
     pending_requests: SharedPendingRequests,
 ) -> Result<()> {
-    write_commands_to(
-        &mut stdin,
-        &mut command_rx,
-        request_counter,
-        pending_requests,
-    )
-    .await
+    write_commands_to(&mut stdin, &mut command_rx, pending_requests).await
 }
 
 async fn write_commands_to<W>(
     writer: &mut W,
     command_rx: &mut mpsc::UnboundedReceiver<StdioOutbound>,
-    request_counter: Arc<AtomicI64>,
     pending_requests: SharedPendingRequests,
 ) -> Result<()>
 where
@@ -267,11 +252,13 @@ where
         match outbound {
             StdioOutbound::Command { command, context } => {
                 let envelope = AppClientCommandEnvelope {
-                    request_id: RequestId::Integer(request_counter.fetch_add(1, Ordering::Relaxed)),
+                    request_id: RequestId::Integer(0),
                     command,
                     context,
                 };
-                let payload = serde_json::to_string(&JsonRpcMessage::from(envelope))?;
+                let payload = serde_json::to_string(&JsonRpcMessage::Notification(
+                    envelope.into_notification(),
+                ))?;
                 writer.write_all(payload.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
                 writer.flush().await?;
@@ -458,7 +445,6 @@ mod tests {
     async fn write_commands_serializes_jsonrpc_lines() {
         let (mut write_side, read_side) = duplex(4096);
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
-        let counter = Arc::new(AtomicI64::new(7));
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
 
         command_tx
@@ -478,7 +464,7 @@ mod tests {
             .expect("queue command");
         drop(command_tx);
 
-        write_commands_to(&mut write_side, &mut command_rx, counter, pending_requests)
+        write_commands_to(&mut write_side, &mut command_rx, pending_requests)
             .await
             .expect("write commands");
         drop(write_side);
@@ -489,7 +475,6 @@ mod tests {
 
         let rpc: JsonRpcMessage = serde_json::from_str(line.trim()).expect("jsonrpc");
         let envelope = AppClientCommandEnvelope::try_from(rpc).expect("command envelope");
-        assert_eq!(envelope.request_id, RequestId::Integer(7));
         match envelope.command {
             AppClientCommand::SubmitTurn(input) => {
                 assert_eq!(input.conversation_id, "default");
@@ -682,14 +667,9 @@ mod tests {
             .expect("queue request");
         drop(command_tx);
         let (mut sink, _unused_read_side) = duplex(4096);
-        write_commands_to(
-            &mut sink,
-            &mut command_rx,
-            Arc::new(AtomicI64::new(1)),
-            pending_requests,
-        )
-        .await
-        .expect("write request");
+        write_commands_to(&mut sink, &mut command_rx, pending_requests)
+            .await
+            .expect("write request");
         let response = request_rx
             .await
             .expect("response channel")
