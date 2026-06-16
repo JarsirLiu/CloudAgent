@@ -8,6 +8,7 @@ MAIN_RAW_BASE="https://raw.githubusercontent.com/$REPO/main/scripts"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 INSTALLS_DIR="$INSTALL_ROOT/installs"
 CURRENT_LINK="$INSTALL_ROOT/current"
+INSTALL_MARKER=".cloudagent-install-complete"
 BIN_DIR="${CLOUDAGENT_BIN_DIR:-$HOME/.local/bin}"
 DATA_DIR="${CLOUDAGENT_DATA_DIR:-$HOME/.cloudagent}"
 TMPDIR="${TMPDIR:-/tmp}"
@@ -224,7 +225,7 @@ download_and_unpack() {
 
 install_files() {
   target="$INSTALLS_DIR/$RELEASE_VERSION"
-  if [ "$FORCE" -ne 1 ] && [ "$(current_version || true)" = "$RELEASE_VERSION" ] && [ -d "$target" ]; then
+  if [ "$FORCE" -ne 1 ] && [ "$(current_version || true)" = "$RELEASE_VERSION" ] && [ -f "$target/$INSTALL_MARKER" ]; then
     printf 'CloudAgent %s is already installed\n' "$RELEASE_VERSION" >&2
     return 0
   fi
@@ -252,7 +253,7 @@ MAIN_RAW_BASE="$MAIN_RAW_BASE"
 
 resolve_bootstrap_url() {
   file_name="\$1"
-  bootstrap_url="\$BOOTSTRAP_RAW_BASE/\$file_name"
+  bootstrap_url="$BOOTSTRAP_RAW_BASE/\$file_name"
   if curl -fsSL -o /dev/null "\$bootstrap_url" 2>/dev/null; then
     printf '%s\n' "\$bootstrap_url"
   else
@@ -261,12 +262,12 @@ resolve_bootstrap_url() {
 }
 
 run_bootstrap_script() {
-  script_url="$1"
+  script_url="\$1"
   shift
-  tmp_script="$(mktemp "${TMPDIR:-/tmp}/cloudagent-bootstrap-XXXXXX")"
-  trap 'rm -f "$tmp_script"' EXIT INT TERM
-  curl -fsSL "$script_url" -o "$tmp_script"
-  sh "$tmp_script" "$@"
+  tmp_script="\$(mktemp "\${TMPDIR:-/tmp}/cloudagent-bootstrap-XXXXXX")"
+  trap 'rm -f "\$tmp_script"' EXIT INT TERM
+  curl -fsSL "\$script_url" -o "\$tmp_script"
+  sh "\$tmp_script" "\$@"
 }
 
 case "\${1:-}" in
@@ -294,6 +295,7 @@ exec "$CURRENT_LINK/$name" "\$@"
 EOF
     chmod 755 "$BIN_DIR/$name"
   done
+  : > "$target/$INSTALL_MARKER"
   stage_done
 }
 
