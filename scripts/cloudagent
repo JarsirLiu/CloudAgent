@@ -3,9 +3,12 @@ set -eu
 
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-cmd="${1:-cli}"
+cmd="${1:-}"
 
 case "$cmd" in
+  "")
+    exec "$SELF_DIR/cloudagent" --help
+    ;;
   help|--help|-h)
     CLOUDAGENT_RELEASE_MODE=1 exec "$SELF_DIR/cloudagent" --help
     ;;

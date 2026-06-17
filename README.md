@@ -60,6 +60,9 @@ irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.
 Common runtime commands:
 
 ```bash
+# show the top-level help
+cloudagent
+
 # start the local node service
 cloudagent start
 
@@ -82,6 +85,8 @@ cloudagent uninstall
 # uninstall CloudAgent and delete user data
 cloudagent uninstall --purge
 ```
+
+`cloudagent` with no arguments shows the top-level help. `cloudagent cli` opens the interactive CLI surface. Unknown commands such as `cloudagent xxx` now fail fast with an "unknown command" error instead of falling back to the CLI.
 
 `cloudagent uninstall` keeps the user data directory by default and removes the CloudAgent PATH entry created by the installer. Use `cloudagent uninstall --purge` to delete user data too.
 
@@ -221,6 +226,9 @@ irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.
 常用运行命令：
 
 ```bash
+# 显示顶层帮助
+cloudagent
+
 # 启动本机 node 服务
 cloudagent start
 
@@ -243,6 +251,8 @@ cloudagent uninstall
 # 卸载 CloudAgent，并删除用户数据
 cloudagent uninstall --purge
 ```
+
+`cloudagent` 在没有参数时会显示顶层帮助。`cloudagent cli` 才会打开交互式 CLI。像 `cloudagent xxx` 这样的未知命令现在会直接报错并提示可用命令，不再回退到 CLI。
 
 `cloudagent uninstall` 默认会保留用户数据目录，并移除安装器创建的 CloudAgent PATH 项。使用 `cloudagent uninstall --purge` 可以同时删除用户数据。
 

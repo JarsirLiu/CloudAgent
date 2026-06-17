@@ -47,6 +47,9 @@ cloudagent
 Common commands:
 
 ```bash
+# show the top-level help
+cloudagent
+
 cloudagent start
 cloudagent cli
 cloudagent status
@@ -54,6 +57,8 @@ cloudagent stop
 cloudagent upgrade
 cloudagent uninstall
 ```
+
+`cloudagent` with no arguments shows the top-level help. `cloudagent cli` opens the interactive CLI surface. Unknown commands such as `cloudagent xxx` now fail fast with an "unknown command" error instead of falling back to the CLI.
 
 `cloudagent cli` exits only the CLI surface. It does not stop the local node.
 

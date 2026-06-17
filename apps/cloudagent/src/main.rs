@@ -14,7 +14,7 @@ use std::process::Command;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    if wants_help(&args) {
+    if wants_help(&args) || args.is_empty() {
         print_help();
         return Ok(());
     }
@@ -32,11 +32,24 @@ async fn main() -> Result<()> {
     };
     let mut config = config;
     apply_data_dir_cli_override(&mut config, &args);
-    if product::maybe_handle_command(&args, &config.runtime.data_root_dir).await? {
-        return Ok(());
+
+    match args.first().and_then(|arg| arg.to_str()) {
+        Some("cli") => {
+            let args = normalize_console_args(args);
+            run_console_surface(&args, config, build_runtime).await
+        }
+        Some("start" | "status" | "stop" | "platform" | "node") => {
+            if product::maybe_handle_command(&args, &config.runtime.data_root_dir).await? {
+                Ok(())
+            } else {
+                unreachable!("recognized top-level product command was not handled")
+            }
+        }
+        Some(other) => {
+            bail!("unknown command `{other}`. run `cloudagent --help` to see supported commands")
+        }
+        None => unreachable!("args were checked for emptiness above"),
     }
-    let args = normalize_console_args(args);
-    run_console_surface(&args, config, build_runtime).await
 }
 
 fn build_runtime(config: AgentConfig) -> Result<std::sync::Arc<agent_core::AgentHost>> {
@@ -101,11 +114,13 @@ fn normalize_console_args(args: Vec<OsString>) -> Vec<OsString> {
 }
 
 fn wants_help(args: &[OsString]) -> bool {
-    args.iter().any(|arg| arg == "--help" || arg == "-h")
+    args.iter()
+        .any(|arg| arg == "--help" || arg == "-h" || arg == "help")
 }
 
 fn wants_version(args: &[OsString]) -> bool {
-    args.iter().any(|arg| arg == "--version" || arg == "-V")
+    args.iter()
+        .any(|arg| arg == "--version" || arg == "-V" || arg == "version")
 }
 
 fn print_help() {
