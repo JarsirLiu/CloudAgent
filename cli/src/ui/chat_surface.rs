@@ -403,10 +403,6 @@ fn render_welcome(app: &TuiApp, frame: &mut Frame, area: Rect) {
             "run tests and explain failures with fix suggestions",
             Style::default().fg(Color::Gray),
         )),
-        Line::from(Span::styled(
-            "add a new slash command and wire it end-to-end",
-            Style::default().fg(Color::Gray),
-        )),
     ];
 
     frame.render_widget(

@@ -113,20 +113,6 @@ impl WelcomeScreen {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled("exit  ", Style::default().fg(dim)),
-            Span::styled(
-                "F2 ",
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("history  ", Style::default().fg(dim)),
-            Span::styled(
-                "F4 ",
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("clear", Style::default().fg(dim)),
         ]));
 
         Paragraph::new(Text::from(lines))
