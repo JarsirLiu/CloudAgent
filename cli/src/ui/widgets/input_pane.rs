@@ -153,6 +153,12 @@ impl InputPane {
         }
     }
 
+    pub(crate) fn supports_text_paste_shortcut(&self) -> bool {
+        self.navigator
+            .active_view()
+            .is_some_and(|view| view.supports_text_paste_shortcut())
+    }
+
     pub(crate) fn attach_image(&mut self, path: PathBuf) -> bool {
         if self.navigator.is_empty() {
             self.composer.attach_image(path);

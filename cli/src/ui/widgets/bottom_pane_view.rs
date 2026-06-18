@@ -47,6 +47,10 @@ pub(crate) trait BottomPaneView {
         false
     }
 
+    fn supports_text_paste_shortcut(&self) -> bool {
+        false
+    }
+
     fn render_lines(&self, area_width: u16) -> Vec<Line<'static>>;
 
     fn desired_height(&self, area_width: u16) -> u16 {

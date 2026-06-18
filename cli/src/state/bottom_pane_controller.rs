@@ -137,6 +137,10 @@ impl BottomPaneController {
         self.input_pane.should_capture_global_paste_shortcut()
     }
 
+    pub(crate) fn supports_text_paste_shortcut(&self) -> bool {
+        self.input_pane.supports_text_paste_shortcut()
+    }
+
     pub(crate) fn composer_is_empty(&self) -> bool {
         self.input_pane.composer_is_empty()
     }

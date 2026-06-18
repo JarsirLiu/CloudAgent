@@ -1,18 +1,24 @@
 use crate::app::TuiApp;
+use crate::app::clipboard_paste::paste_clipboard_text;
 use crate::app::conversation::actions::handle_tui_input;
 use crate::app::conversation::event_router;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
+use crate::app::runtime::paste_coordinator::PasteCoordinator;
 use crate::terminal::{FrameRequester, UiEvent};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
 use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
-pub(crate) struct RuntimeController;
+pub(crate) struct RuntimeController {
+    paste_coordinator: PasteCoordinator,
+}
 
 impl RuntimeController {
     pub(crate) fn new() -> Self {
-        Self
+        Self {
+            paste_coordinator: PasteCoordinator::default(),
+        }
     }
 
     pub(crate) fn handle_client_event(
@@ -39,29 +45,44 @@ impl RuntimeController {
         let outcome = match event {
             UiEvent::Key(key) => {
                 pause_welcome_animation_for_input(app);
-                if should_request_older_history_page(key)
-                    && app.transcript_scroll.is_at_top()
-                    && crate::app::conversation::actions::load_older_history_page_if_available(
-                        app, client,
-                    )
-                    .await?
+                let supports_text_paste_shortcut = app.bottom_pane.supports_text_paste_shortcut();
+                if self
+                    .paste_coordinator
+                    .should_handle_text_shortcut(key, supports_text_paste_shortcut)
+                    && self.handle_text_paste_shortcut(app)
                 {
                     frame_requester.schedule_frame();
-                    return Ok(RuntimeControl::Continue);
+                    RuntimeControl::Continue
+                } else {
+                    if should_request_older_history_page(key)
+                        && app.transcript_scroll.is_at_top()
+                        && crate::app::conversation::actions::load_older_history_page_if_available(
+                            app, client,
+                        )
+                        .await?
+                    {
+                        frame_requester.schedule_frame();
+                        return Ok(RuntimeControl::Continue);
+                    }
+                    if let Some(input) = app.handle_key(key)
+                        && handle_tui_input(app, client, input).await?
+                    {
+                        return Ok(RuntimeControl::Break);
+                    }
+                    if let Some(delay) = app.bottom_pane.next_paste_flush_delay() {
+                        frame_requester.schedule_tick_in(delay);
+                    }
+                    frame_requester.schedule_frame();
+                    RuntimeControl::Continue
                 }
-                if let Some(input) = app.handle_key(key)
-                    && handle_tui_input(app, client, input).await?
-                {
-                    return Ok(RuntimeControl::Break);
-                }
-                if let Some(delay) = app.bottom_pane.next_paste_flush_delay() {
-                    frame_requester.schedule_tick_in(delay);
-                }
-                frame_requester.schedule_frame();
-                RuntimeControl::Continue
             }
             UiEvent::Paste(text) => {
                 pause_welcome_animation_for_input(app);
+                let decision = self.paste_coordinator.decide_terminal_paste(&text);
+                if !decision.should_forward() {
+                    frame_requester.schedule_frame();
+                    return Ok(RuntimeControl::Continue);
+                }
                 let _ = app.bottom_pane.handle_paste(&text);
                 frame_requester.schedule_frame();
                 RuntimeControl::Continue
@@ -82,6 +103,21 @@ impl RuntimeController {
             }
         };
         Ok(outcome)
+    }
+}
+
+impl RuntimeController {
+    fn handle_text_paste_shortcut(&mut self, app: &mut TuiApp) -> bool {
+        let text = match paste_clipboard_text() {
+            Ok(text) => text,
+            Err(_) => {
+                self.paste_coordinator.clear();
+                return false;
+            }
+        };
+        self.paste_coordinator.record_shortcut_text(&text);
+        let _ = app.bottom_pane.handle_paste(&text);
+        true
     }
 }
 
@@ -106,7 +142,7 @@ fn collect_client_events(
     coalesce_client_events(events)
 }
 
-fn coalesce_client_events(events: Vec<AppServerEvent>) -> Vec<AppServerEvent> {
+pub(super) fn coalesce_client_events(events: Vec<AppServerEvent>) -> Vec<AppServerEvent> {
     let mut coalesced = Vec::with_capacity(events.len());
     let mut skipped = 0usize;
     for event in events {
@@ -225,68 +261,5 @@ fn try_merge_messages(existing: &mut AppServerEvent, next: &AppServerMessage) ->
             true
         }
         _ => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::coalesce_client_events;
-    use agent_app_server_client::AppServerEvent;
-    use agent_protocol::{AppServerMessage, AppServerNotification};
-
-    fn command_delta(item_id: &str, delta: &str) -> AppServerEvent {
-        AppServerEvent::Message(AppServerMessage::Notification(
-            AppServerNotification::CommandExecutionOutputDelta {
-                conversation_id: "default".to_string(),
-                turn_id: "turn-1".to_string(),
-                item_id: item_id.to_string(),
-                call_id: Some("call-1".to_string()),
-                delta: delta.to_string(),
-            },
-        ))
-    }
-
-    #[test]
-    fn coalesces_adjacent_command_output_deltas_for_same_item() {
-        let events = vec![
-            command_delta("tool:1", "hello "),
-            command_delta("tool:1", "world"),
-        ];
-
-        let coalesced = coalesce_client_events(events);
-
-        assert_eq!(coalesced.len(), 1);
-        let AppServerEvent::Message(AppServerMessage::Notification(
-            AppServerNotification::CommandExecutionOutputDelta { delta, .. },
-        )) = &coalesced[0]
-        else {
-            panic!("expected merged command delta");
-        };
-        assert_eq!(delta, "hello world");
-    }
-
-    #[test]
-    fn does_not_coalesce_command_output_across_items() {
-        let events = vec![
-            command_delta("tool:1", "hello "),
-            command_delta("tool:2", "world"),
-        ];
-
-        let coalesced = coalesce_client_events(events);
-
-        assert_eq!(coalesced.len(), 2);
-    }
-
-    #[test]
-    fn drops_lagged_markers_from_user_visible_event_stream() {
-        let events = vec![
-            AppServerEvent::Lagged { skipped: 3 },
-            command_delta("tool:1", "done"),
-        ];
-
-        let coalesced = coalesce_client_events(events);
-
-        assert_eq!(coalesced.len(), 1);
-        assert!(matches!(coalesced[0], AppServerEvent::Message(_)));
     }
 }

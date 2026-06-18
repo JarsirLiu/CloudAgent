@@ -1,8 +1,9 @@
 use crate::input::intent::{ComposerIntent, GatewayConfigUpdate};
+use crate::text_width::display_width;
 use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
-use crate::ui::widgets::form_input_state::FormInputState;
+use crate::ui::widgets::form_text_field::FormTextField;
 use agent_protocol::{PlatformConfigResponse, PlatformControlEntry};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -28,18 +29,16 @@ enum GatewayPanelMode {
         configured: bool,
         selected: usize,
         fields: Vec<EditableField>,
-        input_state: FormInputState,
         weixin_login: Option<WeixinLoginSessionView>,
     },
 }
 
 struct EditableField {
     key: String,
-    value: String,
+    input: FormTextField,
     required: bool,
     is_secret: bool,
     was_set: bool,
-    dirty: bool,
 }
 
 impl GatewayPanel {
@@ -57,16 +56,15 @@ impl GatewayPanel {
         config: PlatformConfigResponse,
         weixin_login: Option<WeixinLoginSessionView>,
     ) -> Self {
-        let fields = config
+        let fields: Vec<EditableField> = config
             .fields
             .into_iter()
             .map(|field| EditableField {
                 key: field.key,
-                value: field.value.unwrap_or_default(),
+                input: FormTextField::new(field.value.unwrap_or_default()),
                 required: field.required,
                 is_secret: field.is_secret,
                 was_set: field.is_set,
-                dirty: false,
             })
             .collect();
         Self {
@@ -76,7 +74,6 @@ impl GatewayPanel {
                 configured: config.configured,
                 selected: 0,
                 fields,
-                input_state: FormInputState::new(),
                 weixin_login,
             },
         }
@@ -95,7 +92,6 @@ impl GatewayPanel {
             GatewayPanelMode::Edit {
                 selected,
                 fields,
-                input_state,
                 platform,
                 configured: _,
                 enabled: _,
@@ -106,7 +102,6 @@ impl GatewayPanel {
                 let next = (*selected as i32 + delta).clamp(0, max) as usize;
                 if next != *selected {
                     *selected = next;
-                    input_state.clear_paste_echo();
                 }
             }
         }
@@ -115,14 +110,10 @@ impl GatewayPanel {
     fn collect_updates(fields: &[EditableField]) -> Vec<GatewayConfigUpdate> {
         fields
             .iter()
-            .filter(|field| field.dirty)
+            .filter(|field| field.input.is_dirty())
             .map(|field| GatewayConfigUpdate {
                 key: field.key.clone(),
-                value: if field.value.trim().is_empty() {
-                    None
-                } else {
-                    Some(field.value.trim().to_string())
-                },
+                value: field.input.trimmed_value(),
             })
             .collect()
     }
@@ -133,25 +124,34 @@ impl BottomPaneView for GatewayPanel {
         false
     }
 
+    fn supports_text_paste_shortcut(&self) -> bool {
+        true
+    }
+
     fn handle_paste(&mut self, text: &str) -> BottomPaneViewAction {
-        let value = text.replace('\n', "");
         if let GatewayPanelMode::Edit {
-            selected,
-            fields,
-            input_state,
-            ..
+            selected, fields, ..
         } = &mut self.mode
             && *selected < fields.len()
         {
             let field = &mut fields[*selected];
-            input_state.append_paste(&mut field.value, &value);
-            field.dirty = true;
+            let _ = field.input.append_paste(text);
         }
         BottomPaneViewAction::None
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if !matches!(key.kind, KeyEventKind::Press) {
+            return BottomPaneViewAction::None;
+        }
+        if key.modifiers == KeyModifiers::CONTROL
+            && key.code == KeyCode::Char('a')
+            && let GatewayPanelMode::Edit {
+                selected, fields, ..
+            } = &mut self.mode
+            && *selected < fields.len()
+        {
+            fields[*selected].input.select_all();
             return BottomPaneViewAction::None;
         }
         match &mut self.mode {
@@ -175,37 +175,52 @@ impl BottomPaneView for GatewayPanel {
                 configured,
                 selected,
                 fields,
-                input_state,
                 weixin_login,
                 ..
             } => match key.code {
                 KeyCode::Up => self.move_selection(-1),
                 KeyCode::Down | KeyCode::Tab => self.move_selection(1),
                 KeyCode::BackTab => self.move_selection(-1),
+                KeyCode::Left => {
+                    if *selected < fields.len() {
+                        fields[*selected].input.move_left();
+                    }
+                }
+                KeyCode::Right => {
+                    if *selected < fields.len() {
+                        fields[*selected].input.move_right();
+                    }
+                }
+                KeyCode::Home => {
+                    if *selected < fields.len() {
+                        fields[*selected].input.move_to_start();
+                    }
+                }
+                KeyCode::End => {
+                    if *selected < fields.len() {
+                        fields[*selected].input.move_to_end();
+                    }
+                }
                 KeyCode::Backspace => {
                     if *selected < fields.len() {
-                        let field = &mut fields[*selected];
-                        input_state.backspace(&mut field.value);
-                        field.dirty = true;
+                        fields[*selected].input.backspace();
+                    }
+                }
+                KeyCode::Delete => {
+                    if *selected < fields.len() {
+                        fields[*selected].input.delete();
                     }
                 }
                 KeyCode::Char(' ') => {
                     if *selected == fields.len() {
                         *enabled = !*enabled;
-                        input_state.clear_paste_echo();
                     } else {
-                        let field = &mut fields[*selected];
-                        if input_state.append_char(&mut field.value, ' ') {
-                            field.dirty = true;
-                        }
+                        let _ = fields[*selected].input.append_char(' ');
                     }
                 }
                 KeyCode::Char(c) => {
                     if *selected < fields.len() {
-                        let field = &mut fields[*selected];
-                        if input_state.append_char(&mut field.value, c) {
-                            field.dirty = true;
-                        }
+                        let _ = fields[*selected].input.append_char(c);
                     }
                 }
                 KeyCode::Enter => {
@@ -359,10 +374,14 @@ impl BottomPaneView for GatewayPanel {
                         (false, true, false) => "optional, secret",
                         (false, false, _) => "optional",
                     };
-                    let value = if field.value.is_empty() {
-                        "________".to_string()
+                    let value = if field.input.is_empty() {
+                        if *selected == index {
+                            String::new()
+                        } else {
+                            "________".to_string()
+                        }
                     } else {
-                        field.value.clone()
+                        field.input.value().to_string()
                     };
                     lines.push(Line::from(vec![
                         Span::raw("  "),
@@ -481,8 +500,24 @@ impl BottomPaneView for GatewayPanel {
         }
     }
 
-    fn cursor_position(&self, _area: Rect) -> Option<(u16, u16)> {
-        None
+    fn cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        let GatewayPanelMode::Edit {
+            selected, fields, ..
+        } = &self.mode
+        else {
+            return None;
+        };
+        if *selected >= fields.len() {
+            return None;
+        }
+        let field = &fields[*selected];
+        let prefix = format!("  > {:<12}: ", field.key);
+        Some((
+            area.x
+                .saturating_add(display_width(&prefix) as u16)
+                .saturating_add(fields[*selected].input.cursor_display_column() as u16),
+            area.y.saturating_add(3 + *selected as u16),
+        ))
     }
 }
 

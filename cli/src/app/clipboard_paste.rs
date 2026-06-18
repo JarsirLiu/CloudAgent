@@ -37,6 +37,10 @@ pub(crate) fn paste_clipboard_content() -> Result<ClipboardPasteContent, PasteIm
     }
 }
 
+pub(crate) fn paste_clipboard_text() -> Result<String, PasteImageError> {
+    read_clipboard_text()
+}
+
 pub(crate) fn paste_image_to_temp_png() -> Result<PathBuf, PasteImageError> {
     match paste_image_as_png() {
         Ok(png) => {
