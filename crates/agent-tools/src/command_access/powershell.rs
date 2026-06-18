@@ -295,11 +295,10 @@ fn split_top_level(input: &str, delimiter: char) -> Vec<&str> {
 
     for (index, ch) in input.char_indices() {
         match quote {
-            Some(active) => {
-                if ch == active {
-                    quote = None;
-                }
+            Some(active) if ch == active => {
+                quote = None;
             }
+            Some(_) => {}
             None if ch == '"' || ch == '\'' => quote = Some(ch),
             None if ch == '(' => paren_depth = paren_depth.saturating_add(1),
             None if ch == ')' => paren_depth = paren_depth.saturating_sub(1),
@@ -324,11 +323,10 @@ fn split_top_level_once(input: &str, delimiter: char) -> Option<(&str, &str)> {
 
     for (index, ch) in input.char_indices() {
         match quote {
-            Some(active) => {
-                if ch == active {
-                    quote = None;
-                }
+            Some(active) if ch == active => {
+                quote = None;
             }
+            Some(_) => {}
             None if ch == '"' || ch == '\'' => quote = Some(ch),
             None if ch == '(' => paren_depth = paren_depth.saturating_add(1),
             None if ch == ')' => paren_depth = paren_depth.saturating_sub(1),
@@ -398,11 +396,10 @@ fn find_matching_pair(input: &str, open: char, close: char) -> Option<usize> {
 
     for (index, ch) in input.char_indices() {
         match quote {
-            Some(active) => {
-                if ch == active {
-                    quote = None;
-                }
+            Some(active) if ch == active => {
+                quote = None;
             }
+            Some(_) => {}
             None if ch == '"' || ch == '\'' => quote = Some(ch),
             None if ch == open => depth = depth.saturating_add(1),
             None if ch == close => {

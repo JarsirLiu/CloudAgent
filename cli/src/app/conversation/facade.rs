@@ -1,5 +1,6 @@
 use crate::app::TuiApp;
 use agent_core::ConversationTurn;
+use agent_core::turn::TurnState;
 
 pub(crate) fn rebuild_transcript_from_history(app: &mut TuiApp) {
     app.bottom_pane.clear_views();
@@ -23,11 +24,20 @@ pub(crate) fn upsert_turn_snapshot(app: &mut TuiApp, turn: ConversationTurn) {
         history.push(turn.clone());
     }
 
-    if app.transcript_owner.active_turn_id().is_none() && app.transcript_owner.live_is_empty() {
+    if should_rebuild_transcript_after_upsert(app, &turn) {
         rebuild_transcript_from_history(app);
     }
 }
 
 pub(crate) fn apply_turn_dispatch(app: &mut TuiApp, dispatch: crate::state::reducer::TurnDispatch) {
     app.apply_turn_dispatch(dispatch);
+}
+
+fn should_rebuild_transcript_after_upsert(app: &TuiApp, turn: &ConversationTurn) -> bool {
+    if app.transcript_owner.active_turn_id().is_none() && app.transcript_owner.live_is_empty() {
+        return true;
+    }
+
+    matches!(turn.state, TurnState::Completed | TurnState::Failed)
+        && app.transcript_owner.active_turn_id().is_none()
 }

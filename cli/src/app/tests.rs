@@ -292,7 +292,8 @@ fn rebuilt_completed_turn_routes_finalized_history_to_scrollback() {
 
     assert!(
         app.transcript_owner
-            .committed_cells_for_scrollback()
+            .scrollback_snapshot()
+            .cells
             .iter()
             .any(|cell| cell
                 .body()
@@ -326,9 +327,7 @@ fn local_pending_user_and_rebuilt_committed_user_render_consistently() {
     rebuilt_app
         .transcript_owner
         .rebuild_from_history_snapshot(&history, false);
-    let committed_cells = rebuilt_app
-        .transcript_owner
-        .committed_cells_for_scrollback();
+    let committed_cells = rebuilt_app.transcript_owner.scrollback_snapshot().cells;
     let committed_lines = build_transcript_lines(
         &committed_cells,
         TranscriptLineOptions::scrollback(80, None),
@@ -938,6 +937,39 @@ fn chat_surface_model_renders_streaming_visible_tail() {
 }
 
 #[test]
+fn upsert_completed_turn_rebuilds_transcript_when_no_active_turn_remains() {
+    let mut app = test_app();
+    app.run_state.history_snapshot = Some(vec![turn(
+        "turn-1",
+        TurnState::Running,
+        vec![user("u1", "hello"), reasoning("r1", "thinking")],
+    )]);
+    app.transcript_owner.rebuild_from_history_snapshot(
+        app.run_state.history_snapshot.as_deref().unwrap_or(&[]),
+        false,
+    );
+    app.transcript_owner.clear_active_turn(false);
+
+    conversation_facade::upsert_turn_snapshot(
+        &mut app,
+        turn(
+            "turn-1",
+            TurnState::Completed,
+            vec![user("u1", "hello"), agent("a1", "done")],
+        ),
+    );
+
+    let scrollback = app.transcript_owner.scrollback_snapshot();
+    let rendered = scrollback
+        .cells
+        .iter()
+        .map(|cell| cell.body().to_string())
+        .collect::<Vec<_>>();
+    assert!(rendered.iter().any(|body| body == "done"));
+    assert!(!rendered.iter().any(|body| body == "thinking"));
+}
+
+#[test]
 fn streaming_reasoning_stays_fully_visible_until_completion() {
     let mut app = TuiApp::new(
         "default".to_string(),
@@ -1096,7 +1128,8 @@ fn committed_history_without_active_cell_uses_scrollback_instead_of_viewport_bod
 
     assert!(
         app.transcript_owner
-            .committed_cells_for_scrollback()
+            .scrollback_snapshot()
+            .cells
             .iter()
             .any(|cell| cell.body().contains("hello"))
     );
@@ -1646,8 +1679,13 @@ fn cancelled_turn_clears_running_state_and_reenables_submit() {
     assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Idle);
     assert!(app.can_submit_turn());
     assert!(app.transcript_owner.active_turn_id().is_none());
+    assert!(app.transcript_owner.active_cell().is_none());
     assert_eq!(
-        app.transcript_owner.active_cell().map(|cell| cell.body()),
+        app.transcript_owner
+            .scrollback_snapshot()
+            .cells
+            .last()
+            .map(|cell| cell.body()),
         Some("interrupted")
     );
 }
@@ -1815,13 +1853,23 @@ fn failed_turn_without_pending_draft_does_not_claim_restore() {
         error: "worker app server closed unexpectedly".to_string(),
     });
 
-    let active = app
-        .transcript_owner
-        .active_cell()
+    let scrollback = app.transcript_owner.scrollback_snapshot();
+    let rendered = scrollback
+        .cells
+        .iter()
         .map(|cell| cell.body().to_string())
-        .unwrap_or_default();
-    assert!(active.contains("failed: worker app server closed unexpectedly"));
-    assert!(!active.contains("draft restored for retry"));
+        .collect::<Vec<_>>();
+    assert!(
+        rendered
+            .iter()
+            .any(|body| body.contains("failed: worker app server closed unexpectedly"))
+    );
+    assert!(
+        !rendered
+            .iter()
+            .any(|body| body.contains("draft restored for retry"))
+    );
+    assert!(app.transcript_owner.viewport_snapshot().cells.is_empty());
     assert!(app.can_submit_turn());
 }
 

@@ -181,35 +181,19 @@ impl BottomPaneView for GatewayPanel {
                 KeyCode::Up => self.move_selection(-1),
                 KeyCode::Down | KeyCode::Tab => self.move_selection(1),
                 KeyCode::BackTab => self.move_selection(-1),
-                KeyCode::Left => {
-                    if *selected < fields.len() {
-                        fields[*selected].input.move_left();
-                    }
+                KeyCode::Left if *selected < fields.len() => fields[*selected].input.move_left(),
+                KeyCode::Right if *selected < fields.len() => {
+                    fields[*selected].input.move_right();
                 }
-                KeyCode::Right => {
-                    if *selected < fields.len() {
-                        fields[*selected].input.move_right();
-                    }
+                KeyCode::Home if *selected < fields.len() => {
+                    fields[*selected].input.move_to_start();
                 }
-                KeyCode::Home => {
-                    if *selected < fields.len() {
-                        fields[*selected].input.move_to_start();
-                    }
+                KeyCode::End if *selected < fields.len() => fields[*selected].input.move_to_end(),
+                KeyCode::Backspace if *selected < fields.len() => {
+                    fields[*selected].input.backspace();
                 }
-                KeyCode::End => {
-                    if *selected < fields.len() {
-                        fields[*selected].input.move_to_end();
-                    }
-                }
-                KeyCode::Backspace => {
-                    if *selected < fields.len() {
-                        fields[*selected].input.backspace();
-                    }
-                }
-                KeyCode::Delete => {
-                    if *selected < fields.len() {
-                        fields[*selected].input.delete();
-                    }
+                KeyCode::Delete if *selected < fields.len() => {
+                    fields[*selected].input.delete();
                 }
                 KeyCode::Char(' ') => {
                     if *selected == fields.len() {
@@ -218,10 +202,8 @@ impl BottomPaneView for GatewayPanel {
                         let _ = fields[*selected].input.append_char(' ');
                     }
                 }
-                KeyCode::Char(c) => {
-                    if *selected < fields.len() {
-                        let _ = fields[*selected].input.append_char(c);
-                    }
+                KeyCode::Char(c) if *selected < fields.len() => {
+                    let _ = fields[*selected].input.append_char(c);
                 }
                 KeyCode::Enter => {
                     let toggle_index = fields.len();

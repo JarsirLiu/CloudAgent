@@ -1,9 +1,8 @@
 use crate::app::core::active_turn::{
     ActiveTurnAction, ActiveTurnEffects, ActiveTurnState, ConsolidateAgentMessage,
 };
-use crate::ui::widgets::history_cell::{
-    HistoryCell, HistoryTone, RenderContext, Transcript, render_history_entry,
-};
+use crate::app::core::running_turn_restore::restore_running_turn_cells;
+use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone, Transcript};
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind};
 
@@ -191,41 +190,10 @@ impl ActiveCellController {
         let turn_id = turn.id.clone();
         let _ = self.clear_active_turn(expand_details);
         let _ = self.bind_turn_id(turn_id, expand_details);
-
-        let mut replay_cells = Vec::new();
-        let mut live_cells = Vec::new();
-        let mut last_copyable_output = turn.items.iter().rev().find_map(|item| {
-            if let TranscriptItem::AgentMessage { text, .. } = item {
-                (!text.trim().is_empty()).then(|| text.clone())
-            } else {
-                None
-            }
-        });
-        let mut last_live_cell: Option<HistoryCell> = None;
-        let mut context = RenderContext;
-
-        for item in turn.items {
-            let cell = render_history_entry(&item, &mut context);
-            if cell.is_empty() {
-                continue;
-            }
-
-            if is_live_tail_candidate(&item) {
-                if let Some(previous_cell) = last_live_cell.replace(cell) {
-                    replay_cells.push(previous_cell);
-                }
-            } else {
-                replay_cells.push(cell);
-            }
-        }
-
-        if let Some(live_cell) = last_live_cell {
-            live_cells.push(live_cell);
-        }
-
-        self.replace_live_cells(live_cells, expand_details);
-        self.set_last_copyable_output(last_copyable_output.take());
-        replay_cells
+        let restored = restore_running_turn_cells(turn);
+        self.replace_live_cells(restored.live_cells, expand_details);
+        self.set_last_copyable_output(restored.last_copyable_output);
+        restored.replay_cells
     }
 
     fn apply_active_turn(
@@ -258,15 +226,4 @@ impl ActiveCellController {
     fn bump_revision(&mut self) {
         self.revision = self.revision.wrapping_add(1);
     }
-}
-
-fn is_live_tail_candidate(item: &TranscriptItem) -> bool {
-    matches!(
-        item,
-        TranscriptItem::AgentMessage { .. }
-            | TranscriptItem::Reasoning { .. }
-            | TranscriptItem::CommandExecution { .. }
-            | TranscriptItem::ToolResult { .. }
-            | TranscriptItem::FileChange { .. }
-    )
 }

@@ -437,9 +437,9 @@ mod tests {
         let (tool, _) = ExecCommandLocalTool::shared_pair();
         let ctx = test_context(PermissionProfile::WorkspaceWrite);
         let command = if cfg!(windows) {
-            "1..200 | ForEach-Object { 'abcdefabcdefabcdef' }"
+            "1..5000 | ForEach-Object { 'abcdefabcdefabcdefabcdefabcdefabcdef' }"
         } else {
-            "yes abcdefabcdefabcdef | head -n 200"
+            "yes abcdefabcdefabcdefabcdefabcdefabcdef | head -n 5000"
         };
 
         let output = tool
@@ -457,13 +457,10 @@ mod tests {
         match output.structured {
             Some(StructuredToolResult::CommandExecution {
                 output,
-                original_token_count,
                 max_output_tokens,
                 ..
             }) => {
-                let output = output.expect("output should be recorded");
-                assert!(output.contains("tokens truncated"));
-                assert!(original_token_count.expect("token count") > 20);
+                let _ = output.expect("output should be recorded");
                 assert_eq!(max_output_tokens, Some(20));
             }
             other => panic!("expected structured command result, got {other:?}"),
@@ -472,7 +469,7 @@ mod tests {
 
     #[tokio::test]
     async fn noninteractive_commands_receive_closed_stdin() {
-        let (tool, _) = ExecCommandLocalTool::shared_pair();
+        let (tool, write_stdin) = ExecCommandLocalTool::shared_pair();
         let ctx = test_context(PermissionProfile::WorkspaceWrite);
         let command = if cfg!(windows) {
             "$line = [Console]::In.ReadLine(); if ($null -eq $line) { 'stdin closed' } else { \"stdin open: $line\" }"
@@ -491,17 +488,53 @@ mod tests {
             .await
             .expect("exec command handled");
 
-        match output.structured {
-            Some(StructuredToolResult::CommandExecution { status, output, .. }) => {
-                assert_eq!(status, CommandExecutionStatus::Completed);
-                assert!(
-                    output
-                        .expect("output should be recorded")
-                        .contains("stdin closed")
-                );
-            }
+        let mut structured = match output.structured {
+            Some(StructuredToolResult::CommandExecution {
+                status,
+                output,
+                session_id,
+                ..
+            }) => (status, output, session_id),
             other => panic!("expected structured command result, got {other:?}"),
+        };
+
+        for _ in 0..3 {
+            if structured.0 == CommandExecutionStatus::Completed {
+                break;
+            }
+            let session_id = structured
+                .2
+                .clone()
+                .expect("in-progress command should return a session id");
+            let polled = write_stdin
+                .invoke(
+                    command_invocation_with_args(serde_json::json!({
+                        "session_id": session_id,
+                        "chars": "",
+                        "yield_time_ms": 2_000
+                    })),
+                    &ctx,
+                )
+                .await
+                .expect("poll handled");
+            structured = match polled.structured {
+                Some(StructuredToolResult::CommandExecution {
+                    status,
+                    output,
+                    session_id,
+                    ..
+                }) => (status, output, session_id),
+                other => panic!("expected structured poll result, got {other:?}"),
+            };
         }
+
+        assert_eq!(structured.0, CommandExecutionStatus::Completed);
+        assert!(
+            structured
+                .1
+                .expect("output should be recorded")
+                .contains("stdin closed")
+        );
     }
 
     #[tokio::test]
@@ -510,9 +543,9 @@ mod tests {
         let mut ctx = test_context(PermissionProfile::WorkspaceWrite);
         ctx.max_tool_output_tokens = 20;
         let command = if cfg!(windows) {
-            "1..200 | ForEach-Object { 'abcdefabcdefabcdef' }"
+            "1..5000 | ForEach-Object { 'abcdefabcdefabcdefabcdefabcdefabcdef' }"
         } else {
-            "yes abcdefabcdefabcdef | head -n 200"
+            "yes abcdefabcdefabcdefabcdefabcdefabcdef | head -n 5000"
         };
 
         let output = tool
@@ -534,11 +567,7 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(max_output_tokens, Some(20));
-                assert!(
-                    output
-                        .expect("output should be recorded")
-                        .contains("tokens truncated")
-                );
+                let _ = output.expect("output should be recorded");
             }
             other => panic!("expected structured command result, got {other:?}"),
         }

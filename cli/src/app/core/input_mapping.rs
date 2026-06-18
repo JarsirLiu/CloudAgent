@@ -60,12 +60,11 @@ impl TuiApp {
             );
             return None;
         }
-        if matches_image_paste_shortcut(key) {
-            if self.bottom_pane.no_modal_or_popup_active()
-                && self.bottom_pane.should_capture_global_paste_shortcut()
-            {
-                return Some(ParsedInput::LocalImagePaste);
-            }
+        if matches_image_paste_shortcut(key)
+            && self.bottom_pane.no_modal_or_popup_active()
+            && self.bottom_pane.should_capture_global_paste_shortcut()
+        {
+            return Some(ParsedInput::LocalImagePaste);
         }
         match self.bottom_pane.handle_key(key)? {
             InputPaneAction::LoadMoreSessions { cursor } => {

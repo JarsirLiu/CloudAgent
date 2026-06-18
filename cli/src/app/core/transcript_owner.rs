@@ -2,6 +2,10 @@ use crate::app::conversation::projection::{HistoryTurnCells, project_conversatio
 use crate::app::core::active_cell_controller::ActiveCellController;
 use crate::app::core::active_turn::ConsolidateAgentMessage;
 use crate::app::core::committed_transcript_store::CommittedTranscriptStore;
+use crate::app::core::transcript_projection::{
+    TranscriptScrollbackSnapshot, TranscriptViewportSnapshot, build_scrollback_snapshot,
+    build_viewport_snapshot,
+};
 use crate::ui::transcript_render_cache::TranscriptRenderCacheKey;
 use crate::ui::widgets::history_cell::HistoryCell;
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
@@ -24,6 +28,10 @@ impl TranscriptOwner {
 
     pub(crate) fn push_live_cell(&mut self, cell: HistoryCell) {
         self.active_cell_controller.replace_notice_cell(cell);
+    }
+
+    pub(crate) fn push_committed_cell(&mut self, cell: HistoryCell) {
+        self.queue_history_cells(vec![cell]);
     }
 
     pub(crate) fn replace_live_cells(&mut self, cells: Vec<HistoryCell>, expand_details: bool) {
@@ -49,13 +57,17 @@ impl TranscriptOwner {
         !self.live_is_empty() || !self.committed_store.is_empty()
     }
 
-    pub(crate) fn committed_scrollback_revision(&self) -> u64 {
+    pub(crate) fn committed_revision(&self) -> u64 {
         self.committed_store.revision()
+    }
+
+    pub(crate) fn live_revision(&self) -> u64 {
+        self.active_cell_controller.revision()
     }
 
     pub(crate) fn render_cache_key(&self, width: usize) -> TranscriptRenderCacheKey {
         TranscriptRenderCacheKey {
-            active_revision: self.active_cell_controller.revision(),
+            live_revision: self.live_revision(),
             width,
         }
     }
@@ -84,20 +96,20 @@ impl TranscriptOwner {
 
     #[cfg(test)]
     pub(crate) fn committed_history_cells(&self) -> Vec<HistoryCell> {
-        self.committed_store.cells()
+        self.committed_store.cells_ref().to_vec()
     }
 
     #[cfg(test)]
     pub(crate) fn pending_history_cells(&self) -> Vec<HistoryCell> {
-        self.committed_store.cells()
+        self.committed_store.cells_ref().to_vec()
     }
 
-    pub(crate) fn committed_cells_for_scrollback(&self) -> Vec<HistoryCell> {
-        self.committed_store.cells()
+    pub(crate) fn viewport_snapshot(&self) -> TranscriptViewportSnapshot {
+        build_viewport_snapshot(self)
     }
 
-    pub(crate) fn live_cells_for_viewport(&self) -> Vec<HistoryCell> {
-        self.active_cell_controller.live_cells().to_vec()
+    pub(crate) fn scrollback_snapshot(&self) -> TranscriptScrollbackSnapshot {
+        build_scrollback_snapshot(self)
     }
 
     pub(crate) fn rebuild_from_history_snapshot(
@@ -213,6 +225,14 @@ impl TranscriptOwner {
 
     pub(crate) fn active_turn_id(&self) -> Option<&str> {
         self.active_cell_controller.active_turn_id()
+    }
+
+    pub(crate) fn committed_cells_ref(&self) -> &[HistoryCell] {
+        self.committed_store.cells_ref()
+    }
+
+    pub(crate) fn live_cells_ref(&self) -> &[HistoryCell] {
+        self.active_cell_controller.live_cells()
     }
 
     fn queue_history_cells(&mut self, cells: Vec<HistoryCell>) {

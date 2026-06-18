@@ -150,15 +150,11 @@ impl<'a> MarkdownWriter<'a> {
             }
             TagEnd::Link => self.end_link(),
             TagEnd::Table => self.end_table(),
-            TagEnd::TableHead => {
-                if !self.table_row.is_empty() {
-                    self.table_rows.push(std::mem::take(&mut self.table_row));
-                }
+            TagEnd::TableHead if !self.table_row.is_empty() => {
+                self.table_rows.push(std::mem::take(&mut self.table_row));
             }
-            TagEnd::TableRow => {
-                if !self.table_row.is_empty() {
-                    self.table_rows.push(std::mem::take(&mut self.table_row));
-                }
+            TagEnd::TableRow if !self.table_row.is_empty() => {
+                self.table_rows.push(std::mem::take(&mut self.table_row));
             }
             TagEnd::TableCell => {
                 let cell_text = self

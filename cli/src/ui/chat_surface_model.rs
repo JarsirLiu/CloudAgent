@@ -40,8 +40,11 @@ pub(crate) fn build_chat_surface_model(
 fn transcript_for_width(app: &mut TuiApp, render_width: usize) -> TranscriptSurface {
     let key = app.transcript_owner.render_cache_key(render_width);
     if !app.transcript_render_cache.is_fresh(key) {
-        let cells = app.transcript_owner.live_cells_for_viewport();
-        let lines = build_transcript_lines(&cells, TranscriptLineOptions::live(render_width)).lines;
+        let snapshot = app.transcript_owner.viewport_snapshot();
+        let _revision = snapshot.revision;
+        let lines =
+            build_transcript_lines(&snapshot.cells, TranscriptLineOptions::live(render_width))
+                .lines;
         let rendered_rows = if lines.is_empty() {
             0
         } else {

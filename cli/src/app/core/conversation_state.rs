@@ -170,14 +170,22 @@ impl TuiApp {
                 } else {
                     format!("failed: {error}")
                 };
-                self.push_live_cell(HistoryCell::info("turn", message, HistoryTone::Error));
+                self.transcript_owner.push_committed_cell(HistoryCell::info(
+                    "turn",
+                    message,
+                    HistoryTone::Error,
+                ));
                 self.transcript_scroll.reset();
             }
             TurnDispatch::Cancelled { reason } => {
                 self.run_state.turn_lifecycle.clear_pending_submission();
                 self.transcript_owner
                     .clear_active_turn(self.run_state.expand_tool_details);
-                self.push_live_cell(HistoryCell::info("turn", reason, HistoryTone::Warning));
+                self.transcript_owner.push_committed_cell(HistoryCell::info(
+                    "turn",
+                    reason,
+                    HistoryTone::Warning,
+                ));
                 self.transcript_scroll.reset();
             }
         }

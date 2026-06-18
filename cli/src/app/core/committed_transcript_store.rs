@@ -20,8 +20,8 @@ impl CommittedTranscriptStore {
         self.revision
     }
 
-    pub(crate) fn cells(&self) -> Vec<HistoryCell> {
-        self.transcript.cells().to_vec()
+    pub(crate) fn cells_ref(&self) -> &[HistoryCell] {
+        self.transcript.cells()
     }
 
     pub(crate) fn append_cells(&mut self, cells: Vec<HistoryCell>) {

@@ -19,9 +19,51 @@ fn empty_committed_cells_do_not_emit_scrollback_update() {
             width: 80,
             left_padding: 4,
         },
+        12,
     );
 
     assert!(update.is_none());
+}
+
+#[test]
+fn viewport_height_change_forces_full_replay_even_when_scrollback_is_unchanged() {
+    let mut app = crate::app::TuiApp::new(
+        "default".to_string(),
+        "test",
+        std::path::PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        std::path::PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    let mut projection = TerminalProjectionController::default();
+    app.transcript_owner
+        .push_committed_cell(HistoryCell::user("hello"));
+
+    let first = projection.prepare_history_update(
+        &mut app,
+        crate::ui::chat_surface::TranscriptRenderMetrics {
+            width: 80,
+            left_padding: 4,
+        },
+        10,
+    );
+    assert!(matches!(
+        first.map(|batch| batch.mode),
+        Some(crate::terminal::HistoryReplayMode::FullReplay)
+    ));
+
+    let second = projection.prepare_history_update(
+        &mut app,
+        crate::ui::chat_surface::TranscriptRenderMetrics {
+            width: 80,
+            left_padding: 4,
+        },
+        14,
+    );
+    assert!(matches!(
+        second.map(|batch| batch.mode),
+        Some(crate::terminal::HistoryReplayMode::FullReplay)
+    ));
 }
 
 #[test]
