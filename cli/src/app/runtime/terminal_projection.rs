@@ -132,4 +132,5 @@ pub(crate) fn draw_with_terminal_projection(
 }
 
 #[cfg(test)]
+#[path = "terminal_projection_tests.rs"]
 mod tests;
