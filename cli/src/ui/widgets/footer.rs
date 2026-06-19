@@ -1,13 +1,10 @@
 use agent_protocol::FrontendMode;
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
+use crate::ui::theme::{hint_style, muted_style, status_divider_style, status_mode_style, title_style};
 
 pub fn divider_line(width: usize) -> Line<'static> {
-    Line::from(Span::styled(
-        "-".repeat(width),
-        Style::default().fg(Color::Rgb(40, 40, 50)),
-    ))
+    Line::from(Span::styled("-".repeat(width), status_divider_style()))
 }
 
 pub fn status_line(
@@ -22,34 +19,20 @@ pub fn status_line(
         return running_status_line(indicator, status_text, runtime_hint, meta, width);
     }
 
-    let (dot_color, mode_label, badge_bg) = match mode {
-        FrontendMode::Idle => (Color::Rgb(80, 200, 120), "ready", Color::Rgb(18, 34, 24)),
-        FrontendMode::Running => (Color::Rgb(100, 160, 255), "working", Color::Rgb(18, 28, 45)),
-        FrontendMode::WaitingForServerRequest => {
-            (Color::Rgb(255, 180, 50), "action", Color::Rgb(48, 34, 14))
-        }
+    let (mode_label, badge_style) = match mode {
+        FrontendMode::Idle => ("ready", status_mode_style(mode)),
+        FrontendMode::Running => ("working", status_mode_style(mode)),
+        FrontendMode::WaitingForServerRequest => ("action", status_mode_style(mode)),
     };
 
     let mut spans = vec![
         Span::raw(" "),
-        Span::styled(
-            format!(" {mode_label} "),
-            Style::default()
-                .fg(dot_color)
-                .bg(badge_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!(" {mode_label} "), badge_style),
     ];
 
     if !status_text.trim().is_empty() && !status_text.eq_ignore_ascii_case(mode_label) {
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Rgb(60, 60, 70)),
-        ));
-        spans.push(Span::styled(
-            status_text.to_string(),
-            Style::default().fg(Color::Rgb(140, 140, 155)),
-        ));
+        spans.push(Span::styled(" · ", status_divider_style()));
+        spans.push(Span::styled(status_text.to_string(), muted_style()));
     }
 
     if !meta.is_empty() {
@@ -64,14 +47,8 @@ pub fn status_line(
         if available_meta == 0 {
             return Line::from(spans);
         }
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Rgb(60, 60, 70)),
-        ));
-        spans.push(Span::styled(
-            truncate_single_line(meta, available_meta),
-            Style::default().fg(Color::Rgb(95, 105, 120)),
-        ));
+        spans.push(Span::styled(" · ", status_divider_style()));
+        spans.push(Span::styled(truncate_single_line(meta, available_meta), hint_style()));
     }
 
     Line::from(spans)
@@ -91,14 +68,12 @@ fn running_status_line(
     };
     let mut spans = vec![
         Span::styled(
-            format!("{} ", indicator.unwrap_or("•")),
-            Style::default().fg(Color::Rgb(100, 160, 255)),
+        format!("{} ", indicator.unwrap_or("•")),
+            status_mode_style(FrontendMode::Running),
         ),
         Span::styled(
             header.to_string(),
-            Style::default()
-                .fg(Color::Rgb(210, 215, 225))
-                .add_modifier(Modifier::BOLD),
+            title_style(),
         ),
     ];
 
@@ -109,7 +84,7 @@ fn running_status_line(
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
             format!("({runtime_hint})"),
-            Style::default().fg(Color::Rgb(132, 138, 150)),
+            hint_style(),
         ));
     }
 
@@ -126,7 +101,7 @@ fn running_status_line(
             spans.push(Span::raw(" "));
             spans.push(Span::styled(
                 truncate_single_line(meta, available_meta),
-                Style::default().fg(Color::Rgb(95, 105, 120)),
+                hint_style(),
             ));
         }
     }
@@ -146,10 +121,7 @@ pub fn hint_line(mode: FrontendMode, width: usize, meta: &str) -> Line<'static> 
         base.to_string()
     };
     let hint = truncate_single_line(&hint, width.saturating_sub(1));
-    Line::from(Span::styled(
-        hint,
-        Style::default().fg(Color::Rgb(62, 62, 78)),
-    ))
+    Line::from(Span::styled(hint, hint_style()))
 }
 
 fn truncate_single_line(input: &str, max_width: usize) -> String {

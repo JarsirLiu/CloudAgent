@@ -12,9 +12,27 @@ pub(crate) enum ViewCompletion {
     Cancelled,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ViewKind {
+    Help,
+    Filter,
+    Config,
+    Permissions,
+    Reasoning,
+    ModelPicker,
+    ModelPickerLoading,
+    SessionPicker,
+    SessionPickerLoading,
+    GatewayList,
+    GatewayEdit,
+    WeixinBinding,
+    ServerRequest,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum BottomPaneViewAction {
     None,
+    Handled,
     Cancel,
     Back,
     Composer(ComposerIntent),
@@ -30,6 +48,8 @@ pub(crate) enum BottomPaneViewAction {
 }
 
 pub(crate) trait BottomPaneView {
+    fn kind(&self) -> ViewKind;
+
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if matches!(key.kind, KeyEventKind::Press)
             && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
@@ -75,10 +95,6 @@ pub(crate) trait BottomPaneView {
 
     fn clear_dismiss_after_child_accept(&mut self) {}
 
-    fn prefer_esc_to_handle_key_event(&self) -> bool {
-        false
-    }
-
     fn try_consume_server_request(
         &mut self,
         request: ServerRequestInlineState,
@@ -95,18 +111,6 @@ pub(crate) trait BottomPaneView {
     }
 
     fn requires_action(&self) -> bool {
-        false
-    }
-
-    fn is_model_picker_loading(&self) -> bool {
-        false
-    }
-
-    fn is_session_picker(&self) -> bool {
-        false
-    }
-
-    fn is_session_picker_loading(&self, _generation: u64) -> bool {
         false
     }
 

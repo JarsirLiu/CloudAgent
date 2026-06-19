@@ -2,13 +2,17 @@ use std::cell::RefCell;
 
 use agent_protocol::FrontendMode;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use crate::input::completion::CompletionState;
 use crate::text_width::display_width;
 use crate::ui::widgets::completion_popup::completion_popup_lines;
 use crate::ui::widgets::textarea::{TextArea, TextAreaState};
+use crate::ui::theme::{
+    composer_body_placeholder_style, composer_body_selected_style, composer_body_style,
+    composer_prompt_faint_style, composer_prompt_style,
+};
 
 pub struct ComposerRender {
     pub lines: Vec<Line<'static>>,
@@ -32,11 +36,6 @@ pub(super) fn render_composer(
     mode: FrontendMode,
     width: usize,
 ) -> ComposerRender {
-    let (prompt_color, prompt_bg) = match mode {
-        FrontendMode::WaitingForServerRequest => (Color::Rgb(255, 184, 76), None),
-        FrontendMode::Running => (Color::Rgb(100, 160, 255), None),
-        FrontendMode::Idle => (Color::Rgb(150, 180, 255), None),
-    };
     let layout = composer_layout(mode, width);
     let body = composer_body(textarea, mode);
 
@@ -81,29 +80,21 @@ pub(super) fn render_composer(
         } else {
             " ".repeat(layout.prompt_width)
         };
-        let prompt_style = {
-            let base = Style::default()
-                .fg(prompt_color)
-                .add_modifier(Modifier::BOLD);
-            if actual_index == 0 {
-                prompt_bg.map_or(base, |bg| base.bg(bg))
-            } else {
-                Style::default().fg(Color::Rgb(55, 55, 68))
-            }
+        let prompt_style = if actual_index == 0 {
+            composer_prompt_style(mode).add_modifier(Modifier::BOLD)
+        } else {
+            composer_prompt_faint_style()
         };
         lines.push(Line::from(vec![
             Span::styled(indent, prompt_style),
             Span::styled(
                 wrapped_line,
                 if is_placeholder {
-                    Style::default().fg(Color::Rgb(65, 65, 80))
+                    composer_body_placeholder_style()
                 } else if textarea.is_all_selected() {
-                    Style::default()
-                        .fg(Color::Rgb(40, 40, 52))
-                        .bg(Color::Rgb(220, 220, 230))
-                        .add_modifier(Modifier::BOLD)
+                    composer_body_selected_style()
                 } else {
-                    Style::default().fg(Color::Rgb(220, 220, 230))
+                    composer_body_style()
                 },
             ),
         ]));

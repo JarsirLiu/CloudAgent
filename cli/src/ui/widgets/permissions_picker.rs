@@ -3,9 +3,9 @@ use crate::app::commands::permission_profile::{
 };
 use crate::input::intent::ComposerIntent;
 use crate::text_width::display_width;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::theme::{picker_selected_style, picker_unselected_style};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 pub struct PermissionsPicker {
@@ -32,6 +32,10 @@ impl PermissionsPicker {
 }
 
 impl BottomPaneView for PermissionsPicker {
+    fn kind(&self) -> ViewKind {
+        ViewKind::Permissions
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if !matches!(key.kind, KeyEventKind::Press) {
             return BottomPaneViewAction::None;
@@ -69,12 +73,9 @@ impl BottomPaneView for PermissionsPicker {
             let selected = absolute_idx == self.selected;
             let marker = if selected { "> " } else { "  " };
             let style = if selected {
-                Style::default()
-                    .fg(Color::Rgb(190, 220, 255))
-                    .bg(Color::Rgb(26, 34, 50))
-                    .add_modifier(Modifier::BOLD)
+                picker_selected_style()
             } else {
-                Style::default().fg(Color::Rgb(135, 145, 175))
+                picker_unselected_style()
             };
             let mode_col = format!("{marker}{:<14}", spec.mode);
             let mode_text = pad_to_width(&mode_col, 17);
@@ -83,7 +84,7 @@ impl BottomPaneView for PermissionsPicker {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(mode_text, style),
-                Span::styled(label, Style::default().fg(Color::Rgb(120, 130, 150))),
+                Span::styled(label, picker_unselected_style()),
             ]));
         }
         if end < self.options.len() {

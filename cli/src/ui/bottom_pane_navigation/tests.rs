@@ -1,53 +1,49 @@
 use super::*;
 use crate::input::intent::ComposerIntent;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneViewAction, ViewKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::text::Line;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
+fn release_key(code: KeyCode) -> KeyEvent {
+    KeyEvent {
+        code,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Release,
+        state: crossterm::event::KeyEventState::NONE,
+    }
+}
+
 struct TestView {
     action: BottomPaneViewAction,
-    requires_action: bool,
     dismiss_after_child_accept: bool,
     cleared_child_accept: bool,
-    prefer_esc_to_handle_key_event: bool,
 }
 
 impl TestView {
     fn new(action: BottomPaneViewAction) -> Self {
         Self {
             action,
-            requires_action: false,
             dismiss_after_child_accept: false,
             cleared_child_accept: false,
-            prefer_esc_to_handle_key_event: false,
-        }
-    }
-
-    fn action_required() -> Self {
-        Self {
-            action: BottomPaneViewAction::None,
-            requires_action: true,
-            dismiss_after_child_accept: false,
-            cleared_child_accept: false,
-            prefer_esc_to_handle_key_event: false,
         }
     }
 }
 
 impl BottomPaneView for TestView {
+    fn kind(&self) -> ViewKind {
+        ViewKind::Help
+    }
+
     fn handle_key_event(&mut self, _key: KeyEvent) -> BottomPaneViewAction {
         self.action.clone()
     }
 
     fn render_lines(&self, _area_width: u16) -> Vec<Line<'static>> {
         Vec::new()
-    }
-
-    fn requires_action(&self) -> bool {
-        self.requires_action
     }
 
     fn dismiss_after_child_accept(&self) -> bool {
@@ -58,10 +54,6 @@ impl BottomPaneView for TestView {
         self.cleared_child_accept = true;
         self.dismiss_after_child_accept = false;
     }
-
-    fn prefer_esc_to_handle_key_event(&self) -> bool {
-        self.prefer_esc_to_handle_key_event
-    }
 }
 
 #[test]
@@ -71,7 +63,7 @@ fn cancel_pops_active_view() {
 
     assert!(matches!(
         navigator.handle_key(key(KeyCode::Esc)),
-        NavigationKeyResult::Consumed
+        NavigationKeyResult::Handled
     ));
     assert!(navigator.is_empty());
 }
@@ -84,7 +76,7 @@ fn back_pops_child_and_keeps_parent() {
 
     assert!(matches!(
         navigator.handle_key(key(KeyCode::Esc)),
-        NavigationKeyResult::Consumed
+        NavigationKeyResult::Handled
     ));
     assert!(navigator.has_active_view());
 }
@@ -118,14 +110,15 @@ fn cancelled_child_keeps_parent() {
 }
 
 #[test]
-fn action_required_esc_can_fallthrough() {
+fn esc_with_none_action_pops_active_view() {
     let mut navigator = BottomPaneNavigator::new();
-    navigator.push(Box::new(TestView::action_required()));
+    navigator.push(Box::new(TestView::new(BottomPaneViewAction::None)));
 
     assert!(matches!(
         navigator.handle_key(key(KeyCode::Esc)),
-        NavigationKeyResult::FallthroughEscFromActionRequiredView
+        NavigationKeyResult::Handled
     ));
+    assert!(navigator.is_empty());
 }
 
 #[test]
@@ -135,21 +128,46 @@ fn normal_view_esc_is_consumed() {
 
     assert!(matches!(
         navigator.handle_key(key(KeyCode::Esc)),
-        NavigationKeyResult::Consumed
+        NavigationKeyResult::Handled
     ));
+    assert!(navigator.is_empty());
 }
 
 #[test]
-fn preferred_esc_routes_to_view_handler() {
-    let mut view = TestView::new(BottomPaneViewAction::Composer(ComposerIntent::Help));
-    view.prefer_esc_to_handle_key_event = true;
+fn esc_routes_to_view_handler_before_default_close() {
     let mut navigator = BottomPaneNavigator::new();
-    navigator.push(Box::new(view));
+    navigator.push(Box::new(TestView::new(BottomPaneViewAction::Composer(
+        ComposerIntent::Help,
+    ))));
 
     assert!(matches!(
         navigator.handle_key(key(KeyCode::Esc)),
         NavigationKeyResult::Composer(ComposerIntent::Help)
     ));
+}
+
+#[test]
+fn handled_action_consumes_escape_without_dismissing_view() {
+    let mut navigator = BottomPaneNavigator::new();
+    navigator.push(Box::new(TestView::new(BottomPaneViewAction::Handled)));
+
+    assert!(matches!(
+        navigator.handle_key(key(KeyCode::Esc)),
+        NavigationKeyResult::Handled
+    ));
+    assert!(navigator.has_active_view());
+}
+
+#[test]
+fn key_release_does_not_close_active_view() {
+    let mut navigator = BottomPaneNavigator::new();
+    navigator.push(Box::new(TestView::new(BottomPaneViewAction::None)));
+
+    assert!(matches!(
+        navigator.handle_key(release_key(KeyCode::Esc)),
+        NavigationKeyResult::Handled
+    ));
+    assert!(navigator.has_active_view());
 }
 
 #[test]

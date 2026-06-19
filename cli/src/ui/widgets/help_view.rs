@@ -1,7 +1,7 @@
 use crate::input::slash_command::SlashCommand;
 use crate::text_width::display_width;
-use crate::ui::widgets::bottom_pane_view::BottomPaneView;
-use ratatui::style::{Color, Modifier, Style};
+use crate::ui::theme::{picker_selected_style, title_style};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, ViewKind};
 use ratatui::text::{Line, Span};
 
 pub struct HelpView;
@@ -19,15 +19,14 @@ impl Default for HelpView {
 }
 
 impl BottomPaneView for HelpView {
+    fn kind(&self) -> ViewKind {
+        ViewKind::Help
+    }
+
     fn render_lines(&self, area_width: u16) -> Vec<Line<'static>> {
         let content_width = area_width.saturating_sub(4) as usize;
         let mut lines = vec![
-            Line::from(vec![Span::styled(
-                "  Command Help",
-                Style::default()
-                    .fg(Color::Rgb(215, 220, 235))
-                    .add_modifier(Modifier::BOLD),
-            )]),
+            Line::from(vec![Span::styled("  Command Help", title_style())]),
             Line::from("  Local slash commands:"),
         ];
 
@@ -39,10 +38,7 @@ impl BottomPaneView for HelpView {
             let row = format!("{command:<20} {}", spec.description);
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(
-                    truncate_to_width(&row, content_width),
-                    Style::default().fg(Color::Rgb(190, 220, 255)),
-                ),
+                Span::styled(truncate_to_width(&row, content_width), picker_selected_style()),
             ]));
         }
 

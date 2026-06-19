@@ -2,9 +2,12 @@ use super::wrapping::{WrapOptions, word_wrap_spans, word_wrap_text};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::text_width::display_width;
+use crate::ui::theme::{
+    markdown_code_style, markdown_html_style, markdown_list_marker_style, markdown_table_separator_style,
+    markdown_text_style,
+};
 
 pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
     let input = normalize_markdown_indentation(input);
@@ -59,7 +62,7 @@ impl<'a> MarkdownWriter<'a> {
             out: Vec::new(),
             current: Vec::new(),
             table_cell: Vec::new(),
-            style_stack: vec![Style::default().fg(Color::Rgb(200, 200, 210))],
+            style_stack: vec![markdown_text_style()],
             in_code_block: false,
             code_indent: String::new(),
             code_buf: String::new(),
@@ -307,15 +310,9 @@ impl<'a> MarkdownWriter<'a> {
             Some(Some(number)) => {
                 let prefix = format!("{number}. ");
                 *number += 1;
-                Some(vec![Span::styled(
-                    prefix,
-                    Style::default().fg(Color::Rgb(150, 180, 255)),
-                )])
+                Some(vec![Span::styled(prefix, markdown_list_marker_style())])
             }
-            Some(None) => Some(vec![Span::styled(
-                "- ".to_string(),
-                Style::default().fg(Color::Rgb(200, 200, 210)),
-            )]),
+            Some(None) => Some(vec![Span::styled("- ".to_string(), markdown_text_style())]),
             None => Some(vec![Span::raw("- ".to_string())]),
         };
         let prefix = if depth == 0 {
@@ -389,12 +386,12 @@ impl<'a> MarkdownWriter<'a> {
         if self.in_table_cell {
             self.table_cell.push(Span::styled(
                 text.to_string(),
-                Style::default().fg(Color::Rgb(140, 150, 170)),
+                markdown_html_style(),
             ));
         } else {
             self.push_span(Span::styled(
                 text.to_string(),
-                Style::default().fg(Color::Rgb(140, 150, 170)),
+                markdown_html_style(),
             ));
         }
     }
@@ -603,10 +600,7 @@ pub(super) fn render_plaintext(input: &str, width: usize) -> Vec<Line<'static>> 
                     .spans
                     .into_iter()
                     .map(|span| {
-                        Span::styled(
-                            span.content.into_owned(),
-                            Style::default().fg(Color::Rgb(200, 200, 210)),
-                        )
+                        Span::styled(span.content.into_owned(), markdown_text_style())
                     })
                     .collect::<Vec<_>>();
                 Line::from(spans)
@@ -668,14 +662,14 @@ fn render_table(rows: &[Vec<String>], width: usize, out: &mut Vec<Line<'static>>
             }
             out.push(Line::from(vec![Span::styled(
                 rendered,
-                Style::default().fg(Color::Rgb(200, 200, 210)),
+                markdown_text_style(),
             )]));
         }
 
         if row_index == 0 && rows.len() > 1 {
             out.push(Line::from(vec![Span::styled(
                 table_separator(&widths),
-                Style::default().fg(Color::Rgb(90, 96, 108)),
+                markdown_table_separator_style(),
             )]));
         }
     }
@@ -789,14 +783,9 @@ fn push_code_line(line: &str, prefix: &str, out: &mut Vec<Line<'static>>) {
     }
     spans.push(Span::styled(
         line.to_string(),
-        Style::default().fg(Color::Rgb(210, 210, 220)),
+        markdown_code_style(),
     ));
     out.push(Line::from(spans));
-}
-
-#[allow(dead_code)]
-fn grapheme_len(value: &str) -> usize {
-    UnicodeSegmentation::graphemes(value, true).count()
 }
 
 #[cfg(test)]

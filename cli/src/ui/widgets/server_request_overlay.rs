@@ -7,7 +7,12 @@ use unicode_width::UnicodeWidthStr;
 use crate::input::command_dispatch::intent_for_slash_command;
 use crate::input::intent::ComposerIntent;
 use crate::input::slash_command::find_slash_command;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::theme::{
+    hint_style, input_panel_bg, request_amber_style, request_cyan_style, request_command_style,
+    request_error_style, request_muted_style, request_option_bg, request_success_style,
+    request_title_style,
+};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
 use crate::ui::widgets::server_request_model::ServerRequestInlineState;
 use crate::ui::widgets::textarea::TextArea;
 use agent_core::ServerRequestDecisionKind;
@@ -67,12 +72,17 @@ const REPLY_PROMPT_WIDTH: usize = 10;
 const COMPACT_APPROVAL_HEIGHT: u16 = 8;
 
 impl BottomPaneView for ServerRequestOverlay {
+    fn kind(&self) -> ViewKind {
+        ViewKind::ServerRequest
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if !matches!(key.kind, KeyEventKind::Press) {
             return BottomPaneViewAction::None;
         }
 
         match key.code {
+            KeyCode::Esc => BottomPaneViewAction::Handled,
             KeyCode::Enter if key.modifiers == crossterm::event::KeyModifiers::SHIFT => {
                 self.reply.insert_str("\n");
                 BottomPaneViewAction::None
@@ -123,11 +133,6 @@ impl BottomPaneView for ServerRequestOverlay {
     }
 
     fn render_lines(&self, area_width: u16) -> Vec<Line<'static>> {
-        let accent = Color::Rgb(255, 184, 76);
-        let command_fg = Color::Rgb(226, 230, 240);
-        let muted = Color::Rgb(92, 96, 118);
-        let title_bg = Color::Rgb(42, 34, 18);
-        let option_bg = Color::Rgb(38, 42, 55);
         let title_width = area_width.saturating_sub(22) as usize;
         let content_width = area_width.saturating_sub(6) as usize;
         let queue_label = if self.queue.is_empty() {
@@ -141,20 +146,19 @@ impl BottomPaneView for ServerRequestOverlay {
             if selected {
                 Style::default()
                     .fg(Color::White)
-                    .bg(option_bg)
+                    .bg(request_option_bg())
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Rgb(180, 184, 200))
+                request_command_style()
             }
         };
-        let marker_style = |selected: bool, color: Color| {
+        let marker_style = |selected: bool, style: Style| {
             if selected {
-                Style::default()
-                    .fg(color)
-                    .bg(option_bg)
+                style
+                    .bg(request_option_bg())
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(color)
+                style
             }
         };
 
@@ -162,10 +166,7 @@ impl BottomPaneView for ServerRequestOverlay {
             Span::raw("  "),
             Span::styled(
                 " ACTION REQUIRED ",
-                Style::default()
-                    .fg(accent)
-                    .bg(title_bg)
-                    .add_modifier(Modifier::BOLD),
+                request_title_style(),
             ),
             Span::raw(" "),
             Span::styled(
@@ -178,16 +179,16 @@ impl BottomPaneView for ServerRequestOverlay {
                     ),
                     title_width,
                 ),
-                Style::default().fg(command_fg).add_modifier(Modifier::BOLD),
+                request_command_style().add_modifier(Modifier::BOLD),
             ),
-            Span::styled(queue_label, Style::default().fg(muted)),
+            Span::styled(queue_label, request_muted_style()),
         ])];
         lines.push(Line::raw(""));
         if !reason_line.is_empty() {
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled("reason ", Style::default().fg(muted)),
-                Span::styled(reason_line, Style::default().fg(Color::Rgb(190, 194, 208))),
+                Span::styled("reason ", request_muted_style()),
+                Span::styled(reason_line, request_command_style()),
             ]));
             lines.push(Line::raw(""));
         }
@@ -197,31 +198,31 @@ impl BottomPaneView for ServerRequestOverlay {
                 Span::raw("  "),
                 Span::styled(
                     if self.selected == 0 { "› " } else { "  " },
-                    marker_style(self.selected == 0, Color::Rgb(100, 255, 100)),
+                    marker_style(self.selected == 0, request_success_style()),
                 ),
                 Span::styled("Approve once", option_style(self.selected == 0)),
-                Span::styled("  one-time approval", Style::default().fg(muted)),
+                Span::styled("  one-time approval", request_muted_style()),
             ]),
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
                     if self.selected == 1 { "› " } else { "  " },
-                    marker_style(self.selected == 1, Color::Rgb(100, 210, 255)),
+                    marker_style(self.selected == 1, request_cyan_style()),
                 ),
                 Span::styled("Approve for session", option_style(self.selected == 1)),
                 Span::styled(
                     "  remember this tool permission",
-                    Style::default().fg(muted),
+                    request_muted_style(),
                 ),
             ]),
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
                     if self.selected == 2 { "› " } else { "  " },
-                    marker_style(self.selected == 2, Color::Rgb(255, 100, 100)),
+                    marker_style(self.selected == 2, request_error_style()),
                 ),
                 Span::styled("Deny", option_style(self.selected == 2)),
-                Span::styled("  skip this tool call", Style::default().fg(muted)),
+                Span::styled("  skip this tool call", request_muted_style()),
             ]),
         ]);
 
@@ -231,7 +232,7 @@ impl BottomPaneView for ServerRequestOverlay {
             }
             lines.push(Line::from(Span::styled(
                 "  Enter confirm  ·  ↑/↓ select  ·  y approve  ·  a session  ·  n deny",
-                Style::default().fg(Color::Rgb(62, 62, 78)),
+                hint_style(),
             )));
         } else {
             let reply_width = area_width
@@ -248,12 +249,9 @@ impl BottomPaneView for ServerRequestOverlay {
                 lines.push(Line::from(vec![
                     Span::styled(
                         prompt,
-                        Style::default()
-                            .fg(accent)
-                            .bg(title_bg)
-                            .add_modifier(Modifier::BOLD),
+                        request_amber_style().bg(input_panel_bg()).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(reply_line, Style::default().fg(Color::Rgb(220, 220, 230))),
+                    Span::styled(reply_line, request_command_style()),
                 ]));
             }
         }
@@ -524,5 +522,15 @@ mod tests {
 
         assert!(matches!(action, BottomPaneViewAction::None));
         assert_eq!(overlay.reply.text(), "first\nsecond");
+    }
+
+    #[test]
+    fn escape_is_consumed_without_dismissing_overlay() {
+        let mut overlay = ServerRequestOverlay::new(request_state("req-1"));
+
+        let action = overlay.handle_key_event(key(KeyCode::Esc));
+
+        assert!(matches!(action, BottomPaneViewAction::Handled));
+        assert!(!overlay.is_complete());
     }
 }

@@ -1,8 +1,8 @@
 use crate::input::intent::ComposerIntent;
 use crate::text_width::display_width;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::theme::{picker_current_style, picker_selected_style, picker_unselected_style};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 pub struct ModelPicker {
@@ -43,6 +43,10 @@ impl ModelPicker {
 }
 
 impl BottomPaneView for ModelPicker {
+    fn kind(&self) -> ViewKind {
+        ViewKind::ModelPicker
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if !matches!(key.kind, KeyEventKind::Press) {
             return BottomPaneViewAction::None;
@@ -85,14 +89,11 @@ impl BottomPaneView for ModelPicker {
                 label.push_str("  (current)");
             }
             let style = if selected {
-                Style::default()
-                    .fg(Color::Rgb(190, 220, 255))
-                    .bg(Color::Rgb(26, 34, 50))
-                    .add_modifier(Modifier::BOLD)
+                picker_selected_style()
             } else if is_current {
-                Style::default().fg(Color::Rgb(155, 210, 170))
+                picker_current_style()
             } else {
-                Style::default().fg(Color::Rgb(135, 145, 175))
+                picker_unselected_style()
             };
             lines.push(Line::from(vec![
                 Span::raw("  "),

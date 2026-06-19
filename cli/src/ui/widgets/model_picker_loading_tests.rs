@@ -1,5 +1,5 @@
 use super::ModelPickerLoading;
-use crate::ui::widgets::bottom_pane_view::BottomPaneView;
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, ViewKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
@@ -30,5 +30,5 @@ fn enter_does_not_submit_a_model() {
 #[test]
 fn identifies_as_loading_picker() {
     let picker = ModelPickerLoading::new("gpt-test");
-    assert!(picker.is_model_picker_loading());
+    assert_eq!(picker.kind(), ViewKind::ModelPickerLoading);
 }

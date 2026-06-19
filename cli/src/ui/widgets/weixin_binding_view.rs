@@ -1,7 +1,7 @@
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
+use crate::ui::theme::{body_style, hint_style, title_style};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +27,10 @@ impl WeixinBindingView {
 }
 
 impl BottomPaneView for WeixinBindingView {
+    fn kind(&self) -> ViewKind {
+        ViewKind::WeixinBinding
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if !matches!(key.kind, KeyEventKind::Press) {
             return BottomPaneViewAction::None;
@@ -38,23 +42,18 @@ impl BottomPaneView for WeixinBindingView {
     }
 
     fn render_lines(&self, _area_width: u16) -> Vec<Line<'static>> {
-        let title = Style::default()
-            .fg(Color::Rgb(190, 220, 255))
-            .add_modifier(Modifier::BOLD);
-        let body = Style::default().fg(Color::Rgb(210, 215, 225));
-        let dim = Style::default().fg(Color::Rgb(140, 150, 180));
         vec![
-            Line::from(Span::styled("  Weixin Binding", title)),
+            Line::from(Span::styled("  Weixin Binding", title_style())),
             Line::from("  Scan with WeChat on your phone. This page checks status automatically."),
             Line::from(format!("  Session: {}", self.model.session_id)),
             Line::from("  Scan URL:"),
-            Line::from(Span::styled(format!("  {}", self.model.qr_url), body)),
+            Line::from(Span::styled(format!("  {}", self.model.qr_url), body_style())),
             Line::from("  "),
             Line::from(vec![
-                Span::styled("  Status: ", dim),
-                Span::styled(self.model.status.clone(), body),
+                Span::styled("  Status: ", hint_style()),
+                Span::styled(self.model.status.clone(), body_style()),
             ]),
-            Line::from(Span::styled("  Esc returns to the gateway page.", dim)),
+            Line::from(Span::styled("  Esc returns to the gateway page.", hint_style())),
         ]
     }
 

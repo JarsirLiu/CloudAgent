@@ -1,10 +1,10 @@
 use crate::input::intent::ComposerIntent;
 use crate::text_width::display_width;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::theme::{body_style, disabled_style, info_style};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
 use crate::ui::widgets::form_text_field::FormTextField;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 pub struct ConfigPanel {
@@ -48,6 +48,10 @@ impl ConfigPanel {
 }
 
 impl BottomPaneView for ConfigPanel {
+    fn kind(&self) -> ViewKind {
+        ViewKind::Config
+    }
+
     fn should_capture_global_paste_shortcut(&self) -> bool {
         false
     }
@@ -131,11 +135,9 @@ impl BottomPaneView for ConfigPanel {
     fn render_lines(&self, _area_width: u16) -> Vec<Line<'static>> {
         let row_style = |selected: bool| {
             if selected {
-                Style::default()
-                    .fg(Color::Rgb(190, 220, 255))
-                    .add_modifier(Modifier::BOLD)
+                info_style()
             } else {
-                Style::default().fg(Color::Rgb(140, 150, 180))
+                disabled_style()
             }
         };
         vec![
@@ -157,7 +159,7 @@ impl BottomPaneView for ConfigPanel {
                     } else {
                         self.api_key.value().to_string()
                     },
-                    Style::default().fg(Color::Rgb(210, 215, 225)),
+                    body_style(),
                 ),
             ]),
             Line::from(vec![
@@ -176,7 +178,7 @@ impl BottomPaneView for ConfigPanel {
                     } else {
                         self.base_url.value().to_string()
                     },
-                    Style::default().fg(Color::Rgb(210, 215, 225)),
+                    body_style(),
                 ),
             ]),
             Line::from(vec![
@@ -195,7 +197,7 @@ impl BottomPaneView for ConfigPanel {
                     } else {
                         self.model.value().to_string()
                     },
-                    Style::default().fg(Color::Rgb(210, 215, 225)),
+                    body_style(),
                 ),
             ]),
             Line::from(Span::styled(

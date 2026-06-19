@@ -1,6 +1,11 @@
 use super::*;
-use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
+use super::render::input_block;
+use agent_protocol::FrontendMode;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::Widget;
 
 fn command_request(id: &str, title: &str) -> ServerRequestInlineState {
@@ -15,7 +20,7 @@ fn command_request(id: &str, title: &str) -> ServerRequestInlineState {
 }
 
 #[test]
-fn esc_interrupts_even_when_server_request_overlay_is_active() {
+fn esc_is_consumed_when_server_request_overlay_is_active() {
     let mut pane = InputPane::new();
     pane.set_server_request(command_request("req-1", "Run command?"));
 
@@ -28,8 +33,13 @@ fn esc_interrupts_even_when_server_request_overlay_is_active() {
 
     assert!(matches!(
         action,
-        Some(InputPaneAction::Composer(ComposerIntent::Interrupt))
+        Some(InputPaneAction::Composer(ComposerIntent::None))
     ));
+    assert!(pane.requires_action());
+    assert_eq!(
+        pane.active_server_request_id(),
+        Some(RequestId::String("req-1".to_string()))
+    );
 }
 
 #[test]

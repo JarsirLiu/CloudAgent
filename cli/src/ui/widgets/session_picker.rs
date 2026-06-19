@@ -2,10 +2,10 @@ use std::cmp::Reverse;
 
 use crate::input::intent::ComposerIntent;
 use crate::text_width::display_width;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::theme::{picker_selected_style, picker_unselected_style};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
 use agent_core::ConversationSummary;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 pub struct SessionPicker {
@@ -70,6 +70,10 @@ impl SessionPicker {
 }
 
 impl BottomPaneView for SessionPicker {
+    fn kind(&self) -> ViewKind {
+        ViewKind::SessionPicker
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) -> BottomPaneViewAction {
         if !matches!(key.kind, KeyEventKind::Press) {
             return BottomPaneViewAction::None;
@@ -128,12 +132,9 @@ impl BottomPaneView for SessionPicker {
             );
             let row = format!("{marker}{id:<id_col$}  {title}", id_col = id_col);
             let style = if selected {
-                Style::default()
-                    .fg(Color::Rgb(190, 220, 255))
-                    .bg(Color::Rgb(26, 34, 50))
-                    .add_modifier(Modifier::BOLD)
+                picker_selected_style()
             } else {
-                Style::default().fg(Color::Rgb(135, 145, 175))
+                picker_unselected_style()
             };
             lines.push(Line::from(vec![
                 Span::raw("  ".to_string()),
@@ -164,10 +165,6 @@ impl BottomPaneView for SessionPicker {
             height += 1;
         }
         height
-    }
-
-    fn is_session_picker(&self) -> bool {
-        true
     }
 
     fn append_session_page(

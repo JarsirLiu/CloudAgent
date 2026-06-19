@@ -1,5 +1,5 @@
 use super::SessionPickerLoading;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction};
+use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
 use crate::ui::widgets::session_picker::SessionPickerMode;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
@@ -14,7 +14,7 @@ fn press(code: KeyCode) -> KeyEvent {
 
 #[test]
 fn render_lines_describe_loading_state() {
-    let view = SessionPickerLoading::new(7, SessionPickerMode::Switch);
+    let view = SessionPickerLoading::new(SessionPickerMode::Switch);
     let lines = view
         .render_lines(80)
         .into_iter()
@@ -28,7 +28,7 @@ fn render_lines_describe_loading_state() {
 
 #[test]
 fn esc_cancels_loading_view() {
-    let mut view = SessionPickerLoading::new(7, SessionPickerMode::Switch);
+    let mut view = SessionPickerLoading::new(SessionPickerMode::Switch);
 
     assert!(matches!(
         view.handle_key_event(press(KeyCode::Esc)),
@@ -38,7 +38,7 @@ fn esc_cancels_loading_view() {
 
 #[test]
 fn ignores_key_release() {
-    let mut view = SessionPickerLoading::new(7, SessionPickerMode::Switch);
+    let mut view = SessionPickerLoading::new(SessionPickerMode::Switch);
 
     assert!(matches!(
         view.handle_key_event(KeyEvent {
@@ -52,9 +52,8 @@ fn ignores_key_release() {
 }
 
 #[test]
-fn generation_match_identifies_active_request() {
-    let view = SessionPickerLoading::new(7, SessionPickerMode::Delete);
+fn loading_view_reports_kind_and_generation() {
+    let view = SessionPickerLoading::new(SessionPickerMode::Delete);
 
-    assert!(view.is_session_picker_loading(7));
-    assert!(!view.is_session_picker_loading(8));
+    assert_eq!(view.kind(), ViewKind::SessionPickerLoading);
 }

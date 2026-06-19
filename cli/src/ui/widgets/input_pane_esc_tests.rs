@@ -99,7 +99,7 @@ fn enter_key() -> KeyEvent {
 #[test]
 fn esc_closes_session_picker_loading_without_interrupting() {
     let mut pane = InputPane::new();
-    pane.set_session_picker_loading(1, SessionPickerMode::Switch);
+    pane.set_session_picker_loading(SessionPickerMode::Switch);
 
     let action = pane.handle_key(esc_key());
 
@@ -107,7 +107,68 @@ fn esc_closes_session_picker_loading_without_interrupting() {
         action,
         Some(InputPaneAction::Composer(ComposerIntent::None))
     ));
-    assert!(!pane.is_session_picker_loading(1));
+    assert!(pane.no_modal_or_popup_active());
+}
+
+#[test]
+fn esc_release_after_closing_session_picker_loading_is_ignored() {
+    let mut pane = InputPane::new();
+    pane.set_session_picker_loading(SessionPickerMode::Switch);
+
+    let press = pane.handle_key(KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    let release = pane.handle_key(KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Release,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+
+    assert!(matches!(
+        press,
+        Some(InputPaneAction::Composer(ComposerIntent::None))
+    ));
+    assert!(release.is_none());
+    assert!(!pane.requires_action());
+}
+
+#[test]
+fn esc_release_after_closing_session_picker_does_not_interrupt() {
+    let mut pane = InputPane::new();
+    pane.set_session_picker(
+        vec![ConversationSummary {
+            conversation_id: "default".to_string(),
+            title: Some("Default".to_string()),
+            message_count: 0,
+            updated_at_ms: 1,
+        }],
+        "default",
+        SessionPickerMode::Switch,
+    );
+
+    let press = pane.handle_key(KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    let release = pane.handle_key(KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Release,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+
+    assert!(matches!(
+        press,
+        Some(InputPaneAction::Composer(ComposerIntent::None))
+    ));
+    assert!(release.is_none());
+    assert!(pane.no_modal_or_popup_active());
 }
 
 #[test]

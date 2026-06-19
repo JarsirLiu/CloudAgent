@@ -1,0 +1,31 @@
+pub(crate) const SURFACE_DIVIDER_RGB: (u8, u8, u8) = (40, 40, 50);
+pub(crate) const SURFACE_BORDER_RGB: (u8, u8, u8) = (58, 64, 86);
+pub(crate) const SURFACE_TEXT_RGB: (u8, u8, u8) = (215, 220, 235);
+pub(crate) const SURFACE_TEXT_DIM_RGB: (u8, u8, u8) = (140, 150, 180);
+pub(crate) const SURFACE_TEXT_MID_RGB: (u8, u8, u8) = (135, 145, 175);
+pub(crate) const SURFACE_TEXT_SOFT_RGB: (u8, u8, u8) = (120, 130, 150);
+pub(crate) const SURFACE_TEXT_MUTED_RGB: (u8, u8, u8) = (95, 100, 124);
+pub(crate) const SURFACE_TEXT_FAINT_RGB: (u8, u8, u8) = (75, 84, 105);
+pub(crate) const SURFACE_TEXT_STRONG_RGB: (u8, u8, u8) = (190, 220, 255);
+pub(crate) const SURFACE_BG_SELECTED_RGB: (u8, u8, u8) = (26, 34, 50);
+pub(crate) const SURFACE_BG_INPUT_RGB: (u8, u8, u8) = (38, 42, 55);
+pub(crate) const SURFACE_BG_TITLE_RGB: (u8, u8, u8) = (42, 34, 18);
+pub(crate) const SURFACE_BG_BLUE_RGB: (u8, u8, u8) = (18, 28, 45);
+pub(crate) const SURFACE_BG_GREEN_RGB: (u8, u8, u8) = (18, 34, 24);
+pub(crate) const SURFACE_BG_AMBER_RGB: (u8, u8, u8) = (48, 34, 14);
+
+pub(crate) const ACCENT_BLUE_RGB: (u8, u8, u8) = (100, 160, 255);
+pub(crate) const ACCENT_GREEN_RGB: (u8, u8, u8) = (80, 200, 120);
+pub(crate) const ACCENT_AMBER_RGB: (u8, u8, u8) = (255, 180, 50);
+pub(crate) const ACCENT_CYAN_RGB: (u8, u8, u8) = (120, 170, 255);
+pub(crate) const ACCENT_RED_RGB: (u8, u8, u8) = (255, 100, 100);
+pub(crate) const ACCENT_SUCCESS_RGB: (u8, u8, u8) = (100, 255, 100);
+pub(crate) const ACCENT_INFO_RGB: (u8, u8, u8) = (155, 210, 170);
+
+pub(crate) const HISTORY_USER_BG_RGB: (u8, u8, u8) = (26, 34, 50);
+pub(crate) const HISTORY_RAIL_RGB: (u8, u8, u8) = (90, 96, 108);
+pub(crate) const HISTORY_BODY_RGB: (u8, u8, u8) = (210, 215, 225);
+pub(crate) const HISTORY_NOTE_RGB: (u8, u8, u8) = (148, 152, 164);
+pub(crate) const HISTORY_DIM_RGB: (u8, u8, u8) = (132, 138, 150);
+pub(crate) const HISTORY_REASONING_RGB: (u8, u8, u8) = (170, 140, 255);
+pub(crate) const HISTORY_TOOL_RGB: (u8, u8, u8) = (120, 170, 255);

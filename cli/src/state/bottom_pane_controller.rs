@@ -33,6 +33,8 @@ pub(crate) struct BottomPaneController {
     runtime: BottomPaneRuntimeState,
     input_pane: InputPane,
     pending_session_picker: Option<PendingSessionPicker>,
+    session_picker_loading_generation: Option<u64>,
+    model_picker_loading_current: Option<String>,
     next_session_picker_generation: u64,
 }
 
@@ -48,6 +50,8 @@ impl BottomPaneController {
             runtime: BottomPaneRuntimeState::default(),
             input_pane: InputPane::new(),
             pending_session_picker: None,
+            session_picker_loading_generation: None,
+            model_picker_loading_current: None,
             next_session_picker_generation: 1,
         }
     }
@@ -192,6 +196,8 @@ impl BottomPaneController {
     pub(crate) fn clear_views(&mut self) {
         self.input_pane.clear_views();
         self.pending_session_picker = None;
+        self.session_picker_loading_generation = None;
+        self.model_picker_loading_current = None;
     }
 
     pub(crate) fn show_transient_notice(&mut self, level: NoticeLevel, message: String) {
@@ -241,7 +247,8 @@ impl BottomPaneController {
         let generation = self.next_session_picker_generation;
         self.next_session_picker_generation = self.next_session_picker_generation.saturating_add(1);
         self.pending_session_picker = Some(PendingSessionPicker { mode, generation });
-        self.input_pane.set_session_picker_loading(generation, mode);
+        self.session_picker_loading_generation = Some(generation);
+        self.input_pane.set_session_picker_loading(mode);
     }
 
     pub(crate) fn present_requested_session_picker_page(
@@ -254,12 +261,10 @@ impl BottomPaneController {
         let Some(pending) = self.pending_session_picker.take() else {
             return false;
         };
-        if !self
-            .input_pane
-            .is_session_picker_loading(pending.generation)
-        {
+        if self.session_picker_loading_generation != Some(pending.generation) {
             return false;
         }
+        self.session_picker_loading_generation = None;
         self.input_pane.set_session_picker_page(
             sessions,
             active_conversation_id,
@@ -283,11 +288,12 @@ impl BottomPaneController {
     }
 
     pub(crate) fn set_model_picker_loading(&mut self, current: String) {
+        self.model_picker_loading_current = Some(current.clone());
         self.input_pane.set_model_picker_loading(current);
     }
 
     pub(crate) fn is_model_picker_loading(&self) -> bool {
-        self.input_pane.is_model_picker_loading()
+        self.model_picker_loading_current.is_some()
     }
 
     pub(crate) fn set_config_panel(&mut self, api_key: String, base_url: String, model: String) {

@@ -1,4 +1,8 @@
 use crate::ui::widgets::text_effects::shimmer_spans_for_frame;
+use crate::ui::theme::{
+    body_style, hint_style, title_style, welcome_accent_style, welcome_mascot_style,
+    welcome_signal_style,
+};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -18,10 +22,10 @@ impl WelcomeScreen {
     }
 
     pub fn render(&self, _area: Rect) -> Paragraph<'static> {
-        let dim = Color::Rgb(70, 70, 90);
-        let accent = Color::Rgb(140, 160, 230);
-        let mascot_color = Color::Rgb(120, 130, 200);
-        let soft = Color::Rgb(120, 120, 145);
+        let dim = hint_style();
+        let accent = welcome_accent_style();
+        let mascot_style = welcome_mascot_style();
+        let soft = body_style();
 
         let subtitle = self.status_text.clone();
 
@@ -29,34 +33,32 @@ impl WelcomeScreen {
             Line::raw(""),
             Line::from(vec![
                 Span::raw("      "),
-                Span::styled("▄▄▄▄▄▄▄", Style::default().fg(mascot_color)),
+                Span::styled("▄▄▄▄▄▄▄", mascot_style),
             ]),
             Line::from(vec![
                 Span::raw("     "),
-                Span::styled("█ ", Style::default().fg(mascot_color)),
-                Span::styled("●", Style::default().fg(Color::Rgb(100, 255, 100))),
-                Span::styled("   ", Style::default().fg(mascot_color)),
-                Span::styled("●", Style::default().fg(Color::Rgb(100, 255, 100))),
-                Span::styled(" █", Style::default().fg(mascot_color)),
+                Span::styled("█ ", mascot_style),
+                Span::styled("●", welcome_signal_style()),
+                Span::styled("   ", mascot_style),
+                Span::styled("●", welcome_signal_style()),
+                Span::styled(" █", mascot_style),
                 Span::raw("   "),
                 Span::styled(
                     "Hello, I'm CloudAgent",
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
+                    title_style(),
                 ),
             ]),
             Line::from(vec![
                 Span::raw("     "),
-                Span::styled("█   ", Style::default().fg(mascot_color)),
-                Span::styled("▄", Style::default().fg(mascot_color)),
-                Span::styled("   █", Style::default().fg(mascot_color)),
+                Span::styled("█   ", mascot_style),
+                Span::styled("▄", mascot_style),
+                Span::styled("   █", mascot_style),
                 Span::raw("   "),
-                Span::styled("Your autonomous ops partner", Style::default().fg(dim)),
+                Span::styled("Your autonomous ops partner", dim),
             ]),
             Line::from(vec![
                 Span::raw("      "),
-                Span::styled("▀▀▀▀▀▀▀", Style::default().fg(mascot_color)),
+                Span::styled("▀▀▀▀▀▀▀", mascot_style),
             ]),
             Line::raw(""),
         ];
@@ -68,16 +70,13 @@ impl WelcomeScreen {
         lines.push(Line::from(title_line));
         lines.push(Line::from(vec![
             Span::raw("    "),
-            Span::styled(subtitle, Style::default().fg(dim)),
+            Span::styled(subtitle, dim),
         ]));
         lines.push(Line::raw(""));
 
         lines.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled(
-                "How can I help you today?",
-                Style::default().fg(accent).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("How can I help you today?", accent),
         ]));
         lines.push(Line::raw(""));
 
@@ -91,8 +90,8 @@ impl WelcomeScreen {
         for suggestion in suggestions {
             lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled("→ ", Style::default().fg(Color::Rgb(90, 100, 135))),
-                Span::styled(suggestion.to_string(), Style::default().fg(soft)),
+                Span::styled("→ ", hint_style()),
+                Span::styled(suggestion.to_string(), soft),
             ]));
         }
 
@@ -105,14 +104,14 @@ impl WelcomeScreen {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("send  ", Style::default().fg(dim)),
+            Span::styled("send  ", dim),
             Span::styled(
                 "Ctrl+D ",
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("exit  ", Style::default().fg(dim)),
+            Span::styled("exit  ", dim),
         ]));
 
         Paragraph::new(Text::from(lines))

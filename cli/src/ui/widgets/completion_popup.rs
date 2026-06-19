@@ -1,6 +1,10 @@
 use crate::input::completion::CompletionState;
 use crate::text_width::display_width;
-use ratatui::style::{Color, Modifier, Style};
+use crate::ui::theme::{
+    picker_meta_style, picker_selected_alt_style, picker_selected_style,
+    picker_unselected_style, input_panel_bg, selected_alt_style,
+};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 const MAX_ROWS: usize = 6;
@@ -39,24 +43,17 @@ pub(crate) fn completion_popup_lines(
         let trailing_padding = " ".repeat(row_width.saturating_sub(row_text_width));
 
         let (marker_style, name_style, description_style, padding_style) = if selected {
-            let bg = Color::Rgb(26, 34, 50);
             (
-                Style::default()
-                    .fg(Color::Rgb(120, 255, 170))
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-                Style::default()
-                    .fg(Color::Rgb(190, 220, 255))
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-                Style::default().fg(Color::Rgb(165, 170, 195)).bg(bg),
-                Style::default().bg(bg),
+                picker_selected_alt_style(),
+                picker_selected_style(),
+                selected_alt_style(),
+                Style::default().bg(input_panel_bg()),
             )
         } else {
             (
-                Style::default().fg(Color::Rgb(75, 84, 105)),
-                Style::default().fg(Color::Rgb(135, 145, 175)),
-                Style::default().fg(Color::Rgb(95, 100, 124)),
+                picker_meta_style(),
+                picker_unselected_style(),
+                Style::default(),
                 Style::default(),
             )
         };

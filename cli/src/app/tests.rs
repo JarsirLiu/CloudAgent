@@ -1254,6 +1254,82 @@ fn escape_closes_completion_menu_in_running_mode_without_interrupting_turn() {
 }
 
 #[test]
+fn escape_closes_session_picker_in_running_mode_without_interrupting_turn() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    mark_running(&mut app);
+
+    app.bottom_pane.request_session_picker(crate::ui::widgets::session_picker::SessionPickerMode::Switch);
+    assert!(app.bottom_pane.present_requested_session_picker_page(
+        vec![agent_core::ConversationSummary {
+            conversation_id: "default".to_string(),
+            title: Some("Default".to_string()),
+            message_count: 1,
+            updated_at_ms: 1,
+        }],
+        "default",
+        false,
+        None
+    ));
+
+    let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let bottom_before = app
+        .bottom_pane
+        .desired_height(app.current_mode(), terminal_area.width);
+    assert!(bottom_before > 0);
+
+    let parsed = app.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+
+    assert!(parsed.is_none());
+    assert!(app.bottom_pane.no_modal_or_popup_active());
+    assert!(
+        app.bottom_pane
+            .desired_height(app.current_mode(), terminal_area.width)
+            < bottom_before
+    );
+    assert!(!app.run_state.should_exit);
+}
+
+#[test]
+fn escape_does_not_interrupt_when_server_request_overlay_is_active() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    mark_running(&mut app);
+    app.bottom_pane.set_server_request(crate::ui::widgets::input_pane::ServerRequestInlineState {
+        request_id: agent_protocol::RequestId::String("req-1".to_string()),
+        presentation: crate::ui::widgets::server_request_model::ServerRequestPresentation::command(
+            "exec_command",
+            "needs approval",
+            "Get-Content file.rs",
+        ),
+    });
+
+    let parsed = app.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+
+    assert!(parsed.is_none());
+    assert!(!app.bottom_pane.no_modal_or_popup_active());
+    assert!(!app.run_state.should_exit);
+}
+
+#[test]
 fn welcome_stays_visible_while_composer_has_draft_text() {
     let mut app = TuiApp::new(
         "default".to_string(),

@@ -381,7 +381,6 @@ impl ChatComposer {
         self.sync_completion();
     }
 
-    #[allow(dead_code)]
     pub(crate) fn attach_remote_image(&mut self, url: impl Into<String>) {
         let placeholder = format!("[Image #{}]", self.total_image_count() + 1);
         if !self.textarea.is_empty()

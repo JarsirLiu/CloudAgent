@@ -4,7 +4,7 @@ use agent_protocol::RequestId;
 
 pub(crate) enum NavigationKeyResult {
     NoActiveView,
-    Consumed,
+    Handled,
     Composer(ComposerIntent),
     LoadMoreSessions {
         cursor: String,
@@ -14,5 +14,4 @@ pub(crate) enum NavigationKeyResult {
         decision: ServerRequestDecisionKind,
         reason: String,
     },
-    FallthroughEscFromActionRequiredView,
 }
