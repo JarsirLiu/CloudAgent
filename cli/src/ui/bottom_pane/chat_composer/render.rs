@@ -168,4 +168,3 @@ fn composer_body(textarea: &TextArea, mode: FrontendMode) -> &str {
         FrontendMode::Running => "",
     }
 }
-

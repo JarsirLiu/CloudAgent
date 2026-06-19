@@ -1,7 +1,9 @@
+use crate::ui::theme::{
+    hint_style, muted_style, status_divider_style, status_mode_style, title_style,
+};
 use agent_protocol::FrontendMode;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
-use crate::ui::theme::{hint_style, muted_style, status_divider_style, status_mode_style, title_style};
 
 pub fn divider_line(width: usize) -> Line<'static> {
     Line::from(Span::styled("-".repeat(width), status_divider_style()))
@@ -48,7 +50,10 @@ pub fn status_line(
             return Line::from(spans);
         }
         spans.push(Span::styled(" · ", status_divider_style()));
-        spans.push(Span::styled(truncate_single_line(meta, available_meta), hint_style()));
+        spans.push(Span::styled(
+            truncate_single_line(meta, available_meta),
+            hint_style(),
+        ));
     }
 
     Line::from(spans)
@@ -68,13 +73,10 @@ fn running_status_line(
     };
     let mut spans = vec![
         Span::styled(
-        format!("{} ", indicator.unwrap_or("•")),
+            format!("{} ", indicator.unwrap_or("•")),
             status_mode_style(FrontendMode::Running),
         ),
-        Span::styled(
-            header.to_string(),
-            title_style(),
-        ),
+        Span::styled(header.to_string(), title_style()),
     ];
 
     if let Some(runtime_hint) = runtime_hint
@@ -82,10 +84,7 @@ fn running_status_line(
         .filter(|hint| !hint.is_empty())
     {
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            format!("({runtime_hint})"),
-            hint_style(),
-        ));
+        spans.push(Span::styled(format!("({runtime_hint})"), hint_style()));
     }
 
     if !meta.is_empty() {

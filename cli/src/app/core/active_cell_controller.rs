@@ -227,4 +227,3 @@ impl ActiveCellController {
         self.revision = self.revision.wrapping_add(1);
     }
 }
-

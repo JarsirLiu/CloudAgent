@@ -3,7 +3,7 @@ use agent_core::AgentHost;
 use agent_protocol::{CommandExecutionContext, SessionBootstrapContext};
 use anyhow::Result;
 use cli::agent_host::build_agent_host;
-use cli::app::cli_settings::load_cli_settings;
+use cli::app::load_cli_settings;
 use config::AgentConfig;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

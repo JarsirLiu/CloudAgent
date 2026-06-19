@@ -57,4 +57,3 @@ pub(crate) fn is_live_tail_candidate(item: &TranscriptItem) -> bool {
             | TranscriptItem::FileChange { .. }
     )
 }
-

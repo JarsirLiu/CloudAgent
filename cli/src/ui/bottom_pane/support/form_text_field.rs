@@ -125,4 +125,3 @@ fn ctrl_key(ch: char) -> KeyEvent {
         state: KeyEventState::NONE,
     }
 }
-

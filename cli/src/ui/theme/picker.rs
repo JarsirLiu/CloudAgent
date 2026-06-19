@@ -35,10 +35,9 @@ pub(crate) fn picker_current_style() -> Style {
 }
 
 pub(crate) fn picker_meta_style() -> Style {
-    unselected_style()
-        .fg(Color::Rgb(
-            SURFACE_TEXT_SOFT_RGB.0,
-            SURFACE_TEXT_SOFT_RGB.1,
-            SURFACE_TEXT_SOFT_RGB.2,
-        ))
+    unselected_style().fg(Color::Rgb(
+        SURFACE_TEXT_SOFT_RGB.0,
+        SURFACE_TEXT_SOFT_RGB.1,
+        SURFACE_TEXT_SOFT_RGB.2,
+    ))
 }

@@ -1,7 +1,7 @@
 use super::{InputPane, InputPaneAction};
 use crate::input::intent::ComposerIntent;
-use crate::ui::bottom_pane_navigation::NavigationKeyResult;
 use crate::ui::bottom_pane::bottom_pane_view::BottomPaneViewAction;
+use crate::ui::bottom_pane_navigation::NavigationKeyResult;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl InputPane {
@@ -66,4 +66,3 @@ impl InputPane {
         Some(InputPaneAction::Composer(self.composer.handle_paste(text)))
     }
 }
-

@@ -118,4 +118,3 @@ fn is_provisional_agent_message_cell_for(cell: &HistoryCell, item_id: &str) -> b
         && cell.is_provisional_stream()
         && cell.stream_item_id() == Some(item_id)
 }
-

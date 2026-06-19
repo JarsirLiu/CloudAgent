@@ -41,7 +41,7 @@ impl GatewayPanel {
                 fields: config
                     .fields
                     .into_iter()
-                    .map(|field| state::EditableField::new(field))
+                    .map(state::EditableField::new)
                     .collect(),
                 weixin_login,
             },

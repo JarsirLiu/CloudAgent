@@ -1,6 +1,6 @@
-use crate::app::conversation::actions::show_local_notice;
 use crate::app::TuiApp;
 use crate::app::commands::parse::ParsedInput;
+use crate::app::conversation::actions::show_local_notice;
 use agent_app_server_client::AppServerClient;
 use anyhow::Result;
 
@@ -34,7 +34,11 @@ pub(crate) async fn handle_session_input(
             app.bottom_pane.clear_session_picker();
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
-                show_local_notice(app, crate::state::NoticeLevel::Warn, "Usage: /session <session-id>");
+                show_local_notice(
+                    app,
+                    crate::state::NoticeLevel::Warn,
+                    "Usage: /session <session-id>",
+                );
                 return Ok(false);
             }
             client.send_command(agent_protocol::AppClientCommand::SwitchConversation {
@@ -57,7 +61,11 @@ pub(crate) async fn handle_session_input(
         ParsedInput::LocalConversationArchive(target_conversation_id) => {
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
-                show_local_notice(app, crate::state::NoticeLevel::Warn, "Usage: /archive <session-id>");
+                show_local_notice(
+                    app,
+                    crate::state::NoticeLevel::Warn,
+                    "Usage: /archive <session-id>",
+                );
                 return Ok(false);
             }
             client.send_command(agent_protocol::AppClientCommand::ArchiveConversation {
@@ -85,4 +93,3 @@ pub(crate) async fn handle_session_input(
         _ => unreachable!("session input dispatcher received non-session input"),
     }
 }
-

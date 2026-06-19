@@ -7,14 +7,14 @@ use unicode_width::UnicodeWidthStr;
 use crate::input::command_dispatch::intent_for_slash_command;
 use crate::input::intent::ComposerIntent;
 use crate::input::slash_command::find_slash_command;
-use crate::ui::theme::{
-    hint_style, input_panel_bg, request_amber_style, request_cyan_style, request_command_style,
-    request_error_style, request_muted_style, request_option_bg, request_success_style,
-    request_title_style,
-};
 use crate::ui::bottom_pane::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
 use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestInlineState;
 use crate::ui::bottom_pane::support::textarea::TextArea;
+use crate::ui::theme::{
+    hint_style, input_panel_bg, request_amber_style, request_command_style, request_cyan_style,
+    request_error_style, request_muted_style, request_option_bg, request_success_style,
+    request_title_style,
+};
 use agent_core::ServerRequestDecisionKind;
 use agent_protocol::RequestId;
 use std::collections::VecDeque;
@@ -154,9 +154,7 @@ impl BottomPaneView for ServerRequestOverlay {
         };
         let marker_style = |selected: bool, style: Style| {
             if selected {
-                style
-                    .bg(request_option_bg())
-                    .add_modifier(Modifier::BOLD)
+                style.bg(request_option_bg()).add_modifier(Modifier::BOLD)
             } else {
                 style
             }
@@ -164,10 +162,7 @@ impl BottomPaneView for ServerRequestOverlay {
 
         let mut lines = vec![Line::from(vec![
             Span::raw("  "),
-            Span::styled(
-                " ACTION REQUIRED ",
-                request_title_style(),
-            ),
+            Span::styled(" ACTION REQUIRED ", request_title_style()),
             Span::raw(" "),
             Span::styled(
                 truncate_to_width(
@@ -210,10 +205,7 @@ impl BottomPaneView for ServerRequestOverlay {
                     marker_style(self.selected == 1, request_cyan_style()),
                 ),
                 Span::styled("Approve for session", option_style(self.selected == 1)),
-                Span::styled(
-                    "  remember this tool permission",
-                    request_muted_style(),
-                ),
+                Span::styled("  remember this tool permission", request_muted_style()),
             ]),
             Line::from(vec![
                 Span::raw("  "),
@@ -249,7 +241,9 @@ impl BottomPaneView for ServerRequestOverlay {
                 lines.push(Line::from(vec![
                     Span::styled(
                         prompt,
-                        request_amber_style().bg(input_panel_bg()).add_modifier(Modifier::BOLD),
+                        request_amber_style()
+                            .bg(input_panel_bg())
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(reply_line, request_command_style()),
                 ]));
@@ -534,4 +528,3 @@ mod tests {
         assert!(!overlay.is_complete());
     }
 }
-

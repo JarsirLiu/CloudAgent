@@ -43,10 +43,7 @@ impl WelcomeScreen {
                 Span::styled("●", welcome_signal_style()),
                 Span::styled(" █", mascot_style),
                 Span::raw("   "),
-                Span::styled(
-                    "Hello, I'm CloudAgent",
-                    title_style(),
-                ),
+                Span::styled("Hello, I'm CloudAgent", title_style()),
             ]),
             Line::from(vec![
                 Span::raw("     "),
@@ -119,4 +116,3 @@ impl WelcomeScreen {
             .alignment(Alignment::Left)
     }
 }
-

@@ -1,5 +1,5 @@
-mod route;
 mod result;
+mod route;
 mod stack;
 
 pub(crate) use result::NavigationKeyResult;
@@ -25,4 +25,3 @@ impl Default for BottomPaneNavigator {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
-

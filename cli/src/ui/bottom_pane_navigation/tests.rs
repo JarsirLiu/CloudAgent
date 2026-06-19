@@ -197,4 +197,3 @@ fn composer_without_dismiss_keeps_active_view() {
     ));
     assert!(navigator.has_active_view());
 }
-

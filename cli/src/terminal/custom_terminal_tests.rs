@@ -8,12 +8,20 @@ use ratatui::style::{Color, Style};
 use std::io;
 use std::io::Write;
 use std::str;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 #[derive(Debug)]
 struct TestBackend {
     size: Size,
     cursor: Position,
     bytes: Vec<u8>,
+}
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env lock")
 }
 
 impl TestBackend {
@@ -206,6 +214,11 @@ fn inserted_history_does_not_write_through_viewport_without_history_region() {
 
 #[test]
 fn inserted_history_preserves_line_background_style() {
+    let _lock = env_lock();
+    let previous_no_color = std::env::var_os("NO_COLOR");
+    unsafe {
+        std::env::remove_var("NO_COLOR");
+    }
     let backend = TestBackend::new(100, 30);
     let mut terminal = Terminal::new(
         backend,
@@ -229,4 +242,10 @@ fn inserted_history_preserves_line_background_style() {
         output.contains("48;2;26;34;50m"),
         "history should preserve line background style: {output:?}"
     );
+    unsafe {
+        match previous_no_color {
+            Some(value) => std::env::set_var("NO_COLOR", value),
+            None => std::env::remove_var("NO_COLOR"),
+        }
+    }
 }

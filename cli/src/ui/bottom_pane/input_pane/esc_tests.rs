@@ -1,10 +1,10 @@
-use crate::ui::bottom_pane::input_pane::{InputPane, InputPaneAction};
 use crate::input::intent::ComposerIntent;
+use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
+use crate::ui::bottom_pane::dialogs::weixin_binding_view::WeixinBindingViewModel;
+use crate::ui::bottom_pane::input_pane::{InputPane, InputPaneAction};
 use agent_core::ConversationSummary;
 use agent_protocol::{PlatformConfigResponse, PlatformControlEntry};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
-use crate::ui::bottom_pane::dialogs::weixin_binding_view::WeixinBindingViewModel;
 
 fn esc_key() -> KeyEvent {
     KeyEvent {

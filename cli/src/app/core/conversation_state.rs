@@ -5,8 +5,8 @@ use crate::app::runtime::terminal_projection::TerminalProjectionController;
 use crate::state::RunState;
 use crate::state::bottom_pane_controller::BottomPaneController;
 use crate::state::reducer::TurnDispatch;
-use crate::ui::transcript_render_cache::TranscriptRenderCache;
 use crate::ui::history_cell::{HistoryCell, HistoryTone};
+use crate::ui::transcript_render_cache::TranscriptRenderCache;
 use agent_core::conversation::InputItem;
 use agent_core::turn::{ModelRetryStage, TurnItemKind};
 use agent_protocol::{
@@ -263,4 +263,3 @@ pub(crate) fn conversation_view_snapshot_for_test(
         updated_at_ms: 0,
     }
 }
-

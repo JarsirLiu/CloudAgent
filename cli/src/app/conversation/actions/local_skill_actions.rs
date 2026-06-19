@@ -1,6 +1,6 @@
-use crate::app::conversation::actions::show_local_notice;
 use crate::app::TuiApp;
 use crate::app::commands::parse::ParsedInput;
+use crate::app::conversation::actions::show_local_notice;
 use crate::ui::history_cell::{HistoryCell, HistoryFormat};
 use agent_app_server_client::AppServerClient;
 use anyhow::Result;
@@ -119,4 +119,3 @@ pub(crate) async fn handle_skill_input(
         _ => unreachable!("skill input dispatcher received non-skill input"),
     }
 }
-

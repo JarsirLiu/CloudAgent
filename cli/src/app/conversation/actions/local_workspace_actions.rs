@@ -1,10 +1,10 @@
-use crate::app::conversation::actions::show_local_notice;
 use crate::app::TuiApp;
-use crate::app::config::cli_settings::{PersistedCliSettings, save_cli_settings};
 use crate::app::commands::filter_toggle::apply_filter_toggle;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permissions_mode::apply_permission_mode;
+use crate::app::config::cli_settings::{PersistedCliSettings, save_cli_settings};
 use crate::app::config::llm_config::{UserLlmSettings, save_user_llm_settings};
+use crate::app::conversation::actions::show_local_notice;
 use crate::app::model_catalog::{
     ModelCatalogSnapshot, ModelCatalogSnapshotState, ModelCatalogSource,
 };
@@ -58,11 +58,13 @@ pub(crate) async fn handle_workspace_input(
             app.model_catalog.reset().await;
             app.model_catalog
                 .spawn_prewarm(base_url.clone(), api_key.clone());
-            if let Err(err) = client.send_command(agent_protocol::AppClientCommand::ReloadLlmConfig {
-                api_key: api_key.clone(),
-                base_url: base_url.clone(),
-                model: model.clone(),
-            }) {
+            if let Err(err) =
+                client.send_command(agent_protocol::AppClientCommand::ReloadLlmConfig {
+                    api_key: api_key.clone(),
+                    base_url: base_url.clone(),
+                    model: model.clone(),
+                })
+            {
                 tracing::warn!("failed to reload LLM config after save: {err}");
             }
             show_local_notice(
@@ -91,11 +93,13 @@ pub(crate) async fn handle_workspace_input(
             };
             let cfg = UserLlmSettings::load(&app.workspace_root)?;
             save_user_llm_settings(&cfg.api_key, &cfg.base_url, &cfg.model, effort)?;
-            if let Err(err) = client.send_command(agent_protocol::AppClientCommand::ReloadLlmConfig {
-                api_key: cfg.api_key.clone(),
-                base_url: cfg.base_url.clone(),
-                model: cfg.model.clone(),
-            }) {
+            if let Err(err) =
+                client.send_command(agent_protocol::AppClientCommand::ReloadLlmConfig {
+                    api_key: cfg.api_key.clone(),
+                    base_url: cfg.base_url.clone(),
+                    model: cfg.model.clone(),
+                })
+            {
                 tracing::warn!("failed to reload LLM config after reasoning update: {err}");
             }
             show_local_notice(
@@ -145,11 +149,13 @@ pub(crate) async fn handle_workspace_input(
             let mut cfg = UserLlmSettings::load(&app.workspace_root)?;
             cfg.model = trimmed.to_string();
             cfg.save()?;
-            if let Err(err) = client.send_command(agent_protocol::AppClientCommand::ReloadLlmConfig {
-                api_key: cfg.api_key.clone(),
-                base_url: cfg.base_url.clone(),
-                model: cfg.model.clone(),
-            }) {
+            if let Err(err) =
+                client.send_command(agent_protocol::AppClientCommand::ReloadLlmConfig {
+                    api_key: cfg.api_key.clone(),
+                    base_url: cfg.base_url.clone(),
+                    model: cfg.model.clone(),
+                })
+            {
                 tracing::warn!("failed to reload model after model update: {err}");
             }
             show_local_notice(

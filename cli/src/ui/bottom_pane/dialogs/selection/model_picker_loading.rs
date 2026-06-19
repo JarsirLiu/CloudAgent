@@ -35,4 +35,3 @@ impl BottomPaneView for ModelPickerLoading {
 #[cfg(test)]
 #[path = "model_picker_loading_tests.rs"]
 mod tests;
-

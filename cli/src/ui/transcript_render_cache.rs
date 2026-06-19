@@ -48,4 +48,3 @@ impl TranscriptRenderCache {
 pub(crate) fn build_rendered_rows(lines: &[Line<'static>], width: usize) -> usize {
     HistoryCell::rendered_line_count(lines, width)
 }
-

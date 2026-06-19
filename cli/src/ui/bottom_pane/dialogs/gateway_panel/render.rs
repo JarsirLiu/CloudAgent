@@ -1,11 +1,16 @@
 use super::state::GatewayPanelMode;
 use super::{GatewayPanel, WeixinLoginSessionView};
 use crate::text_width::display_width;
-use crate::ui::theme::{picker_selected_style, picker_unselected_style, title_style};
 use crate::ui::bottom_pane::bottom_pane_view::ViewKind;
+use crate::ui::theme::{picker_selected_style, picker_unselected_style, title_style};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+
+struct RenderStyles {
+    selected: Style,
+    normal: Style,
+}
 
 pub(crate) fn kind(mode: &GatewayPanelMode) -> ViewKind {
     match mode {
@@ -15,8 +20,10 @@ pub(crate) fn kind(mode: &GatewayPanelMode) -> ViewKind {
 }
 
 pub(crate) fn render_lines(panel: &GatewayPanel, _area_width: u16) -> Vec<Line<'static>> {
-    let selected_style = picker_selected_style();
-    let normal_style = picker_unselected_style();
+    let styles = RenderStyles {
+        selected: picker_selected_style(),
+        normal: picker_unselected_style(),
+    };
     match &panel.mode {
         GatewayPanelMode::List { entries, selected } => {
             let mut lines = vec![
@@ -29,10 +36,21 @@ pub(crate) fn render_lines(panel: &GatewayPanel, _area_width: u16) -> Vec<Line<'
             for (index, entry) in entries.iter().enumerate() {
                 let marker = if index == *selected { ">" } else { " " };
                 let connection = if entry.enabled { "enabled" } else { "disabled" };
-                let config = if entry.configured { "configured" } else { "incomplete" };
+                let config = if entry.configured {
+                    "configured"
+                } else {
+                    "incomplete"
+                };
                 lines.push(Line::from(vec![
                     Span::raw("  "),
-                Span::styled(format!("{marker} {:<8}", entry.platform), if index == *selected { selected_style } else { normal_style }),
+                    Span::styled(
+                        format!("{marker} {:<8}", entry.platform),
+                        if index == *selected {
+                            styles.selected
+                        } else {
+                            styles.normal
+                        },
+                    ),
                     Span::raw(" "),
                     Span::styled(
                         connection.to_string(),
@@ -70,8 +88,7 @@ pub(crate) fn render_lines(panel: &GatewayPanel, _area_width: u16) -> Vec<Line<'
             *selected,
             fields,
             weixin_login.as_ref(),
-            selected_style,
-            normal_style,
+            styles,
         ),
     }
 }
@@ -83,26 +100,29 @@ fn render_edit(
     selected: usize,
     fields: &[super::state::EditableField],
     weixin_login: Option<&WeixinLoginSessionView>,
-    selected_style: Style,
-    normal_style: Style,
+    styles: RenderStyles,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
-        Line::from(vec![Span::styled(format!("  Gateway Panel · {platform}"), title_style())]),
+        Line::from(vec![Span::styled(
+            format!("  Gateway Panel · {platform}"),
+            title_style(),
+        )]),
         Line::from(if platform == "weixin" {
             "  Manage the connection here. Esc returns to the platform list"
         } else {
             "  Type or paste values, Tab/Up/Down switch fields, Esc returns to list"
         }),
         Line::from(if platform == "weixin" {
-            format!(
-                "  Status: {}",
-                if enabled { "enabled" } else { "disabled" }
-            )
+            format!("  Status: {}", if enabled { "enabled" } else { "disabled" })
         } else {
             format!(
                 "  Status: {} · {}",
                 if enabled { "enabled" } else { "disabled" },
-                if configured { "configured" } else { "incomplete" }
+                if configured {
+                    "configured"
+                } else {
+                    "incomplete"
+                }
             )
         }),
     ];
@@ -130,15 +150,12 @@ fn render_edit(
             Span::styled(
                 format!("{prefix} {:<12}: ", field.key),
                 if selected == index {
-                    selected_style
+                    styles.selected
                 } else {
-                    normal_style
+                    styles.normal
                 },
             ),
-            Span::styled(
-                format!("{value} ({meta})"),
-                picker_unselected_style(),
-            ),
+            Span::styled(format!("{value} ({meta})"), picker_unselected_style()),
         ]));
     }
     if platform != "weixin" {
@@ -196,9 +213,9 @@ fn render_edit(
             )
         },
         if selected == toggle_index {
-            selected_style
+            styles.selected
         } else {
-            normal_style
+            styles.normal
         },
     )));
     if show_weixin_login && let Some(session) = weixin_login {
@@ -214,9 +231,9 @@ fn render_edit(
                 "    [ Save Platform Settings ]"
             },
             if selected == save_index {
-                selected_style
+                styles.selected
             } else {
-                normal_style
+                styles.normal
             },
         )));
     }
@@ -227,9 +244,9 @@ fn render_edit(
             "    [ Back to list ]"
         },
         if selected == back_index {
-            selected_style
+            styles.selected
         } else {
-            normal_style
+            styles.normal
         },
     )));
     lines.push(Line::from(if platform == "weixin" {
@@ -259,4 +276,3 @@ pub(crate) fn cursor_position(panel: &GatewayPanel, area: Rect) -> Option<(u16, 
         area.y.saturating_add(3 + *selected as u16),
     ))
 }
-

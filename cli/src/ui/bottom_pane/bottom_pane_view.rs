@@ -123,4 +123,3 @@ pub(crate) trait BottomPaneView {
         false
     }
 }
-

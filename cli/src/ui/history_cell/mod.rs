@@ -1,9 +1,9 @@
-mod markdown;
 mod display;
+mod markdown;
 mod render;
-mod transcript;
 pub(crate) mod tool_aggregation;
 mod tool_ui;
+mod transcript;
 mod wrapping;
 
 use ratatui::text::Line;

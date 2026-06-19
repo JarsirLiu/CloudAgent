@@ -1265,7 +1265,9 @@ fn escape_closes_session_picker_in_running_mode_without_interrupting_turn() {
     );
     mark_running(&mut app);
 
-    app.bottom_pane.request_session_picker(crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode::Switch);
+    app.bottom_pane.request_session_picker(
+        crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode::Switch,
+    );
     assert!(app.bottom_pane.present_requested_session_picker_page(
         vec![agent_core::ConversationSummary {
             conversation_id: "default".to_string(),
@@ -2506,4 +2508,3 @@ fn transcript_surface_uses_centered_width_metrics() {
     assert_eq!(metrics.width, 112);
     assert_eq!(metrics.left_padding, 4);
 }
-

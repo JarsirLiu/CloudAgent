@@ -1,5 +1,5 @@
-use super::state::{EditableField, GatewayPanelMode};
 use super::GatewayPanel;
+use super::state::{EditableField, GatewayPanelMode};
 use crate::input::intent::ComposerIntent;
 use crate::ui::bottom_pane::bottom_pane_view::BottomPaneViewAction;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -164,4 +164,3 @@ pub(crate) fn handle_key_event(panel: &mut GatewayPanel, key: KeyEvent) -> Botto
     }
     BottomPaneViewAction::None
 }
-

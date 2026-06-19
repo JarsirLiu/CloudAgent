@@ -1,7 +1,7 @@
 use crate::input::slash_command::SlashCommand;
 use crate::text_width::display_width;
-use crate::ui::theme::{picker_selected_style, title_style};
 use crate::ui::bottom_pane::bottom_pane_view::{BottomPaneView, ViewKind};
+use crate::ui::theme::{picker_selected_style, title_style};
 use ratatui::text::{Line, Span};
 
 pub struct HelpView;
@@ -38,7 +38,10 @@ impl BottomPaneView for HelpView {
             let row = format!("{command:<20} {}", spec.description);
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(truncate_to_width(&row, content_width), picker_selected_style()),
+                Span::styled(
+                    truncate_to_width(&row, content_width),
+                    picker_selected_style(),
+                ),
             ]));
         }
 
@@ -63,4 +66,3 @@ fn truncate_to_width(value: &str, width: usize) -> String {
     out.push_str("...");
     out
 }
-

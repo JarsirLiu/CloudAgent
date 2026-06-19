@@ -1,11 +1,11 @@
-use crate::app::conversation::actions::platform_request_notice;
-use crate::app::conversation::actions::show_local_notice;
 use crate::app::TuiApp;
 use crate::app::commands::parse::ParsedInput;
+use crate::app::conversation::actions::platform_request_notice;
+use crate::app::conversation::actions::show_local_notice;
 use crate::state::WeixinBindingState;
 use crate::ui::bottom_pane::dialogs::gateway_panel::WeixinLoginSessionView;
-use crate::ui::history_cell::{HistoryCell, HistoryFormat};
 use crate::ui::bottom_pane::dialogs::weixin_binding_view::WeixinBindingViewModel;
+use crate::ui::history_cell::{HistoryCell, HistoryFormat};
 use agent_app_server_client::AppServerClient;
 use anyhow::Result;
 
@@ -305,4 +305,3 @@ async fn push_gateway_panel(
         .push_gateway_edit_panel(status.platform, config);
     Ok(false)
 }
-

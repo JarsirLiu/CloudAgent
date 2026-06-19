@@ -1,6 +1,6 @@
 use crate::input::intent::ComposerIntent;
-use crate::ui::theme::{picker_selected_style, picker_unselected_style};
 use crate::ui::bottom_pane::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
+use crate::ui::theme::{picker_selected_style, picker_unselected_style};
 use config::ReasoningEffort;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::text::{Line, Span};
@@ -78,4 +78,3 @@ impl BottomPaneView for ReasoningPicker {
         lines
     }
 }
-

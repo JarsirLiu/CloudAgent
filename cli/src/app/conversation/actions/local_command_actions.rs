@@ -1,7 +1,7 @@
-use crate::app::conversation::actions::decision_label;
-use crate::app::conversation::actions::show_local_notice;
 use crate::app::TuiApp;
 use crate::app::commands::parse::ParsedInput;
+use crate::app::conversation::actions::decision_label;
+use crate::app::conversation::actions::show_local_notice;
 use agent_app_server_client::AppServerClient;
 use agent_core::ServerRequestDecision;
 use agent_protocol::{AppClientCommand, UserTurnInput};

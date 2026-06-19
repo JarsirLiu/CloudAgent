@@ -1,8 +1,8 @@
 use crate::input::intent::ComposerIntent;
 use crate::text_width::display_width;
-use crate::ui::theme::{body_style, disabled_style, info_style};
 use crate::ui::bottom_pane::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
 use crate::ui::bottom_pane::support::form_text_field::FormTextField;
+use crate::ui::theme::{body_style, disabled_style, info_style};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -303,4 +303,3 @@ mod tests {
         assert_eq!(panel.api_key.value(), "abc");
     }
 }
-

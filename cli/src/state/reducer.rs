@@ -449,4 +449,3 @@ fn transport_closed_message(message: &str) -> Option<String> {
 #[cfg(test)]
 #[path = "reducer_tests.rs"]
 mod tests;
-

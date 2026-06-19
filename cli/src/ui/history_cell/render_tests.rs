@@ -268,4 +268,3 @@ fn transcript_does_not_merge_agent_cells_across_non_agent_boundaries() {
 
     assert_eq!(cells.len(), 3);
 }
-

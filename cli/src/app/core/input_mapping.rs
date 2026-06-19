@@ -315,4 +315,3 @@ mod tests {
         assert!(!app.run_state.should_exit);
     }
 }
-

@@ -47,13 +47,19 @@ impl BottomPaneView for WeixinBindingView {
             Line::from("  Scan with WeChat on your phone. This page checks status automatically."),
             Line::from(format!("  Session: {}", self.model.session_id)),
             Line::from("  Scan URL:"),
-            Line::from(Span::styled(format!("  {}", self.model.qr_url), body_style())),
+            Line::from(Span::styled(
+                format!("  {}", self.model.qr_url),
+                body_style(),
+            )),
             Line::from("  "),
             Line::from(vec![
                 Span::styled("  Status: ", hint_style()),
                 Span::styled(self.model.status.clone(), body_style()),
             ]),
-            Line::from(Span::styled("  Esc returns to the gateway page.", hint_style())),
+            Line::from(Span::styled(
+                "  Esc returns to the gateway page.",
+                hint_style(),
+            )),
         ]
     }
 
@@ -61,4 +67,3 @@ impl BottomPaneView for WeixinBindingView {
         None
     }
 }
-

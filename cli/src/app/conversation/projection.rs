@@ -55,4 +55,3 @@ fn render_turn_items(items: &[TranscriptItem]) -> Vec<HistoryCell> {
         .filter(|cell| !cell.is_empty())
         .collect::<Vec<_>>()
 }
-

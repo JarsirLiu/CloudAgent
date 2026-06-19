@@ -1,8 +1,8 @@
 use crate::input::completion::CompletionState;
 use crate::text_width::display_width;
 use crate::ui::theme::{
-    picker_meta_style, picker_selected_alt_style, picker_selected_style,
-    picker_unselected_style, input_panel_bg, selected_alt_style,
+    input_panel_bg, picker_meta_style, picker_selected_alt_style, picker_selected_style,
+    picker_unselected_style, selected_alt_style,
 };
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};

@@ -1,17 +1,21 @@
 use super::InputPane;
-use crate::ui::bottom_pane::dialogs::config_panel::ConfigPanel;
-use crate::ui::bottom_pane::dialogs::selection::filter_picker::FilterPicker;
 use crate::ui::bottom_pane::bottom_pane_view::ViewKind;
+use crate::ui::bottom_pane::dialogs::config_panel::ConfigPanel;
 use crate::ui::bottom_pane::dialogs::gateway_panel::{GatewayPanel, WeixinLoginSessionView};
 use crate::ui::bottom_pane::dialogs::help_view::HelpView;
+use crate::ui::bottom_pane::dialogs::selection::filter_picker::FilterPicker;
 use crate::ui::bottom_pane::dialogs::selection::model_picker::ModelPicker;
 use crate::ui::bottom_pane::dialogs::selection::model_picker_loading::ModelPickerLoading;
 use crate::ui::bottom_pane::dialogs::selection::permissions_picker::PermissionsPicker;
 use crate::ui::bottom_pane::dialogs::selection::reasoning_picker::ReasoningPicker;
-use crate::ui::bottom_pane::dialogs::server_request::server_request_overlay::ServerRequestOverlay;
-use crate::ui::bottom_pane::dialogs::selection::session_picker::{SessionPicker, SessionPickerMode};
+use crate::ui::bottom_pane::dialogs::selection::session_picker::{
+    SessionPicker, SessionPickerMode,
+};
 use crate::ui::bottom_pane::dialogs::selection::session_picker_loading::SessionPickerLoading;
-use crate::ui::bottom_pane::dialogs::weixin_binding_view::{WeixinBindingView, WeixinBindingViewModel};
+use crate::ui::bottom_pane::dialogs::server_request::server_request_overlay::ServerRequestOverlay;
+use crate::ui::bottom_pane::dialogs::weixin_binding_view::{
+    WeixinBindingView, WeixinBindingViewModel,
+};
 use agent_core::ConversationSummary;
 use agent_core::InputItem;
 use agent_protocol::{PlatformConfigResponse, PlatformControlEntry, RequestId};
@@ -92,7 +96,10 @@ impl InputPane {
 
     pub fn clear_session_picker(&mut self) {
         self.navigator.retain(|view| {
-            !matches!(view.kind(), ViewKind::SessionPicker | ViewKind::SessionPickerLoading)
+            !matches!(
+                view.kind(),
+                ViewKind::SessionPicker | ViewKind::SessionPickerLoading
+            )
         });
     }
 
@@ -195,4 +202,3 @@ impl InputPane {
             .and_then(|view| view.active_server_request_id().cloned())
     }
 }
-

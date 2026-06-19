@@ -1,14 +1,11 @@
-use crate::app::conversation::actions::show_local_notice;
 use crate::app::TuiApp;
 use crate::app::commands::parse::ParsedInput;
+use crate::app::conversation::actions::show_local_notice;
 use crate::app::conversation::image_paste::handle_clipboard_paste;
 use crate::app::effects::copy_text_to_clipboard;
 use anyhow::Result;
 
-pub(crate) async fn handle_basic_input(
-    app: &mut TuiApp,
-    input: ParsedInput,
-) -> Result<bool> {
+pub(crate) async fn handle_basic_input(app: &mut TuiApp, input: ParsedInput) -> Result<bool> {
     match input {
         ParsedInput::LocalCopy => {
             let Some(text) = app.transcript_owner.last_copyable_output() else {

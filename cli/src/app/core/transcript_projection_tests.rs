@@ -68,4 +68,3 @@ fn snapshot_revisions_track_committed_and_live_updates_independently() {
     assert_eq!(after_live_scrollback, after_committed_scrollback);
     assert_ne!(after_live_viewport, after_committed_viewport);
 }
-

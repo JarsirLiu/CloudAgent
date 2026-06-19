@@ -3,8 +3,8 @@ use crate::app::commands::permission_profile::{
 };
 use crate::input::intent::ComposerIntent;
 use crate::text_width::display_width;
-use crate::ui::theme::{picker_selected_style, picker_unselected_style};
 use crate::ui::bottom_pane::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewKind};
+use crate::ui::theme::{picker_selected_style, picker_unselected_style};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::text::{Line, Span};
 
@@ -144,4 +144,3 @@ fn pad_to_width(value: &str, width: usize) -> String {
     }
     out
 }
-

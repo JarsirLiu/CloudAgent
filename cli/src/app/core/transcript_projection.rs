@@ -26,4 +26,3 @@ pub(crate) fn build_scrollback_snapshot(owner: &TranscriptOwner) -> TranscriptSc
         cells: owner.committed_cells_ref().to_vec(),
     }
 }
-

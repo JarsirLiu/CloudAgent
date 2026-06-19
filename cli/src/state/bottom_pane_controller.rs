@@ -4,11 +4,11 @@ use crate::state::bottom_pane_runtime::BottomPaneRuntimeState;
 use crate::state::selectors::status_text_from_mode;
 use crate::terminal::Frame;
 use crate::ui::bottom_pane::dialogs::gateway_panel::WeixinLoginSessionView;
+use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
+use crate::ui::bottom_pane::dialogs::weixin_binding_view::WeixinBindingViewModel;
 use crate::ui::bottom_pane::input_pane::{
     InputPane, InputPaneAction, InputPaneRenderResult, ServerRequestInlineState,
 };
-use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
-use crate::ui::bottom_pane::dialogs::weixin_binding_view::WeixinBindingViewModel;
 use agent_core::InputItem;
 use agent_core::SkillMetadata;
 use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
@@ -499,4 +499,3 @@ fn format_tokens(value: u64) -> String {
 #[cfg(test)]
 #[path = "bottom_pane_controller_tests.rs"]
 mod tests;
-

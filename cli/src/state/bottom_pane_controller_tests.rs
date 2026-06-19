@@ -1,7 +1,7 @@
 use crate::app::TuiApp;
 use crate::state::NoticeLevel;
-use crate::ui::bottom_pane::input_pane::InputPaneAction;
 use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
+use crate::ui::bottom_pane::input_pane::InputPaneAction;
 use agent_core::ConversationSummary;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
@@ -338,4 +338,3 @@ fn transient_notice_renders_above_runtime_banner_and_expires() {
     );
     assert_eq!(after.live_banner_level, None);
 }
-

@@ -236,4 +236,3 @@ fn edit_panel_ignores_immediate_char_echo_after_paste() {
             .any(|line| line.contains("token123 (required)"))
     );
 }
-

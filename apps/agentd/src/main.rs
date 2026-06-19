@@ -4,7 +4,7 @@ use agent_app_server::run_stdio_server_with_runtime_manager;
 use agent_core::AgentHost;
 use anyhow::Result;
 use cli::agent_host::build_agent_host;
-use cli::app::cli_settings::load_cli_settings;
+use cli::app::load_cli_settings;
 use cli::{ConsoleBootstrap, ConsoleConfig, run_console};
 use config::AgentConfig;
 use runtime_manager::AgentdRuntimeManager;

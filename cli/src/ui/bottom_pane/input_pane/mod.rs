@@ -1,7 +1,7 @@
 use crate::input::intent::ComposerIntent;
-use crate::ui::bottom_pane_navigation::BottomPaneNavigator;
 use crate::ui::bottom_pane::chat_composer::ChatComposer;
 pub(crate) use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestInlineState;
+use crate::ui::bottom_pane_navigation::BottomPaneNavigator;
 use agent_core::ServerRequestDecisionKind;
 use agent_core::SkillMetadata;
 use agent_protocol::RequestId;
@@ -130,4 +130,3 @@ impl Default for InputPane {
 #[cfg(test)]
 #[path = "esc_tests.rs"]
 mod tests;
-

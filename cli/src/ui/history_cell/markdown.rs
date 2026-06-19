@@ -5,8 +5,8 @@ use ratatui::text::{Line, Span};
 
 use crate::text_width::display_width;
 use crate::ui::theme::{
-    markdown_code_style, markdown_html_style, markdown_list_marker_style, markdown_table_separator_style,
-    markdown_text_style,
+    markdown_code_style, markdown_html_style, markdown_list_marker_style,
+    markdown_table_separator_style, markdown_text_style,
 };
 
 pub(super) fn render_markdown(input: &str, width: usize) -> Vec<Line<'static>> {
@@ -384,15 +384,10 @@ impl<'a> MarkdownWriter<'a> {
 
     fn html(&mut self, text: &str) {
         if self.in_table_cell {
-            self.table_cell.push(Span::styled(
-                text.to_string(),
-                markdown_html_style(),
-            ));
+            self.table_cell
+                .push(Span::styled(text.to_string(), markdown_html_style()));
         } else {
-            self.push_span(Span::styled(
-                text.to_string(),
-                markdown_html_style(),
-            ));
+            self.push_span(Span::styled(text.to_string(), markdown_html_style()));
         }
     }
 
@@ -599,9 +594,7 @@ pub(super) fn render_plaintext(input: &str, width: usize) -> Vec<Line<'static>> 
                 let spans = line
                     .spans
                     .into_iter()
-                    .map(|span| {
-                        Span::styled(span.content.into_owned(), markdown_text_style())
-                    })
+                    .map(|span| Span::styled(span.content.into_owned(), markdown_text_style()))
                     .collect::<Vec<_>>();
                 Line::from(spans)
             }),
@@ -781,10 +774,7 @@ fn push_code_line(line: &str, prefix: &str, out: &mut Vec<Line<'static>>) {
     if !prefix.is_empty() {
         spans.push(Span::raw(prefix.to_string()));
     }
-    spans.push(Span::styled(
-        line.to_string(),
-        markdown_code_style(),
-    ));
+    spans.push(Span::styled(line.to_string(), markdown_code_style()));
     out.push(Line::from(spans));
 }
 

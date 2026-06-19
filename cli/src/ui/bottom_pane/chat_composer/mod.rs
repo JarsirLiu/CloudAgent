@@ -781,4 +781,3 @@ fn format_file_restore_text(
         _ => format!("[Attachment: {label}]"),
     }
 }
-

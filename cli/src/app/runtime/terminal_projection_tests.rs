@@ -94,4 +94,3 @@ fn scrollback_diff_replays_when_existing_prefix_changes() {
 
     assert_eq!(scrollback_diff(&previous, &current), ScrollbackDiff::Replay);
 }
-

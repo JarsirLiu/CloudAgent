@@ -483,4 +483,3 @@ fn should_keep_completed_item_live(item: &TranscriptItem) -> bool {
             | TranscriptItem::ToolResult { .. }
     )
 }
-

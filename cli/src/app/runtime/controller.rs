@@ -1,7 +1,7 @@
 use crate::app::TuiApp;
-use crate::app::input::clipboard_paste::paste_clipboard_text;
 use crate::app::conversation::actions::handle_tui_input;
 use crate::app::conversation::event_router;
+use crate::app::input::clipboard_paste::paste_clipboard_text;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
 use crate::app::runtime::paste_coordinator::PasteCoordinator;
 use crate::terminal::{FrameRequester, UiEvent};

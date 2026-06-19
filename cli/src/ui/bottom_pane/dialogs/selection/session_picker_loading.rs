@@ -37,4 +37,3 @@ impl BottomPaneView for SessionPickerLoading {
 #[cfg(test)]
 #[path = "session_picker_loading_tests.rs"]
 mod tests;
-
