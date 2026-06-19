@@ -1059,4 +1059,5 @@ fn byte_index_from_char_index(s: &str, char_index: usize) -> usize {
 }
 
 #[cfg(test)]
+#[path = "textarea_tests.rs"]
 mod tests;

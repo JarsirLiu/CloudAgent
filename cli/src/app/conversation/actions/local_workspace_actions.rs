@@ -1,10 +1,10 @@
 use crate::app::conversation::actions::show_local_notice;
 use crate::app::TuiApp;
-use crate::app::cli_settings::{PersistedCliSettings, save_cli_settings};
+use crate::app::config::cli_settings::{PersistedCliSettings, save_cli_settings};
 use crate::app::commands::filter_toggle::apply_filter_toggle;
 use crate::app::commands::parse::ParsedInput;
 use crate::app::commands::permissions_mode::apply_permission_mode;
-use crate::app::llm_config::{UserLlmSettings, save_user_llm_settings};
+use crate::app::config::llm_config::{UserLlmSettings, save_user_llm_settings};
 use crate::app::model_catalog::{
     ModelCatalogSnapshot, ModelCatalogSnapshotState, ModelCatalogSource,
 };

@@ -94,7 +94,7 @@ pub async fn run_console_surface(
 ) -> Result<()> {
     let mut config = config;
     if let Ok(Some(settings)) =
-        crate::app::cli_settings::load_cli_settings(&config.runtime.conversation_store_dir)
+        crate::app::config::cli_settings::load_cli_settings(&config.runtime.conversation_store_dir)
     {
         config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;
         config.cli.permission_mode = settings.permission_mode;

@@ -1,3 +1,10 @@
+//! Terminal and event-loop infrastructure for the CLI app.
+//!
+//! This module owns low-level terminal initialization, rendering primitives,
+//! keyboard-mode handling, and the event loop plumbing used by the TUI runtime.
+//! The `events/` submodule is an implementation cluster for event polling,
+//! frame requests, and cross-thread input plumbing.
+
 mod color_compat;
 pub mod custom_terminal;
 mod draw_coordinator;

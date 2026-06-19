@@ -1,11 +1,10 @@
-pub mod cli_settings;
-pub(crate) mod clipboard_paste;
 pub(crate) mod commands;
+pub(crate) mod config;
 pub(crate) mod conversation;
 mod core;
+pub(crate) mod input;
 pub mod effects;
 mod facade;
-pub(crate) mod llm_config;
 pub(crate) mod model_catalog;
 pub(crate) mod runtime;
 

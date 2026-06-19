@@ -1,3 +1,12 @@
+//! Application state, reducers, and state-machine helpers for the CLI app.
+//!
+//! This module owns the mutable runtime state that is shared across app layers:
+//! - `RunState` and `WeixinBindingState` model the current conversation/runtime state
+//! - `reducer` translates server messages into state actions
+//! - `bottom_pane_*` modules derive UI state for the input pane and status area
+//! - `selectors` exposes read-only state helpers used by rendering and input routing
+//! - `turn_lifecycle` tracks the lifecycle of the active conversation turn
+
 pub mod bottom_pane_controller;
 pub mod bottom_pane_runtime;
 pub mod reducer;

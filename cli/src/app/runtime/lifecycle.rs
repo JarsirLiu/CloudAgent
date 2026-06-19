@@ -1,6 +1,6 @@
 use crate::app::TuiApp;
 use crate::app::conversation::actions::handle_tui_input;
-use crate::app::llm_config::UserLlmSettings;
+use crate::app::config::llm_config::UserLlmSettings;
 use crate::app::model_catalog::ModelCatalogSnapshotState;
 use crate::app::runtime::display::{should_animate_live_status, should_animate_welcome};
 use crate::state::NoticeLevel;

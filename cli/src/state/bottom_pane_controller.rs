@@ -488,4 +488,5 @@ fn format_tokens(value: u64) -> String {
 }
 
 #[cfg(test)]
+#[path = "bottom_pane_controller_tests.rs"]
 mod tests;

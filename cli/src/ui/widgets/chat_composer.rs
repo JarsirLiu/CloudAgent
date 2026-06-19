@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::app::clipboard_paste::{is_supported_image_path, normalize_pasted_image_path};
+use crate::app::input::clipboard_paste::{is_supported_image_path, normalize_pasted_image_path};
 use crate::ui::widgets::textarea::{TextArea, TextAreaState, is_altgr};
 
 mod attachments;

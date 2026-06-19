@@ -48,5 +48,5 @@ pub(crate) fn decision_label(decision: &agent_core::ServerRequestDecisionKind) -
 }
 
 #[cfg(test)]
-#[path = "actions_tests.rs"]
+#[path = "tests.rs"]
 mod tests;

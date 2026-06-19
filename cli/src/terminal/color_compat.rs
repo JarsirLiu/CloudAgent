@@ -485,4 +485,5 @@ fn color_distance_sq(r: u8, g: u8, b: u8, target: (u8, u8, u8)) -> u32 {
 }
 
 #[cfg(test)]
+#[path = "color_compat_tests.rs"]
 mod tests;

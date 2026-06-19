@@ -32,4 +32,5 @@ impl HistoryReplayBatch {
 }
 
 #[cfg(test)]
+#[path = "history_replay_tests.rs"]
 mod tests;

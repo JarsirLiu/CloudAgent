@@ -147,4 +147,5 @@ fn trim_trailing_blank_lines(lines: &mut Vec<Line<'static>>) {
 }
 
 #[cfg(test)]
+#[path = "transcript_line_builder_tests.rs"]
 mod tests;

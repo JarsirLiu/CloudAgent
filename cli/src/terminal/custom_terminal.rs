@@ -559,4 +559,5 @@ fn queue_modifier_diff<W: Write>(writer: &mut W, from: Modifier, to: Modifier) -
 }
 
 #[cfg(test)]
+#[path = "custom_terminal_tests.rs"]
 mod tests;

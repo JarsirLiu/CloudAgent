@@ -1,5 +1,5 @@
 use crate::app::TuiApp;
-use crate::app::clipboard_paste::{ClipboardPasteContent, paste_clipboard_content};
+use crate::app::input::clipboard_paste::{ClipboardPasteContent, paste_clipboard_content};
 use crate::state::NoticeLevel;
 
 pub(crate) fn handle_clipboard_paste(app: &mut TuiApp) {

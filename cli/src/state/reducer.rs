@@ -447,4 +447,5 @@ fn transport_closed_message(message: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 #[cfg(test)]
+#[path = "reducer_tests.rs"]
 mod tests;
