@@ -3,12 +3,12 @@ use crate::state::NoticeLevel;
 use crate::state::bottom_pane_runtime::BottomPaneRuntimeState;
 use crate::state::selectors::status_text_from_mode;
 use crate::terminal::Frame;
-use crate::ui::widgets::gateway_panel::WeixinLoginSessionView;
-use crate::ui::widgets::input_pane::{
+use crate::ui::bottom_pane::dialogs::gateway_panel::WeixinLoginSessionView;
+use crate::ui::bottom_pane::input_pane::{
     InputPane, InputPaneAction, InputPaneRenderResult, ServerRequestInlineState,
 };
-use crate::ui::widgets::session_picker::SessionPickerMode;
-use crate::ui::widgets::weixin_binding_view::WeixinBindingViewModel;
+use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
+use crate::ui::bottom_pane::dialogs::weixin_binding_view::WeixinBindingViewModel;
 use agent_core::InputItem;
 use agent_core::SkillMetadata;
 use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
@@ -114,7 +114,9 @@ impl BottomPaneController {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> Option<InputPaneAction> {
-        self.input_pane.handle_key(key)
+        let action = self.input_pane.handle_key(key);
+        self.sync_pending_session_picker_state();
+        action
     }
 
     pub(crate) fn handle_paste(&mut self, text: &str) -> Option<InputPaneAction> {
@@ -198,6 +200,13 @@ impl BottomPaneController {
         self.pending_session_picker = None;
         self.session_picker_loading_generation = None;
         self.model_picker_loading_current = None;
+    }
+
+    fn sync_pending_session_picker_state(&mut self) {
+        if self.pending_session_picker.is_some() && self.input_pane.no_modal_or_popup_active() {
+            self.pending_session_picker = None;
+            self.session_picker_loading_generation = None;
+        }
     }
 
     pub(crate) fn show_transient_notice(&mut self, level: NoticeLevel, message: String) {
@@ -490,3 +499,4 @@ fn format_tokens(value: u64) -> String {
 #[cfg(test)]
 #[path = "bottom_pane_controller_tests.rs"]
 mod tests;
+

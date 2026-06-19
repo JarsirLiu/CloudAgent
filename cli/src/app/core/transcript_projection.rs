@@ -1,5 +1,5 @@
 use crate::app::core::transcript_owner::TranscriptOwner;
-use crate::ui::widgets::history_cell::HistoryCell;
+use crate::ui::history_cell::HistoryCell;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TranscriptViewportSnapshot {
@@ -26,3 +26,4 @@ pub(crate) fn build_scrollback_snapshot(owner: &TranscriptOwner) -> TranscriptSc
         cells: owner.committed_cells_ref().to_vec(),
     }
 }
+

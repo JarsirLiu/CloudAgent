@@ -1,5 +1,5 @@
 use super::{HistoryCellGapKey, TranscriptLineOptions, build_transcript_lines};
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat, HistoryKind, HistoryTone};
+use crate::ui::history_cell::{HistoryCell, HistoryFormat, HistoryKind, HistoryTone};
 
 #[test]
 fn live_transcript_keeps_message_and_agent_lines() {

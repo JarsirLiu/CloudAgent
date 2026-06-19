@@ -1,5 +1,5 @@
 use super::streaming::{AgentStreamController, AgentStreamFinish, AgentStreamOutput};
-use crate::ui::widgets::history_cell::{
+use crate::ui::history_cell::{
     HistoryCell, humanize_tool_label, render_active_item_placeholder, render_history_entry,
 };
 use agent_core::conversation::{InputItem, TranscriptItem, input_items_to_plain_text};
@@ -483,3 +483,4 @@ fn should_keep_completed_item_live(item: &TranscriptItem) -> bool {
             | TranscriptItem::ToolResult { .. }
     )
 }
+

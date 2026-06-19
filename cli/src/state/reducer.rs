@@ -1,6 +1,6 @@
 use crate::input::intent::GatewayConfigUpdate;
 use crate::state::NoticeLevel;
-use crate::ui::widgets::server_request_model::ServerRequestPresentation;
+use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation;
 use agent_core::conversation::{ConversationSummary, ConversationTurn, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind};
 use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
@@ -449,3 +449,4 @@ fn transport_closed_message(message: &str) -> Option<String> {
 #[cfg(test)]
 #[path = "reducer_tests.rs"]
 mod tests;
+

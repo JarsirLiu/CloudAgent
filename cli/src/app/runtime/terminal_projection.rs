@@ -6,7 +6,7 @@ use crate::ui::chat_surface::{ChatSurface, TranscriptRenderMetrics};
 use crate::ui::transcript_line_builder::{
     HistoryCellGapKey, TranscriptLineOptions, build_transcript_lines,
 };
-use crate::ui::widgets::history_cell::HistoryCell;
+use crate::ui::history_cell::HistoryCell;
 use anyhow::Result;
 use ratatui::layout::Rect;
 
@@ -134,3 +134,4 @@ pub(crate) fn draw_with_terminal_projection(
 #[cfg(test)]
 #[path = "terminal_projection_tests.rs"]
 mod tests;
+

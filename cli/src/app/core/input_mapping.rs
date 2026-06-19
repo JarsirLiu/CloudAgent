@@ -5,7 +5,7 @@ use crate::input::intent::ComposerIntent;
 use crate::input::keymap::matches_ctrl_char;
 use crate::input::keymap::matches_image_paste_shortcut;
 use crate::state::NoticeLevel;
-use crate::ui::widgets::input_pane::InputPaneAction;
+use crate::ui::bottom_pane::input_pane::InputPaneAction;
 use agent_protocol::AppClientCommand;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -95,7 +95,7 @@ impl TuiApp {
             )),
             InputPaneAction::Composer(ComposerIntent::Session) => {
                 self.bottom_pane.request_session_picker(
-                    crate::ui::widgets::session_picker::SessionPickerMode::Switch,
+                    crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode::Switch,
                 );
                 Some(ParsedInput::Command(
                     AppClientCommand::ListConversationsPage {
@@ -224,7 +224,7 @@ impl TuiApp {
 #[cfg(test)]
 mod tests {
     use crate::app::TuiApp;
-    use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat};
+    use crate::ui::history_cell::{HistoryCell, HistoryFormat};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::path::PathBuf;
 
@@ -315,3 +315,4 @@ mod tests {
         assert!(!app.run_state.should_exit);
     }
 }
+

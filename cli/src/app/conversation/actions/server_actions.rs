@@ -280,7 +280,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             request_id,
             request,
         } => {
-            app.show_server_request_prompt(crate::ui::widgets::input_pane::ServerRequestInlineState {
+            app.show_server_request_prompt(crate::ui::bottom_pane::input_pane::ServerRequestInlineState {
                 request_id,
                 presentation: request.clone(),
             });
@@ -303,3 +303,4 @@ pub(crate) fn prepend_turn_page(
     }
     merged
 }
+

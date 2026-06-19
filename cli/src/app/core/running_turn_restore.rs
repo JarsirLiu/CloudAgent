@@ -1,4 +1,4 @@
-use crate::ui::widgets::history_cell::{HistoryCell, RenderContext, render_history_entry};
+use crate::ui::history_cell::{HistoryCell, RenderContext, render_history_entry};
 use agent_core::conversation::ConversationTurn;
 use agent_core::conversation::TranscriptItem;
 
@@ -57,3 +57,4 @@ pub(crate) fn is_live_tail_candidate(item: &TranscriptItem) -> bool {
             | TranscriptItem::FileChange { .. }
     )
 }
+

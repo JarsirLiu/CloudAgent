@@ -1,4 +1,4 @@
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat};
+use crate::ui::history_cell::{HistoryCell, HistoryFormat};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AgentStreamOutput {
@@ -209,3 +209,4 @@ mod tests {
         );
     }
 }
+

@@ -1,4 +1,4 @@
-use crate::ui::widgets::history_cell::{HistoryCell, RenderContext, render_history_entry};
+use crate::ui::history_cell::{HistoryCell, RenderContext, render_history_entry};
 use agent_core::conversation::{ConversationTurn, TranscriptItem};
 use agent_core::turn::TurnState;
 
@@ -55,3 +55,4 @@ fn render_turn_items(items: &[TranscriptItem]) -> Vec<HistoryCell> {
         .filter(|cell| !cell.is_empty())
         .collect::<Vec<_>>()
 }
+

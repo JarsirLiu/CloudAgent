@@ -1,4 +1,4 @@
-use crate::ui::widgets::history_cell::HistoryCell;
+use crate::ui::history_cell::HistoryCell;
 use ratatui::text::Line;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,3 +48,4 @@ impl TranscriptRenderCache {
 pub(crate) fn build_rendered_rows(lines: &[Line<'static>], width: usize) -> usize {
     HistoryCell::rendered_line_count(lines, width)
 }
+

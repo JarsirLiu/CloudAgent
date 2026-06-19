@@ -69,7 +69,7 @@ pub(crate) async fn handle_session_input(
             let trimmed = target_conversation_id.trim();
             if trimmed.is_empty() {
                 app.bottom_pane.request_session_picker(
-                    crate::ui::widgets::session_picker::SessionPickerMode::Delete,
+                    crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode::Delete,
                 );
                 client.send_command(agent_protocol::AppClientCommand::ListConversationsPage {
                     cursor: None,
@@ -85,3 +85,4 @@ pub(crate) async fn handle_session_input(
         _ => unreachable!("session input dispatcher received non-session input"),
     }
 }
+

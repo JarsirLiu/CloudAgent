@@ -7,7 +7,7 @@ use crate::app::core::transcript_projection::{
     build_viewport_snapshot,
 };
 use crate::ui::transcript_render_cache::TranscriptRenderCacheKey;
-use crate::ui::widgets::history_cell::HistoryCell;
+use crate::ui::history_cell::HistoryCell;
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind, TurnState};
 use std::collections::HashSet;
@@ -254,3 +254,4 @@ impl TranscriptOwner {
             .consolidate_agent_message(&message.item_id, message.cell);
     }
 }
+

@@ -2,7 +2,7 @@ use crate::app::core::active_turn::{
     ActiveTurnAction, ActiveTurnEffects, ActiveTurnState, ConsolidateAgentMessage,
 };
 use crate::app::core::running_turn_restore::restore_running_turn_cells;
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone, Transcript};
+use crate::ui::history_cell::{HistoryCell, HistoryTone, Transcript};
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind};
 
@@ -227,3 +227,4 @@ impl ActiveCellController {
         self.revision = self.revision.wrapping_add(1);
     }
 }
+

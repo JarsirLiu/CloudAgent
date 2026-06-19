@@ -1,5 +1,5 @@
 use super::BottomPaneNavigator;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, ViewCompletion};
+use crate::ui::bottom_pane::bottom_pane_view::{BottomPaneView, ViewCompletion};
 
 impl BottomPaneNavigator {
     pub(crate) fn is_empty(&self) -> bool {
@@ -80,3 +80,4 @@ impl BottomPaneNavigator {
         }
     }
 }
+

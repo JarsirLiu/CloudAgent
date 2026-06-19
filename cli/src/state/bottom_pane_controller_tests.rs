@@ -1,7 +1,7 @@
 use crate::app::TuiApp;
 use crate::state::NoticeLevel;
-use crate::ui::widgets::input_pane::InputPaneAction;
-use crate::ui::widgets::session_picker::SessionPickerMode;
+use crate::ui::bottom_pane::input_pane::InputPaneAction;
+use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
 use agent_core::ConversationSummary;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
@@ -247,7 +247,7 @@ fn generic_live_label_hides_when_active_cell_is_visible() {
     app.bottom_pane
         .live_label_override_for_test(Some("Thinking".to_string()));
     app.transcript_owner
-        .push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+        .push_live_cell(crate::ui::history_cell::HistoryCell::reasoning(
             "Reasoning",
             "streaming body",
         ));
@@ -338,3 +338,4 @@ fn transient_notice_renders_above_runtime_banner_and_expires() {
     );
     assert_eq!(after.live_banner_level, None);
 }
+

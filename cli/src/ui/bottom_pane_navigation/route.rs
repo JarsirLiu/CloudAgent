@@ -1,5 +1,5 @@
 use super::{BottomPaneNavigator, NavigationKeyResult};
-use crate::ui::widgets::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewCompletion};
+use crate::ui::bottom_pane::bottom_pane_view::{BottomPaneView, BottomPaneViewAction, ViewCompletion};
 use agent_protocol::RequestId;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -100,3 +100,4 @@ impl BottomPaneNavigator {
         }
     }
 }
+

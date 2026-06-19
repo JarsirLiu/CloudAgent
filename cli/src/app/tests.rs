@@ -163,15 +163,15 @@ fn transcript_owner_shows_local_user_immediately() {
 #[test]
 fn local_live_cells_replace_previous_active_notice() {
     let mut owner = TranscriptOwner::default();
-    owner.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+    owner.push_live_cell(crate::ui::history_cell::HistoryCell::info(
         "conversation",
         "first notice",
-        crate::ui::widgets::history_cell::HistoryTone::Warning,
+        crate::ui::history_cell::HistoryTone::Warning,
     ));
-    owner.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+    owner.push_live_cell(crate::ui::history_cell::HistoryCell::info(
         "conversation",
         "second notice",
-        crate::ui::widgets::history_cell::HistoryTone::Warning,
+        crate::ui::history_cell::HistoryTone::Warning,
     ));
 
     let live = owner.live_cells();
@@ -366,13 +366,13 @@ fn replacing_history_resets_transcript_scroll_without_rehydrating_viewport_histo
 
     app.transcript_owner
         .rebuild_from_history_snapshot(&history, false);
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::agent(
         "assistant",
         (0..10)
             .map(|idx| format!("line {idx}"))
             .collect::<Vec<_>>()
             .join("\n"),
-        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+        crate::ui::history_cell::HistoryFormat::PlainText,
     ));
     let initial_model = build_chat_surface_model(&mut app, 100, 4);
     let ChatSurfaceBody::Transcript(initial_surface) = initial_model.body else {
@@ -1184,10 +1184,10 @@ fn slash_completion_expands_bottom_pane_as_single_layout_region() {
         false,
         "ReadOnly".to_string(),
     );
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::agent(
         "cloudagent",
         "streaming response stays stable while the command list is open",
-        crate::ui::widgets::history_cell::HistoryFormat::Markdown,
+        crate::ui::history_cell::HistoryFormat::Markdown,
     ));
 
     let terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
@@ -1265,7 +1265,7 @@ fn escape_closes_session_picker_in_running_mode_without_interrupting_turn() {
     );
     mark_running(&mut app);
 
-    app.bottom_pane.request_session_picker(crate::ui::widgets::session_picker::SessionPickerMode::Switch);
+    app.bottom_pane.request_session_picker(crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode::Switch);
     assert!(app.bottom_pane.present_requested_session_picker_page(
         vec![agent_core::ConversationSummary {
             conversation_id: "default".to_string(),
@@ -1310,9 +1310,9 @@ fn escape_does_not_interrupt_when_server_request_overlay_is_active() {
         "ReadOnly".to_string(),
     );
     mark_running(&mut app);
-    app.bottom_pane.set_server_request(crate::ui::widgets::input_pane::ServerRequestInlineState {
+    app.bottom_pane.set_server_request(crate::ui::bottom_pane::input_pane::ServerRequestInlineState {
         request_id: agent_protocol::RequestId::String("req-1".to_string()),
-        presentation: crate::ui::widgets::server_request_model::ServerRequestPresentation::command(
+        presentation: crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation::command(
             "exec_command",
             "needs approval",
             "Get-Content file.rs",
@@ -1498,7 +1498,7 @@ fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell()
         &mut app,
         crate::state::reducer::ServerAction::ShowServerRequestPrompt {
             request_id: agent_protocol::RequestId::String("req-1".to_string()),
-            request: crate::ui::widgets::server_request_model::ServerRequestPresentation::command(
+            request: crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation::command(
                 "exec_command",
                 "needs review",
                 "Get-Content file.rs",
@@ -1710,10 +1710,10 @@ fn generic_live_notice_does_not_keep_mode_running() {
         false,
         "ReadOnly".to_string(),
     );
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::info(
         "conversation",
         "no active turn",
-        crate::ui::widgets::history_cell::HistoryTone::Warning,
+        crate::ui::history_cell::HistoryTone::Warning,
     ));
 
     assert_eq!(app.current_mode(), agent_protocol::FrontendMode::Idle);
@@ -2156,7 +2156,7 @@ fn active_reasoning_transcript_matches_reasoning_card_ui() {
         false,
         "ReadOnly".to_string(),
     );
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::reasoning(
         "Reasoning",
         "Let me inspect the code path carefully.".to_string(),
     ));
@@ -2188,10 +2188,10 @@ fn active_notice_transcript_does_not_render_history_rails() {
         false,
         "ReadOnly".to_string(),
     );
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::info(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::info(
         "conversation",
         "conversation reset",
-        crate::ui::widgets::history_cell::HistoryTone::Control,
+        crate::ui::history_cell::HistoryTone::Control,
     ));
 
     let model = build_chat_surface_model(&mut app, 80, 20);
@@ -2249,7 +2249,7 @@ fn finalized_reasoning_history_matches_live_reasoning_card_ui() {
     let committed = app.transcript_owner.committed_history_cells();
     let rendered = committed
         .iter()
-        .find(|cell| cell.tone == crate::ui::widgets::history_cell::HistoryTone::Reasoning)
+        .find(|cell| cell.tone == crate::ui::history_cell::HistoryTone::Reasoning)
         .expect("reasoning cell should exist")
         .to_lines_with_mode(80)
         .iter()
@@ -2273,7 +2273,7 @@ fn long_active_reasoning_does_not_expand_viewport_beyond_bottom_pane_stack() {
         "ReadOnly".to_string(),
     );
 
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::reasoning(
         "Reasoning",
         "This is a very long reasoning paragraph that should wrap across many lines without forcing the input pane off screen. "
             .repeat(40),
@@ -2301,7 +2301,7 @@ fn active_body_height_is_capped_by_remaining_space_above_bottom_pane() {
         "ReadOnly".to_string(),
     );
 
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::reasoning(
         "Reasoning",
         "This is a very long reasoning paragraph that should wrap across many lines without forcing the input pane off screen. "
             .repeat(40),
@@ -2334,7 +2334,7 @@ fn active_transcript_tail_keeps_latest_reasoning_visible() {
         "ReadOnly".to_string(),
     );
 
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::reasoning(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::reasoning(
         "Reasoning",
         "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
             .to_string(),
@@ -2365,13 +2365,13 @@ fn active_transcript_manual_scroll_is_preserved_across_new_content() {
         "ReadOnly".to_string(),
     );
 
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::agent(
         "assistant",
         (0..10)
             .map(|idx| format!("line {idx}"))
             .collect::<Vec<_>>()
             .join("\n"),
-        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+        crate::ui::history_cell::HistoryFormat::PlainText,
     ));
 
     let initial = build_chat_surface_model(&mut app, 80, 4);
@@ -2396,13 +2396,13 @@ fn active_transcript_manual_scroll_is_preserved_across_new_content() {
     assert_eq!(scrolled_active.lines.len(), 10);
     assert_eq!(app.transcript_scroll.top_row_for_render(10, 4), 3);
 
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::agent(
         "assistant",
         (0..14)
             .map(|idx| format!("line {idx}"))
             .collect::<Vec<_>>()
             .join("\n"),
-        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+        crate::ui::history_cell::HistoryFormat::PlainText,
     ));
 
     let updated = build_chat_surface_model(&mut app, 80, 4);
@@ -2424,11 +2424,11 @@ fn active_body_height_tracks_wrapped_physical_rows_during_streaming() {
         "ReadOnly".to_string(),
     );
 
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::agent(
         "assistant",
         "This is a single long streaming paragraph that should wrap into multiple physical rows inside the active viewport instead of being treated like a single logical line."
             .to_string(),
-        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+        crate::ui::history_cell::HistoryFormat::PlainText,
     ));
 
     let model = build_chat_surface_model(&mut app, 28, 20);
@@ -2451,10 +2451,10 @@ fn active_body_height_does_not_add_phantom_margin_rows() {
         "ReadOnly".to_string(),
     );
 
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::agent(
         "assistant",
         "one visible line".to_string(),
-        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+        crate::ui::history_cell::HistoryFormat::PlainText,
     ));
 
     let model = build_chat_surface_model(&mut app, 80, 20);
@@ -2477,10 +2477,10 @@ fn active_transcript_tail_ignores_trailing_blank_stream_rows() {
         "ReadOnly".to_string(),
     );
 
-    app.push_live_cell(crate::ui::widgets::history_cell::HistoryCell::agent(
+    app.push_live_cell(crate::ui::history_cell::HistoryCell::agent(
         "assistant",
         "line 0\nline 1\nline 2\n\n\n".to_string(),
-        crate::ui::widgets::history_cell::HistoryFormat::PlainText,
+        crate::ui::history_cell::HistoryFormat::PlainText,
     ));
 
     let model = build_chat_surface_model(&mut app, 80, 2);
@@ -2506,3 +2506,4 @@ fn transcript_surface_uses_centered_width_metrics() {
     assert_eq!(metrics.width, 112);
     assert_eq!(metrics.left_padding, 4);
 }
+

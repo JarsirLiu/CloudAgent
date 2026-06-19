@@ -3,7 +3,7 @@ use crate::app::runtime::display::should_show_welcome;
 use crate::state::NoticeLevel;
 use crate::terminal::Frame;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, ChatSurfaceModel, build_chat_surface_model};
-use crate::ui::widgets::welcome::WelcomeScreen;
+use crate::ui::bottom_pane::dialogs::welcome::WelcomeScreen;
 use agent_protocol::FrontendMode;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -429,3 +429,4 @@ fn centered_column(area: Rect, max_width: u16) -> Rect {
         height: area.height,
     }
 }
+

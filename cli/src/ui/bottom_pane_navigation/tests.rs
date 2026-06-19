@@ -1,6 +1,6 @@
 use super::*;
 use crate::input::intent::ComposerIntent;
-use crate::ui::widgets::bottom_pane_view::{BottomPaneViewAction, ViewKind};
+use crate::ui::bottom_pane::bottom_pane_view::{BottomPaneViewAction, ViewKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::text::Line;
 
@@ -197,3 +197,4 @@ fn composer_without_dismiss_keeps_active_view() {
     ));
     assert!(navigator.has_active_view());
 }
+

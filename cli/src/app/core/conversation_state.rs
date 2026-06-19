@@ -6,7 +6,7 @@ use crate::state::RunState;
 use crate::state::bottom_pane_controller::BottomPaneController;
 use crate::state::reducer::TurnDispatch;
 use crate::ui::transcript_render_cache::TranscriptRenderCache;
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryTone};
+use crate::ui::history_cell::{HistoryCell, HistoryTone};
 use agent_core::conversation::InputItem;
 use agent_core::turn::{ModelRetryStage, TurnItemKind};
 use agent_protocol::{
@@ -115,7 +115,7 @@ impl TuiApp {
 
     pub(crate) fn show_server_request_prompt(
         &mut self,
-        request: crate::ui::widgets::input_pane::ServerRequestInlineState,
+        request: crate::ui::bottom_pane::input_pane::ServerRequestInlineState,
     ) {
         self.bottom_pane.set_server_request(request);
     }
@@ -263,3 +263,4 @@ pub(crate) fn conversation_view_snapshot_for_test(
         updated_at_ms: 0,
     }
 }
+

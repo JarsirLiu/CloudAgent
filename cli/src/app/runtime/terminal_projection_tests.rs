@@ -1,5 +1,5 @@
 use super::{ScrollbackDiff, TerminalProjectionController, scrollback_diff};
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryFormat};
+use crate::ui::history_cell::{HistoryCell, HistoryFormat};
 
 #[test]
 fn empty_committed_cells_do_not_emit_scrollback_update() {
@@ -94,3 +94,4 @@ fn scrollback_diff_replays_when_existing_prefix_changes() {
 
     assert_eq!(scrollback_diff(&previous, &current), ScrollbackDiff::Replay);
 }
+

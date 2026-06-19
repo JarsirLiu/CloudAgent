@@ -1,4 +1,4 @@
-use crate::ui::widgets::history_cell::{HistoryCell, Transcript, tool_aggregation};
+use crate::ui::history_cell::{HistoryCell, Transcript, tool_aggregation};
 
 #[derive(Default)]
 pub(crate) struct CommittedTranscriptStore {
@@ -93,15 +93,15 @@ impl CommittedTranscriptStore {
             return;
         }
 
-        let is_agent_message = cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
-            && cell.kind() == crate::ui::widgets::history_cell::HistoryKind::Message;
+        let is_agent_message = cell.tone == crate::ui::history_cell::HistoryTone::Agent
+            && cell.kind() == crate::ui::history_cell::HistoryKind::Message;
         let previous_was_agent_message = self
             .transcript
             .cells()
             .last()
             .map(|previous| {
-                previous.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
-                    && previous.kind() == crate::ui::widgets::history_cell::HistoryKind::Message
+                previous.tone == crate::ui::history_cell::HistoryTone::Agent
+                    && previous.kind() == crate::ui::history_cell::HistoryKind::Message
             })
             .unwrap_or(false);
         cell.set_stream_continuation(is_agent_message && previous_was_agent_message);
@@ -113,8 +113,9 @@ impl CommittedTranscriptStore {
 }
 
 fn is_provisional_agent_message_cell_for(cell: &HistoryCell, item_id: &str) -> bool {
-    cell.tone == crate::ui::widgets::history_cell::HistoryTone::Agent
-        && cell.kind() == crate::ui::widgets::history_cell::HistoryKind::Message
+    cell.tone == crate::ui::history_cell::HistoryTone::Agent
+        && cell.kind() == crate::ui::history_cell::HistoryKind::Message
         && cell.is_provisional_stream()
         && cell.stream_item_id() == Some(item_id)
 }
+

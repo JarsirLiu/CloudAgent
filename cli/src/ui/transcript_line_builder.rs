@@ -1,4 +1,4 @@
-use crate::ui::widgets::history_cell::{HistoryCell, HistoryKind};
+use crate::ui::history_cell::{HistoryCell, HistoryKind};
 use ratatui::text::Line;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,3 +149,4 @@ fn trim_trailing_blank_lines(lines: &mut Vec<Line<'static>>) {
 #[cfg(test)]
 #[path = "transcript_line_builder_tests.rs"]
 mod tests;
+
