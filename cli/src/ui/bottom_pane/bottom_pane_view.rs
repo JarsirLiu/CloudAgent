@@ -110,10 +110,6 @@ pub(crate) trait BottomPaneView {
         None
     }
 
-    fn requires_action(&self) -> bool {
-        false
-    }
-
     fn append_session_page(
         &mut self,
         _sessions: Vec<agent_core::ConversationSummary>,

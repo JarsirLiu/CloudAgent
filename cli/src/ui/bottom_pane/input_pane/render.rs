@@ -1,6 +1,7 @@
 use super::layout::{COMPOSER_TOP_SPACER_HEIGHT, compute_desired_height, compute_input_layout};
 use super::{InputPane, InputPaneRenderResult};
 use crate::terminal::Frame;
+use crate::ui::bottom_pane::bottom_pane_view::ViewKind;
 use crate::ui::bottom_pane::support::footer::{hint_line, status_line};
 use crate::ui::theme::{input_border_style, input_completion_border_style, input_title_style};
 use agent_protocol::FrontendMode;
@@ -50,7 +51,7 @@ impl InputPane {
         if self
             .navigator
             .active_view()
-            .is_some_and(|view| view.requires_action())
+            .is_some_and(|view| view_requires_action(view.kind()))
         {
             let (widget, lines_before_composer, _) = self.render_request_view(&request, area.width);
             frame.render_widget(widget, area);
@@ -140,7 +141,7 @@ impl InputPane {
         if self
             .navigator
             .active_view()
-            .is_some_and(|view| view.requires_action())
+            .is_some_and(|view| view_requires_action(view.kind()))
         {
             let (widget, lines_before, _) = self.render_request_view(&request, area_width);
             let text = format!("{widget:?}");
@@ -160,7 +161,7 @@ impl InputPane {
     pub fn desired_height(&self, mode: FrontendMode, area_width: u16) -> u16 {
         let inner_width = area_width.saturating_sub(2) as usize;
         if let Some(view) = self.navigator.active_view()
-            && view.requires_action()
+            && view_requires_action(view.kind())
         {
             return (4 + view.desired_height(area_width.saturating_sub(2))).max(7);
         }
@@ -254,5 +255,24 @@ pub(super) fn input_block(lines: Vec<Line<'static>>, border_style: Style) -> Par
             .border_style(border_style)
             .title_style(input_title_style())
             .title(" prompt "),
+    )
+}
+
+fn view_requires_action(kind: ViewKind) -> bool {
+    matches!(
+        kind,
+        ViewKind::ServerRequest
+            | ViewKind::Help
+            | ViewKind::Filter
+            | ViewKind::Config
+            | ViewKind::Permissions
+            | ViewKind::Reasoning
+            | ViewKind::ModelPicker
+            | ViewKind::ModelPickerLoading
+            | ViewKind::SessionPicker
+            | ViewKind::SessionPickerLoading
+            | ViewKind::GatewayList
+            | ViewKind::GatewayEdit
+            | ViewKind::WeixinBinding
     )
 }

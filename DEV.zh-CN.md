@@ -277,8 +277,6 @@ worker-oriented 二进制。
 
 当前保留的架构实施文档：
 
-- [`docs/projection-state-machine-refactor.zh-CN.md`](D:/learn/gifti/cloudagent/docs/projection-state-machine-refactor.zh-CN.md)
-  会话 view 状态机重构、后端状态真相、前端投影边界。
 - [`docs/auto-compaction-codex-alignment.zh-CN.md`](D:/learn/gifti/cloudagent/docs/auto-compaction-codex-alignment.zh-CN.md)
   自动压缩 checkpoint、rollout 重建、turn aborted 边界和工具循环保护。
 

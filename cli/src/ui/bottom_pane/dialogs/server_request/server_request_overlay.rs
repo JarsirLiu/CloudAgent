@@ -319,9 +319,6 @@ impl BottomPaneView for ServerRequestOverlay {
         (!self.complete).then_some(&self.state.request_id)
     }
 
-    fn requires_action(&self) -> bool {
-        !self.complete
-    }
 }
 
 fn truncate_to_width(value: &str, max_width: usize) -> String {

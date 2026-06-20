@@ -103,9 +103,7 @@ impl InputPane {
     }
 
     pub fn requires_action(&self) -> bool {
-        self.navigator
-            .active_view()
-            .is_some_and(|view| view.requires_action())
+        self.navigator.has_active_view()
     }
 
     pub fn composer_is_empty(&self) -> bool {
