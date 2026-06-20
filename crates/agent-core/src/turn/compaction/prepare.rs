@@ -4,6 +4,7 @@ use super::policy::{AutoCompactPolicyInput, AutoCompactTokenStatus, auto_compact
 use super::window::AutoCompactWindow;
 use crate::EventMsg;
 use crate::context::{ContextFacade, ContextManager, FilterPolicy};
+use crate::skill::TurnSkillContext;
 use crate::turn::{RequestTokenBaseline, TurnHost, apply_signed_token_delta};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -37,9 +38,8 @@ pub(crate) async fn prepare_turn_context_with_auto_compaction<H>(
     environment_context: &crate::context::EnvironmentContext,
     settings: &crate::turn::ChatTurnSettings,
     tool_specs: &[crate::ToolSpec],
-    turn_explicit_skill_fragments: &[crate::ResponseItem],
     raw_memory_fragment: &Option<String>,
-    skill_summary: &Option<String>,
+    turn_skill_context: &TurnSkillContext,
     request_baseline: &mut RequestTokenBaseline,
     auto_compact_window: &mut AutoCompactWindow,
     roundtrip_count: usize,
@@ -57,16 +57,12 @@ where
         settings,
         super::context::BudgetedFragmentInputs {
             raw_memory_fragment: raw_memory_fragment.clone(),
-            skill_summary: skill_summary.clone(),
+            turn_skill_context: turn_skill_context.clone(),
         },
-    );
-    let candidate_fragments = super::context::append_rendered_fragments(
-        budgeted_before_compaction.fragments.clone(),
-        turn_explicit_skill_fragments,
     );
     let mut candidate_request = context_manager
         .build_current_model_request_with_rendered_fragments(
-            &candidate_fragments,
+            &budgeted_before_compaction.fragments,
             tool_specs.to_vec(),
             settings.llm_temperature,
         );
@@ -113,9 +109,8 @@ where
         filter_policy,
         environment_context,
         settings,
-        turn_explicit_skill_fragments,
         raw_memory_fragment,
-        skill_summary,
+        turn_skill_context,
         request_baseline,
         auto_compact_window,
         token_status,

@@ -1,11 +1,10 @@
-use super::context::{
-    BudgetedFragmentInputs, append_rendered_fragments, build_budgeted_fragments_for_current_history,
-};
+use super::context::{BudgetedFragmentInputs, build_budgeted_fragments_for_current_history};
 use super::flow::{AppliedCompaction, CompactionMode, maybe_compact_history_with_start_callback};
 use super::prepare::PreparedTurnContext;
 use super::window::AutoCompactWindow;
 use crate::context::{ContextFacade, ContextManager, FilterPolicy};
 use crate::rollout::RolloutItem;
+use crate::skill::TurnSkillContext;
 use crate::turn::{AutoCompactTokenStatus, RequestTokenBaseline, TurnHost};
 use crate::{EventMsg, emit_event};
 use anyhow::Result;
@@ -21,9 +20,8 @@ pub(crate) struct AutoCompactionLifecycleInput<'a, H: TurnHost> {
     pub filter_policy: FilterPolicy,
     pub environment_context: &'a crate::context::EnvironmentContext,
     pub settings: &'a crate::turn::ChatTurnSettings,
-    pub turn_explicit_skill_fragments: &'a [crate::ResponseItem],
     pub raw_memory_fragment: &'a Option<String>,
-    pub skill_summary: &'a Option<String>,
+    pub turn_skill_context: &'a TurnSkillContext,
     pub request_baseline: &'a mut RequestTokenBaseline,
     pub auto_compact_window: &'a mut AutoCompactWindow,
     pub token_status: AutoCompactTokenStatus,
@@ -49,9 +47,8 @@ where
         filter_policy,
         environment_context,
         settings,
-        turn_explicit_skill_fragments,
         raw_memory_fragment,
-        skill_summary,
+        turn_skill_context,
         request_baseline,
         auto_compact_window,
         token_status,
@@ -69,7 +66,7 @@ where
         settings,
         BudgetedFragmentInputs {
             raw_memory_fragment: raw_memory_fragment.clone(),
-            skill_summary: skill_summary.clone(),
+            turn_skill_context: turn_skill_context.clone(),
         },
     );
 
@@ -125,14 +122,14 @@ where
             settings,
             BudgetedFragmentInputs {
                 raw_memory_fragment: raw_memory_fragment.clone(),
-                skill_summary: skill_summary.clone(),
+                turn_skill_context: turn_skill_context.clone(),
             },
         )
     } else {
         budgeted_before_compaction
     };
-    let prepared_fragments =
-        append_rendered_fragments(budgeted.fragments.clone(), turn_explicit_skill_fragments);
+
+    let prepared_fragments = budgeted.fragments.clone();
 
     Ok(PreparedTurnContext {
         budgeted,

@@ -40,6 +40,12 @@ pub struct SkillDocument {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TurnSkillContext {
+    pub catalog_summary: Option<String>,
+    pub explicit_documents: Vec<SkillDocument>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SkillCatalog {
     pub skills: Vec<SkillMetadata>,
     pub errors: Vec<String>,

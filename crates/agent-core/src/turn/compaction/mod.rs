@@ -16,9 +16,7 @@ mod policy_tests;
 mod window_tests;
 
 #[allow(unused_imports)]
-pub(crate) use context::{
-    BudgetedFragmentInputs, append_rendered_fragments, build_budgeted_fragments_for_current_history,
-};
+pub(crate) use context::{BudgetedFragmentInputs, build_budgeted_fragments_for_current_history};
 pub use flow::ManualCompactionOutcome;
 #[allow(unused_imports)]
 pub(crate) use flow::{

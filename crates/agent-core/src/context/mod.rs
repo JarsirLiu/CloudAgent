@@ -12,7 +12,8 @@ mod tool_context;
 mod fragments_tests;
 
 pub use budget::{
-    BucketAudit, BudgetedFragments, MemoryBudgetSource, build_memory_budgeted_fragments,
+    BucketAudit, BudgetedFragments, ContextBudgetSource, SkillBudgetSource,
+    build_context_budgeted_fragments,
 };
 pub use compaction::{
     CompactedReplacementHistory, CompactionSummary, ContextCompactionConfig, ContextCompactionPlan,

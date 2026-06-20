@@ -75,3 +75,7 @@ pub fn latest_user_items(messages: &[ResponseItem]) -> Option<&[InputItem]> {
         _ => None,
     })
 }
+
+#[cfg(test)]
+#[path = "render_tests.rs"]
+mod tests;

@@ -1,7 +1,7 @@
 use super::execute_chat_turn;
 use super::{collect_discoverable_tools, compose_visible_tool_specs};
 use crate::context::EnvironmentContext;
-use crate::skill::SkillRuntime;
+use crate::skill::{SkillRuntime, TurnSkillContext};
 use crate::tool::ChatTurnToolExposure;
 use crate::turn::compaction::{
     BudgetedFragmentInputs, build_budgeted_fragments_for_current_history, compaction_phase,
@@ -786,7 +786,7 @@ fn recomputing_budgeted_fragments_after_compaction_can_restore_memory_context() 
         &settings,
         BudgetedFragmentInputs {
             raw_memory_fragment: host.raw_memory_fragment(),
-            skill_summary: None,
+            turn_skill_context: TurnSkillContext::default(),
         },
     );
     assert!(!before.fragments.iter().any(|item| {
@@ -804,7 +804,7 @@ fn recomputing_budgeted_fragments_after_compaction_can_restore_memory_context() 
         &settings,
         BudgetedFragmentInputs {
             raw_memory_fragment: host.raw_memory_fragment(),
-            skill_summary: None,
+            turn_skill_context: TurnSkillContext::default(),
         },
     );
     assert!(after.fragments.iter().any(|item| {

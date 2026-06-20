@@ -6,6 +6,7 @@ mod validate;
 
 pub use model::{
     SkillCatalog, SkillDependencies, SkillDocument, SkillInvocationMode, SkillMetadata, SkillScope,
+    TurnSkillContext,
 };
 pub use render::{render_skill_catalog, render_skill_injection};
 pub use runtime::SkillRuntime;
