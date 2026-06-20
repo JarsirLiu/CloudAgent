@@ -6,8 +6,7 @@ use anyhow::Result;
 use crossterm::cursor::{MoveTo, MoveToColumn};
 use crossterm::queue;
 use crossterm::style::{
-    Attribute, Color as CrosstermColor, Print, SetAttribute, SetBackgroundColor,
-    SetForegroundColor,
+    Attribute, Color as CrosstermColor, Print, SetAttribute, SetBackgroundColor, SetForegroundColor,
 };
 use crossterm::terminal::{Clear, ClearType as CrosstermClearType};
 use ratatui::backend::Backend;

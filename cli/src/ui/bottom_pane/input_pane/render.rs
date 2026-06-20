@@ -260,7 +260,10 @@ impl InputPane {
             (Some(view), Some(popup_area)) if !view_uses_full_input_pane(view.kind()) => {
                 view.cursor_position(popup_inner_area(popup_area))
             }
-            _ => Some(self.composer.cursor_position(layout.composer_area, request.mode)),
+            _ => Some(
+                self.composer
+                    .cursor_position(layout.composer_area, request.mode),
+            ),
         };
         let height = compute_desired_height(composer.height, popup_height);
 

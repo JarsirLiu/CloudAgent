@@ -318,7 +318,6 @@ impl BottomPaneView for ServerRequestOverlay {
     fn active_server_request_id(&self) -> Option<&RequestId> {
         (!self.complete).then_some(&self.state.request_id)
     }
-
 }
 
 fn truncate_to_width(value: &str, max_width: usize) -> String {

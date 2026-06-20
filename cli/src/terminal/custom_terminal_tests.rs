@@ -1,5 +1,7 @@
 use super::{DrawCommand, Terminal, diff_buffers, draw_updates};
 use crate::terminal::color_compat::{BackgroundTone, ColorDepth, TerminalCapabilities};
+use crate::terminal::test_support::env_lock;
+use crossterm::style::force_color_output;
 use ratatui::backend::{Backend, WindowSize};
 use ratatui::buffer::Buffer;
 use ratatui::buffer::Cell;
@@ -8,20 +10,12 @@ use ratatui::style::{Color, Style};
 use std::io;
 use std::io::Write;
 use std::str;
-use std::sync::{Mutex, MutexGuard, OnceLock};
 
 #[derive(Debug)]
 struct TestBackend {
     size: Size,
     cursor: Position,
     bytes: Vec<u8>,
-}
-
-fn env_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock")
 }
 
 impl TestBackend {
@@ -219,6 +213,7 @@ fn inserted_history_preserves_line_background_style() {
     unsafe {
         std::env::remove_var("NO_COLOR");
     }
+    force_color_output(true);
     let backend = TestBackend::new(100, 30);
     let mut terminal = Terminal::new(
         backend,
@@ -248,4 +243,5 @@ fn inserted_history_preserves_line_background_style() {
             None => std::env::remove_var("NO_COLOR"),
         }
     }
+    force_color_output(std::env::var_os("NO_COLOR").is_none());
 }

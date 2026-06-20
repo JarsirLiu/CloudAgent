@@ -31,6 +31,19 @@ pub(crate) use history_replay::{HistoryReplayBatch, HistoryReplayMode};
 
 static INSTALL_PANIC_HOOK: Once = Once::new();
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock")
+    }
+}
+
 pub(crate) struct TerminalGuard {
     pub(crate) terminal: custom_terminal::Terminal<CrosstermBackend<io::Stdout>>,
     capabilities: TerminalCapabilities,

@@ -7,7 +7,7 @@ pub(crate) mod shared;
 use crate::spec::ToolDescriptor;
 use agent_core::output_truncation::truncate_text_to_token_budget;
 use agent_core::{
-    ApprovalPolicy, ApprovalRequirement, PermissionProfile, ChatTurnToolExposure,
+    ApprovalPolicy, ApprovalRequirement, ChatTurnToolExposure, PermissionProfile,
     StructuredToolResult, ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext,
     ToolExecutor, ToolResult, ToolSpec,
 };

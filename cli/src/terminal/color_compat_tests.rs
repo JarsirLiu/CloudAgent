@@ -2,15 +2,9 @@ use super::{
     BackgroundTone, ColorCliPreference, ColorDepth, TerminalCapabilities, adapt_bg, adapt_color,
     color_cli_preference, effective_color_depth,
 };
+use crate::terminal::test_support::env_lock;
 use ratatui::style::Color;
 use std::ffi::OsString;
-use std::sync::{Mutex, MutexGuard};
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-fn env_lock() -> MutexGuard<'static, ()> {
-    ENV_LOCK.lock().expect("env lock")
-}
 
 #[test]
 fn ansi256_adapts_rgb_to_indexed_color() {

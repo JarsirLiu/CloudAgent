@@ -69,7 +69,12 @@ fn config_panel_popup_renders_below_input_pane() {
     );
 
     let snapshot = pane.snapshot_for_test(
-        Rect::new(0, 10, 100, pane.desired_height(agent_protocol::FrontendMode::Idle, 100)),
+        Rect::new(
+            0,
+            10,
+            100,
+            pane.desired_height(agent_protocol::FrontendMode::Idle, 100),
+        ),
         agent_protocol::FrontendMode::Idle,
         100,
     );
@@ -96,7 +101,12 @@ fn session_picker_renders_below_input_pane() {
     );
 
     let snapshot = pane.snapshot_for_test(
-        Rect::new(0, 10, 100, pane.desired_height(agent_protocol::FrontendMode::Idle, 100)),
+        Rect::new(
+            0,
+            10,
+            100,
+            pane.desired_height(agent_protocol::FrontendMode::Idle, 100),
+        ),
         agent_protocol::FrontendMode::Idle,
         100,
     );
@@ -117,7 +127,12 @@ fn model_picker_renders_below_input_pane() {
     );
 
     let snapshot = pane.snapshot_for_test(
-        Rect::new(0, 10, 100, pane.desired_height(agent_protocol::FrontendMode::Idle, 100)),
+        Rect::new(
+            0,
+            10,
+            100,
+            pane.desired_height(agent_protocol::FrontendMode::Idle, 100),
+        ),
         agent_protocol::FrontendMode::Idle,
         100,
     );
