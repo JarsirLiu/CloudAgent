@@ -10,10 +10,10 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
-pub(super) struct InputPaneSnapshot {
+pub(crate) struct InputPaneSnapshot {
     pub(super) layout: super::layout::InputPaneLayout,
     pub(super) input_lines: Vec<Line<'static>>,
-    pub(super) completion_lines: Vec<Line<'static>>,
+    pub(super) popup_lines: Vec<Line<'static>>,
     pub(super) cursor_position: Option<(u16, u16)>,
     pub(super) height: u16,
 }
@@ -51,7 +51,7 @@ impl InputPane {
         if self
             .navigator
             .active_view()
-            .is_some_and(|view| view_requires_action(view.kind()))
+            .is_some_and(|view| view_uses_full_input_pane(view.kind()))
         {
             let (widget, lines_before_composer, _) = self.render_request_view(&request, area.width);
             frame.render_widget(widget, area);
@@ -67,13 +67,13 @@ impl InputPane {
             snapshot.layout.input_area,
         );
 
-        if let Some(completion_area) = snapshot.layout.completion_area {
-            let panel = Paragraph::new(Text::from(snapshot.completion_lines)).block(
+        if let Some(popup_area) = snapshot.layout.popup_area {
+            let panel = Paragraph::new(Text::from(snapshot.popup_lines)).block(
                 Block::default()
                     .borders(Borders::TOP)
                     .border_style(input_completion_border_style()),
             );
-            frame.render_widget(panel, completion_area);
+            frame.render_widget(panel, popup_area);
         }
 
         InputPaneRenderResult {
@@ -141,7 +141,7 @@ impl InputPane {
         if self
             .navigator
             .active_view()
-            .is_some_and(|view| view_requires_action(view.kind()))
+            .is_some_and(|view| view_uses_full_input_pane(view.kind()))
         {
             let (widget, lines_before, _) = self.render_request_view(&request, area_width);
             let text = format!("{widget:?}");
@@ -158,10 +158,28 @@ impl InputPane {
         (snapshot.input_lines, cursor_y)
     }
 
+    #[cfg(test)]
+    pub(crate) fn snapshot_for_test(
+        &self,
+        area: Rect,
+        mode: FrontendMode,
+        area_width: u16,
+    ) -> InputPaneSnapshot {
+        let request = RenderRequest {
+            mode,
+            status_indicator: None,
+            status_text: "",
+            runtime_hint: None,
+            status_meta: "",
+            hint_meta: "",
+        };
+        self.build_snapshot(area, &request, area_width.saturating_sub(2) as usize)
+    }
+
     pub fn desired_height(&self, mode: FrontendMode, area_width: u16) -> u16 {
         let inner_width = area_width.saturating_sub(2) as usize;
         if let Some(view) = self.navigator.active_view()
-            && view_requires_action(view.kind())
+            && view_uses_full_input_pane(view.kind())
         {
             return (4 + view.desired_height(area_width.saturating_sub(2))).max(7);
         }
@@ -210,12 +228,19 @@ impl InputPane {
         inner_width: usize,
     ) -> InputPaneSnapshot {
         let composer = self.composer.render(request.mode, inner_width);
-        let completion_lines = if let Some(view) = self.navigator.active_view() {
-            view.render_lines(area.width.saturating_sub(2))
-        } else {
-            composer.completion_lines.clone()
+        let popup_lines = match self.navigator.active_view() {
+            Some(view) if !view_uses_full_input_pane(view.kind()) => {
+                view.render_lines(area.width.saturating_sub(2))
+            }
+            Some(_) => Vec::new(),
+            None => composer.completion_lines.clone(),
         };
-        let layout = compute_input_layout(area, composer.height, completion_lines.len());
+        let popup_height = if popup_lines.is_empty() {
+            None
+        } else {
+            Some((popup_lines.len() as u16).saturating_add(1))
+        };
+        let layout = compute_input_layout(area, composer.height, popup_height);
         let mut input_lines = vec![status_line(
             request.mode,
             request.status_indicator,
@@ -228,19 +253,21 @@ impl InputPane {
             input_lines.push(Line::raw(""));
         }
         input_lines.extend(composer.lines);
-        if layout.completion_area.is_none() {
+        if layout.popup_area.is_none() {
             input_lines.push(hint_line(request.mode, inner_width, request.hint_meta));
         }
-        let cursor_position = Some(
-            self.composer
-                .cursor_position(layout.composer_area, request.mode),
-        );
-        let height = compute_desired_height(composer.height, completion_lines.len());
+        let cursor_position = match (self.navigator.active_view(), layout.popup_area) {
+            (Some(view), Some(popup_area)) if !view_uses_full_input_pane(view.kind()) => {
+                view.cursor_position(popup_inner_area(popup_area))
+            }
+            _ => Some(self.composer.cursor_position(layout.composer_area, request.mode)),
+        };
+        let height = compute_desired_height(composer.height, popup_height);
 
         InputPaneSnapshot {
             layout,
             input_lines,
-            completion_lines,
+            popup_lines,
             cursor_position,
             height,
         }
@@ -258,21 +285,15 @@ pub(super) fn input_block(lines: Vec<Line<'static>>, border_style: Style) -> Par
     )
 }
 
-fn view_requires_action(kind: ViewKind) -> bool {
-    matches!(
-        kind,
-        ViewKind::ServerRequest
-            | ViewKind::Help
-            | ViewKind::Filter
-            | ViewKind::Config
-            | ViewKind::Permissions
-            | ViewKind::Reasoning
-            | ViewKind::ModelPicker
-            | ViewKind::ModelPickerLoading
-            | ViewKind::SessionPicker
-            | ViewKind::SessionPickerLoading
-            | ViewKind::GatewayList
-            | ViewKind::GatewayEdit
-            | ViewKind::WeixinBinding
-    )
+fn view_uses_full_input_pane(kind: ViewKind) -> bool {
+    matches!(kind, ViewKind::ServerRequest)
+}
+
+fn popup_inner_area(area: Rect) -> Rect {
+    Rect {
+        x: area.x,
+        y: area.y.saturating_add(1),
+        width: area.width,
+        height: area.height.saturating_sub(1),
+    }
 }

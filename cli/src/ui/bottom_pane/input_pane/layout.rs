@@ -4,7 +4,7 @@ use ratatui::layout::Rect;
 pub(super) struct InputPaneLayout {
     pub(super) input_area: Rect,
     pub(super) composer_area: Rect,
-    pub(super) completion_area: Option<Rect>,
+    pub(super) popup_area: Option<Rect>,
 }
 
 pub(super) const STATUS_ROW_HEIGHT: u16 = 1;
@@ -16,34 +16,33 @@ pub(super) const INPUT_BLOCK_CHROME_HEIGHT: u16 = 2;
 pub(super) fn compute_input_layout(
     area: Rect,
     composer_height: u16,
-    completion_line_count: usize,
+    popup_height: Option<u16>,
 ) -> InputPaneLayout {
     let input_content_height = STATUS_ROW_HEIGHT
         .saturating_add(COMPOSER_TOP_SPACER_HEIGHT)
         .saturating_add(composer_height)
-        .saturating_add(if completion_line_count == 0 {
+        .saturating_add(if popup_height.is_none() {
             COMPOSER_BOTTOM_SPACER_HEIGHT.saturating_add(HINT_ROW_HEIGHT)
         } else {
             0
         });
     let input_height = input_content_height.saturating_add(INPUT_BLOCK_CHROME_HEIGHT);
-    let (input_area, completion_area) = if completion_line_count == 0 {
-        (area, None)
-    } else {
-        let requested = (completion_line_count as u16).saturating_add(1);
+    let (input_area, popup_area) = if let Some(requested_height) = popup_height {
         let input_height = input_height.min(area.height);
-        let completion_height = requested.min(area.height.saturating_sub(input_height));
+        let popup_height = requested_height.min(area.height.saturating_sub(input_height));
         let input_area = Rect {
             height: input_height,
             ..area
         };
-        let completion_area = (completion_height > 0).then_some(Rect {
+        let popup_area = (popup_height > 0).then_some(Rect {
             x: area.x,
             y: area.y.saturating_add(input_height),
             width: area.width,
-            height: completion_height,
+            height: popup_height,
         });
-        (input_area, completion_area)
+        (input_area, popup_area)
+    } else {
+        (area, None)
     };
 
     let composer_area = Rect {
@@ -60,21 +59,23 @@ pub(super) fn compute_input_layout(
     InputPaneLayout {
         input_area,
         composer_area,
-        completion_area,
+        popup_area,
     }
 }
 
-pub(super) fn compute_desired_height(composer_height: u16, completion_line_count: usize) -> u16 {
+pub(super) fn compute_desired_height(composer_height: u16, popup_height: Option<u16>) -> u16 {
     let input_content_height = STATUS_ROW_HEIGHT
         .saturating_add(COMPOSER_TOP_SPACER_HEIGHT)
         .saturating_add(composer_height)
-        .saturating_add(if completion_line_count == 0 {
+        .saturating_add(if popup_height.is_none() {
             COMPOSER_BOTTOM_SPACER_HEIGHT.saturating_add(HINT_ROW_HEIGHT)
         } else {
             0
         });
     let input_height = input_content_height.saturating_add(INPUT_BLOCK_CHROME_HEIGHT);
-    if completion_line_count == 0 {
+    if let Some(popup_height) = popup_height {
+        input_height.saturating_add(popup_height)
+    } else {
         input_height.max(
             STATUS_ROW_HEIGHT
                 .saturating_add(COMPOSER_TOP_SPACER_HEIGHT)
@@ -83,7 +84,5 @@ pub(super) fn compute_desired_height(composer_height: u16, completion_line_count
                 .saturating_add(HINT_ROW_HEIGHT)
                 .saturating_add(INPUT_BLOCK_CHROME_HEIGHT),
         )
-    } else {
-        input_height.saturating_add(completion_line_count as u16 + 1)
     }
 }

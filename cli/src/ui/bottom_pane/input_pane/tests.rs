@@ -115,7 +115,7 @@ fn approval_selection_mode_does_not_force_a_text_cursor() {
 }
 
 #[test]
-fn completion_popup_is_part_of_input_pane_height() {
+fn completion_popup_does_not_expand_input_pane_height() {
     let mut pane = InputPane::new();
     let before = pane.desired_height(FrontendMode::Idle, 100);
     assert_eq!(before, 6);
@@ -128,13 +128,13 @@ fn completion_popup_is_part_of_input_pane_height() {
     });
 
     let after = pane.desired_height(FrontendMode::Idle, 100);
-    assert!(after > before);
+    assert_eq!(after, before);
     let (lines, _) = pane.render_lines_for_test(FrontendMode::Idle, "Idle", "test", 100);
     assert!(!lines.is_empty());
 }
 
 #[test]
-fn completion_popup_area_stays_inside_input_pane() {
+fn completion_popup_renders_below_input_pane() {
     let mut pane = InputPane::new();
     let _ = pane.handle_key(KeyEvent {
         code: KeyCode::Char('/'),
@@ -160,8 +160,7 @@ fn completion_popup_area_stays_inside_input_pane() {
         .expect("completion popup should render");
 
     assert_eq!(snapshot.layout.input_area.y, 10);
-    assert!(completion_area.y >= 10);
-    assert!(completion_area.bottom() <= 10 + height);
+    assert_eq!(completion_area.y, snapshot.layout.input_area.bottom());
     assert_eq!(snapshot.height, height);
 }
 

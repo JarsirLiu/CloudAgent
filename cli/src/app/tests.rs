@@ -1175,7 +1175,7 @@ fn committed_history_without_active_cell_keeps_viewport_at_bottom_pane_stack_hei
 }
 
 #[test]
-fn slash_completion_expands_bottom_pane_as_single_layout_region() {
+fn slash_completion_expands_bottom_pane_with_separate_popup_region() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",

@@ -5,6 +5,7 @@ use crate::ui::bottom_pane::input_pane::{InputPane, InputPaneAction};
 use agent_core::ConversationSummary;
 use agent_protocol::{PlatformConfigResponse, PlatformControlEntry};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::layout::Rect;
 
 fn esc_key() -> KeyEvent {
     KeyEvent {
@@ -27,6 +28,105 @@ fn esc_closes_help_view_without_interrupting() {
         Some(InputPaneAction::Composer(ComposerIntent::None))
     ));
     assert!(!pane.requires_action());
+}
+
+#[test]
+fn completion_popup_does_not_expand_input_pane_height() {
+    let mut pane = InputPane::new();
+    let before = pane.desired_height(agent_protocol::FrontendMode::Idle, 100);
+    assert_eq!(before, 6);
+
+    let _ = pane.handle_key(KeyEvent {
+        code: KeyCode::Char('/'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+
+    let after = pane.desired_height(agent_protocol::FrontendMode::Idle, 100);
+    assert!(after > before);
+
+    let snapshot = pane.snapshot_for_test(
+        Rect::new(0, 10, 100, after),
+        agent_protocol::FrontendMode::Idle,
+        100,
+    );
+    let popup_area = snapshot
+        .layout
+        .popup_area
+        .expect("completion popup should render");
+    assert_eq!(snapshot.layout.composer_area.height, 1);
+    assert_eq!(popup_area.y, snapshot.layout.input_area.bottom());
+}
+
+#[test]
+fn config_panel_popup_renders_below_input_pane() {
+    let mut pane = InputPane::new();
+    pane.set_config_panel(
+        "key".to_string(),
+        "https://example.com".to_string(),
+        "gpt-5".to_string(),
+    );
+
+    let snapshot = pane.snapshot_for_test(
+        Rect::new(0, 10, 100, pane.desired_height(agent_protocol::FrontendMode::Idle, 100)),
+        agent_protocol::FrontendMode::Idle,
+        100,
+    );
+    let popup_area = snapshot
+        .layout
+        .popup_area
+        .expect("config panel should render as popup");
+
+    assert_eq!(popup_area.y, snapshot.layout.input_area.bottom());
+}
+
+#[test]
+fn session_picker_renders_below_input_pane() {
+    let mut pane = InputPane::new();
+    pane.set_session_picker(
+        vec![ConversationSummary {
+            conversation_id: "default".to_string(),
+            title: Some("Default".to_string()),
+            message_count: 0,
+            updated_at_ms: 1,
+        }],
+        "default",
+        SessionPickerMode::Switch,
+    );
+
+    let snapshot = pane.snapshot_for_test(
+        Rect::new(0, 10, 100, pane.desired_height(agent_protocol::FrontendMode::Idle, 100)),
+        agent_protocol::FrontendMode::Idle,
+        100,
+    );
+    let popup_area = snapshot
+        .layout
+        .popup_area
+        .expect("session picker should render as popup");
+
+    assert_eq!(popup_area.y, snapshot.layout.input_area.bottom());
+}
+
+#[test]
+fn model_picker_renders_below_input_pane() {
+    let mut pane = InputPane::new();
+    pane.set_model_picker(
+        "gpt-5".to_string(),
+        vec!["gpt-5".to_string(), "gpt-4.1".to_string()],
+    );
+
+    let snapshot = pane.snapshot_for_test(
+        Rect::new(0, 10, 100, pane.desired_height(agent_protocol::FrontendMode::Idle, 100)),
+        agent_protocol::FrontendMode::Idle,
+        100,
+    );
+    let popup_area = snapshot
+        .layout
+        .popup_area
+        .expect("model picker should render as popup");
+
+    assert_eq!(popup_area.y, snapshot.layout.input_area.bottom());
 }
 
 #[test]
