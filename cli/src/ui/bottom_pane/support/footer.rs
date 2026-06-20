@@ -167,7 +167,7 @@ mod tests {
             Some("⠋"),
             "Request approved:",
             Some("0s · esc to interrupt"),
-            "in 1.3k tokens · out 93 tokens · cached 0 tokens · total 1.4k tokens",
+            "in 1.3k tokens · out 93 tokens · cached 0 tokens",
             58,
         );
 
@@ -181,7 +181,7 @@ mod tests {
             Some("⠋"),
             "Working",
             Some("15s · esc to interrupt"),
-            "in 7.7k tokens · out 35 tokens · cached 0 tokens · total 7.7k tokens · context 3%",
+            "in 7.7k tokens · out 35 tokens · cached 0 tokens · context 3%",
             80,
         );
 

@@ -388,11 +388,10 @@ impl BottomPaneController {
         );
         if let Some(usage) = &app.run_state.last_turn_usage {
             parts.push(format!(
-                "in {} · out {} · cached {} · total {}",
+                "in {} · out {} · cached {}",
                 format_tokens(usage.input_tokens),
                 format_tokens(usage.total_output_tokens()),
                 format_tokens(usage.cached_input_tokens),
-                format_tokens(usage.total_consumed_tokens())
             ));
         }
         if let (Some(last), Some(window)) = (
