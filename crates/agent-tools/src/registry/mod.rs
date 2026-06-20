@@ -7,7 +7,7 @@ pub(crate) mod shared;
 use crate::spec::ToolDescriptor;
 use agent_core::output_truncation::truncate_text_to_token_budget;
 use agent_core::{
-    ApprovalPolicy, ApprovalRequirement, PermissionProfile, RegularTurnToolExposure,
+    ApprovalPolicy, ApprovalRequirement, PermissionProfile, ChatTurnToolExposure,
     StructuredToolResult, ToolBackend, ToolBatchExecutionStrategy, ToolCall, ToolExecutionContext,
     ToolExecutor, ToolResult, ToolSpec,
 };
@@ -81,10 +81,10 @@ impl ToolRegistry {
         self.mcp.set_client(client);
     }
 
-    pub fn resolve_regular_turn_tool_exposure(
+    pub fn resolve_chat_turn_tool_exposure(
         &self,
         permission_profile: &PermissionProfile,
-    ) -> RegularTurnToolExposure {
+    ) -> ChatTurnToolExposure {
         let mcp_client_is_configured = self.mcp.client_is_configured();
         let discoverable_count = self
             .descriptors
@@ -116,7 +116,7 @@ impl ToolRegistry {
             resolution::permission_allowed_tools(environment_visible, permission_profile);
         let default_visible = resolution::model_visible_default_tools(permission_allowed.clone());
         let deferred_visible = resolution::deferred_discoverable_tools(permission_allowed);
-        RegularTurnToolExposure {
+        ChatTurnToolExposure {
             default_tools: resolution::specs_for_registered_tools(default_visible),
             deferred_tools: resolution::specs_for_registered_tools(deferred_visible),
         }
@@ -278,9 +278,9 @@ mod tests {
     #[test]
     fn resolve_exposure_filters_tools_by_permission_profile() {
         let registry = ToolRegistry::new(4_096);
-        let read_only = registry.resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly);
+        let read_only = registry.resolve_chat_turn_tool_exposure(&PermissionProfile::ReadOnly);
         let workspace_write =
-            registry.resolve_regular_turn_tool_exposure(&PermissionProfile::WorkspaceWrite);
+            registry.resolve_chat_turn_tool_exposure(&PermissionProfile::WorkspaceWrite);
 
         assert!(
             read_only
@@ -339,10 +339,10 @@ mod tests {
     }
 
     #[test]
-    fn regular_turn_default_visible_set_uses_default_priority_ordering() {
+    fn chat_turn_default_visible_set_uses_default_priority_ordering() {
         let registry = ToolRegistry::new(4_096);
         let resolved = registry
-            .resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly)
+            .resolve_chat_turn_tool_exposure(&PermissionProfile::ReadOnly)
             .default_tools;
 
         let ordered_names = resolved
@@ -361,7 +361,7 @@ mod tests {
     fn workspace_write_keeps_apply_patch_ahead_of_command_execution() {
         let registry = ToolRegistry::new(4_096);
         let resolved = registry
-            .resolve_regular_turn_tool_exposure(&PermissionProfile::WorkspaceWrite)
+            .resolve_chat_turn_tool_exposure(&PermissionProfile::WorkspaceWrite)
             .default_tools;
 
         let ordered_names = resolved
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn regular_turn_hides_mcp_tools_without_a_configured_client() {
+    fn chat_turn_hides_mcp_tools_without_a_configured_client() {
         let mut registry = ToolRegistry::new(4_096);
         registry.register_mcp_tool(McpToolDescriptor::new(
             "mcp__demo__lookup".to_string(),
@@ -402,14 +402,14 @@ mod tests {
         ));
 
         let resolved = registry
-            .resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly)
+            .resolve_chat_turn_tool_exposure(&PermissionProfile::ReadOnly)
             .default_tools;
 
         assert!(resolved.iter().all(|spec| spec.name != "mcp__demo__lookup"));
     }
 
     #[test]
-    fn regular_turn_shows_mcp_tools_only_when_the_client_is_configured() {
+    fn chat_turn_shows_mcp_tools_only_when_the_client_is_configured() {
         let mut registry = ToolRegistry::new(4_096);
         registry.register_mcp_tool(McpToolDescriptor::new(
             "mcp__demo__lookup".to_string(),
@@ -435,16 +435,16 @@ mod tests {
         registry.set_mcp_client(Arc::new(FakeMcpClient));
 
         let resolved = registry
-            .resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly)
+            .resolve_chat_turn_tool_exposure(&PermissionProfile::ReadOnly)
             .default_tools;
 
         assert!(resolved.iter().any(|spec| spec.name == "mcp__demo__lookup"));
     }
 
     #[test]
-    fn regular_turn_exposes_tool_search_when_deferred_tools_exist() {
+    fn chat_turn_exposes_tool_search_when_deferred_tools_exist() {
         let registry = ToolRegistry::new(4_096);
-        let exposure = registry.resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly);
+        let exposure = registry.resolve_chat_turn_tool_exposure(&PermissionProfile::ReadOnly);
 
         assert!(
             exposure
@@ -461,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn regular_turn_puts_deferred_mcp_tools_in_the_discoverable_set() {
+    fn chat_turn_puts_deferred_mcp_tools_in_the_discoverable_set() {
         let mut registry = ToolRegistry::new(4_096);
         registry.register_mcp_tool(
             McpToolDescriptor::new(
@@ -490,7 +490,7 @@ mod tests {
         );
         registry.set_mcp_client(Arc::new(FakeMcpClient));
 
-        let exposure = registry.resolve_regular_turn_tool_exposure(&PermissionProfile::ReadOnly);
+        let exposure = registry.resolve_chat_turn_tool_exposure(&PermissionProfile::ReadOnly);
 
         assert!(
             exposure
@@ -593,10 +593,10 @@ mod tests {
 impl ToolExecutor for ToolRegistry {
     fn specs(&self) -> Vec<ToolSpec> {
         let mut specs = self
-            .resolve_regular_turn_tool_exposure(&PermissionProfile::FullAccess)
+            .resolve_chat_turn_tool_exposure(&PermissionProfile::FullAccess)
             .default_tools;
         specs.extend(
-            self.resolve_regular_turn_tool_exposure(&PermissionProfile::FullAccess)
+            self.resolve_chat_turn_tool_exposure(&PermissionProfile::FullAccess)
                 .deferred_tools,
         );
         specs
@@ -663,11 +663,11 @@ impl ToolBackend for ToolRegistry {
     type PermissionProfile = PermissionProfile;
     type ApprovalPolicy = ApprovalPolicy;
 
-    fn resolve_regular_turn_tool_exposure(
+    fn resolve_chat_turn_tool_exposure(
         &self,
         permission_profile: &Self::PermissionProfile,
-    ) -> RegularTurnToolExposure {
-        ToolRegistry::resolve_regular_turn_tool_exposure(self, permission_profile)
+    ) -> ChatTurnToolExposure {
+        ToolRegistry::resolve_chat_turn_tool_exposure(self, permission_profile)
     }
 
     fn batch_execution_strategy(&self, calls: &[ToolCall]) -> ToolBatchExecutionStrategy {

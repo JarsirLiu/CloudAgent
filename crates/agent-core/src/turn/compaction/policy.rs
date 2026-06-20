@@ -1,4 +1,4 @@
-use super::auto_compact_window::AutoCompactWindowSnapshot;
+use super::window::AutoCompactWindowSnapshot;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

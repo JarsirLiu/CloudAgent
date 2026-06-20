@@ -2,8 +2,8 @@ mod agent;
 
 use crate::{
     AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy, ChatModel,
-    ChatModelFactory, ConversationHistory, ConversationSummary, ExecutionPolicy, PermissionProfile,
-    RegularTurnSettings, ReloadableChatModel, RolloutItem, SkillRuntime, ToolBackend,
+    ChatModelFactory, ChatTurnSettings, ConversationHistory, ConversationSummary, ExecutionPolicy,
+    PermissionProfile, ReloadableChatModel, RolloutItem, SkillRuntime, ToolBackend,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -25,7 +25,7 @@ pub struct AgentMetadata {
 pub struct AgentHostParts {
     pub metadata: AgentMetadata,
     pub context: AgentContext,
-    pub regular_turn_settings: RegularTurnSettings,
+    pub chat_turn_settings: ChatTurnSettings,
     pub policy: ExecutionPolicy,
     pub model: Arc<dyn ChatModel>,
     pub reloadable_model: Option<Arc<ReloadableChatModel>>,
@@ -44,7 +44,7 @@ pub struct AgentHostParts {
 pub trait AgentHostExt {
     fn metadata(&self) -> &AgentMetadata;
     fn context(&self) -> &AgentContext;
-    fn regular_turn_settings(&self) -> &RegularTurnSettings;
+    fn chat_turn_settings(&self) -> &ChatTurnSettings;
     fn policy(&self) -> &ExecutionPolicy;
     fn model(&self) -> &Arc<dyn ChatModel>;
     fn tools(

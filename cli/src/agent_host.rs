@@ -4,7 +4,7 @@ use agent_core::context::AgentContext;
 use agent_core::host::{AgentHost, AgentHostParts, AgentMetadata};
 use agent_core::model::{ChatModel, ChatModelFactory, ModelProviderSettings, ReloadableChatModel};
 use agent_core::state::AgentState;
-use agent_core::turn::{AutoCompactTokenLimitScope, ExecutionPolicy, RegularTurnSettings};
+use agent_core::turn::{AutoCompactTokenLimitScope, ChatTurnSettings, ExecutionPolicy};
 use agent_memory::LongTermMemoryFacade;
 use agent_model_provider::OpenAiCompatibleModel;
 use agent_tools::{ToolRegistry, ToolRegistryOptions};
@@ -39,7 +39,7 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         tool_output_token_limit: config.runtime.tool_output_token_limit,
     };
     let policy = ExecutionPolicy::new(config.runtime.max_tool_roundtrips);
-    let regular_turn_settings = RegularTurnSettings {
+    let chat_turn_settings = ChatTurnSettings {
         workspace_root: config.workspace_root.clone(),
         data_root_dir: config.runtime.data_root_dir.clone(),
         llm_temperature: config.llm.temperature,
@@ -117,7 +117,7 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
     Ok(Arc::new(AgentHost::new(AgentHostParts {
         metadata,
         context,
-        regular_turn_settings,
+        chat_turn_settings,
         policy,
         model,
         reloadable_model: Some(reloadable_model),

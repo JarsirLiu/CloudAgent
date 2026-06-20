@@ -1,5 +1,5 @@
 use super::{
-    ServerRequestHandler, TurnHost, TurnOutcome, conversation_busy_error, execute_regular_turn,
+    ServerRequestHandler, TurnHost, TurnOutcome, conversation_busy_error, execute_chat_turn,
 };
 use crate::{EventMsg, InputItem, TurnState};
 use crate::{RolloutItem, emit_event, next_turn_id};
@@ -65,7 +65,7 @@ pub async fn run_turn_with_approval<H: TurnHost>(
             state: TurnState::Cancelled,
         })
     } else {
-        execute_regular_turn(
+        execute_chat_turn(
             host,
             conversation_id,
             &turn_id,

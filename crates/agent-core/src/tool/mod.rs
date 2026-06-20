@@ -423,7 +423,7 @@ pub struct ToolEvent {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct RegularTurnToolExposure {
+pub struct ChatTurnToolExposure {
     pub default_tools: Vec<ToolSpec>,
     pub deferred_tools: Vec<ToolSpec>,
 }
@@ -439,10 +439,10 @@ pub trait ToolBackend: ToolExecutor {
     type PermissionProfile: Send + Sync;
     type ApprovalPolicy: Send + Sync;
 
-    fn resolve_regular_turn_tool_exposure(
+    fn resolve_chat_turn_tool_exposure(
         &self,
         permission_profile: &Self::PermissionProfile,
-    ) -> RegularTurnToolExposure;
+    ) -> ChatTurnToolExposure;
 
     fn batch_execution_strategy(&self, calls: &[ToolCall]) -> ToolBatchExecutionStrategy;
 

@@ -6,7 +6,7 @@ use anyhow::Result;
 use crossterm::cursor::{MoveTo, MoveToColumn};
 use crossterm::queue;
 use crossterm::style::{
-    Attribute, Color as CrosstermColor, Colors, Print, SetAttribute, SetBackgroundColor, SetColors,
+    Attribute, Color as CrosstermColor, Print, SetAttribute, SetBackgroundColor,
     SetForegroundColor,
 };
 use crossterm::terminal::{Clear, ClearType as CrosstermClearType};
@@ -309,12 +309,10 @@ fn write_history_line<W: Write>(
 ) -> io::Result<()> {
     let line_fg = line.style.fg.unwrap_or(Color::Reset);
     let line_bg = line.style.bg.unwrap_or(Color::Reset);
-    queue!(
+    queue_colors(
         writer,
-        SetColors(Colors::new(
-            adapt_color(line_fg, capabilities).into(),
-            adapt_bg(line_bg, capabilities).into()
-        ))
+        adapt_color(line_fg, capabilities),
+        adapt_bg(line_bg, capabilities),
     )?;
     for span in &line.spans {
         let style = span.style.patch(line.style);
@@ -322,14 +320,12 @@ fn write_history_line<W: Write>(
         queue_modifier_diff(writer, Modifier::empty(), modifier)?;
         let fg = style.fg.unwrap_or(line_fg);
         let bg = style.bg.unwrap_or(line_bg);
-        queue!(
+        queue_colors(
             writer,
-            SetColors(Colors::new(
-                adapt_color(fg, capabilities).into(),
-                adapt_bg(bg, capabilities).into()
-            )),
-            Print(span.content.as_ref())
+            adapt_color(fg, capabilities),
+            adapt_bg(bg, capabilities),
         )?;
+        queue!(writer, Print(span.content.as_ref()))?;
         queue_modifier_diff(writer, modifier, Modifier::empty())?;
     }
     queue!(
@@ -484,10 +480,7 @@ fn draw_updates(
                     modifier = cell.modifier;
                 }
                 if next_fg != fg || next_bg != bg {
-                    queue!(
-                        writer,
-                        SetColors(Colors::new(next_fg.into(), next_bg.into()))
-                    )?;
+                    queue_colors(writer, next_fg, next_bg)?;
                     fg = next_fg;
                     bg = next_bg;
                 }
@@ -509,6 +502,14 @@ fn draw_updates(
         SetForegroundColor(CrosstermColor::Reset),
         SetBackgroundColor(CrosstermColor::Reset),
         SetAttribute(Attribute::Reset)
+    )
+}
+
+fn queue_colors<W: Write>(writer: &mut W, fg: Color, bg: Color) -> io::Result<()> {
+    queue!(
+        writer,
+        SetForegroundColor(fg.into()),
+        SetBackgroundColor(bg.into())
     )
 }
 

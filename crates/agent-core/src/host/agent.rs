@@ -21,11 +21,10 @@ use crate::turn::{
 };
 use crate::{
     ActiveTurnHandle, AgentContext, AgentState, ApprovalGrantStoreBackend, ApprovalPolicy,
-    ChatModel, ChatModelFactory, ContextManager, ConversationTurn, ExecutionPolicy,
-    ModelProviderSettings, PermissionProfile, RegularTurnSettings, ReloadableChatModel,
-    ResponseItem, build_turns_from_rollout_items, complete_model_request,
-    complete_model_request_streaming, input_items_attachment_count, input_items_preview_text,
-    visible_message_count,
+    ChatModel, ChatModelFactory, ChatTurnSettings, ContextManager, ConversationTurn,
+    ExecutionPolicy, ModelProviderSettings, PermissionProfile, ReloadableChatModel, ResponseItem,
+    build_turns_from_rollout_items, complete_model_request, complete_model_request_streaming,
+    input_items_attachment_count, input_items_preview_text, visible_message_count,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -43,7 +42,7 @@ pub const MANUAL_COMPACTION_MIN_HISTORY_TOKENS: usize = 20_000;
 pub struct AgentHost {
     metadata: AgentMetadata,
     context: AgentContext,
-    regular_turn_settings: RegularTurnSettings,
+    chat_turn_settings: ChatTurnSettings,
     policy: ExecutionPolicy,
     model: Arc<dyn ChatModel>,
     reloadable_model: Option<Arc<ReloadableChatModel>>,
@@ -64,7 +63,7 @@ impl AgentHost {
         Self {
             metadata: parts.metadata,
             context: parts.context,
-            regular_turn_settings: parts.regular_turn_settings,
+            chat_turn_settings: parts.chat_turn_settings,
             policy: parts.policy,
             model: parts.model,
             reloadable_model: parts.reloadable_model,
@@ -638,8 +637,8 @@ impl AgentHostExt for AgentHost {
     fn context(&self) -> &AgentContext {
         &self.context
     }
-    fn regular_turn_settings(&self) -> &RegularTurnSettings {
-        &self.regular_turn_settings
+    fn chat_turn_settings(&self) -> &ChatTurnSettings {
+        &self.chat_turn_settings
     }
     fn policy(&self) -> &ExecutionPolicy {
         &self.policy
@@ -681,8 +680,8 @@ impl TurnHost for AgentHost {
     fn turn_interrupted_error(&self) -> &'static str {
         TURN_INTERRUPTED_ERROR
     }
-    fn regular_turn_settings(&self) -> RegularTurnSettings {
-        self.regular_turn_settings.clone()
+    fn chat_turn_settings(&self) -> ChatTurnSettings {
+        self.chat_turn_settings.clone()
     }
     fn environment_context(&self) -> EnvironmentContext {
         self.environment_context()
@@ -693,12 +692,12 @@ impl TurnHost for AgentHost {
     fn skills(&self) -> crate::SkillRuntime {
         self.skills.clone()
     }
-    fn resolve_regular_turn_tool_exposure(
+    fn resolve_chat_turn_tool_exposure(
         &self,
         permission_profile: &PermissionProfile,
-    ) -> crate::RegularTurnToolExposure {
+    ) -> crate::ChatTurnToolExposure {
         self.tools
-            .resolve_regular_turn_tool_exposure(permission_profile)
+            .resolve_chat_turn_tool_exposure(permission_profile)
     }
 
     async fn start_turn(

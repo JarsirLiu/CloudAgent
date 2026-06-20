@@ -5,7 +5,7 @@ use crate::model::{ModelRequest, ModelResponse, ModelStreamObserver};
 use crate::rollout::RolloutItem;
 use crate::skill::SkillRuntime;
 use crate::state::ActiveTurnHandle;
-use crate::tool::{RegularTurnToolExposure, ToolCall, ToolSpec};
+use crate::tool::{ChatTurnToolExposure, ToolCall, ToolSpec};
 use crate::turn::ModelRequestShapeAudit;
 use crate::turn::token_usage::RestoredTurnTokenState;
 use crate::turn::{AutoCompactTokenLimitScope, EventMsg, ServerRequest, ServerRequestDecision};
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
-pub struct RegularTurnSettings {
+pub struct ChatTurnSettings {
     pub workspace_root: PathBuf,
     pub data_root_dir: PathBuf,
     pub llm_temperature: f32,
@@ -74,14 +74,14 @@ pub trait TurnHost: Send + Sync {
     type ApprovalPolicy: Send + Sync;
 
     fn turn_interrupted_error(&self) -> &'static str;
-    fn regular_turn_settings(&self) -> RegularTurnSettings;
+    fn chat_turn_settings(&self) -> ChatTurnSettings;
     fn environment_context(&self) -> EnvironmentContext;
     fn raw_memory_fragment(&self) -> Option<String>;
     fn skills(&self) -> SkillRuntime;
-    fn resolve_regular_turn_tool_exposure(
+    fn resolve_chat_turn_tool_exposure(
         &self,
         permission_profile: &Self::PermissionProfile,
-    ) -> RegularTurnToolExposure;
+    ) -> ChatTurnToolExposure;
 
     async fn start_turn(
         &self,

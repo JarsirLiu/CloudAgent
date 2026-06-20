@@ -3,6 +3,12 @@ use crate::conversation::{ResponseItem, input_items_to_plain_text, text_input_it
 use super::{CompactionSummary, ContextCompactionPlan};
 
 #[derive(Clone, Debug)]
+pub struct ContextCompactionResult {
+    pub summary: CompactionSummary,
+    pub replacement_history: Vec<ResponseItem>,
+}
+
+#[derive(Clone, Debug)]
 pub struct CompactedReplacementHistory {
     pub messages: Vec<ResponseItem>,
     pub preserved_user_count: usize,
@@ -30,6 +36,21 @@ pub fn build_compacted_replacement_history(
     CompactedReplacementHistory {
         messages,
         preserved_user_count,
+    }
+}
+
+pub fn apply_history_compaction(
+    messages: &mut Vec<ResponseItem>,
+    plan: &ContextCompactionPlan,
+    summary: CompactionSummary,
+) -> ContextCompactionResult {
+    let replacement = build_compacted_replacement_history(messages, plan, &summary).messages;
+
+    *messages = replacement.clone();
+
+    ContextCompactionResult {
+        summary,
+        replacement_history: replacement,
     }
 }
 

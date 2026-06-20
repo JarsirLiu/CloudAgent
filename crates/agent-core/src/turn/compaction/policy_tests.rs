@@ -1,8 +1,8 @@
-use super::auto_compact_policy::{
+use super::policy::{
     AutoCompactPolicyInput, AutoCompactTokenLimitScope, auto_compact_token_status,
     effective_auto_compact_limit,
 };
-use super::auto_compact_window::AutoCompactWindowSnapshot;
+use super::window::AutoCompactWindowSnapshot;
 
 fn snapshot(prefill_input_tokens: Option<usize>) -> AutoCompactWindowSnapshot {
     AutoCompactWindowSnapshot {

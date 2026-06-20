@@ -24,7 +24,7 @@ pub enum ManualCompactionOutcome {
 }
 
 #[derive(Debug, Clone)]
-pub struct AppliedCompaction {
+pub(crate) struct AppliedCompaction {
     pub summary: CompactionSummary,
     pub rendered_summary: String,
     pub replacement_history: Vec<crate::ResponseItem>,
@@ -38,7 +38,7 @@ pub struct AppliedCompaction {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct CompactionStart {
+pub(crate) struct CompactionStart {
     pub continuation: CompactionContinuation,
     pub estimated_history_tokens: usize,
 }
@@ -51,7 +51,7 @@ pub enum CompactionContinuation {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum CompactionMode {
+pub(crate) enum CompactionMode {
     Manual {
         minimum_history_tokens: usize,
     },
@@ -62,7 +62,7 @@ pub enum CompactionMode {
     },
 }
 
-pub async fn maybe_compact_history<H>(
+pub(crate) async fn maybe_compact_history<H>(
     host: &H,
     history: &mut ConversationHistory,
     cancellation_token: &CancellationToken,
@@ -74,7 +74,7 @@ where
     maybe_compact_history_with_start_callback(host, history, cancellation_token, mode, |_| {}).await
 }
 
-pub async fn maybe_compact_history_with_start_callback<H, F>(
+pub(crate) async fn maybe_compact_history_with_start_callback<H, F>(
     host: &H,
     history: &mut ConversationHistory,
     cancellation_token: &CancellationToken,
@@ -86,7 +86,7 @@ where
     F: FnOnce(CompactionStart),
 {
     let context_facade = ContextFacade::new();
-    let settings = host.regular_turn_settings();
+    let settings = host.chat_turn_settings();
     let estimated_history_tokens = context_facade.estimate_history_tokens_for_canonical_compaction(
         &history.messages,
         &settings.workspace_root,
@@ -216,7 +216,7 @@ where
         let estimated_history_tokens = context_facade
             .estimate_history_tokens_for_canonical_compaction(
                 &history.messages,
-                &host.regular_turn_settings().workspace_root,
+                &host.chat_turn_settings().workspace_root,
             );
         return Ok(ManualCompactionOutcome::Skipped {
             estimated_history_tokens,

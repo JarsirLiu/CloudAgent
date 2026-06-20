@@ -1,4 +1,4 @@
-use super::auto_compact_window::{AutoCompactWindow, AutoCompactWindowSnapshot};
+use super::window::{AutoCompactWindow, AutoCompactWindowSnapshot};
 use crate::model::ModelUsage;
 
 #[test]
