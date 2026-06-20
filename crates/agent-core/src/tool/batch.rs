@@ -1,14 +1,17 @@
 use super::{ToolBatchExecutionStrategy, ToolCall, ToolResult, ToolSpec};
 use crate::approval::{ApprovalFlow, ApprovalRuntime};
-use crate::context::{ContextManager, ToolExecutionContext};
+use crate::context::{
+    ContextManager, ToolExecutionContext, append_turn_aborted_marker_if_needed,
+    turn_aborted_marker_item,
+};
 use crate::host::{AgentHost, AgentHostExt};
 use crate::rollout::RolloutItem;
 use crate::turn::{
     EventMsg, ServerRequestHandler, ToolBatchOutcome, TurnHost, TurnItemDeltaKind, TurnItemKind,
 };
 use crate::{
-    ApprovalPolicy, PermissionProfile, emit_event, execute_tool_call_streaming,
-    run_parallel_tool_invocations,
+    ApprovalPolicy, PermissionProfile, TurnInterruptedError, emit_event,
+    execute_tool_call_streaming, run_parallel_tool_invocations,
 };
 use anyhow::Result;
 use std::collections::HashSet;
@@ -100,6 +103,7 @@ impl<'a> ToolBatchRunner<'a> {
 
         for call in tool_calls {
             if self.is_cancelled().await {
+                self.persist_turn_aborted_marker(context_manager).await?;
                 self.emit_cancelled(events, on_event);
                 return Ok(ToolBatchOutcome {
                     cancelled: true,
@@ -193,6 +197,7 @@ impl<'a> ToolBatchRunner<'a> {
                         continue;
                     }
                     ApprovalFlow::Cancelled => {
+                        self.persist_turn_aborted_marker(context_manager).await?;
                         self.emit_cancelled(events, on_event);
                         return Ok(ToolBatchOutcome {
                             cancelled: true,
@@ -221,6 +226,7 @@ impl<'a> ToolBatchRunner<'a> {
                     )
                     .await?;
                 if cancelled {
+                    self.persist_turn_aborted_marker(context_manager).await?;
                     self.emit_cancelled(events, on_event);
                     return Ok(ToolBatchOutcome {
                         cancelled: true,
@@ -261,7 +267,6 @@ impl<'a> ToolBatchRunner<'a> {
                 &self.cancellation_token,
                 ready.call.clone(),
                 tool_ctx,
-                self.host.turn_interrupted_error(),
                 |delta| {
                     tool_streamed_output = true;
                     let rendered = match delta.stream {
@@ -286,7 +291,7 @@ impl<'a> ToolBatchRunner<'a> {
 
             if self.is_cancelled().await {
                 self.emit_cancelled(events, on_event);
-                anyhow::bail!(self.host.turn_interrupted_error());
+                return Err(anyhow::Error::new(TurnInterruptedError));
             }
 
             self.emit_finished_tool(
@@ -327,7 +332,6 @@ impl<'a> ToolBatchRunner<'a> {
             tool_ctx,
             &self.cancellation_token,
             invocations,
-            self.host.turn_interrupted_error(),
         )
         .await?;
 
@@ -483,6 +487,23 @@ impl<'a> ToolBatchRunner<'a> {
             .state()
             .save_history(context_manager.history().clone())
             .await;
+        Ok(())
+    }
+
+    async fn persist_turn_aborted_marker(
+        &self,
+        context_manager: &mut ContextManager,
+    ) -> Result<()> {
+        append_turn_aborted_marker_if_needed(context_manager.history_mut());
+        self.host
+            .persist_rollout_items(
+                self.conversation_id,
+                &[RolloutItem::from(turn_aborted_marker_item())],
+            )
+            .await?;
+        self.host
+            .save_history(context_manager.history().clone())
+            .await?;
         Ok(())
     }
 

@@ -330,19 +330,19 @@ fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayEvent]
                 "weixin.runtime.outbound.generated"
             ),
             GatewayEvent::ContextCompactionStarted {
-                continuation,
+                phase,
                 estimated_tokens,
                 ..
             } => info!(
                 session_key = %session_key,
                 event = event_name,
                 kind = "context_compaction_started",
-                continuation = ?continuation,
+                phase = ?phase,
                 estimated_tokens,
                 "weixin.runtime.outbound.generated"
             ),
             GatewayEvent::ContextCompacted {
-                continuation,
+                phase,
                 pre_context_tokens_estimate,
                 post_context_tokens_estimate,
                 ..
@@ -350,7 +350,7 @@ fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayEvent]
                 session_key = %session_key,
                 event = event_name,
                 kind = "context_compacted",
-                continuation = ?continuation,
+                phase = ?phase,
                 pre_context_tokens_estimate,
                 post_context_tokens_estimate,
                 "weixin.runtime.outbound.generated"

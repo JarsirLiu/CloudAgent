@@ -1,6 +1,7 @@
 use super::compaction::prepare_turn_context_with_auto_compaction;
 use super::completion::{
-    cancelled_outcome, complete_turn_with_message, emit_turn_cancelled, fail_turn_with_message,
+    TurnCompletionContext, cancelled_outcome, complete_turn_with_message, emit_turn_cancelled,
+    fail_turn_with_message,
 };
 use super::response::{
     handle_model_response_event, record_model_response, update_token_usage_from_response,
@@ -12,6 +13,7 @@ use super::tooling::{collect_discoverable_tools, compose_visible_tool_specs};
 use super::{ServerRequestHandler, TurnHost, TurnOutcome, build_model_request_shape_audit};
 use crate::EventMsg;
 use crate::context::ContextFragment;
+use crate::context::{append_turn_aborted_marker_if_needed, turn_aborted_marker_item};
 use crate::{ContextBudgetLogEntry, append_context_budget_log, emit_event};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -51,6 +53,7 @@ pub async fn execute_chat_turn<H: TurnHost>(
         let discoverable_tools =
             collect_discoverable_tools(&state.deferred_tool_map, &state.exposed_tool_names);
         if cancellation_token.is_cancelled() || host.is_turn_cancelled(conversation_id).await {
+            persist_turn_aborted_marker(host, conversation_id, &mut state.context_manager).await?;
             emit_turn_cancelled(
                 &mut state.events,
                 on_event,
@@ -86,12 +89,15 @@ pub async fn execute_chat_turn<H: TurnHost>(
             on_event,
         )
         .await?;
+        let compaction = prepared_context.compaction.clone();
+        if compaction.is_some() {
+            state.saw_compaction_this_turn = true;
+            state.tool_only_roundtrips_after_compaction = 0;
+        }
         let budgeted = prepared_context.budgeted;
         let prepared_fragments = prepared_context.prepared_fragments;
-        let injection_strategy = prepared_context.injection_strategy;
         let token_status = prepared_context.token_status;
         let active_context_tokens_estimate = prepared_context.active_context_tokens_estimate;
-        let compaction = prepared_context.compaction;
         let model_request = state
             .context_facade
             .prepare_model_request(
@@ -99,7 +105,6 @@ pub async fn execute_chat_turn<H: TurnHost>(
                 &settings.workspace_root,
                 state.filter_policy,
                 prepared_fragments,
-                injection_strategy,
                 tool_specs.clone(),
                 settings.llm_temperature,
             )
@@ -155,15 +160,17 @@ pub async fn execute_chat_turn<H: TurnHost>(
                 final_budget.estimated_tokens, final_budget.limit_tokens
             );
             return fail_turn_with_message(
-                host,
-                conversation_id,
-                turn_id,
+                TurnCompletionContext {
+                    host,
+                    conversation_id,
+                    turn_id,
+                    context_manager: &mut state.context_manager,
+                    events: &mut state.events,
+                    on_event,
+                    assistant_item_seq: &mut state.assistant_item_seq,
+                    model_name: state.last_model_name,
+                },
                 message,
-                &mut state.context_manager,
-                &mut state.events,
-                on_event,
-                &mut state.assistant_item_seq,
-                state.last_model_name,
             )
             .await;
         }
@@ -186,7 +193,7 @@ pub async fn execute_chat_turn<H: TurnHost>(
         let request_shape = build_model_request_shape_audit(
             &model_request.messages,
             tool_specs.len(),
-            compaction.as_ref().map(|compacted| compacted.continuation),
+            compaction.as_ref().map(|compacted| compacted.phase),
         );
         host.audit_model_request_shape(conversation_id, turn_id, &request_shape);
 
@@ -254,15 +261,17 @@ pub async fn execute_chat_turn<H: TurnHost>(
         "Reached the configured tool roundtrip limit before the model produced a final answer."
             .to_string();
     complete_turn_with_message(
-        host,
-        conversation_id,
-        turn_id,
+        TurnCompletionContext {
+            host,
+            conversation_id,
+            turn_id,
+            context_manager: &mut state.context_manager,
+            events: &mut state.events,
+            on_event,
+            assistant_item_seq: &mut state.assistant_item_seq,
+            model_name: state.last_model_name,
+        },
         roundtrip_limit_message,
-        &mut state.context_manager,
-        &mut state.events,
-        on_event,
-        &mut state.assistant_item_seq,
-        state.last_model_name,
     )
     .await
 }
@@ -270,3 +279,18 @@ pub async fn execute_chat_turn<H: TurnHost>(
 #[cfg(test)]
 #[path = "chat_tests.rs"]
 mod tests;
+
+async fn persist_turn_aborted_marker<H: TurnHost>(
+    host: &H,
+    conversation_id: &str,
+    context_manager: &mut crate::ContextManager,
+) -> Result<()> {
+    append_turn_aborted_marker_if_needed(context_manager.history_mut());
+    host.persist_rollout_items(
+        conversation_id,
+        &[crate::RolloutItem::from(turn_aborted_marker_item())],
+    )
+    .await?;
+    host.save_history(context_manager.history().clone()).await?;
+    Ok(())
+}

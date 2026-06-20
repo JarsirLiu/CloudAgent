@@ -5,6 +5,17 @@ use crate::{
 };
 use anyhow::Result;
 
+pub(super) struct TurnCompletionContext<'a, H: TurnHost, F: FnMut(&EventMsg) + Send + ?Sized> {
+    pub host: &'a H,
+    pub conversation_id: &'a str,
+    pub turn_id: &'a str,
+    pub context_manager: &'a mut ContextManager,
+    pub events: &'a mut Vec<EventMsg>,
+    pub on_event: &'a mut F,
+    pub assistant_item_seq: &'a mut usize,
+    pub model_name: Option<String>,
+}
+
 pub(super) fn cancelled_outcome(
     turn_id: &str,
     events: Vec<EventMsg>,
@@ -80,17 +91,24 @@ pub(super) fn emit_turn_cancelled(
     );
 }
 
-pub(super) async fn fail_turn_with_message<H: TurnHost>(
-    host: &H,
-    conversation_id: &str,
-    turn_id: &str,
+pub(super) async fn fail_turn_with_message<H, F>(
+    ctx: TurnCompletionContext<'_, H, F>,
     message: String,
-    context_manager: &mut ContextManager,
-    events: &mut Vec<EventMsg>,
-    on_event: &mut (impl FnMut(&EventMsg) + Send + ?Sized),
-    assistant_item_seq: &mut usize,
-    model_name: Option<String>,
-) -> Result<TurnOutcome> {
+) -> Result<TurnOutcome>
+where
+    H: TurnHost,
+    F: FnMut(&EventMsg) + Send + ?Sized,
+{
+    let TurnCompletionContext {
+        host,
+        conversation_id,
+        turn_id,
+        context_manager,
+        events,
+        on_event,
+        assistant_item_seq,
+        model_name,
+    } = ctx;
     emit_assistant_message_item(events, on_event, turn_id, &message, assistant_item_seq);
     let failed_item =
         context_manager.record_assistant_message(Some(message.clone()), None, Vec::new());
@@ -113,17 +131,24 @@ pub(super) async fn fail_turn_with_message<H: TurnHost>(
     ))
 }
 
-pub(super) async fn complete_turn_with_message<H: TurnHost>(
-    host: &H,
-    conversation_id: &str,
-    turn_id: &str,
+pub(super) async fn complete_turn_with_message<H, F>(
+    ctx: TurnCompletionContext<'_, H, F>,
     message: String,
-    context_manager: &mut ContextManager,
-    events: &mut Vec<EventMsg>,
-    on_event: &mut (impl FnMut(&EventMsg) + Send + ?Sized),
-    assistant_item_seq: &mut usize,
-    model_name: Option<String>,
-) -> Result<TurnOutcome> {
+) -> Result<TurnOutcome>
+where
+    H: TurnHost,
+    F: FnMut(&EventMsg) + Send + ?Sized,
+{
+    let TurnCompletionContext {
+        host,
+        conversation_id,
+        turn_id,
+        context_manager,
+        events,
+        on_event,
+        assistant_item_seq,
+        model_name,
+    } = ctx;
     emit_assistant_message_item(events, on_event, turn_id, &message, assistant_item_seq);
     let item = context_manager.record_assistant_message(Some(message), None, Vec::new());
     host.persist_rollout_items(conversation_id, &[RolloutItem::from(item)])

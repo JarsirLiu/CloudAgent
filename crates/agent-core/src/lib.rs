@@ -1,6 +1,7 @@
 pub mod approval;
 pub mod context;
 pub mod conversation;
+pub mod error;
 pub mod host;
 pub mod model;
 pub mod observability;
@@ -27,6 +28,7 @@ pub use conversation::{
     input_items_attachment_count, input_items_display_text, input_items_preview_text,
     input_items_text_len, input_items_to_plain_text, text_input_items, visible_message_count,
 };
+pub use error::TurnInterruptedError;
 pub use host::{
     AgentHost, AgentHostExt, AgentHostParts, AgentMetadata, ConversationStoreBackend,
     MemoryBackend, RolloutRecorderBackend,
@@ -43,14 +45,14 @@ pub use observability::{
 pub use projection::{
     ConversationHistoryBuilder, CoreTranscriptEvent, EventDelivery, EventStream, TranscriptBuilder,
     agent_turn_output_from_events, build_turns_from_rollout_items, classify_event_msg,
-    conversation_history_from_rollout_items, core_transcript_event_from_event_msg,
-    filter_history_ui_turn, filter_history_ui_turns, flatten_conversation_turns,
-    tool_events_from_turn_events, transcript_item_from_response_item,
+    core_transcript_event_from_event_msg, filter_history_ui_turn, filter_history_ui_turns,
+    flatten_conversation_turns, tool_events_from_turn_events, transcript_item_from_response_item,
     transcript_items_from_response_items, transcript_items_from_rollout_items,
 };
 pub use rollout::{
     RolloutItem,
     policy::{RolloutPersistenceMode, persisted_rollout_item, persisted_rollout_items},
+    reconstruction::conversation_history_from_rollout_items,
 };
 pub use skill::{
     SkillCatalog, SkillDependencies, SkillDocument, SkillInvocationMode, SkillMetadata,
@@ -71,8 +73,9 @@ pub use tool::{
 };
 pub use turn::{
     AgentTurnOutput, ApprovalPolicy, CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE,
-    ChatTurnSettings, CommandApprovalRequest, CompactionContinuation, EventMsg, ExecutionPolicy,
-    FileChangeApprovalRequest, ManualCompactionOutcome, ModelRetryStage, PermissionProfile,
+    ChatTurnSettings, CommandApprovalRequest, CompactionOutcome, CompactionPhase, CompactionReason,
+    CompactionRequest, CompactionTrigger, EventMsg, ExecutionPolicy, FileChangeApprovalRequest,
+    InitialContextInjection, ManualCompactionOutcome, ModelRetryStage, PermissionProfile,
     RequestId, RequestTokenBaseline, RestoredTurnTokenState, ServerRequest, ServerRequestDecision,
     ServerRequestDecisionKind, ServerRequestHandler, TokenUsageState, ToolBatchOutcome, TurnHost,
     TurnId, TurnItemDeltaKind, TurnItemKind, TurnLifecycleClass, TurnLifecyclePhase, TurnOutcome,

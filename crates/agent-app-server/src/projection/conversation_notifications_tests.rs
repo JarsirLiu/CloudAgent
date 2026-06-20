@@ -1,7 +1,7 @@
 use super::ConversationNotificationProjector;
 use agent_core::{
-    CommandExecutionStatus, CompactionContinuation, EventMsg, ModelRetryStage, ModelUsage,
-    TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState,
+    CommandExecutionStatus, CompactionPhase, CompactionReason, CompactionTrigger, EventMsg,
+    ModelRetryStage, ModelUsage, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState,
 };
 use agent_protocol::AppServerNotification;
 
@@ -208,17 +208,21 @@ fn model_retrying_projects_to_conversation_notification() {
 }
 
 #[test]
-fn context_compaction_notifications_preserve_continuation() {
+fn context_compaction_notifications_preserve_phase() {
     let mut projector = ConversationNotificationProjector::new("default");
 
     let started = projector.project_turn_event(&EventMsg::ContextCompactionStarted {
         turn_id: "turn-1".to_string(),
-        continuation: CompactionContinuation::MidTurn,
+        trigger: CompactionTrigger::Auto,
+        reason: CompactionReason::ContextLimit,
+        phase: CompactionPhase::MidTurn,
         estimated_tokens: 12_345,
     });
     let compacted = projector.project_turn_event(&EventMsg::ContextCompacted {
         turn_id: "turn-1".to_string(),
-        continuation: CompactionContinuation::MidTurn,
+        trigger: CompactionTrigger::Auto,
+        reason: CompactionReason::ContextLimit,
+        phase: CompactionPhase::MidTurn,
         pre_context_tokens_estimate: 12_345,
         post_context_tokens_estimate: 4_321,
         pre_message_count: 20,
@@ -229,20 +233,20 @@ fn context_compaction_notifications_preserve_continuation() {
     assert!(matches!(
         &started[0],
         AppServerNotification::ContextCompactionStarted {
-            continuation,
+            phase,
             estimated_tokens,
             ..
-        } if *continuation == CompactionContinuation::MidTurn
+        } if *phase == CompactionPhase::MidTurn
             && *estimated_tokens == 12_345
     ));
     assert!(matches!(
         &compacted[0],
         AppServerNotification::ContextCompacted {
-            continuation,
+            phase,
             pre_context_tokens_estimate,
             post_context_tokens_estimate,
             ..
-        } if *continuation == CompactionContinuation::MidTurn
+        } if *phase == CompactionPhase::MidTurn
             && *pre_context_tokens_estimate == 12_345
             && *post_context_tokens_estimate == 4_321
     ));

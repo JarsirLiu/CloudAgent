@@ -1,9 +1,10 @@
 use crate::context::CompactionSummary;
 use crate::conversation::ResponseItem;
-use crate::turn::{CompactionContinuation, EventMsg};
+use crate::turn::{CompactionPhase, CompactionReason, CompactionTrigger, EventMsg};
 use serde::{Deserialize, Serialize};
 
 pub mod policy;
+pub mod reconstruction;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -17,8 +18,9 @@ pub enum RolloutItem {
     Compacted {
         summary: CompactionSummary,
         rendered_summary: String,
-        continuation: CompactionContinuation,
-        #[serde(default)]
+        trigger: CompactionTrigger,
+        reason: CompactionReason,
+        phase: CompactionPhase,
         replacement_history: Vec<ResponseItem>,
     },
 }

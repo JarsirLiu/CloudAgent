@@ -1,4 +1,4 @@
-use super::{CompactionContinuation, build_model_request_shape_audit};
+use super::{CompactionPhase, build_model_request_shape_audit};
 use crate::conversation::ResponseItem;
 use crate::text_input_items;
 
@@ -22,7 +22,7 @@ fn audit_reports_summary_and_raw_tail_shape() {
             },
         ],
         2,
-        Some(CompactionContinuation::MidTurn),
+        Some(CompactionPhase::MidTurn),
     );
 
     assert_eq!(audit.compaction_phase, Some("mid_turn"));

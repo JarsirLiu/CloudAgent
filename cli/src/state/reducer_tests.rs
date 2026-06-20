@@ -1,7 +1,5 @@
 use super::*;
-use agent_core::{
-    CommandExecutionStatus, CompactionContinuation, InputItem, TranscriptItem, TurnState,
-};
+use agent_core::{CommandExecutionStatus, CompactionPhase, InputItem, TranscriptItem, TurnState};
 
 #[test]
 fn conversation_history_action_preserves_turns() {
@@ -205,7 +203,9 @@ fn context_compaction_started_sets_runtime_status_without_notice_cell() {
     let message = AppServerMessage::Notification(AppServerNotification::ContextCompactionStarted {
         conversation_id: "default".to_string(),
         turn_id: Some("turn-1".to_string()),
-        continuation: CompactionContinuation::MidTurn,
+        trigger: agent_core::CompactionTrigger::Auto,
+        reason: agent_core::CompactionReason::ContextLimit,
+        phase: CompactionPhase::MidTurn,
         estimated_tokens: 12_345,
     });
 

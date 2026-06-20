@@ -5,6 +5,7 @@ mod facade;
 mod fragments;
 mod input_filter;
 mod manager;
+mod markers;
 mod tool_context;
 
 #[cfg(test)]
@@ -20,7 +21,12 @@ pub use compaction::{
 };
 pub use environment::EnvironmentContext;
 pub use facade::ContextFacade;
-pub use fragments::{ContextFragment, ContextInjectionStrategy};
+pub use fragments::ContextFragment;
 pub use input_filter::{ContextInputFilterService, FilterPolicy};
 pub use manager::{ContextManager, ModelContext};
+pub use markers::{
+    append_turn_aborted_marker_if_needed, context_summary_prefix, counts_as_real_user_turn,
+    is_context_summary_item, is_turn_aborted_marker, turn_aborted_marker_item,
+    turn_aborted_marker_text,
+};
 pub use tool_context::{AgentContext, ToolExecutionContext};

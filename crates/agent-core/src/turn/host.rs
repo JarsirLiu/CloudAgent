@@ -1,4 +1,5 @@
 use crate::InputItem;
+use crate::TurnInterruptedError;
 use crate::context::{ContextManager, EnvironmentContext};
 use crate::conversation::ConversationHistory;
 use crate::model::{ModelRequest, ModelResponse, ModelStreamObserver};
@@ -23,6 +24,7 @@ pub struct ChatTurnSettings {
     pub llm_temperature: f32,
     pub pre_llm_filter_enabled: bool,
     pub max_tool_roundtrips: Option<usize>,
+    pub max_tool_only_roundtrips_after_compaction: usize,
     pub model_context_window: u64,
     pub model_auto_compact_token_limit: Option<usize>,
     pub model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope,
@@ -73,7 +75,6 @@ pub trait TurnHost: Send + Sync {
     type PermissionProfile: Send + Sync;
     type ApprovalPolicy: Send + Sync;
 
-    fn turn_interrupted_error(&self) -> &'static str;
     fn chat_turn_settings(&self) -> ChatTurnSettings;
     fn environment_context(&self) -> EnvironmentContext;
     fn raw_memory_fragment(&self) -> Option<String>;
@@ -172,4 +173,8 @@ pub trait TurnHost: Send + Sync {
         has_content: bool,
         tool_call_count: usize,
     );
+}
+
+pub(crate) fn is_turn_interrupted_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<TurnInterruptedError>().is_some()
 }

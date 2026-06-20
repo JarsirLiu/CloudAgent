@@ -4,8 +4,7 @@ use agent_core::conversation::{ConversationSummary, ResponseItem, input_items_ar
 use agent_core::host::{
     ConversationListPage, ConversationReconcileReport, ConversationStoreBackend, RolloutItemsPage,
 };
-use agent_core::projection::conversation_history_from_rollout_items;
-use agent_core::rollout::RolloutItem;
+use agent_core::rollout::{RolloutItem, reconstruction::conversation_history_from_rollout_items};
 use agent_core::tool::ApprovalGrantKey;
 use agent_core::{RolloutPersistenceMode, persisted_rollout_items};
 use anyhow::{Context, Result};

@@ -4,17 +4,18 @@ use crate::context::EnvironmentContext;
 use crate::skill::SkillRuntime;
 use crate::tool::ChatTurnToolExposure;
 use crate::turn::compaction::{
-    BudgetedFragmentInputs, build_budgeted_fragments_for_current_history, compaction_continuation,
+    BudgetedFragmentInputs, build_budgeted_fragments_for_current_history, compaction_phase,
 };
-use crate::turn::compaction::{CompactionContinuation, CompactionMode, maybe_compact_history};
+use crate::turn::compaction::{CompactionMode, maybe_compact_history};
 use crate::turn::{
-    AutoCompactTokenLimitScope, ChatTurnSettings, ServerRequest, ServerRequestDecision,
-    ServerRequestHandler, ToolBatchOutcome, TurnHost,
+    AutoCompactTokenLimitScope, ChatTurnSettings, CompactionPhase, ServerRequest,
+    ServerRequestDecision, ServerRequestHandler, ToolBatchOutcome, TurnHost,
 };
 use crate::{
     ContextFacade, ContextManager, ConversationHistory, EventMsg, FilterPolicy, ModelRequest,
     ModelResponse, ModelStreamObserver, RolloutItem, ToolCall, ToolExecutionPolicy, ToolIdentity,
-    ToolSource, ToolSpec, TurnItemDeltaKind, TurnItemKind, TurnOutcome, TurnState,
+    ToolSource, ToolSpec, TurnInterruptedError, TurnItemDeltaKind, TurnItemKind, TurnOutcome,
+    TurnState,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -110,10 +111,10 @@ fn discoverable_tools_exclude_already_exposed_deferred_hits() {
 
 #[test]
 fn first_roundtrip_compaction_is_pre_turn_and_later_roundtrips_are_mid_turn() {
-    assert_eq!(compaction_continuation(0), CompactionContinuation::PreTurn);
-    assert_eq!(compaction_continuation(1), CompactionContinuation::PreTurn);
-    assert_eq!(compaction_continuation(2), CompactionContinuation::MidTurn);
-    assert_eq!(compaction_continuation(4), CompactionContinuation::MidTurn);
+    assert_eq!(compaction_phase(0), CompactionPhase::PreTurn);
+    assert_eq!(compaction_phase(1), CompactionPhase::PreTurn);
+    assert_eq!(compaction_phase(2), CompactionPhase::MidTurn);
+    assert_eq!(compaction_phase(4), CompactionPhase::MidTurn);
 }
 
 struct MockTurnHost {
@@ -135,6 +136,7 @@ impl MockTurnHost {
                 llm_temperature: 0.0,
                 pre_llm_filter_enabled: false,
                 max_tool_roundtrips: Some(4),
+                max_tool_only_roundtrips_after_compaction: 2,
                 model_context_window: 200_000,
                 model_auto_compact_token_limit: None,
                 model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
@@ -185,10 +187,6 @@ impl MockTurnHost {
 impl TurnHost for MockTurnHost {
     type PermissionProfile = ();
     type ApprovalPolicy = ();
-
-    fn turn_interrupted_error(&self) -> &'static str {
-        "interrupted"
-    }
 
     fn chat_turn_settings(&self) -> ChatTurnSettings {
         self.settings.clone()
@@ -286,7 +284,7 @@ impl TurnHost for MockTurnHost {
         _request: ModelRequest,
     ) -> Result<ModelResponse> {
         if cancellation_token.is_cancelled() {
-            anyhow::bail!(self.turn_interrupted_error());
+            return Err(anyhow::Error::new(TurnInterruptedError));
         }
         Ok(ModelResponse {
             content: Some(
@@ -520,30 +518,30 @@ async fn automatic_compaction_preserves_explicit_continuation_mode() {
         &mut history.clone(),
         &CancellationToken::new(),
         CompactionMode::Automatic {
-            _estimated_total_tokens: usize::MAX,
+            estimated_total_tokens: usize::MAX,
             token_limit_reached: true,
-            continuation: CompactionContinuation::PreTurn,
+            phase: CompactionPhase::PreTurn,
         },
     )
     .await
     .expect("pre-turn compaction result")
     .expect("pre-turn compaction applied");
-    assert_eq!(pre_turn.continuation, CompactionContinuation::PreTurn);
+    assert_eq!(pre_turn.phase, CompactionPhase::PreTurn);
 
     let mid_turn = maybe_compact_history(
         &host,
         &mut history,
         &CancellationToken::new(),
         CompactionMode::Automatic {
-            _estimated_total_tokens: usize::MAX,
+            estimated_total_tokens: usize::MAX,
             token_limit_reached: true,
-            continuation: CompactionContinuation::MidTurn,
+            phase: CompactionPhase::MidTurn,
         },
     )
     .await
     .expect("mid-turn compaction result")
     .expect("mid-turn compaction applied");
-    assert_eq!(mid_turn.continuation, CompactionContinuation::MidTurn);
+    assert_eq!(mid_turn.phase, CompactionPhase::MidTurn);
 }
 
 #[tokio::test]
@@ -573,15 +571,15 @@ async fn interrupted_compaction_leaves_history_unchanged() {
         &mut history,
         &cancellation_token,
         CompactionMode::Automatic {
-            _estimated_total_tokens: usize::MAX,
+            estimated_total_tokens: usize::MAX,
             token_limit_reached: true,
-            continuation: CompactionContinuation::MidTurn,
+            phase: CompactionPhase::MidTurn,
         },
     )
     .await
     .expect_err("cancelled compaction should error");
 
-    assert!(err.to_string().contains("interrupted"));
+    assert!(err.downcast_ref::<TurnInterruptedError>().is_some());
     assert_eq!(history.messages.len(), original_messages.len());
     assert_eq!(
         format!("{:?}", history.messages),
@@ -792,7 +790,7 @@ fn recomputing_budgeted_fragments_after_compaction_can_restore_memory_context() 
         },
     );
     assert!(!before.fragments.iter().any(|item| {
-        matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(&content).contains("<long_term_memory>"))
+        matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(content).contains("<long_term_memory>"))
     }));
 
     let mut compacted_history = ConversationHistory::new("default".to_string(), "system");
@@ -810,6 +808,6 @@ fn recomputing_budgeted_fragments_after_compaction_can_restore_memory_context() 
         },
     );
     assert!(after.fragments.iter().any(|item| {
-        matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(&content).contains("<long_term_memory>"))
+        matches!(item, crate::ResponseItem::User { content } if crate::input_items_to_plain_text(content).contains("<long_term_memory>"))
     }));
 }

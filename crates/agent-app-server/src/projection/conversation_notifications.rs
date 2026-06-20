@@ -179,7 +179,9 @@ impl ConversationNotificationProjector {
             }],
             EventMsg::ContextCompacted {
                 turn_id,
-                continuation,
+                trigger,
+                reason,
+                phase,
                 pre_context_tokens_estimate,
                 post_context_tokens_estimate,
                 pre_message_count,
@@ -189,7 +191,9 @@ impl ConversationNotificationProjector {
                 vec![AppServerNotification::ContextCompacted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id: Some(turn_id.clone()),
-                    continuation: *continuation,
+                    trigger: *trigger,
+                    reason: *reason,
+                    phase: *phase,
                     pre_context_tokens_estimate: *pre_context_tokens_estimate,
                     post_context_tokens_estimate: *post_context_tokens_estimate,
                     pre_message_count: *pre_message_count,
@@ -199,13 +203,17 @@ impl ConversationNotificationProjector {
             }
             EventMsg::ContextCompactionStarted {
                 turn_id,
-                continuation,
+                trigger,
+                reason,
+                phase,
                 estimated_tokens,
             } => {
                 vec![AppServerNotification::ContextCompactionStarted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id: Some(turn_id.clone()),
-                    continuation: *continuation,
+                    trigger: *trigger,
+                    reason: *reason,
+                    phase: *phase,
                     estimated_tokens: *estimated_tokens,
                 }]
             }

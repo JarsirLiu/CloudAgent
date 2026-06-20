@@ -1,5 +1,4 @@
 mod core_transcript;
-mod rollout_reconstruction;
 mod transcript;
 mod turn_output;
 
@@ -10,7 +9,6 @@ pub use core_transcript::{
     CoreTranscriptEvent, EventDelivery, EventStream, classify_event_msg,
     core_transcript_event_from_event_msg,
 };
-pub use rollout_reconstruction::conversation_history_from_rollout_items;
 pub use transcript::{
     ConversationHistoryBuilder, TranscriptBuilder, build_turns_from_rollout_items,
     filter_history_ui_turn, filter_history_ui_turns, flatten_conversation_turns,

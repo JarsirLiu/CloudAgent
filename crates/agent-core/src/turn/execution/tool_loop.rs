@@ -1,5 +1,6 @@
 use super::completion::{
-    cancelled_outcome, completed_outcome, emit_turn_completed, fail_turn_with_message,
+    TurnCompletionContext, cancelled_outcome, completed_outcome, emit_turn_completed,
+    fail_turn_with_message,
 };
 use super::state::ChatTurnState;
 use super::tooling::finish_reason_implies_tool_use;
@@ -34,6 +35,7 @@ pub(super) async fn advance_after_model_response<H: TurnHost>(
 
     if tool_calls.is_empty() && !finish_reason_implies_tool_use(finish_reason) {
         state.loop_guard.reset();
+        state.tool_only_roundtrips_after_compaction = 0;
         if !had_streaming_assistant_item && response.content.is_none() {
             emit_assistant_message_item(
                 &mut state.events,
@@ -55,6 +57,38 @@ pub(super) async fn advance_after_model_response<H: TurnHost>(
     if tool_calls.is_empty() && finish_reason_implies_tool_use(finish_reason) {
         state.loop_guard.reset();
         return Ok(ToolLoopControl::Continue);
+    }
+
+    if state.saw_compaction_this_turn
+        && response
+            .content
+            .as_ref()
+            .is_none_or(|content| content.trim().is_empty())
+    {
+        state.tool_only_roundtrips_after_compaction += 1;
+        if state.tool_only_roundtrips_after_compaction
+            > host
+                .chat_turn_settings()
+                .max_tool_only_roundtrips_after_compaction
+        {
+            let outcome = fail_turn_with_message(
+                TurnCompletionContext {
+                    host,
+                    conversation_id,
+                    turn_id,
+                    context_manager: &mut state.context_manager,
+                    events: &mut state.events,
+                    on_event,
+                    assistant_item_seq: &mut state.assistant_item_seq,
+                    model_name: state.last_model_name.clone(),
+                },
+                "Stopped after automatic compaction because the model continued requesting tools without producing an answer. Please retry or narrow the request.".to_string(),
+            )
+            .await?;
+            return Ok(ToolLoopControl::Return(outcome));
+        }
+    } else {
+        state.tool_only_roundtrips_after_compaction = 0;
     }
 
     let tool_batch: ToolBatchOutcome = host
@@ -94,15 +128,17 @@ pub(super) async fn advance_after_model_response<H: TurnHost>(
             loop_abort.repeated_count
         );
         let outcome = fail_turn_with_message(
-            host,
-            conversation_id,
-            turn_id,
+            TurnCompletionContext {
+                host,
+                conversation_id,
+                turn_id,
+                context_manager: &mut state.context_manager,
+                events: &mut state.events,
+                on_event,
+                assistant_item_seq: &mut state.assistant_item_seq,
+                model_name: state.last_model_name.clone(),
+            },
             message,
-            &mut state.context_manager,
-            &mut state.events,
-            on_event,
-            &mut state.assistant_item_seq,
-            state.last_model_name.clone(),
         )
         .await?;
         return Ok(ToolLoopControl::Return(outcome));

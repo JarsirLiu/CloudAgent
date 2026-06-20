@@ -1,4 +1,4 @@
-use super::fragments::{ContextInjectionStrategy, insert_context_fragments};
+use super::fragments::insert_context_fragments;
 use crate::conversation::{ResponseItem, input_items_to_plain_text};
 use crate::text_input_items;
 
@@ -19,8 +19,7 @@ fn standard_inserts_before_latest_real_user_not_summary() {
         content: text_input_items("<environment_context>\nctx"),
     }];
 
-    let injected =
-        insert_context_fragments(messages, &fragments, ContextInjectionStrategy::Standard);
+    let injected = insert_context_fragments(messages, &fragments);
 
     assert!(matches!(
         &injected[..],
@@ -54,11 +53,7 @@ fn mid_turn_compaction_inserts_before_summary_when_tail_has_no_real_user() {
         content: text_input_items("<environment_context>\nctx"),
     }];
 
-    let injected = insert_context_fragments(
-        messages,
-        &fragments,
-        ContextInjectionStrategy::MidTurnCompactionContinuation,
-    );
+    let injected = insert_context_fragments(messages, &fragments);
 
     assert!(matches!(
         &injected[..],

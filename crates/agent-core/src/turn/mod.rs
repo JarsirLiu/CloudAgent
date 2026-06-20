@@ -24,8 +24,9 @@ pub use compaction::{
     auto_compact_token_status,
 };
 pub use compaction::{
-    AutoCompactWindow, AutoCompactWindowSnapshot, CompactionContinuation, ManualCompactionOutcome,
-    run_manual_compaction,
+    AutoCompactWindow, AutoCompactWindowSnapshot, CompactionOutcome, CompactionPhase,
+    CompactionReason, CompactionRequest, CompactionTrigger, InitialContextInjection,
+    ManualCompactionOutcome, run_manual_compaction,
 };
 pub use concurrency::{
     CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE, conversation_busy_error,

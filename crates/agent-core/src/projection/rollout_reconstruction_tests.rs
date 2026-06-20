@@ -1,8 +1,8 @@
-use super::conversation_history_from_rollout_items;
 use crate::conversation::ResponseItem;
 use crate::rollout::RolloutItem;
+use crate::rollout::reconstruction::conversation_history_from_rollout_items;
 use crate::tool::{ToolCall, ToolIdentity};
-use crate::turn::{CompactionContinuation, EventMsg};
+use crate::turn::{CompactionPhase, CompactionReason, CompactionTrigger, EventMsg};
 use crate::{AttachmentRef, ImageDetail, InputItem, input_items_to_plain_text, text_input_items};
 use serde_json::json;
 
@@ -90,7 +90,9 @@ fn prefers_compacted_replacement_history() {
             RolloutItem::Compacted {
                 summary: summary(),
                 rendered_summary: "[Context Summary]\nold".to_string(),
-                continuation: CompactionContinuation::PreTurn,
+                trigger: CompactionTrigger::Auto,
+                reason: CompactionReason::ContextLimit,
+                phase: CompactionPhase::PreTurn,
                 replacement_history: vec![
                     ResponseItem::System {
                         content: "system prompt".to_string(),
@@ -137,7 +139,9 @@ fn normalizes_legacy_compacted_summary_system_message() {
         &[RolloutItem::Compacted {
             summary: summary(),
             rendered_summary: "[Context Summary]\nold".to_string(),
-            continuation: CompactionContinuation::PreTurn,
+            trigger: CompactionTrigger::Auto,
+            reason: CompactionReason::ContextLimit,
+            phase: CompactionPhase::PreTurn,
             replacement_history: vec![
                 ResponseItem::System {
                     content: "system prompt".to_string(),
@@ -177,7 +181,9 @@ fn keeps_post_compaction_items_in_same_turn_suffix() {
             RolloutItem::Compacted {
                 summary: summary(),
                 rendered_summary: "[Context Summary]\nold".to_string(),
-                continuation: CompactionContinuation::MidTurn,
+                trigger: CompactionTrigger::Auto,
+                reason: CompactionReason::ContextLimit,
+                phase: CompactionPhase::MidTurn,
                 replacement_history: vec![
                     ResponseItem::System {
                         content: "system prompt".to_string(),
@@ -244,7 +250,9 @@ fn rebuild_starts_from_latest_compaction_checkpoint() {
             RolloutItem::Compacted {
                 summary: summary(),
                 rendered_summary: "[Context Summary]\nfirst".to_string(),
-                continuation: CompactionContinuation::PreTurn,
+                trigger: CompactionTrigger::Auto,
+                reason: CompactionReason::ContextLimit,
+                phase: CompactionPhase::PreTurn,
                 replacement_history: vec![
                     ResponseItem::System {
                         content: "system prompt".to_string(),
@@ -263,7 +271,9 @@ fn rebuild_starts_from_latest_compaction_checkpoint() {
             RolloutItem::Compacted {
                 summary: summary(),
                 rendered_summary: "[Context Summary]\nsecond".to_string(),
-                continuation: CompactionContinuation::MidTurn,
+                trigger: CompactionTrigger::Auto,
+                reason: CompactionReason::ContextLimit,
+                phase: CompactionPhase::MidTurn,
                 replacement_history: vec![
                     ResponseItem::System {
                         content: "system prompt".to_string(),
@@ -406,7 +416,9 @@ fn marks_cancelled_compacted_tool_turn_as_aborted() {
                 )
                 .ensure_defaults(),
                 rendered_summary: "[Context Summary]\nolder".to_string(),
-                continuation: CompactionContinuation::PreTurn,
+                trigger: CompactionTrigger::Auto,
+                reason: CompactionReason::ContextLimit,
+                phase: CompactionPhase::PreTurn,
                 replacement_history: vec![
                     ResponseItem::System {
                         content: "system".to_string(),

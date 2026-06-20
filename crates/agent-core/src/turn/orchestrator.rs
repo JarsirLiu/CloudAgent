@@ -1,6 +1,8 @@
 use super::{
     ServerRequestHandler, TurnHost, TurnOutcome, conversation_busy_error, execute_chat_turn,
+    host::is_turn_interrupted_error,
 };
+use crate::context::{append_turn_aborted_marker_if_needed, turn_aborted_marker_item};
 use crate::{EventMsg, InputItem, TurnState};
 use crate::{RolloutItem, emit_event, next_turn_id};
 use anyhow::{Result, bail};
@@ -49,6 +51,13 @@ pub async fn run_turn_with_approval<H: TurnHost>(
         },
     );
     let result = if active_turn.is_cancelled() {
+        append_turn_aborted_marker_if_needed(&mut history);
+        host.save_history(history.clone()).await?;
+        host.persist_rollout_items(
+            conversation_id,
+            &[RolloutItem::from(turn_aborted_marker_item())],
+        )
+        .await?;
         emit_event(
             &mut events,
             &mut event_sink,
@@ -92,7 +101,15 @@ pub async fn run_turn_with_approval<H: TurnHost>(
             Ok(outcome)
         }
         Err(err) => {
-            if err.to_string().contains(host.turn_interrupted_error()) {
+            if is_turn_interrupted_error(&err) {
+                let mut interrupted_history = host.history_from_rollout(conversation_id).await?;
+                append_turn_aborted_marker_if_needed(&mut interrupted_history);
+                host.persist_rollout_items(
+                    conversation_id,
+                    &[RolloutItem::from(turn_aborted_marker_item())],
+                )
+                .await?;
+                host.save_history(interrupted_history.clone()).await?;
                 let mut events = Vec::new();
                 emit_event(
                     &mut events,
@@ -102,8 +119,6 @@ pub async fn run_turn_with_approval<H: TurnHost>(
                         reason: "interrupted by client".to_string(),
                     },
                 );
-                host.flush_rollout().await?;
-                let mut interrupted_history = host.history_from_rollout(conversation_id).await?;
                 interrupted_history.ensure_tool_outputs_present();
                 host.save_history(interrupted_history.clone()).await?;
                 host.flush_rollout().await?;

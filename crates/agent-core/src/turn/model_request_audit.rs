@@ -1,6 +1,7 @@
-use crate::conversation::{ResponseItem, input_items_to_plain_text};
+use crate::context::{counts_as_real_user_turn, is_context_summary_item};
+use crate::conversation::ResponseItem;
 
-use super::CompactionContinuation;
+use super::CompactionPhase;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ModelRequestShapeAudit {
@@ -17,15 +18,15 @@ pub struct ModelRequestShapeAudit {
 pub fn build_model_request_shape_audit(
     messages: &[ResponseItem],
     tool_count: usize,
-    compaction_continuation: Option<CompactionContinuation>,
+    compaction_phase: Option<CompactionPhase>,
 ) -> ModelRequestShapeAudit {
-    let summary_index = messages.iter().position(response_item_is_context_summary);
+    let summary_index = messages.iter().position(is_context_summary_item);
     let before_summary = summary_index.unwrap_or(messages.len());
 
     ModelRequestShapeAudit {
         message_count: messages.len(),
         tool_count,
-        compaction_phase: compaction_continuation.map(compaction_phase),
+        compaction_phase: compaction_phase.map(compaction_phase_name),
         message_roles: messages.iter().map(response_item_role).collect(),
         summary_index,
         raw_tool_messages_before_summary: messages[..before_summary]
@@ -36,16 +37,15 @@ pub fn build_model_request_shape_audit(
             .iter()
             .filter(|item| matches!(item, ResponseItem::Assistant { .. }))
             .count(),
-        latest_real_user_index: messages
-            .iter()
-            .rposition(response_item_is_real_user_message),
+        latest_real_user_index: messages.iter().rposition(counts_as_real_user_turn),
     }
 }
 
-fn compaction_phase(continuation: CompactionContinuation) -> &'static str {
-    match continuation {
-        CompactionContinuation::PreTurn => "pre_turn",
-        CompactionContinuation::MidTurn => "mid_turn",
+fn compaction_phase_name(phase: CompactionPhase) -> &'static str {
+    match phase {
+        CompactionPhase::StandaloneTurn => "standalone_turn",
+        CompactionPhase::PreTurn => "pre_turn",
+        CompactionPhase::MidTurn => "mid_turn",
     }
 }
 
@@ -56,23 +56,4 @@ fn response_item_role(item: &ResponseItem) -> &'static str {
         ResponseItem::Assistant { .. } => "assistant",
         ResponseItem::Tool { .. } => "tool",
     }
-}
-
-fn response_item_is_context_summary(item: &ResponseItem) -> bool {
-    match item {
-        ResponseItem::System { content } => content.trim_start().starts_with("[Context Summary]"),
-        ResponseItem::User { content } => input_items_to_plain_text(content)
-            .trim_start()
-            .starts_with("[Context Summary]"),
-        ResponseItem::Assistant { .. } | ResponseItem::Tool { .. } => false,
-    }
-}
-
-fn response_item_is_real_user_message(item: &ResponseItem) -> bool {
-    let ResponseItem::User { content } = item else {
-        return false;
-    };
-    let text = input_items_to_plain_text(content);
-    let trimmed = text.trim_start();
-    !trimmed.starts_with("[Context Summary]") && !trimmed.starts_with("<turn_aborted>")
 }

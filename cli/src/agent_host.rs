@@ -45,6 +45,9 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         llm_temperature: config.llm.temperature,
         pre_llm_filter_enabled: config.cli.pre_llm_filter_enabled,
         max_tool_roundtrips: policy.max_tool_roundtrips,
+        max_tool_only_roundtrips_after_compaction: config
+            .runtime
+            .max_tool_only_roundtrips_after_compaction,
         model_context_window: config.runtime.model_context_window,
         model_auto_compact_token_limit: config.runtime.model_auto_compact_token_limit,
         model_auto_compact_token_limit_scope: match config

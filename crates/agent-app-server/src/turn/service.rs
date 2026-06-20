@@ -5,8 +5,9 @@ use crate::server_request::view::pending_request_view;
 use crate::session::listener::start_conversation_listener;
 use crate::session::service as session_service;
 use agent_core::{
-    AgentHost, ApprovalPolicy, CompactionContinuation, EventMsg, InputItem, PermissionProfile,
-    ServerRequest, ServerRequestDecision, TurnState, input_items_text_len,
+    AgentHost, ApprovalPolicy, CompactionPhase, CompactionReason, CompactionTrigger, EventMsg,
+    InputItem, PermissionProfile, ServerRequest, ServerRequestDecision, TurnState,
+    input_items_text_len,
 };
 use agent_protocol::{
     AppServerNotification, AppServerRequest, InterruptDisposition, TurnViewStatus,
@@ -127,7 +128,9 @@ pub(crate) async fn compact_conversation(
         AppServerNotification::ContextCompactionStarted {
             conversation_id: conversation_id.clone(),
             turn_id: None,
-            continuation: CompactionContinuation::PreTurn,
+            trigger: CompactionTrigger::Manual,
+            reason: CompactionReason::UserRequested,
+            phase: CompactionPhase::StandaloneTurn,
             estimated_tokens,
         },
     )

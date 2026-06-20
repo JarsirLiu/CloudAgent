@@ -3,7 +3,7 @@ use crate::model::await_server_request_decision;
 use crate::tool::{ToolCall, ToolSpec};
 use crate::turn::{
     CommandApprovalRequest, EventMsg, FileChangeApprovalRequest, ServerRequest,
-    ServerRequestDecisionKind, ServerRequestHandler, TurnHost, TurnItemKind, TurnState, emit_event,
+    ServerRequestDecisionKind, ServerRequestHandler, TurnItemKind, TurnState, emit_event,
 };
 use crate::{ApprovalGrantKey, ApprovalPolicy, PermissionProfile};
 use anyhow::Result;
@@ -98,7 +98,6 @@ impl<'a> ApprovalRuntime<'a> {
         let decision = await_server_request_decision(
             self.cancellation_token,
             self.approval.decide(request.clone()),
-            self.host.turn_interrupted_error(),
         )
         .await?;
         self.host

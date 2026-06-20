@@ -1,4 +1,4 @@
-use super::fragments::{ContextFragment, ContextInjectionStrategy, insert_context_fragments};
+use super::fragments::{ContextFragment, insert_context_fragments};
 use crate::conversation::{ConversationHistory, InputItem, ResponseItem};
 use crate::model::ModelRequest;
 use crate::output_truncation::DEFAULT_MAX_OUTPUT_TOKENS;
@@ -20,10 +20,9 @@ impl ModelContext {
     pub fn from_history_with_fragments(
         history: &ConversationHistory,
         fragments: &[ResponseItem],
-        strategy: ContextInjectionStrategy,
     ) -> Self {
         Self {
-            messages: insert_context_fragments(history.messages.clone(), fragments, strategy),
+            messages: insert_context_fragments(history.messages.clone(), fragments),
         }
     }
 
@@ -94,10 +93,9 @@ impl ContextManager {
         &self,
         history: &ConversationHistory,
         fragments: &[impl ContextFragment],
-        strategy: ContextInjectionStrategy,
     ) -> ModelContext {
         let rendered = render_context_fragments(fragments);
-        ModelContext::from_history_with_fragments(history, &rendered, strategy)
+        ModelContext::from_history_with_fragments(history, &rendered)
     }
 
     pub fn build_current_model_context(&self) -> ModelContext {
@@ -107,9 +105,8 @@ impl ContextManager {
     pub fn build_current_model_context_with_fragments(
         &self,
         fragments: &[impl ContextFragment],
-        strategy: ContextInjectionStrategy,
     ) -> ModelContext {
-        self.build_model_context_with_fragments(&self.history, fragments, strategy)
+        self.build_model_context_with_fragments(&self.history, fragments)
     }
 
     pub fn build_model_request(
@@ -132,11 +129,10 @@ impl ContextManager {
         &self,
         history: &ConversationHistory,
         fragments: &[impl ContextFragment],
-        strategy: ContextInjectionStrategy,
         tools: Vec<ToolSpec>,
         temperature: f32,
     ) -> ModelRequest {
-        let context = self.build_model_context_with_fragments(history, fragments, strategy);
+        let context = self.build_model_context_with_fragments(history, fragments);
         ModelRequest {
             messages: context.into_messages(),
             tools,
@@ -164,27 +160,19 @@ impl ContextManager {
     pub fn build_current_model_request_with_fragments(
         &self,
         fragments: &[impl ContextFragment],
-        strategy: ContextInjectionStrategy,
         tools: Vec<ToolSpec>,
         temperature: f32,
     ) -> ModelRequest {
-        self.build_model_request_with_fragments(
-            &self.history,
-            fragments,
-            strategy,
-            tools,
-            temperature,
-        )
+        self.build_model_request_with_fragments(&self.history, fragments, tools, temperature)
     }
 
     pub fn build_current_model_request_with_rendered_fragments(
         &self,
         fragments: &[ResponseItem],
-        strategy: ContextInjectionStrategy,
         tools: Vec<ToolSpec>,
         temperature: f32,
     ) -> ModelRequest {
-        let messages = insert_context_fragments(self.history.messages.clone(), fragments, strategy);
+        let messages = insert_context_fragments(self.history.messages.clone(), fragments);
         ModelRequest {
             messages,
             tools,
@@ -221,12 +209,8 @@ mod tests {
             "2026-04-30T19:16:01+08:00",
             "+08:00",
         );
-        let request = manager.build_current_model_request_with_fragments(
-            &[environment],
-            ContextInjectionStrategy::Standard,
-            Vec::new(),
-            0.0,
-        );
+        let request =
+            manager.build_current_model_request_with_fragments(&[environment], Vec::new(), 0.0);
 
         assert_eq!(manager.history().messages.len(), 2);
         assert_eq!(request.messages.len(), 3);
@@ -271,12 +255,8 @@ mod tests {
             "+08:00",
         );
 
-        let request = manager.build_current_model_request_with_fragments(
-            &[environment],
-            ContextInjectionStrategy::MidTurnCompactionContinuation,
-            Vec::new(),
-            0.0,
-        );
+        let request =
+            manager.build_current_model_request_with_fragments(&[environment], Vec::new(), 0.0);
 
         assert!(matches!(
             &request.messages[..],

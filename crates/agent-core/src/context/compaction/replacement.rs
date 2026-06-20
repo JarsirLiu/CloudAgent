@@ -1,4 +1,5 @@
-use crate::conversation::{ResponseItem, input_items_to_plain_text, text_input_items};
+use crate::context::counts_as_real_user_turn;
+use crate::conversation::{ResponseItem, text_input_items};
 
 use super::{CompactionSummary, ContextCompactionPlan};
 
@@ -58,7 +59,7 @@ fn recent_real_user_messages(messages: &[ResponseItem]) -> Vec<ResponseItem> {
     messages
         .iter()
         .filter_map(|item| match item {
-            ResponseItem::User { content } if user_content_is_real(content) => {
+            ResponseItem::User { content } if counts_as_real_user_turn(item) => {
                 Some(ResponseItem::User {
                     content: content.clone(),
                 })
@@ -66,10 +67,4 @@ fn recent_real_user_messages(messages: &[ResponseItem]) -> Vec<ResponseItem> {
             _ => None,
         })
         .collect()
-}
-
-fn user_content_is_real(content: &[crate::InputItem]) -> bool {
-    let text = input_items_to_plain_text(content);
-    let trimmed = text.trim_start();
-    !trimmed.starts_with("[Context Summary]") && !trimmed.starts_with("<turn_aborted>")
 }

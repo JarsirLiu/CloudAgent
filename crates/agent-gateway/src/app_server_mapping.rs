@@ -235,18 +235,24 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
         }]),
         AppServerNotification::ContextCompactionStarted {
             turn_id,
-            continuation,
+            trigger,
+            reason,
+            phase,
             estimated_tokens,
             ..
         } => EventFlow::Continue(vec![GatewayEvent::ContextCompactionStarted {
             target: target.clone(),
             turn_id: turn_id.clone(),
-            continuation: *continuation,
+            trigger: *trigger,
+            reason: *reason,
+            phase: *phase,
             estimated_tokens: *estimated_tokens,
         }]),
         AppServerNotification::ContextCompacted {
             turn_id,
-            continuation,
+            trigger,
+            reason,
+            phase,
             pre_context_tokens_estimate,
             post_context_tokens_estimate,
             pre_message_count,
@@ -256,7 +262,9 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
         } => EventFlow::Continue(vec![GatewayEvent::ContextCompacted {
             target: target.clone(),
             turn_id: turn_id.clone(),
-            continuation: *continuation,
+            trigger: *trigger,
+            reason: *reason,
+            phase: *phase,
             pre_context_tokens_estimate: *pre_context_tokens_estimate,
             post_context_tokens_estimate: *post_context_tokens_estimate,
             pre_message_count: *pre_message_count,

@@ -23,6 +23,8 @@ pub(super) struct ChatTurnState {
     pub(super) request_baseline: RequestTokenBaseline,
     pub(super) auto_compact_window: AutoCompactWindow,
     pub(super) reasoning_item_seq: usize,
+    pub(super) saw_compaction_this_turn: bool,
+    pub(super) tool_only_roundtrips_after_compaction: usize,
 }
 
 impl ChatTurnState {
@@ -79,6 +81,8 @@ impl ChatTurnState {
                 restored_token_state.auto_compact_window,
             ),
             reasoning_item_seq: 0,
+            saw_compaction_this_turn: false,
+            tool_only_roundtrips_after_compaction: 0,
         })
     }
 }

@@ -2,8 +2,9 @@ use crate::types::{NotificationDelivery, NotificationStream};
 use crate::view_state::ConversationViewSnapshot;
 use crate::{RequestId, UserTurnInput};
 use agent_core::{
-    CompactionContinuation, ConversationSummary, ConversationTurn, ModelRetryStage, ModelUsage,
-    ServerRequest, ServerRequestDecision, SkillMetadata, TranscriptItem, TurnId,
+    CompactionPhase, CompactionReason, CompactionTrigger, ConversationSummary, ConversationTurn,
+    ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision, SkillMetadata,
+    TranscriptItem, TurnId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -453,7 +454,9 @@ pub enum AppServerNotification {
     ContextCompacted {
         conversation_id: String,
         turn_id: Option<TurnId>,
-        continuation: CompactionContinuation,
+        trigger: CompactionTrigger,
+        reason: CompactionReason,
+        phase: CompactionPhase,
         pre_context_tokens_estimate: u64,
         post_context_tokens_estimate: u64,
         pre_message_count: usize,
@@ -463,7 +466,9 @@ pub enum AppServerNotification {
     ContextCompactionStarted {
         conversation_id: String,
         turn_id: Option<TurnId>,
-        continuation: CompactionContinuation,
+        trigger: CompactionTrigger,
+        reason: CompactionReason,
+        phase: CompactionPhase,
         estimated_tokens: u64,
     },
     ItemCompleted {

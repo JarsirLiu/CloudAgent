@@ -1,6 +1,7 @@
 use super::{ToolCall, ToolExecutor, ToolOutputDelta, ToolResult};
+use crate::TurnInterruptedError;
 use crate::context::ToolExecutionContext;
-use anyhow::{Result, anyhow};
+use anyhow::{Error, Result};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -31,7 +32,6 @@ pub async fn execute_tool_call_streaming<T, F>(
     cancellation_token: &CancellationToken,
     call: ToolCall,
     ctx: &ToolExecutionContext,
-    interrupted_error: &str,
     mut on_output_delta: F,
 ) -> Result<ToolResult>
 where
@@ -46,7 +46,7 @@ where
     loop {
         tokio::select! {
             _ = cancellation_token.cancelled() => {
-                return Err(anyhow!(interrupted_error.to_string()));
+                return Err(Error::new(TurnInterruptedError));
             }
             Some(delta) = output_rx.recv() => {
                 on_output_delta(delta);
@@ -66,7 +66,6 @@ pub async fn run_parallel_tool_invocations<T>(
     tool_ctx: &ToolExecutionContext,
     cancellation_token: &CancellationToken,
     invocations: Vec<ParallelToolInvocation>,
-    interrupted_error: &str,
 ) -> Result<ParallelToolRunOutcome>
 where
     T: ToolExecutor + Send + Sync + 'static + ?Sized,
@@ -76,11 +75,10 @@ where
         let tools = Arc::clone(&tools);
         let ctx = tool_ctx.clone();
         let turn_cancellation = cancellation_token.clone();
-        let interrupted_error = interrupted_error.to_string();
         join_set.spawn(async move {
             let result = tokio::select! {
                 _ = turn_cancellation.cancelled() => {
-                    return Err(anyhow!(interrupted_error));
+                    return Err(Error::new(TurnInterruptedError));
                 }
                 response = tools.execute(invocation.call.clone(), &ctx) => response,
             }?;
@@ -220,7 +218,6 @@ mod tests {
                     delta_kind: crate::TurnItemDeltaKind::ToolOutput,
                 },
             ],
-            "interrupted",
         )
         .await
         .expect("parallel execution should surface cancellation as an outcome");

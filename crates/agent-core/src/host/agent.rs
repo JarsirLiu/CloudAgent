@@ -8,9 +8,8 @@ use crate::conversation::{
     ConversationSummary,
 };
 use crate::observability::{AuditEventEntry, append_audit_event_safe, verify_audit_chain};
-use crate::projection::conversation_history_from_rollout_items;
 use crate::projection::flatten_conversation_turns;
-use crate::rollout::RolloutItem;
+use crate::rollout::{RolloutItem, reconstruction::conversation_history_from_rollout_items};
 use crate::tool::{ToolBackend, ToolCall, ToolResult, ToolSpec, summarize_arguments};
 use crate::turn::{
     AgentTurnOutput, EventMsg, ManualCompactionOutcome, RequestId, RestoredTurnTokenState,
@@ -36,7 +35,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
-const TURN_INTERRUPTED_ERROR: &str = "turn interrupted by client";
 pub const MANUAL_COMPACTION_MIN_HISTORY_TOKENS: usize = 20_000;
 
 pub struct AgentHost {
@@ -677,9 +675,6 @@ impl TurnHost for AgentHost {
     type PermissionProfile = PermissionProfile;
     type ApprovalPolicy = ApprovalPolicy;
 
-    fn turn_interrupted_error(&self) -> &'static str {
-        TURN_INTERRUPTED_ERROR
-    }
     fn chat_turn_settings(&self) -> ChatTurnSettings {
         self.chat_turn_settings.clone()
     }
@@ -759,13 +754,7 @@ impl TurnHost for AgentHost {
         request: crate::ModelRequest,
     ) -> Result<crate::ModelResponse> {
         let model = self.model_snapshot();
-        complete_model_request(
-            model.as_ref(),
-            cancellation_token,
-            request,
-            TURN_INTERRUPTED_ERROR,
-        )
-        .await
+        complete_model_request(model.as_ref(), cancellation_token, request).await
     }
 
     async fn complete_model_request_streaming(
@@ -775,14 +764,8 @@ impl TurnHost for AgentHost {
         observer: &mut dyn crate::ModelStreamObserver,
     ) -> Result<crate::ModelResponse> {
         let model = self.model_snapshot();
-        complete_model_request_streaming(
-            model.as_ref(),
-            cancellation_token,
-            request,
-            observer,
-            TURN_INTERRUPTED_ERROR,
-        )
-        .await
+        complete_model_request_streaming(model.as_ref(), cancellation_token, request, observer)
+            .await
     }
 
     async fn run_tool_batch(

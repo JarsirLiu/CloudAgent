@@ -1,7 +1,7 @@
 use crate::message::ReplyContext;
 use agent_core::{
-    CompactionContinuation, ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision,
-    TranscriptItem,
+    CompactionPhase, CompactionReason, CompactionTrigger, ModelRetryStage, ModelUsage,
+    ServerRequest, ServerRequestDecision, TranscriptItem,
 };
 use agent_protocol::RequestId;
 
@@ -87,13 +87,17 @@ pub enum GatewayEvent {
     ContextCompactionStarted {
         target: OutboundTarget,
         turn_id: Option<String>,
-        continuation: CompactionContinuation,
+        trigger: CompactionTrigger,
+        reason: CompactionReason,
+        phase: CompactionPhase,
         estimated_tokens: u64,
     },
     ContextCompacted {
         target: OutboundTarget,
         turn_id: Option<String>,
-        continuation: CompactionContinuation,
+        trigger: CompactionTrigger,
+        reason: CompactionReason,
+        phase: CompactionPhase,
         pre_context_tokens_estimate: u64,
         post_context_tokens_estimate: u64,
         pre_message_count: usize,

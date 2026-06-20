@@ -1,5 +1,5 @@
 use super::*;
-use crate::turn::CompactionContinuation;
+use crate::turn::{CompactionPhase, CompactionReason, CompactionTrigger};
 
 fn usage(total: u64) -> ModelUsage {
     ModelUsage {
@@ -55,7 +55,9 @@ fn compaction_resets_window_baseline_without_discarding_session_usage() {
         }),
         RolloutItem::from(EventMsg::ContextCompacted {
             turn_id: "turn-2".to_string(),
-            continuation: CompactionContinuation::PreTurn,
+            trigger: CompactionTrigger::Auto,
+            reason: CompactionReason::ContextLimit,
+            phase: CompactionPhase::PreTurn,
             pre_context_tokens_estimate: 190_000,
             post_context_tokens_estimate: 32_000,
             pre_message_count: 40,

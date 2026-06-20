@@ -877,7 +877,9 @@ mod tests {
                 )
                 .ensure_defaults(),
                 rendered_summary: "[Context Summary]\nhidden".to_string(),
-                continuation: crate::turn::CompactionContinuation::PreTurn,
+                trigger: crate::turn::CompactionTrigger::Auto,
+                reason: crate::turn::CompactionReason::ContextLimit,
+                phase: crate::turn::CompactionPhase::PreTurn,
                 replacement_history: vec![],
             },
             RolloutItem::EventMsg {

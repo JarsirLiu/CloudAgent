@@ -86,6 +86,7 @@ pub struct LlmConfig {
 pub struct RuntimeConfig {
     pub system_prompt: String,
     pub max_tool_roundtrips: Option<usize>,
+    pub max_tool_only_roundtrips_after_compaction: usize,
     pub data_root_dir: PathBuf,
     pub conversation_store_dir: PathBuf,
     pub skills_enabled: bool,
@@ -165,6 +166,7 @@ struct PartialLlmConfig {
 struct PartialRuntimeConfig {
     system_prompt: Option<String>,
     max_tool_roundtrips: Option<Option<usize>>,
+    max_tool_only_roundtrips_after_compaction: Option<usize>,
     data_root_dir: Option<PathBuf>,
     #[serde(alias = "session_store_dir")]
     conversation_store_dir: Option<PathBuf>,
@@ -288,6 +290,7 @@ impl AgentConfig {
             runtime: RuntimeConfig {
                 system_prompt: default_system_prompt(),
                 max_tool_roundtrips: Some(12),
+                max_tool_only_roundtrips_after_compaction: 2,
                 data_root_dir: data_root_dir.clone(),
                 conversation_store_dir: data_root_dir.join("conversations"),
                 skills_enabled: true,
@@ -379,6 +382,9 @@ impl AgentConfig {
             }
             if let Some(value) = runtime.max_tool_roundtrips {
                 self.runtime.max_tool_roundtrips = value.map(|v| v.max(1));
+            }
+            if let Some(value) = runtime.max_tool_only_roundtrips_after_compaction {
+                self.runtime.max_tool_only_roundtrips_after_compaction = value.max(1);
             }
             if let Some(value) = runtime.data_root_dir {
                 self.runtime.data_root_dir = absolutize_path(&self.workspace_root, value);
@@ -587,6 +593,11 @@ impl AgentConfig {
             && let Ok(parsed) = value.parse::<usize>()
         {
             self.runtime.max_tool_roundtrips = Some(parsed.max(1));
+        }
+        if let Ok(value) = env::var("CLOUDAGENT_MAX_TOOL_ONLY_ROUNDTRIPS_AFTER_COMPACTION")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            self.runtime.max_tool_only_roundtrips_after_compaction = parsed.max(1);
         }
         if let Ok(value) = env::var("CLOUDAGENT_CONVERSATION_STORE_DIR") {
             conversation_store_overridden = true;

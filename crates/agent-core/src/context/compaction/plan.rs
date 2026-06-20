@@ -1,6 +1,7 @@
+use crate::context::counts_as_real_user_turn;
 use crate::conversation::ResponseItem;
 
-use super::support::{estimate_message_tokens, render_input_items_for_compaction};
+use super::support::estimate_message_tokens;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ContextCompactionConfig {
@@ -112,7 +113,7 @@ fn find_recent_user_boundary(
 ) -> Option<usize> {
     let mut seen_users = 0usize;
     for index in (1..messages.len()).rev() {
-        if response_item_is_real_user_message(&messages[index]) {
+        if counts_as_real_user_turn(&messages[index]) {
             seen_users += 1;
             if seen_users == preserved_user_turns {
                 return Some(index);
@@ -182,13 +183,4 @@ fn find_matching_tool_call(messages: &[ResponseItem], tool_call_id: &str) -> Opt
         }
     }
     None
-}
-
-fn response_item_is_real_user_message(item: &ResponseItem) -> bool {
-    let ResponseItem::User { content } = item else {
-        return false;
-    };
-    let text = render_input_items_for_compaction(content);
-    let trimmed = text.trim_start();
-    !trimmed.starts_with("[Context Summary]") && !trimmed.starts_with("<turn_aborted>")
 }

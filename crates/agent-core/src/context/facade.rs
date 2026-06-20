@@ -1,7 +1,7 @@
 use crate::context::{
     BudgetedFragments, CompactionSummary, ContextCompactionConfig, ContextCompactionPlan,
-    ContextCompactionResult, ContextInjectionStrategy, ContextInputFilterService, ContextManager,
-    FilterPolicy, MemoryBudgetSource, apply_history_compaction, build_compaction_summary_request,
+    ContextCompactionResult, ContextInputFilterService, ContextManager, FilterPolicy,
+    MemoryBudgetSource, apply_history_compaction, build_compaction_summary_request,
     build_memory_budgeted_fragments, plan_manual_history_compaction,
 };
 use crate::conversation::ResponseItem;
@@ -195,17 +195,11 @@ impl ContextFacade {
         workspace_root: &Path,
         filter_policy: FilterPolicy,
         fragments: Vec<ResponseItem>,
-        injection_strategy: ContextInjectionStrategy,
         tools: Vec<ToolSpec>,
         temperature: f32,
     ) -> PreparedModelRequest {
         let mut model_request = context_manager
-            .build_current_model_request_with_rendered_fragments(
-                &fragments,
-                injection_strategy,
-                tools,
-                temperature,
-            );
+            .build_current_model_request_with_rendered_fragments(&fragments, tools, temperature);
         model_request.messages =
             self.apply_pre_llm_filter(model_request.messages, filter_policy, workspace_root);
 

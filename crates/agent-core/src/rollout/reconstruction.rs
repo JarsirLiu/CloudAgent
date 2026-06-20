@@ -1,3 +1,6 @@
+use crate::context::{
+    append_turn_aborted_marker_if_needed, counts_as_real_user_turn, is_context_summary_item,
+};
 use crate::conversation::{ConversationHistory, ResponseItem};
 use crate::rollout::RolloutItem;
 use crate::turn::{EventMsg, TurnState};
@@ -47,7 +50,7 @@ fn latest_compaction_checkpoint<'a>(
     history.messages = replacement_history.clone();
     history.turn_count = replacement_history
         .iter()
-        .filter(|item| response_item_counts_as_user_turn(item))
+        .filter(|item| counts_as_real_user_turn(item))
         .count() as u64;
 
     Some((history, &items[index + 1..]))
@@ -175,25 +178,12 @@ fn flush_pending_model_history_turn(
     history.turn_count += turn
         .items
         .iter()
-        .filter(|item| response_item_counts_as_user_turn(item))
+        .filter(|item| counts_as_real_user_turn(item))
         .count() as u64;
     history.messages.extend(turn.items);
     if append_turn_aborted_marker {
         append_turn_aborted_marker_if_needed(history);
     }
-}
-
-fn append_turn_aborted_marker_if_needed(history: &mut ConversationHistory) {
-    let already_marked = history
-        .messages
-        .last()
-        .is_some_and(response_item_is_turn_aborted_marker);
-    if already_marked {
-        return;
-    }
-    history.messages.push(ResponseItem::User {
-        content: crate::text_input_items(turn_aborted_marker_text()),
-    });
 }
 
 fn normalize_compacted_replacement_history(
@@ -203,9 +193,7 @@ fn normalize_compacted_replacement_history(
         .iter()
         .enumerate()
         .map(|(index, item)| match item {
-            ResponseItem::System { content }
-                if index > 0 && content.trim_start().starts_with("[Context Summary]") =>
-            {
+            ResponseItem::System { content } if index > 0 && is_context_summary_item(item) => {
                 ResponseItem::User {
                     content: crate::text_input_items(content.clone()),
                 }
@@ -213,32 +201,4 @@ fn normalize_compacted_replacement_history(
             _ => item.clone(),
         })
         .collect()
-}
-
-fn turn_aborted_marker_text() -> &'static str {
-    concat!(
-        "<turn_aborted>\n",
-        "The user interrupted the previous turn on purpose. Any running commands or tools may ",
-        "have partially executed. Continue from the latest user request without assuming the ",
-        "interrupted turn completed.\n",
-        "</turn_aborted>"
-    )
-}
-
-fn response_item_counts_as_user_turn(item: &ResponseItem) -> bool {
-    let ResponseItem::User { content } = item else {
-        return false;
-    };
-    let text = crate::input_items_to_plain_text(content);
-    let trimmed = text.trim_start();
-    !trimmed.starts_with("[Context Summary]") && !trimmed.starts_with("<turn_aborted>")
-}
-
-fn response_item_is_turn_aborted_marker(item: &ResponseItem) -> bool {
-    let ResponseItem::User { content } = item else {
-        return false;
-    };
-    crate::input_items_to_plain_text(content)
-        .trim_start()
-        .starts_with("<turn_aborted>")
 }
