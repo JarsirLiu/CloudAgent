@@ -1,9 +1,7 @@
 use crate::spec::{
     ToolCategory, ToolDescriptor, ToolLayer, ToolPermissionTier, ToolRisk, ToolUsageGuidance,
 };
-use agent_core::{
-    ToolExecutionPolicy, ToolIdentity, ToolSpec, TurnItemDeltaKind, TurnItemKind,
-};
+use agent_core::{ToolExecutionPolicy, ToolIdentity, ToolSpec, TurnItemDeltaKind, TurnItemKind};
 use serde_json::json;
 
 pub struct WebSearchTool;

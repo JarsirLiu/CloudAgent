@@ -348,12 +348,12 @@ mod tests {
         let ordered_names = resolved
             .iter()
             .map(|spec| spec.name.as_str())
-            .take(3)
+            .take(4)
             .collect::<Vec<_>>();
 
         assert_eq!(
             ordered_names,
-            vec!["exec_command", "tool_search", "write_stdin"]
+            vec!["web_search", "exec_command", "tool_search", "write_stdin"]
         );
     }
 
@@ -372,7 +372,13 @@ mod tests {
 
         assert_eq!(
             ordered_names,
-            vec!["apply_patch", "exec_command", "tool_search", "write_stdin"]
+            vec![
+                "web_search",
+                "apply_patch",
+                "exec_command",
+                "tool_search",
+                "write_stdin",
+            ]
         );
     }
 

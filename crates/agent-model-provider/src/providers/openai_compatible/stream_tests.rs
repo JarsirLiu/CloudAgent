@@ -56,9 +56,11 @@ fn responses_text_delta_maps_to_text_event() {
     )
     .expect("parse responses delta");
 
-    assert!(frame.events.iter().any(
-        |event| matches!(event, ProviderStreamEvent::TextDelta(delta) if delta == "hello")
-    ));
+    assert!(
+        frame.events.iter().any(
+            |event| matches!(event, ProviderStreamEvent::TextDelta(delta) if delta == "hello")
+        )
+    );
     assert!(!frame.done);
 }
 
@@ -208,9 +210,12 @@ fn hosted_web_search_output_items_do_not_become_tool_calls() {
     )
     .expect("parse hosted web search frame");
 
-    assert!(frame.events.iter().all(
-        |event| !matches!(event, ProviderStreamEvent::ToolCallDelta(_))
-    ));
+    assert!(
+        frame
+            .events
+            .iter()
+            .all(|event| !matches!(event, ProviderStreamEvent::ToolCallDelta(_)))
+    );
     assert!(frame.events.iter().any(|event| matches!(
         event,
         ProviderStreamEvent::WebSearchCompleted(web_search)
@@ -228,9 +233,12 @@ fn hosted_web_search_added_maps_to_started_event() {
     )
     .expect("parse hosted web search added frame");
 
-    assert!(frame.events.iter().all(
-        |event| !matches!(event, ProviderStreamEvent::ToolCallDelta(_))
-    ));
+    assert!(
+        frame
+            .events
+            .iter()
+            .all(|event| !matches!(event, ProviderStreamEvent::ToolCallDelta(_)))
+    );
     assert!(frame.events.iter().any(|event| matches!(
         event,
         ProviderStreamEvent::WebSearchStarted(web_search)

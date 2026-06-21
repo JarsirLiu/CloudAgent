@@ -4,8 +4,8 @@ use crate::event::{
     ProviderCompletion, ProviderMetadata, ProviderReasoningDelta, ProviderStreamEvent,
     ProviderToolCallDelta, ProviderWebSearch,
 };
-use agent_core::{WebSearchAction, WebSearchRecord};
 use agent_core::ModelUsage;
+use agent_core::{WebSearchAction, WebSearchRecord};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
