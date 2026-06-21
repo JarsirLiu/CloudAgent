@@ -12,6 +12,7 @@ pub mod skill;
 pub mod state;
 pub mod tool;
 pub mod turn;
+pub mod web_search_presentation;
 
 pub use approval::ApprovalGrantStoreBackend;
 pub use context::{
@@ -35,8 +36,9 @@ pub use host::{
 };
 pub use model::{
     ChatModel, ChatModelFactory, ModelProviderSettings, ModelRequest, ModelResponse,
-    ModelRetryDecision, ModelStreamObserver, ModelUsage, ReloadableChatModel,
-    await_server_request_decision, complete_model_request, complete_model_request_streaming,
+    ModelRetryDecision, ModelStreamObserver, ModelUsage, ReloadableChatModel, WebSearchAction,
+    WebSearchRecord, await_server_request_decision, complete_model_request,
+    complete_model_request_streaming,
 };
 pub use observability::{
     AuditEventEntry, ContextBudgetLogEntry, append_audit_event, append_audit_event_safe,
@@ -82,6 +84,10 @@ pub use turn::{
     TurnPolicy, TurnState, UserTurnInput, chat, chat_with_approval, chat_with_approval_and_events,
     compact_conversation, conversation_busy_error, emit_assistant_message_item, emit_event,
     execute_chat_turn, next_turn_id, paginate_turns, run_manual_compaction, run_turn_with_approval,
+};
+pub use web_search_presentation::{
+    WEB_SEARCH_TOOL_NAME, is_web_search_tool_result, web_search_detail, web_search_summary,
+    web_search_transcript_item,
 };
 
 pub fn crate_name() -> &'static str {

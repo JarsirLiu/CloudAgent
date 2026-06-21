@@ -1,7 +1,9 @@
+use super::tool_operation::{ToolOperation, classify_structured_result, classify_tool_name};
 use super::{ExplorationAggregate, HistoryCell, HistoryTone};
 use crate::app::conversation::exploration::{
     is_exploration_command, summarize_exploration_command,
 };
+use crate::tool_identity::WEB_SEARCH_TOOL_NAME;
 use agent_core::{
     CommandExecutionStatus, SearchWorkspaceMode, SearchWorkspaceStatus, StructuredToolResult,
     TurnItemKind, WriteFileStatus,
@@ -45,6 +47,11 @@ pub(super) fn render_active_placeholder(kind: TurnItemKind, title: &str) -> Hist
             HistoryTone::Control,
         ),
         TurnItemKind::ToolCall => HistoryCell::info(
+            humanize_tool_label(title),
+            "running".to_string(),
+            HistoryTone::Control,
+        ),
+        TurnItemKind::ToolResult => HistoryCell::info(
             humanize_tool_label(title),
             "running".to_string(),
             HistoryTone::Control,
@@ -272,6 +279,29 @@ pub(super) fn render_tool_result(
         );
     }
 
+    if matches!(
+        structured.map(classify_structured_result),
+        Some(ToolOperation::Search | ToolOperation::Read)
+    ) {
+        let detail = content
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| compact_inline(line, 72))
+            .unwrap_or_else(|| "completed".to_string());
+        let mut aggregate = ExplorationAggregate::new(detail);
+        if matches!(classify_tool_name(tool_name), ToolOperation::Search) {
+            aggregate.searches = 1;
+        } else {
+            aggregate.metadata_reads = 1;
+        }
+        return HistoryCell::exploration(
+            humanize_tool_label(tool_name),
+            "completed".to_string(),
+            aggregate,
+            HistoryTone::Control,
+        );
+    }
+
     let first = content
         .lines()
         .find(|line| !line.trim().is_empty())
@@ -446,9 +476,11 @@ pub(crate) fn humanize_tool_label(tool_name: &str) -> String {
     match tool_name {
         "exec_command" | "tool" => "Run command".to_string(),
         "apply_patch" | "edit_file" => "Edit file".to_string(),
+        WEB_SEARCH_TOOL_NAME => "Web search".to_string(),
         "read_file" => "Read file".to_string(),
         "read_directory" => "Read directory".to_string(),
         "search_workspace" => "Search workspace".to_string(),
+        "tool_search" => "Search tools".to_string(),
         "get_metadata" => "File info".to_string(),
         "create_directory" => "Create directory".to_string(),
         "write_file" => "Write file".to_string(),

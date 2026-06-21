@@ -1,14 +1,17 @@
 use super::{AutoCompactTokenLimitScope, AutoCompactWindow, RequestTokenBaseline, TurnHost};
 use crate::{
     ContextManager, EventMsg, ModelResponse, RolloutItem, TokenUsageState,
-    emit_assistant_message_item, emit_event,
+    emit_assistant_message_item, emit_event, web_search_transcript_item,
 };
 use anyhow::Result;
 
 pub(super) async fn record_model_response<H: TurnHost>(
     host: &H,
     conversation_id: &str,
+    turn_id: &str,
     context_manager: &mut ContextManager,
+    _events: &mut Vec<EventMsg>,
+    _on_event: &mut (impl FnMut(&EventMsg) + Send + ?Sized),
     response: &ModelResponse,
 ) -> Result<()> {
     let assistant_response_item = context_manager.record_assistant_message(
@@ -21,6 +24,26 @@ pub(super) async fn record_model_response<H: TurnHost>(
         &[RolloutItem::from(assistant_response_item)],
     )
     .await?;
+    if !response.web_searches.is_empty() {
+        let rollout_items = response
+            .web_searches
+            .iter()
+            .map(|web_search| {
+                RolloutItem::from(EventMsg::ItemCompleted {
+                    turn_id: turn_id.to_string(),
+                    item_id: web_search.id.clone(),
+                    call_id: Some(web_search.id.clone()),
+                    item: web_search_transcript_item(
+                        web_search.id.clone(),
+                        web_search.query.clone(),
+                        web_search.action.clone(),
+                    ),
+                })
+            })
+            .collect::<Vec<_>>();
+        host.persist_rollout_items(conversation_id, &rollout_items)
+            .await?;
+    }
     host.save_history(context_manager.history().clone()).await?;
     Ok(())
 }

@@ -3,7 +3,10 @@ use crate::state::NoticeLevel;
 use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation;
 use agent_core::conversation::{ConversationSummary, ConversationTurn, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind};
-use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
+use agent_core::{
+    ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind,
+    is_web_search_tool_result,
+};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest,
     ConversationViewSnapshot, InterruptDisposition, RequestId,
@@ -129,6 +132,11 @@ pub(crate) enum ServerAction {
         item_id: String,
         delta: String,
     },
+    AppendActiveToolDelta {
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
     AppendCommandOutputDelta {
         item_id: String,
         delta: String,
@@ -233,9 +241,23 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     delta: delta.clone(),
                 });
             }
-            AppServerNotification::ToolOutputDelta { .. }
-            | AppServerNotification::FileChangeOutputDelta { .. } => {}
+            AppServerNotification::ToolOutputDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            } => {
+                actions.push(ServerAction::AppendActiveToolDelta {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                });
+            }
+            AppServerNotification::FileChangeOutputDelta { .. } => {}
             AppServerNotification::ItemCompleted { turn_id, item, .. } => {
+                if is_web_search_tool_result(item) {
+                    actions.push(ServerAction::ClearLastToolName);
+                }
                 actions.push(ServerAction::CompleteActiveTurnItem {
                     turn_id: turn_id.clone(),
                     item_id: item.id().to_string(),

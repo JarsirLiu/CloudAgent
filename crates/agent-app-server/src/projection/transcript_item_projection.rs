@@ -1,6 +1,8 @@
 use crate::projection::turn_projection_state::{ProjectedItemState, ProjectedItemStatus};
 use agent_core::conversation::TranscriptItem;
-use agent_core::{CommandExecutionStatus, TurnItemKind, WriteFileStatus};
+use agent_core::{
+    CommandExecutionStatus, StructuredToolResult, TurnItemKind, WriteFileStatus, web_search_detail,
+};
 
 pub(super) fn projected_item_from_transcript_item(
     turn_id: String,
@@ -121,7 +123,7 @@ pub(super) fn projected_item_from_transcript_item(
             tool_name,
             content,
             summary,
-            structured: _,
+            structured,
         } => ProjectedItemState {
             turn_id,
             item_id: id,
@@ -133,10 +135,12 @@ pub(super) fn projected_item_from_transcript_item(
             user_content: Vec::new(),
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
-            tool_output_buffer: if summary.trim().is_empty() {
-                content
-            } else {
-                summary
+            tool_output_buffer: match structured.as_ref() {
+                Some(StructuredToolResult::WebSearch { query, action, .. }) => {
+                    web_search_detail(query, action.as_ref())
+                }
+                _ if summary.trim().is_empty() => content,
+                _ => summary,
             },
             reasoning_summary_part_opened: false,
             order_hint: order_hint as u64,

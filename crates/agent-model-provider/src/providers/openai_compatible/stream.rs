@@ -2,8 +2,9 @@ use super::wire::ChatCompletionStreamChunk;
 use crate::error::ProviderStreamError;
 use crate::event::{
     ProviderCompletion, ProviderMetadata, ProviderReasoningDelta, ProviderStreamEvent,
-    ProviderToolCallDelta,
+    ProviderToolCallDelta, ProviderWebSearch,
 };
+use agent_core::{WebSearchAction, WebSearchRecord};
 use agent_core::ModelUsage;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -225,11 +226,17 @@ fn parse_responses_stream_frame(block: &str) -> Result<ParsedStreamFrame, Provid
             }
         }
         "response.output_item.added" => {
+            if let Some(web_search) = parse_responses_output_item_added_web_search(&parsed) {
+                events.push(ProviderStreamEvent::WebSearchStarted(web_search));
+            }
             if let Some(delta) = parse_responses_output_item_tool_call_delta(&parsed) {
                 events.push(ProviderStreamEvent::ToolCallDelta(delta));
             }
         }
         "response.output_item.done" => {
+            if let Some(web_search) = parse_responses_output_item_done_web_search(&parsed) {
+                events.push(ProviderStreamEvent::WebSearchCompleted(web_search));
+            }
             if let Some(delta) = parse_responses_output_item_done_tool_call_delta(&parsed) {
                 events.push(ProviderStreamEvent::ToolCallDelta(delta));
             }
@@ -351,6 +358,28 @@ fn parse_responses_output_item_tool_call_delta(parsed: &Value) -> Option<Provide
     })
 }
 
+fn parse_responses_output_item_added_web_search(parsed: &Value) -> Option<ProviderWebSearch> {
+    let item = parsed.get("item")?;
+    if item.get("type").and_then(|value| value.as_str()) != Some("web_search_call") {
+        return None;
+    }
+
+    let id = item
+        .get("id")
+        .and_then(|value| value.as_str())
+        .or_else(|| item.get("call_id").and_then(|value| value.as_str()))?;
+    let record = map_stream_web_search_record(item).unwrap_or(WebSearchRecord {
+        id: id.to_string(),
+        query: String::new(),
+        action: None,
+    });
+    Some(ProviderWebSearch {
+        id: record.id,
+        query: record.query,
+        action: record.action,
+    })
+}
+
 fn parse_responses_output_item_done_tool_call_delta(
     parsed: &Value,
 ) -> Option<ProviderToolCallDelta> {
@@ -401,6 +430,109 @@ fn is_responses_tool_call_item(item: &Value) -> bool {
         item.get("type").and_then(|value| value.as_str()),
         Some("function_call" | "custom_tool_call" | "tool_search_call")
     )
+}
+
+fn parse_responses_output_item_done_web_search(parsed: &Value) -> Option<ProviderWebSearch> {
+    let item = parsed.get("item")?;
+    if item.get("type").and_then(|value| value.as_str()) != Some("web_search_call") {
+        return None;
+    }
+
+    let record = map_stream_web_search_record(item)?;
+    Some(ProviderWebSearch {
+        id: record.id,
+        query: record.query,
+        action: record.action,
+    })
+}
+
+fn map_stream_web_search_record(item: &Value) -> Option<WebSearchRecord> {
+    let id = item
+        .get("id")
+        .and_then(|value| value.as_str())
+        .or_else(|| item.get("call_id").and_then(|value| value.as_str()))?;
+    let action = item.get("action").and_then(map_stream_web_search_action);
+    let query = action
+        .as_ref()
+        .map(web_search_action_detail)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            item.get("query")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+        })
+        .unwrap_or_default();
+    Some(WebSearchRecord {
+        id: id.to_string(),
+        query,
+        action,
+    })
+}
+
+fn map_stream_web_search_action(value: &Value) -> Option<WebSearchAction> {
+    let kind = value.get("type").and_then(|entry| entry.as_str())?;
+    match kind {
+        "search" => Some(WebSearchAction::Search {
+            query: value
+                .get("query")
+                .and_then(|entry| entry.as_str())
+                .map(ToString::to_string),
+            queries: value.get("queries").and_then(|entry| {
+                entry.as_array().map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(ToString::to_string))
+                        .collect::<Vec<_>>()
+                })
+            }),
+        }),
+        "open_page" => Some(WebSearchAction::OpenPage {
+            url: value
+                .get("url")
+                .and_then(|entry| entry.as_str())
+                .map(ToString::to_string),
+        }),
+        "find_in_page" => Some(WebSearchAction::FindInPage {
+            url: value
+                .get("url")
+                .and_then(|entry| entry.as_str())
+                .map(ToString::to_string),
+            pattern: value
+                .get("pattern")
+                .and_then(|entry| entry.as_str())
+                .map(ToString::to_string),
+        }),
+        "other" => Some(WebSearchAction::Other),
+        _ => None,
+    }
+}
+
+fn web_search_action_detail(action: &WebSearchAction) -> String {
+    match action {
+        WebSearchAction::Search { query, queries } => query
+            .clone()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| {
+                let first = queries
+                    .as_ref()
+                    .and_then(|values| values.first())
+                    .cloned()
+                    .unwrap_or_default();
+                if queries.as_ref().is_some_and(|values| values.len() > 1) && !first.is_empty() {
+                    format!("{first} ...")
+                } else {
+                    first
+                }
+            }),
+        WebSearchAction::OpenPage { url } => url.clone().unwrap_or_default(),
+        WebSearchAction::FindInPage { url, pattern } => match (pattern, url) {
+            (Some(pattern), Some(url)) => format!("'{pattern}' in {url}"),
+            (Some(pattern), None) => format!("'{pattern}'"),
+            (None, Some(url)) => url.clone(),
+            (None, None) => String::new(),
+        },
+        WebSearchAction::Other => String::new(),
+    }
 }
 
 fn parse_responses_tool_call_done_delta(
@@ -668,6 +800,46 @@ mod tests {
                 && arguments_delta.as_deref() == Some("{\"path\":\"Cargo.toml\"}")
                 && *arguments_replace
         )));
+    }
+
+    #[test]
+    fn hosted_web_search_output_items_do_not_become_tool_calls() {
+        let frame = parse_stream_frame(
+            WireApi::Responses,
+            "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_1\",\"status\":\"completed\"}}\n\n",
+        )
+        .expect("parse hosted web search frame");
+
+        assert!(frame.events.iter().all(
+            |event| !matches!(event, ProviderStreamEvent::ToolCallDelta(_))
+        ));
+        assert!(frame.events.iter().any(|event| matches!(
+            event,
+            ProviderStreamEvent::WebSearchCompleted(web_search)
+                if web_search.id == "ws_1"
+        )));
+        assert!(frame.completion.is_none());
+        assert!(!frame.done);
+    }
+
+    #[test]
+    fn hosted_web_search_added_maps_to_started_event() {
+        let frame = parse_stream_frame(
+            WireApi::Responses,
+            "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_1\",\"status\":\"in_progress\"}}\n\n",
+        )
+        .expect("parse hosted web search added frame");
+
+        assert!(frame.events.iter().all(
+            |event| !matches!(event, ProviderStreamEvent::ToolCallDelta(_))
+        ));
+        assert!(frame.events.iter().any(|event| matches!(
+            event,
+            ProviderStreamEvent::WebSearchStarted(web_search)
+                if web_search.id == "ws_1"
+        )));
+        assert!(frame.completion.is_none());
+        assert!(!frame.done);
     }
 
     #[test]

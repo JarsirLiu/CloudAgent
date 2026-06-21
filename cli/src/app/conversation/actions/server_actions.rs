@@ -221,6 +221,19 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 app.run_state.expand_tool_details,
             );
         }
+        ServerAction::AppendActiveToolDelta {
+            turn_id,
+            item_id,
+            delta,
+        } => {
+            app.bottom_pane.on_tool_output_delta(Some(&item_id), &delta);
+            app.transcript_owner.append_tool_delta(
+                turn_id,
+                item_id,
+                delta,
+                app.run_state.expand_tool_details,
+            );
+        }
         ServerAction::AppendCommandOutputDelta { item_id, delta } => {
             app.bottom_pane
                 .on_command_output_delta(Some(&item_id), &delta);

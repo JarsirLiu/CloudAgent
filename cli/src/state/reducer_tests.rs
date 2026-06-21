@@ -1,5 +1,8 @@
 use super::*;
-use agent_core::{CommandExecutionStatus, CompactionPhase, InputItem, TranscriptItem, TurnState};
+use agent_core::{
+    CommandExecutionStatus, CompactionPhase, InputItem, StructuredToolResult, TranscriptItem,
+    TurnState,
+};
 
 #[test]
 fn conversation_history_action_preserves_turns() {
@@ -164,7 +167,7 @@ fn command_output_delta_updates_runtime_status() {
 }
 
 #[test]
-fn generic_tool_output_deltas_wait_for_completed_item() {
+fn tool_output_delta_updates_active_tool_item() {
     let tool_message = AppServerMessage::Notification(AppServerNotification::ToolOutputDelta {
         conversation_id: "default".to_string(),
         turn_id: "turn-1".to_string(),
@@ -172,6 +175,74 @@ fn generic_tool_output_deltas_wait_for_completed_item() {
         call_id: Some("call-1".to_string()),
         delta: "large streaming tool output".to_string(),
     });
+
+    let tool_reduced = apply_server_message(&tool_message);
+
+    assert!(tool_reduced.actions.iter().any(|action| {
+        matches!(
+            action,
+            ServerAction::AppendActiveToolDelta {
+                turn_id,
+                item_id,
+                delta,
+            } if turn_id == "turn-1"
+                && item_id == "tool-1"
+                && delta == "large streaming tool output"
+        )
+    }));
+}
+
+#[test]
+fn completed_web_search_clears_runtime_banner_and_commits_item() {
+    let message = AppServerMessage::Notification(AppServerNotification::ItemCompleted {
+        conversation_id: "default".to_string(),
+        turn_id: "turn-1".to_string(),
+        call_id: Some("ws-1".to_string()),
+        item: TranscriptItem::ToolResult {
+            id: "ws-1".to_string(),
+            tool_name: "web_search".to_string(),
+            content: "weather seattle".to_string(),
+            summary: "searched the web".to_string(),
+            structured: Some(StructuredToolResult::WebSearch {
+                query: "weather seattle".to_string(),
+                action: None,
+                result_count: None,
+                source_count: None,
+            }),
+        },
+    });
+
+    let reduced = apply_server_message(&message);
+
+    assert!(
+        reduced
+            .actions
+            .iter()
+            .any(|action| matches!(action, ServerAction::ClearLastToolName))
+    );
+    assert!(reduced.actions.iter().any(|action| {
+        matches!(
+            action,
+            ServerAction::CompleteActiveTurnItem { turn_id, item_id, item }
+                if turn_id == "turn-1"
+                    && item_id == "ws-1"
+                    && matches!(
+                        item,
+                        TranscriptItem::ToolResult { id, tool_name, structured, .. }
+                            if id == "ws-1"
+                                && tool_name == "web_search"
+                                && matches!(
+                                    structured,
+                                    Some(StructuredToolResult::WebSearch { query, .. })
+                                        if query == "weather seattle"
+                                )
+                    )
+        )
+    }));
+}
+
+#[test]
+fn file_change_output_delta_still_waits_for_completed_item() {
     let file_message =
         AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
             conversation_id: "default".to_string(),
@@ -181,20 +252,13 @@ fn generic_tool_output_deltas_wait_for_completed_item() {
             delta: "patch output".to_string(),
         });
 
-    let tool_reduced = apply_server_message(&tool_message);
     let file_reduced = apply_server_message(&file_message);
 
-    assert!(
-        tool_reduced
-            .actions
-            .iter()
-            .all(|action| !matches!(action, ServerAction::AppendCommandOutputDelta { .. }))
-    );
     assert!(
         file_reduced
             .actions
             .iter()
-            .all(|action| !matches!(action, ServerAction::AppendCommandOutputDelta { .. }))
+            .all(|action| !matches!(action, ServerAction::AppendActiveToolDelta { .. }))
     );
 }
 

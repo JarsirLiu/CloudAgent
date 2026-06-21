@@ -68,6 +68,10 @@ impl BottomPaneController {
         self.runtime.on_command_output_delta(item_id, delta);
     }
 
+    pub(crate) fn on_tool_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
+        self.runtime.on_tool_output_delta(item_id, delta);
+    }
+
     pub(crate) fn on_command_finished(&mut self, item_id: &str) {
         self.runtime.on_command_finished(item_id);
     }
@@ -417,11 +421,8 @@ impl BottomPaneController {
         if let Some(notice) = self.runtime.transient_notice.as_ref() {
             return (Some(notice.message.clone()), Some(notice.level));
         }
-        if let Some(command) = self.runtime.active_command.as_ref() {
-            return (Some(command.banner_text()), None);
-        }
-        if let Some(tool_title) = self.runtime.active_tool_title.as_deref() {
-            return (Some(tool_title.to_string()), None);
+        if let Some(tool) = self.runtime.active_tool.as_ref() {
+            return (Some(tool.banner_text()), None);
         }
         let Some(live_label) = self.runtime.live_label.as_deref() else {
             return (None, None);

@@ -1,5 +1,7 @@
-use super::controller::coalesce_client_events;
+use super::controller::{coalesce_client_events, should_stop_after_event_boundary};
 use agent_app_server_client::AppServerEvent;
+use agent_core::conversation::TranscriptItem;
+use agent_core::{StructuredToolResult, WebSearchAction};
 use agent_protocol::{AppServerMessage, AppServerNotification};
 
 fn command_delta(item_id: &str, delta: &str) -> AppServerEvent {
@@ -10,6 +12,60 @@ fn command_delta(item_id: &str, delta: &str) -> AppServerEvent {
             item_id: item_id.to_string(),
             call_id: Some("call-1".to_string()),
             delta: delta.to_string(),
+        },
+    ))
+}
+
+fn web_search_started() -> AppServerEvent {
+    AppServerEvent::Message(AppServerMessage::Notification(
+        AppServerNotification::ItemStarted {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            call_id: Some("ws-1".to_string()),
+            item: TranscriptItem::ToolResult {
+                id: "ws-1".to_string(),
+                tool_name: "web_search".to_string(),
+                content: String::new(),
+                summary: String::new(),
+                structured: None,
+            },
+        },
+    ))
+}
+
+fn web_search_delta(query: &str) -> AppServerEvent {
+    AppServerEvent::Message(AppServerMessage::Notification(
+        AppServerNotification::ToolOutputDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "ws-1".to_string(),
+            call_id: Some("ws-1".to_string()),
+            delta: query.to_string(),
+        },
+    ))
+}
+
+fn web_search_completed(query: &str) -> AppServerEvent {
+    AppServerEvent::Message(AppServerMessage::Notification(
+        AppServerNotification::ItemCompleted {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            call_id: Some("ws-1".to_string()),
+            item: TranscriptItem::ToolResult {
+                id: "ws-1".to_string(),
+                tool_name: "web_search".to_string(),
+                content: query.to_string(),
+                summary: "searched the web".to_string(),
+                structured: Some(StructuredToolResult::WebSearch {
+                    query: query.to_string(),
+                    action: Some(WebSearchAction::Search {
+                        query: Some(query.to_string()),
+                        queries: None,
+                    }),
+                    result_count: None,
+                    source_count: None,
+                }),
+            },
         },
     ))
 }
@@ -56,4 +112,25 @@ fn drops_lagged_markers_from_user_visible_event_stream() {
 
     assert_eq!(coalesced.len(), 1);
     assert!(matches!(coalesced[0], AppServerEvent::Message(_)));
+}
+
+#[test]
+fn web_search_started_is_a_runtime_render_boundary() {
+    assert!(should_stop_after_event_boundary(
+        Some(&web_search_started())
+    ));
+}
+
+#[test]
+fn web_search_output_delta_is_a_runtime_render_boundary() {
+    assert!(should_stop_after_event_boundary(Some(&web_search_delta(
+        "weather seattle"
+    ))));
+}
+
+#[test]
+fn web_search_completed_is_a_runtime_render_boundary() {
+    assert!(should_stop_after_event_boundary(Some(
+        &web_search_completed("weather seattle")
+    )));
 }

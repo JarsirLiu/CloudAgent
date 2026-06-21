@@ -6,6 +6,7 @@ pub mod local_node;
 pub mod state;
 pub mod terminal;
 mod text_width;
+mod tool_identity;
 pub mod transport;
 pub mod ui;
 

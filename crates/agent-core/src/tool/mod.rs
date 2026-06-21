@@ -243,6 +243,15 @@ pub enum StructuredToolResult {
         tool_name: String,
         message: String,
     },
+    WebSearch {
+        query: String,
+        #[serde(default)]
+        action: Option<crate::model::WebSearchAction>,
+        #[serde(default)]
+        result_count: Option<usize>,
+        #[serde(default)]
+        source_count: Option<usize>,
+    },
     CommandExecution {
         command: String,
         current_directory: String,

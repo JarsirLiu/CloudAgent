@@ -329,6 +329,7 @@ impl OpenAiCompatibleModel {
         let mut usage: Option<ModelUsage> = None;
         let mut completion: Option<ProviderCompletion> = None;
         let mut tool_calls_acc: HashMap<usize, StreamingToolCallAcc> = HashMap::new();
+        let mut web_searches = Vec::new();
         let mut saw_provider_event = false;
         let mut saw_substantive_event = false;
         let stream_started_at = Instant::now();
@@ -404,6 +405,21 @@ impl OpenAiCompatibleModel {
                         }
                     }
                 }
+                ProviderStreamEvent::WebSearchStarted(web_search) => {
+                    observer.on_web_search_started(web_search.id, web_search.query);
+                }
+                ProviderStreamEvent::WebSearchCompleted(web_search) => {
+                    observer.on_web_search_completed(
+                        web_search.id.clone(),
+                        web_search.query.clone(),
+                        web_search.action.clone(),
+                    );
+                    web_searches.push(agent_core::WebSearchRecord {
+                        id: web_search.id,
+                        query: web_search.query,
+                        action: web_search.action,
+                    });
+                }
                 ProviderStreamEvent::Usage(chunk_usage) => {
                     usage = Some(chunk_usage);
                 }
@@ -434,6 +450,7 @@ impl OpenAiCompatibleModel {
             content: (!content.is_empty()).then_some(content),
             reasoning: (!reasoning.is_empty()).then_some(reasoning),
             tool_calls: finalize_stream_tool_calls(tool_calls_acc, &tool_index),
+            web_searches,
             finish_reason: completion.finish_reason,
             model_name,
             usage,
@@ -457,6 +474,9 @@ fn provider_stream_event_is_substantive(event: &ProviderStreamEvent) -> bool {
                     .arguments_delta
                     .as_ref()
                     .is_some_and(|arguments| !arguments.is_empty())
+        }
+        ProviderStreamEvent::WebSearchStarted(_) | ProviderStreamEvent::WebSearchCompleted(_) => {
+            true
         }
         ProviderStreamEvent::Completed(_) => true,
         ProviderStreamEvent::Usage(_) | ProviderStreamEvent::Metadata(_) => false,

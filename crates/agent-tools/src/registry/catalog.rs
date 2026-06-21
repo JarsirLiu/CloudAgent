@@ -3,7 +3,7 @@ use crate::impls::command::{
     ExecCommandLocalTool, ExecCommandTool as ExecCommandDescriptorTool,
     WriteStdinTool as WriteStdinDescriptorTool,
 };
-use crate::impls::discovery::{ToolSearchLocalTool, ToolSearchTool};
+use crate::impls::discovery::{ToolSearchLocalTool, ToolSearchTool, WebSearchTool};
 use crate::impls::fs::{
     ApplyPatchLocalTool, ApplyPatchTool, CopyPathLocalTool, CopyPathTool, CreateDirectoryLocalTool,
     CreateDirectoryTool, CreateSkillScaffoldLocalTool, CreateSkillScaffoldTool,
@@ -29,6 +29,7 @@ pub(super) fn build_descriptors(
 fn build_main_chain_descriptors(options: ToolRegistryOptions) -> Vec<ToolDescriptor> {
     let mut descriptors = vec![
         ToolSearchTool::descriptor(),
+        WebSearchTool::descriptor(),
         ExecCommandDescriptorTool::descriptor(),
         WriteStdinDescriptorTool::descriptor(),
     ];

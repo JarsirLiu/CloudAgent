@@ -157,6 +157,23 @@ impl ActiveCellController {
         )
     }
 
+    pub(crate) fn append_tool_delta(
+        &mut self,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+        expand_details: bool,
+    ) -> AppliedActiveTurnEffects {
+        self.apply_active_turn(
+            ActiveTurnAction::AppendToolDelta {
+                turn_id,
+                item_id,
+                delta,
+            },
+            expand_details,
+        )
+    }
+
     pub(crate) fn complete_item(
         &mut self,
         turn_id: TurnId,

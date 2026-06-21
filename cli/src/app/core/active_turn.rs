@@ -3,6 +3,7 @@ use crate::ui::history_cell::{
     HistoryCell, humanize_tool_label, render_active_item_placeholder, render_history_entry,
 };
 use agent_core::conversation::{InputItem, TranscriptItem, input_items_to_plain_text};
+use agent_core::is_web_search_tool_result;
 use agent_core::turn::{TurnId, TurnItemKind};
 use std::collections::HashSet;
 
@@ -28,6 +29,11 @@ pub(crate) enum ActiveTurnAction {
         delta: String,
     },
     AppendReasoningDelta {
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    AppendToolDelta {
         turn_id: TurnId,
         item_id: String,
         delta: String,
@@ -192,6 +198,23 @@ impl ActiveTurnState {
                         live_item.replace_body(delta.clone());
                     } else {
                         live_item.append_body(&delta);
+                    }
+                }
+                self.snapshot_effects_with_replay(replay_cells)
+            }
+            ActiveTurnAction::AppendToolDelta {
+                turn_id,
+                item_id,
+                delta,
+            } => {
+                self.ensure_turn(&turn_id);
+                let replay_cells = self.flush_live_tail_if_different(&item_id);
+                if let Some(live_item) = self.live_item.as_mut()
+                    && live_item.item_id == item_id
+                {
+                    match live_item.body().trim() {
+                        "" | "running" => live_item.replace_body(delta),
+                        _ => live_item.append_body(&delta),
                     }
                 }
                 self.snapshot_effects_with_replay(replay_cells)
@@ -476,6 +499,9 @@ fn turn_item_kind(item: &TranscriptItem) -> TurnItemKind {
 }
 
 fn should_keep_completed_item_live(item: &TranscriptItem) -> bool {
+    if is_web_search_tool_result(item) {
+        return false;
+    }
     matches!(
         item,
         TranscriptItem::CommandExecution { .. }

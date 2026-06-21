@@ -1,6 +1,7 @@
 use crate::conversation::{ConversationHistory, TranscriptItem};
 use crate::tool::{CommandExecutionStatus, ToolEvent, WriteFileStatus};
 use crate::turn::{AgentTurnOutput, EventMsg, TurnState};
+use crate::web_search_presentation::{WEB_SEARCH_TOOL_NAME, web_search_detail};
 
 pub fn agent_turn_output_from_events(
     turn_id: String,
@@ -39,8 +40,24 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
                     });
                 }
                 TranscriptItem::ToolResult {
-                    tool_name, summary, ..
+                    tool_name,
+                    summary,
+                    structured,
+                    ..
                 } => {
+                    if let Some(crate::tool::StructuredToolResult::WebSearch {
+                        query,
+                        action,
+                        ..
+                    }) = structured
+                    {
+                        tool_events.push(ToolEvent {
+                            name: WEB_SEARCH_TOOL_NAME.to_string(),
+                            summary: web_search_detail(query, action.as_ref()),
+                            is_error: false,
+                        });
+                        continue;
+                    }
                     let lower = summary.to_lowercase();
                     let is_error = lower.contains("error")
                         || lower.contains("failed")

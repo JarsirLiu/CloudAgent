@@ -15,7 +15,7 @@ use crate::{
     ContextFacade, ContextManager, ConversationHistory, EventMsg, FilterPolicy, ModelRequest,
     ModelResponse, ModelStreamObserver, RolloutItem, ToolCall, ToolExecutionPolicy, ToolIdentity,
     ToolSource, ToolSpec, TurnInterruptedError, TurnItemDeltaKind, TurnItemKind, TurnOutcome,
-    TurnState,
+    TurnState, WebSearchAction, WebSearchRecord,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -293,6 +293,7 @@ impl TurnHost for MockTurnHost {
             ),
             reasoning: None,
             tool_calls: Vec::new(),
+            web_searches: Vec::new(),
             finish_reason: None,
             model_name: Some("test-model".to_string()),
             usage: None,
@@ -307,6 +308,14 @@ impl TurnHost for MockTurnHost {
     ) -> Result<ModelResponse> {
         *self.last_request.lock().expect("last request lock") = Some(request);
         let response = self.responses.lock().expect("responses lock").remove(0);
+        for web_search in &response.web_searches {
+            observer.on_web_search_started(web_search.id.clone(), web_search.query.clone());
+            observer.on_web_search_completed(
+                web_search.id.clone(),
+                web_search.query.clone(),
+                web_search.action.clone(),
+            );
+        }
         if let Some(reasoning) = response.reasoning.clone() {
             observer.on_reasoning_delta(crate::model::ReasoningDelta::Text {
                 content_index: 0,
@@ -384,6 +393,7 @@ async fn reasoning_item_ids_advance_across_tool_roundtrips() {
                 identity: ToolIdentity::built_in("read_file"),
                 arguments: json!({"path":"README.md"}),
             }],
+            web_searches: Vec::new(),
             finish_reason: None,
             model_name: Some("test-model".to_string()),
             usage: None,
@@ -392,6 +402,7 @@ async fn reasoning_item_ids_advance_across_tool_roundtrips() {
             content: Some("final answer".to_string()),
             reasoning: Some("second reasoning".to_string()),
             tool_calls: vec![],
+            web_searches: Vec::new(),
             finish_reason: None,
             model_name: Some("test-model".to_string()),
             usage: None,
@@ -450,6 +461,7 @@ async fn finish_reason_tool_use_keeps_turn_open_for_next_round() {
             content: Some("intermediate text".to_string()),
             reasoning: None,
             tool_calls: Vec::new(),
+            web_searches: Vec::new(),
             finish_reason: Some("tool_calls".to_string()),
             model_name: Some("test-model".to_string()),
             usage: None,
@@ -458,6 +470,7 @@ async fn finish_reason_tool_use_keeps_turn_open_for_next_round() {
             content: Some("final answer".to_string()),
             reasoning: None,
             tool_calls: Vec::new(),
+            web_searches: Vec::new(),
             finish_reason: Some("stop".to_string()),
             model_name: Some("test-model".to_string()),
             usage: None,
@@ -492,6 +505,115 @@ async fn finish_reason_tool_use_keeps_turn_open_for_next_round() {
         host.responses.lock().expect("responses lock").is_empty(),
         "turn should have consumed both model responses"
     );
+}
+
+#[tokio::test]
+async fn streaming_web_search_events_arrive_before_assistant_completion() {
+    let host = MockTurnHost::new(vec![ModelResponse {
+        content: Some("final answer".to_string()),
+        reasoning: None,
+        tool_calls: Vec::new(),
+        web_searches: vec![WebSearchRecord {
+            id: "ws_1".to_string(),
+            query: "weather seattle".to_string(),
+            action: Some(WebSearchAction::Search {
+                query: Some("weather seattle".to_string()),
+                queries: None,
+            }),
+        }],
+        finish_reason: Some("stop".to_string()),
+        model_name: Some("test-model".to_string()),
+        usage: None,
+    }]);
+
+    let history = ConversationHistory::new("default".to_string(), "system".to_string());
+    let outcome: TurnOutcome = execute_chat_turn(
+        &host,
+        "default",
+        "turn-1",
+        &(),
+        &(),
+        CancellationToken::new(),
+        history,
+        &mut |_event| {},
+        &(|_req: ServerRequest| async move {
+            Ok(ServerRequestDecision::accept(Some("ok".to_string())))
+        }),
+    )
+    .await
+    .expect("turn outcome");
+
+    let web_search_started = outcome.events.iter().position(|event| {
+        matches!(
+            event,
+            EventMsg::ItemStarted {
+                item_id,
+                title,
+                ..
+            } if item_id == "ws_1" && title.as_deref() == Some("web_search")
+        )
+    });
+    let web_search_delta = outcome.events.iter().position(|event| {
+        matches!(
+            event,
+            EventMsg::ItemDelta {
+                item_id,
+                kind: crate::TurnItemDeltaKind::ToolOutput,
+                delta,
+                ..
+            } if item_id == "ws_1" && delta == "weather seattle"
+        )
+    });
+    let web_search_completed = outcome.events.iter().position(|event| {
+        matches!(
+            event,
+            EventMsg::ItemCompleted {
+                item: crate::TranscriptItem::ToolResult {
+                    id,
+                    tool_name,
+                    structured,
+                    ..
+                },
+                ..
+            } if id == "ws_1"
+                && tool_name == "web_search"
+                && matches!(
+                    structured,
+                    Some(crate::StructuredToolResult::WebSearch { query, .. })
+                        if query == "weather seattle"
+                )
+        )
+    });
+    let assistant_completed = outcome.events.iter().position(|event| {
+        matches!(
+            event,
+            EventMsg::ItemCompleted {
+                item: crate::TranscriptItem::AgentMessage { text, .. },
+                ..
+            } if text == "final answer"
+        )
+    });
+
+    assert!(
+        web_search_started.is_some(),
+        "web search should start during streaming"
+    );
+    assert!(
+        web_search_delta.is_some(),
+        "web search query should stream into the active tool item"
+    );
+    assert!(
+        web_search_completed.is_some(),
+        "web search should complete during streaming"
+    );
+    assert!(
+        assistant_completed.is_some(),
+        "assistant message should still complete"
+    );
+    assert!(web_search_started < assistant_completed);
+    assert!(web_search_started < web_search_delta);
+    assert!(web_search_delta < web_search_completed);
+    assert!(web_search_completed < assistant_completed);
 }
 
 #[tokio::test]
@@ -593,6 +715,7 @@ async fn explicit_skill_mentions_inject_skill_instructions_into_model_request() 
         content: Some("done".to_string()),
         reasoning: None,
         tool_calls: Vec::new(),
+        web_searches: Vec::new(),
         finish_reason: None,
         model_name: Some("test-model".to_string()),
         usage: None,
@@ -658,6 +781,7 @@ async fn skill_injection_does_not_carry_across_turns_without_remention() {
             content: Some("done".to_string()),
             reasoning: None,
             tool_calls: Vec::new(),
+            web_searches: Vec::new(),
             finish_reason: None,
             model_name: Some("test-model".to_string()),
             usage: None,
@@ -666,6 +790,7 @@ async fn skill_injection_does_not_carry_across_turns_without_remention() {
             content: Some("done again".to_string()),
             reasoning: None,
             tool_calls: Vec::new(),
+            web_searches: Vec::new(),
             finish_reason: None,
             model_name: Some("test-model".to_string()),
             usage: None,

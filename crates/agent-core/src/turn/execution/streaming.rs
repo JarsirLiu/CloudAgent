@@ -1,5 +1,8 @@
 use super::TurnHost;
-use crate::model::{ModelRequest, ModelResponse, ModelStreamObserver, ReasoningDelta};
+use crate::model::{
+    ModelRequest, ModelResponse, ModelStreamObserver, ReasoningDelta, WebSearchAction,
+};
+use crate::web_search_presentation::web_search_transcript_item;
 use crate::{EventMsg, TranscriptItem, TurnItemDeltaKind, TurnItemKind, emit_event};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -192,6 +195,52 @@ impl<E: FnMut(&EventMsg) + Send + ?Sized> ModelStreamObserver for TurnStreamObse
                 stage,
                 attempt,
                 next_delay_ms: delay.as_millis().try_into().unwrap_or(u64::MAX),
+            },
+        );
+    }
+
+    fn on_web_search_started(&mut self, id: String, query: String) {
+        emit_event(
+            self.events,
+            self.on_event,
+            EventMsg::ItemStarted {
+                turn_id: self.turn_id.to_string(),
+                item_id: id.clone(),
+                call_id: Some(id.clone()),
+                kind: TurnItemKind::ToolResult,
+                title: Some("web_search".to_string()),
+            },
+        );
+        if !query.trim().is_empty() {
+            emit_event(
+                self.events,
+                self.on_event,
+                EventMsg::ItemDelta {
+                    turn_id: self.turn_id.to_string(),
+                    item_id: id.clone(),
+                    call_id: Some(id),
+                    kind: TurnItemDeltaKind::ToolOutput,
+                    segment_index: None,
+                    delta: query,
+                },
+            );
+        }
+    }
+
+    fn on_web_search_completed(
+        &mut self,
+        id: String,
+        query: String,
+        action: Option<WebSearchAction>,
+    ) {
+        emit_event(
+            self.events,
+            self.on_event,
+            EventMsg::ItemCompleted {
+                turn_id: self.turn_id.to_string(),
+                item_id: id.clone(),
+                call_id: Some(id.clone()),
+                item: web_search_transcript_item(id, query, action),
             },
         );
     }

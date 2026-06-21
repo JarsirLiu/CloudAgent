@@ -1554,6 +1554,134 @@ fn command_output_delta_updates_status_without_transcript_history() {
 }
 
 #[test]
+fn web_search_tool_output_delta_updates_active_transcript_cell() {
+    let mut app = test_app();
+    mark_running(&mut app);
+    app.bottom_pane.on_turn_started();
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::StartActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "ws-1".to_string(),
+            kind: TurnItemKind::ToolResult,
+            title: Some("web_search".to_string()),
+        },
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::AppendActiveToolDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "ws-1".to_string(),
+            delta: "weather seattle".to_string(),
+        },
+    );
+
+    let active = app
+        .transcript_owner
+        .active_cell()
+        .expect("active web search cell");
+    assert_eq!(active.label(), "Web search");
+    assert_eq!(active.body(), "weather seattle");
+    assert!(app.transcript_owner.pending_history_cells().is_empty());
+}
+
+#[test]
+fn web_search_active_placeholder_uses_codex_like_summary() {
+    let mut app = test_app();
+    mark_running(&mut app);
+    app.bottom_pane.on_turn_started();
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::StartActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "ws-1".to_string(),
+            kind: TurnItemKind::ToolResult,
+            title: Some("web_search".to_string()),
+        },
+    );
+
+    let active = app
+        .transcript_owner
+        .active_cell()
+        .expect("active web search cell");
+    assert_eq!(active.label(), "Web search");
+    assert_eq!(active.body(), "running");
+}
+
+#[test]
+fn completed_web_search_commits_immediately_and_clears_active_state() {
+    let mut app = test_app();
+    mark_running(&mut app);
+    app.bottom_pane.on_turn_started();
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::StartActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "ws-1".to_string(),
+            kind: TurnItemKind::ToolResult,
+            title: Some("web_search".to_string()),
+        },
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::AppendActiveToolDelta {
+            turn_id: "turn-1".to_string(),
+            item_id: "ws-1".to_string(),
+            delta: "weather seattle".to_string(),
+        },
+    );
+
+    let active = app
+        .transcript_owner
+        .active_cell()
+        .expect("active web search cell before completion");
+    assert_eq!(active.label(), "Web search");
+    assert_eq!(active.body(), "weather seattle");
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::ClearLastToolName,
+    );
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::CompleteActiveTurnItem {
+            turn_id: "turn-1".to_string(),
+            item_id: "ws-1".to_string(),
+            item: TranscriptItem::ToolResult {
+                id: "ws-1".to_string(),
+                tool_name: "web_search".to_string(),
+                content: "weather seattle".to_string(),
+                summary: "searched the web".to_string(),
+                structured: Some(StructuredToolResult::WebSearch {
+                    query: "weather seattle".to_string(),
+                    action: None,
+                    result_count: None,
+                    source_count: None,
+                }),
+            },
+        },
+    );
+
+    assert!(app.transcript_owner.active_cell().is_none());
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(status.live_banner, None);
+
+    let committed = app
+        .transcript_owner
+        .pending_history_cells()
+        .into_iter()
+        .map(|cell| (cell.label().to_string(), cell.body().to_string()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        committed,
+        vec![("Web search".to_string(), "weather seattle".to_string())]
+    );
+}
+
+#[test]
 fn in_progress_command_completion_keeps_status_until_final_completion() {
     let mut app = test_app();
     mark_running(&mut app);

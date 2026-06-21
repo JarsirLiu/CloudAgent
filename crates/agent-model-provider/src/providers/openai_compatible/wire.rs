@@ -358,17 +358,30 @@ pub(super) struct ResponsesRequest {
 }
 
 #[derive(Serialize)]
-pub(super) struct ResponsesToolSpec {
-    #[serde(rename = "type")]
-    kind: String,
-    name: String,
-    description: String,
-    parameters: Value,
+#[serde(untagged)]
+pub(super) enum ResponsesToolSpec {
+    Function {
+        #[serde(rename = "type")]
+        kind: String,
+        name: String,
+        description: String,
+        parameters: Value,
+    },
+    HostedWebSearch {
+        #[serde(rename = "type")]
+        kind: String,
+    },
 }
 
 impl ResponsesToolSpec {
     pub(super) fn from_spec(spec: &ToolSpec) -> Self {
-        Self {
+        if spec.identity.wire_name == "web_search" {
+            return Self::HostedWebSearch {
+                kind: "web_search".to_string(),
+            };
+        }
+
+        Self::Function {
             kind: "function".to_string(),
             name: spec.identity.wire_name.clone(),
             description: spec.description.clone(),

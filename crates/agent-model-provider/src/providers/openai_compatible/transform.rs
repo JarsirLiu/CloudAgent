@@ -5,6 +5,7 @@ use super::wire::{
 use crate::request::{ProviderMessage, ProviderRequest};
 use agent_core::model::{ModelResponse, ModelUsage};
 use agent_core::tool::{ToolCall, ToolIdentity, ToolSpec};
+use agent_core::{WebSearchAction, WebSearchRecord};
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -39,6 +40,7 @@ pub(super) fn build_chat_request(
         tools: provider_request
             .tools
             .iter()
+            .filter(|spec| spec.identity.wire_name != "web_search")
             .map(ChatToolSpec::from_spec)
             .collect(),
         tool_choice: "auto".to_string(),
@@ -158,6 +160,7 @@ pub(super) fn parse_chat_response(
             choice.message.tool_calls.unwrap_or_default(),
             tool_spec_index,
         ),
+        web_searches: Vec::new(),
         finish_reason: choice.finish_reason,
         model_name: Some(parsed.model),
         usage: parsed.usage.map(ModelUsage::from),
@@ -171,6 +174,7 @@ pub(super) fn parse_responses_response(
     let mut content_parts = Vec::new();
     let mut reasoning_parts = Vec::new();
     let mut tool_calls = Vec::new();
+    let mut web_searches = Vec::new();
 
     for item in parsed.output {
         match item.get("type").and_then(|value| value.as_str()) {
@@ -208,6 +212,11 @@ pub(super) fn parse_responses_response(
                     tool_calls.push(call);
                 }
             }
+            Some("web_search_call") => {
+                if let Some(record) = map_responses_web_search_item(&item) {
+                    web_searches.push(record);
+                }
+            }
             _ => {}
         }
     }
@@ -216,6 +225,7 @@ pub(super) fn parse_responses_response(
         content: (!content_parts.is_empty()).then_some(content_parts.join("")),
         reasoning: (!reasoning_parts.is_empty()).then_some(reasoning_parts.join("")),
         tool_calls,
+        web_searches,
         finish_reason: responses_finish_reason(&parsed.status, parsed.incomplete_details.as_ref()),
         model_name: Some(parsed.model),
         usage: parsed.usage.map(ModelUsage::from),
@@ -366,6 +376,96 @@ fn extract_reasoning_texts(item: &Value) -> Vec<String> {
     }
 
     texts
+}
+
+fn map_responses_web_search_item(item: &Value) -> Option<WebSearchRecord> {
+    let id = item
+        .get("id")
+        .and_then(|value| value.as_str())
+        .or_else(|| item.get("call_id").and_then(|value| value.as_str()))?;
+    let action = item.get("action").and_then(map_responses_web_search_action);
+    let query = action
+        .as_ref()
+        .map(web_search_action_detail)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            item.get("query")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+        })
+        .unwrap_or_default();
+
+    Some(WebSearchRecord {
+        id: id.to_string(),
+        query,
+        action,
+    })
+}
+
+fn map_responses_web_search_action(value: &Value) -> Option<WebSearchAction> {
+    let kind = value.get("type").and_then(|entry| entry.as_str())?;
+    match kind {
+        "search" => Some(WebSearchAction::Search {
+            query: value
+                .get("query")
+                .and_then(|entry| entry.as_str())
+                .map(ToString::to_string),
+            queries: value.get("queries").and_then(|entry| {
+                entry.as_array().map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(ToString::to_string))
+                        .collect::<Vec<_>>()
+                })
+            }),
+        }),
+        "open_page" => Some(WebSearchAction::OpenPage {
+            url: value
+                .get("url")
+                .and_then(|entry| entry.as_str())
+                .map(ToString::to_string),
+        }),
+        "find_in_page" => Some(WebSearchAction::FindInPage {
+            url: value
+                .get("url")
+                .and_then(|entry| entry.as_str())
+                .map(ToString::to_string),
+            pattern: value
+                .get("pattern")
+                .and_then(|entry| entry.as_str())
+                .map(ToString::to_string),
+        }),
+        "other" => Some(WebSearchAction::Other),
+        _ => None,
+    }
+}
+
+fn web_search_action_detail(action: &WebSearchAction) -> String {
+    match action {
+        WebSearchAction::Search { query, queries } => query
+            .clone()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| {
+                let first = queries
+                    .as_ref()
+                    .and_then(|values| values.first())
+                    .cloned()
+                    .unwrap_or_default();
+                if queries.as_ref().is_some_and(|values| values.len() > 1) && !first.is_empty() {
+                    format!("{first} ...")
+                } else {
+                    first
+                }
+            }),
+        WebSearchAction::OpenPage { url } => url.clone().unwrap_or_default(),
+        WebSearchAction::FindInPage { url, pattern } => match (pattern, url) {
+            (Some(pattern), Some(url)) => format!("'{pattern}' in {url}"),
+            (Some(pattern), None) => format!("'{pattern}'"),
+            (None, Some(url)) => url.clone(),
+            (None, None) => String::new(),
+        },
+        WebSearchAction::Other => String::new(),
+    }
 }
 
 fn responses_finish_reason(status: &str, incomplete_details: Option<&Value>) -> Option<String> {
@@ -523,5 +623,36 @@ mod tests {
             parsed.tool_calls[0].arguments,
             json!({"query":"gmail","limit":5})
         );
+    }
+
+    #[test]
+    fn ignores_hosted_web_search_call_items_from_responses_output() {
+        let index = HashMap::new();
+        let response = ResponsesResponse {
+            model: "test-model".to_string(),
+            output: vec![
+                json!({
+                    "type": "web_search_call",
+                    "id": "ws_1",
+                    "status": "completed"
+                }),
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "Latest result."
+                    }]
+                }),
+            ],
+            status: "completed".to_string(),
+            incomplete_details: None,
+            usage: None,
+        };
+
+        let parsed = parse_responses_response(response, &index);
+
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.content.as_deref(), Some("Latest result."));
     }
 }

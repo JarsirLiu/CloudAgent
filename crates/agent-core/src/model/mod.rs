@@ -34,9 +34,40 @@ pub struct ModelResponse {
     pub content: Option<String>,
     pub reasoning: Option<String>,
     pub tool_calls: Vec<ToolCall>,
+    pub web_searches: Vec<WebSearchRecord>,
     pub finish_reason: Option<String>,
     pub model_name: Option<String>,
     pub usage: Option<ModelUsage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WebSearchAction {
+    Search {
+        #[serde(default)]
+        query: Option<String>,
+        #[serde(default)]
+        queries: Option<Vec<String>>,
+    },
+    OpenPage {
+        #[serde(default)]
+        url: Option<String>,
+    },
+    FindInPage {
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        pattern: Option<String>,
+    },
+    Other,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebSearchRecord {
+    pub id: String,
+    pub query: String,
+    #[serde(default)]
+    pub action: Option<WebSearchAction>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -114,6 +145,16 @@ pub trait ModelStreamObserver: Send {
 
     fn on_reasoning_delta(&mut self, _delta: ReasoningDelta) {}
 
+    fn on_web_search_started(&mut self, _id: String, _query: String) {}
+
+    fn on_web_search_completed(
+        &mut self,
+        _id: String,
+        _query: String,
+        _action: Option<WebSearchAction>,
+    ) {
+    }
+
     fn on_retry(&mut self, _stage: ModelRetryStage, _attempt: u64, _delay: Duration) {}
 }
 
@@ -143,6 +184,14 @@ pub trait ChatModel: Send + Sync {
         observer: &mut dyn ModelStreamObserver,
     ) -> Result<ModelResponse> {
         let response = self.complete(request).await?;
+        for web_search in &response.web_searches {
+            observer.on_web_search_started(web_search.id.clone(), web_search.query.clone());
+            observer.on_web_search_completed(
+                web_search.id.clone(),
+                web_search.query.clone(),
+                web_search.action.clone(),
+            );
+        }
         if let Some(reasoning) = response.reasoning.clone() {
             observer.on_reasoning_delta(ReasoningDelta::Text {
                 content_index: 0,

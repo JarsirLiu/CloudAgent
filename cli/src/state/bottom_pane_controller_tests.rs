@@ -134,6 +134,33 @@ fn command_output_delta_stays_in_runtime_banner() {
 }
 
 #[test]
+fn web_search_delta_updates_runtime_banner() {
+    let mut app = test_app();
+    app.run_state.live_animation_frame = 1;
+    mark_running(&mut app);
+    app.bottom_pane.on_active_item_started(
+        "ws-1",
+        &agent_core::TurnItemKind::ToolResult,
+        Some("web_search"),
+    );
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(status.live_banner.as_deref(), Some("Web search"));
+
+    app.bottom_pane
+        .on_tool_output_delta(Some("ws-1"), "weather seattle");
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(
+        status.live_banner.as_deref(),
+        Some("Web search · weather seattle")
+    );
+
+    app.bottom_pane.on_tool_finished();
+    let after = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(after.live_banner, None);
+}
+
+#[test]
 fn command_output_delta_keeps_recent_tail_compact() {
     let mut app = test_app();
     mark_running(&mut app);

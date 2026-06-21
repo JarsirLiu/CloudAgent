@@ -5,7 +5,9 @@ use crate::app::input::clipboard_paste::paste_clipboard_text;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
 use crate::app::runtime::paste_coordinator::PasteCoordinator;
 use crate::terminal::{FrameRequester, UiEvent};
+use crate::tool_identity::is_web_search_tool_name;
 use agent_app_server_client::{AppServerClient, AppServerEvent};
+use agent_core::is_web_search_tool_result;
 use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -28,7 +30,7 @@ impl RuntimeController {
         event: AppServerEvent,
         frame_requester: &FrameRequester,
     ) {
-        let events = collect_client_events(client, event);
+        let events = collect_client_events(client, event, frame_requester);
         for event in events {
             event_router::handle_client_event(app, event);
         }
@@ -134,12 +136,42 @@ pub(crate) enum RuntimeControl {
 fn collect_client_events(
     client: &mut AppServerClient,
     first: AppServerEvent,
+    frame_requester: &FrameRequester,
 ) -> Vec<AppServerEvent> {
     let mut events = vec![first];
-    while let Some(event) = client.try_next_event() {
+    let mut stop_after_boundary = should_stop_after_event_boundary(events.last());
+    while !frame_requester.is_draw_pending() {
+        if stop_after_boundary {
+            break;
+        }
+        let Some(event) = client.try_next_event() else {
+            break;
+        };
+        stop_after_boundary = should_stop_after_event_boundary(Some(&event));
         events.push(event);
     }
     coalesce_client_events(events)
+}
+
+pub(super) fn should_stop_after_event_boundary(event: Option<&AppServerEvent>) -> bool {
+    let Some(AppServerEvent::Message(AppServerMessage::Notification(notification))) = event else {
+        return false;
+    };
+    match notification {
+        AppServerNotification::ItemStarted { item, .. } => is_web_search_started_item(item),
+        AppServerNotification::ToolOutputDelta { .. } => true,
+        AppServerNotification::ItemCompleted { item, .. } => is_web_search_tool_result(item),
+        _ => false,
+    }
+}
+
+fn is_web_search_started_item(item: &agent_core::conversation::TranscriptItem) -> bool {
+    match item {
+        agent_core::conversation::TranscriptItem::ToolResult { tool_name, .. } => {
+            is_web_search_tool_name(tool_name)
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn coalesce_client_events(events: Vec<AppServerEvent>) -> Vec<AppServerEvent> {

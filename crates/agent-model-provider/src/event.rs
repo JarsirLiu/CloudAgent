@@ -1,10 +1,13 @@
 use agent_core::ModelUsage;
+use agent_core::WebSearchAction;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderStreamEvent {
     TextDelta(String),
     ReasoningDelta(ProviderReasoningDelta),
     ToolCallDelta(ProviderToolCallDelta),
+    WebSearchStarted(ProviderWebSearch),
+    WebSearchCompleted(ProviderWebSearch),
     Usage(ModelUsage),
     Metadata(ProviderMetadata),
     Completed(ProviderCompletion),
@@ -23,6 +26,13 @@ pub struct ProviderToolCallDelta {
     pub name: Option<String>,
     pub arguments_delta: Option<String>,
     pub arguments_replace: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderWebSearch {
+    pub id: String,
+    pub query: String,
+    pub action: Option<WebSearchAction>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

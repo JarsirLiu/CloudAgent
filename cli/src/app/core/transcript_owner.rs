@@ -203,6 +203,19 @@ impl TranscriptOwner {
         self.apply_active_turn_effects(effects);
     }
 
+    pub(crate) fn append_tool_delta(
+        &mut self,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+        expand_details: bool,
+    ) {
+        let effects =
+            self.active_cell_controller
+                .append_tool_delta(turn_id, item_id, delta, expand_details);
+        self.apply_active_turn_effects(effects);
+    }
+
     pub(crate) fn complete_item(
         &mut self,
         turn_id: TurnId,

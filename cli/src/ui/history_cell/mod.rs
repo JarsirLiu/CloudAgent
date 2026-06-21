@@ -2,6 +2,7 @@ mod display;
 mod markdown;
 mod render;
 pub(crate) mod tool_aggregation;
+mod tool_operation;
 mod tool_ui;
 mod transcript;
 mod wrapping;
@@ -527,5 +528,7 @@ fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
     }
 }
 
+#[cfg(test)]
+mod render_entry_tests;
 #[cfg(test)]
 mod tests;

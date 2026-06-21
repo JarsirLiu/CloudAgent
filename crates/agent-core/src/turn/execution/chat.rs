@@ -233,7 +233,16 @@ pub async fn execute_chat_turn<H: TurnHost>(
             &mut state.events,
             on_event,
         );
-        record_model_response(host, conversation_id, &mut state.context_manager, &response).await?;
+        record_model_response(
+            host,
+            conversation_id,
+            turn_id,
+            &mut state.context_manager,
+            &mut state.events,
+            on_event,
+            &response,
+        )
+        .await?;
         match advance_after_model_response(
             host,
             conversation_id,
