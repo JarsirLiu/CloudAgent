@@ -1,7 +1,8 @@
 use super::controller::{coalesce_client_events, should_stop_after_event_boundary};
 use agent_app_server_client::AppServerEvent;
-use agent_core::conversation::TranscriptItem;
-use agent_core::{StructuredToolResult, WebSearchAction};
+use agent_core::{
+    RuntimeItem, RuntimeItemProgress, StructuredToolResult, TurnItemKind, WebSearchAction,
+};
 use agent_protocol::{AppServerMessage, AppServerNotification};
 
 fn command_delta(item_id: &str, delta: &str) -> AppServerEvent {
@@ -21,51 +22,62 @@ fn web_search_started() -> AppServerEvent {
         AppServerNotification::ItemStarted {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
-            call_id: Some("ws-1".to_string()),
-            item: TranscriptItem::ToolResult {
-                id: "ws-1".to_string(),
-                tool_name: "web_search".to_string(),
-                content: String::new(),
-                summary: String::new(),
-                structured: None,
-            },
+            item: RuntimeItem::started(
+                "ws-1",
+                Some("ws-1".to_string()),
+                TurnItemKind::ToolResult,
+                Some("web_search".to_string()),
+            ),
         },
     ))
 }
 
-fn web_search_delta(query: &str) -> AppServerEvent {
+fn web_search_progress(query: &str) -> AppServerEvent {
     AppServerEvent::Message(AppServerMessage::Notification(
-        AppServerNotification::ToolOutputDelta {
+        AppServerNotification::ItemProgress {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "ws-1".to_string(),
             call_id: Some("ws-1".to_string()),
-            delta: query.to_string(),
+            progress: RuntimeItemProgress::message(query),
+        },
+    ))
+}
+
+fn json_patch_delta(item_id: &str, delta: &str) -> AppServerEvent {
+    AppServerEvent::Message(AppServerMessage::Notification(
+        AppServerNotification::JsonPatchDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: item_id.to_string(),
+            call_id: Some("call-edit".to_string()),
+            delta: delta.to_string(),
         },
     ))
 }
 
 fn web_search_completed(query: &str) -> AppServerEvent {
+    let transcript_item = agent_core::TranscriptItem::ToolResult {
+        id: "ws-1".to_string(),
+        tool_name: "web_search".to_string(),
+        content: query.to_string(),
+        summary: "searched the web".to_string(),
+        structured: Some(StructuredToolResult::WebSearch {
+            query: query.to_string(),
+            action: Some(WebSearchAction::Search {
+                query: Some(query.to_string()),
+                queries: None,
+            }),
+            result_count: None,
+            source_count: None,
+        }),
+    };
     AppServerEvent::Message(AppServerMessage::Notification(
         AppServerNotification::ItemCompleted {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
-            call_id: Some("ws-1".to_string()),
-            item: TranscriptItem::ToolResult {
-                id: "ws-1".to_string(),
-                tool_name: "web_search".to_string(),
-                content: query.to_string(),
-                summary: "searched the web".to_string(),
-                structured: Some(StructuredToolResult::WebSearch {
-                    query: query.to_string(),
-                    action: Some(WebSearchAction::Search {
-                        query: Some(query.to_string()),
-                        queries: None,
-                    }),
-                    result_count: None,
-                    source_count: None,
-                }),
-            },
+            item: RuntimeItem::completed(&transcript_item, Some("ws-1".to_string())),
+            transcript_item,
         },
     ))
 }
@@ -75,18 +87,12 @@ fn command_started() -> AppServerEvent {
         AppServerNotification::ItemStarted {
             conversation_id: "default".to_string(),
             turn_id: "turn-1".to_string(),
-            call_id: Some("call-1".to_string()),
-            item: TranscriptItem::CommandExecution {
-                id: "tool:1".to_string(),
-                tool_name: "exec_command".to_string(),
-                command: "pwd".to_string(),
-                current_directory: String::new(),
-                status: agent_core::CommandExecutionStatus::InProgress,
-                exit_code: None,
-                output: Some(String::new()),
-                duration_ms: None,
-                summary: String::new(),
-            },
+            item: RuntimeItem::started(
+                "tool:1",
+                Some("call-1".to_string()),
+                TurnItemKind::CommandExecution,
+                Some("pwd".to_string()),
+            ),
         },
     ))
 }
@@ -148,10 +154,10 @@ fn command_started_is_a_runtime_render_boundary() {
 }
 
 #[test]
-fn web_search_output_delta_is_a_runtime_render_boundary() {
-    assert!(should_stop_after_event_boundary(Some(&web_search_delta(
-        "weather seattle"
-    ))));
+fn web_search_progress_is_a_runtime_render_boundary() {
+    assert!(should_stop_after_event_boundary(Some(
+        &web_search_progress("weather seattle")
+    )));
 }
 
 #[test]
@@ -162,15 +168,28 @@ fn web_search_completed_is_a_runtime_render_boundary() {
 }
 
 #[test]
-fn file_change_output_delta_is_a_runtime_render_boundary() {
-    let event = AppServerEvent::Message(AppServerMessage::Notification(
-        AppServerNotification::FileChangeOutputDelta {
-            conversation_id: "default".to_string(),
-            turn_id: "turn-1".to_string(),
-            item_id: "edit-1".to_string(),
-            call_id: Some("call-edit".to_string()),
-            delta: "updated 2 files".to_string(),
-        },
-    ));
-    assert!(should_stop_after_event_boundary(Some(&event)));
+fn json_patch_delta_is_a_runtime_render_boundary() {
+    assert!(should_stop_after_event_boundary(Some(&json_patch_delta(
+        "edit-1",
+        "*** Begin Patch"
+    ))));
+}
+
+#[test]
+fn coalesces_adjacent_json_patch_deltas_for_same_item() {
+    let events = vec![
+        json_patch_delta("edit-1", "*** Begin Patch"),
+        json_patch_delta("edit-1", "*** Update File: src/lib.rs"),
+    ];
+
+    let coalesced = coalesce_client_events(events);
+
+    assert_eq!(coalesced.len(), 1);
+    let AppServerEvent::Message(AppServerMessage::Notification(
+        AppServerNotification::JsonPatchDelta { delta, .. },
+    )) = &coalesced[0]
+    else {
+        panic!("expected merged json patch delta");
+    };
+    assert_eq!(delta, "*** Begin Patch\n*** Update File: src/lib.rs");
 }

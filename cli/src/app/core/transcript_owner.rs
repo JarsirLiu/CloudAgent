@@ -9,7 +9,8 @@ use crate::app::core::transcript_projection::{
 use crate::ui::history_cell::HistoryCell;
 use crate::ui::transcript_render_cache::TranscriptRenderCacheKey;
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
-use agent_core::turn::{TurnId, TurnItemKind, TurnState};
+use agent_core::turn::{TurnId, TurnState};
+use agent_core::{RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress};
 use std::collections::HashSet;
 
 #[derive(Default)]
@@ -160,17 +161,10 @@ impl TranscriptOwner {
         self.apply_active_turn_effects(effects);
     }
 
-    pub(crate) fn start_item(
-        &mut self,
-        turn_id: TurnId,
-        item_id: String,
-        kind: TurnItemKind,
-        title: Option<String>,
-        expand_details: bool,
-    ) {
-        let effects =
-            self.active_cell_controller
-                .start_item(turn_id, item_id, kind, title, expand_details);
+    pub(crate) fn start_item(&mut self, turn_id: TurnId, item: RuntimeItem, expand_details: bool) {
+        let effects = self
+            .active_cell_controller
+            .start_item(turn_id, item, expand_details);
         self.apply_active_turn_effects(effects);
     }
 
@@ -213,6 +207,51 @@ impl TranscriptOwner {
         let effects =
             self.active_cell_controller
                 .append_tool_delta(turn_id, item_id, delta, expand_details);
+        self.apply_active_turn_effects(effects);
+    }
+
+    pub(crate) fn append_patch_delta(
+        &mut self,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+        expand_details: bool,
+    ) {
+        let effects =
+            self.active_cell_controller
+                .append_patch_delta(turn_id, item_id, delta, expand_details);
+        self.apply_active_turn_effects(effects);
+    }
+
+    pub(crate) fn update_item_progress(
+        &mut self,
+        turn_id: TurnId,
+        item_id: String,
+        progress: RuntimeItemProgress,
+        expand_details: bool,
+    ) {
+        let effects = self.active_cell_controller.update_item_progress(
+            turn_id,
+            item_id,
+            progress,
+            expand_details,
+        );
+        self.apply_active_turn_effects(effects);
+    }
+
+    pub(crate) fn update_item_metrics(
+        &mut self,
+        turn_id: TurnId,
+        item_id: String,
+        metrics: RuntimeItemMetrics,
+        expand_details: bool,
+    ) {
+        let effects = self.active_cell_controller.update_item_metrics(
+            turn_id,
+            item_id,
+            metrics,
+            expand_details,
+        );
         self.apply_active_turn_effects(effects);
     }
 

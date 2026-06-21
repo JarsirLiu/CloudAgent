@@ -1,6 +1,6 @@
 use super::tool_ui;
 use super::{HistoryCell, HistoryFormat, HistoryTone};
-use agent_core::{InputItem, TranscriptItem, TurnItemKind};
+use agent_core::{InputItem, RuntimeItem, TranscriptItem, TurnItemKind};
 
 #[derive(Default)]
 pub struct RenderContext;
@@ -79,13 +79,13 @@ fn render_user_content(content: &[InputItem]) -> String {
     }
 }
 
-pub fn render_active_item_placeholder(kind: TurnItemKind, title: &str) -> HistoryCell {
-    match kind {
+pub fn render_active_runtime_item(item: &RuntimeItem) -> HistoryCell {
+    match item.kind {
         TurnItemKind::AssistantMessage => {
             HistoryCell::agent("", "responding".to_string(), HistoryFormat::Markdown)
         }
         TurnItemKind::Reasoning => HistoryCell::reasoning("Reasoning", "thinking".to_string()),
-        _ => tool_ui::render_active_placeholder(kind, title),
+        _ => tool_ui::render_active_runtime_item(item),
     }
 }
 

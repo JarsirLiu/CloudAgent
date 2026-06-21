@@ -1,5 +1,5 @@
 use crate::projection::transcript_item_projection::{
-    fallback_started_item, projected_item_from_transcript_item, projected_item_to_transcript_item,
+    projected_item_from_transcript_item, projected_item_to_transcript_item,
     projected_transcript_item_is_empty, turn_item_kind_for_transcript_item,
 };
 use crate::projection::turn_projection_state::{
@@ -7,7 +7,10 @@ use crate::projection::turn_projection_state::{
 };
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
 use agent_core::projection::{CoreTranscriptEvent, core_transcript_event_from_event_msg};
-use agent_core::{EventMsg, TurnItemDeltaKind, TurnItemKind, TurnState};
+use agent_core::{
+    EventMsg, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress, TurnItemDeltaKind,
+    TurnItemKind, TurnState,
+};
 use agent_protocol::AppServerNotification;
 use std::collections::HashMap;
 
@@ -57,37 +60,18 @@ impl ConversationNotificationProjector {
                     turn_id: turn_id.clone(),
                 }]
             }
-            EventMsg::ItemStarted {
-                turn_id,
-                item_id,
-                call_id,
-                kind,
-                title,
-            } => {
+            EventMsg::ItemStarted { turn_id, item } => {
                 let lifecycle = ActiveLifecycle {
                     turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    call_id: call_id.clone(),
+                    item_id: item.id.clone(),
+                    call_id: item.call_id.clone(),
                 };
                 self.register_active_item(lifecycle);
-                self.observe_item_started(
-                    turn_id.clone(),
-                    item_id.clone(),
-                    call_id.clone(),
-                    kind.clone(),
-                    title.clone(),
-                    rollout_index,
-                );
-                let started_item = self
-                    .items_by_item_id
-                    .get(item_id)
-                    .and_then(projected_item_to_transcript_item)
-                    .unwrap_or_else(|| fallback_started_item(item_id, kind, title.as_deref()));
+                self.observe_item_started(turn_id.clone(), item.clone(), rollout_index);
                 vec![AppServerNotification::ItemStarted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id: turn_id.clone(),
-                    call_id: call_id.clone(),
-                    item: started_item,
+                    item: item.clone(),
                 }]
             }
             EventMsg::ItemDelta {
@@ -134,12 +118,12 @@ impl ConversationNotificationProjector {
                         delta: delta.clone(),
                     }]
                 }
-                TurnItemDeltaKind::FileChangeOutput => {
+                TurnItemDeltaKind::JsonPatch => {
                     self.observe_item_delta(turn_id, item_id, kind.clone(), delta, rollout_index);
                     if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
                         return vec![error];
                     }
-                    vec![AppServerNotification::FileChangeOutputDelta {
+                    vec![AppServerNotification::JsonPatchDelta {
                         conversation_id: self.conversation_id.clone(),
                         turn_id: turn_id.clone(),
                         item_id: item_id.clone(),
@@ -149,8 +133,19 @@ impl ConversationNotificationProjector {
                         delta: delta.clone(),
                     }]
                 }
-                TurnItemDeltaKind::JsonPatch => Vec::new(),
             },
+            EventMsg::ItemProgress {
+                turn_id,
+                item_id,
+                call_id,
+                progress,
+            } => self.project_item_progress(turn_id, item_id, call_id, progress),
+            EventMsg::ItemMetricsUpdated {
+                turn_id,
+                item_id,
+                call_id,
+                metrics,
+            } => self.project_item_metrics(turn_id, item_id, call_id, metrics),
             EventMsg::ItemCompleted { .. } => Vec::new(),
             EventMsg::TokenUsageUpdated {
                 turn_id,
@@ -286,12 +281,19 @@ impl ConversationNotificationProjector {
             CoreTranscriptEvent::ItemCompleted {
                 turn_id,
                 call_id,
+                runtime_item,
                 item,
             } => {
                 let item_id = item.id().to_string();
                 let lifecycle_error = self.validate_active_lifecycle(&turn_id, &item_id, &call_id);
                 let lifecycle = self.remove_active_item(&item_id);
-                self.observe_item_completed(&turn_id, &item_id, &item, rollout_index);
+                self.observe_item_completed(
+                    &turn_id,
+                    &item_id,
+                    &runtime_item,
+                    &item,
+                    rollout_index,
+                );
                 let mut notifications = Vec::new();
                 if let Some(error) = lifecycle_error {
                     notifications.push(error);
@@ -299,8 +301,13 @@ impl ConversationNotificationProjector {
                 notifications.push(AppServerNotification::ItemCompleted {
                     conversation_id: self.conversation_id.clone(),
                     turn_id,
-                    call_id: call_id.or_else(|| lifecycle.and_then(|it| it.call_id)),
-                    item,
+                    item: RuntimeItem {
+                        call_id: call_id
+                            .or_else(|| lifecycle.and_then(|active| active.call_id))
+                            .or(runtime_item.call_id),
+                        ..runtime_item
+                    },
+                    transcript_item: item,
                 });
                 notifications
             }
@@ -427,6 +434,54 @@ impl ConversationNotificationProjector {
         vec![build(self.conversation_id.clone(), turn_id, item_id, delta)]
     }
 
+    fn project_item_progress(
+        &mut self,
+        turn_id: &str,
+        item_id: &str,
+        call_id: &Option<String>,
+        progress: &RuntimeItemProgress,
+    ) -> Vec<AppServerNotification> {
+        if let Some(item) = self.items_by_item_id.get_mut(item_id) {
+            item.update_progress(progress.clone());
+        }
+        if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
+            return vec![error];
+        }
+        vec![AppServerNotification::ItemProgress {
+            conversation_id: self.conversation_id.clone(),
+            turn_id: turn_id.to_string(),
+            item_id: item_id.to_string(),
+            call_id: call_id
+                .clone()
+                .or_else(|| self.call_id_for_item(item_id).map(str::to_owned)),
+            progress: progress.clone(),
+        }]
+    }
+
+    fn project_item_metrics(
+        &mut self,
+        turn_id: &str,
+        item_id: &str,
+        call_id: &Option<String>,
+        metrics: &RuntimeItemMetrics,
+    ) -> Vec<AppServerNotification> {
+        if let Some(item) = self.items_by_item_id.get_mut(item_id) {
+            item.update_metrics(metrics.clone());
+        }
+        if let Some(error) = self.validate_active_lifecycle(turn_id, item_id, call_id) {
+            return vec![error];
+        }
+        vec![AppServerNotification::ItemMetricsUpdated {
+            conversation_id: self.conversation_id.clone(),
+            turn_id: turn_id.to_string(),
+            item_id: item_id.to_string(),
+            call_id: call_id
+                .clone()
+                .or_else(|| self.call_id_for_item(item_id).map(str::to_owned)),
+            metrics: metrics.clone(),
+        }]
+    }
+
     fn mark_reasoning_summary_part_opened(&mut self, item_id: &str) -> bool {
         let Some(item) = self.items_by_item_id.get_mut(item_id) else {
             return false;
@@ -537,16 +592,9 @@ impl ConversationNotificationProjector {
             .and_then(|lifecycle| lifecycle.call_id.as_deref())
     }
 
-    fn observe_item_started(
-        &mut self,
-        turn_id: String,
-        item_id: String,
-        call_id: Option<String>,
-        kind: TurnItemKind,
-        title: Option<String>,
-        rollout_index: usize,
-    ) {
+    fn observe_item_started(&mut self, turn_id: String, item: RuntimeItem, rollout_index: usize) {
         let order_hint = self.bump_item_order_hint();
+        let item_id = item.id.clone();
         self.turns_by_turn_id
             .entry(turn_id.clone())
             .or_insert_with(|| TurnProjectionState::new(rollout_index))
@@ -554,7 +602,7 @@ impl ConversationNotificationProjector {
         self.touch_turn(&turn_id, rollout_index);
         self.items_by_item_id.insert(
             item_id.clone(),
-            ProjectedItemState::new(turn_id, item_id, call_id, kind, title, order_hint),
+            ProjectedItemState::from_runtime_item(turn_id, item, order_hint),
         );
     }
 
@@ -576,6 +624,7 @@ impl ConversationNotificationProjector {
         &mut self,
         turn_id: &str,
         item_id: &str,
+        runtime_item: &RuntimeItem,
         completed_item: &TranscriptItem,
         rollout_index: usize,
     ) {
@@ -584,14 +633,17 @@ impl ConversationNotificationProjector {
             item_state.kind = turn_item_kind_for_transcript_item(completed_item);
         }
         self.touch_turn(turn_id, rollout_index);
-        self.items_by_item_id.insert(
-            item_id.to_string(),
-            projected_item_from_transcript_item(
-                turn_id.to_string(),
-                completed_item.clone(),
-                rollout_index,
-            ),
+        let mut projected = projected_item_from_transcript_item(
+            turn_id.to_string(),
+            completed_item.clone(),
+            rollout_index,
         );
+        projected.call_id = runtime_item.call_id.clone().or(projected.call_id);
+        projected.summary = runtime_item.summary.clone().or(projected.summary);
+        projected.tool_identity = runtime_item.tool_identity.clone();
+        projected.structured = runtime_item.structured.clone().or(projected.structured);
+        projected.metrics = runtime_item.metrics.clone().or(projected.metrics);
+        self.items_by_item_id.insert(item_id.to_string(), projected);
         if let Some(turn) = self.turns_by_turn_id.get_mut(turn_id) {
             turn.push_item(item_id);
         }
@@ -637,12 +689,18 @@ impl ConversationNotificationProjector {
                 call_id: None,
                 kind: TurnItemKind::UserMessage,
                 title: None,
+                summary: None,
+                tool_identity: None,
+                structured: None,
+                progress: None,
+                metrics: None,
                 status: ProjectedItemStatus::Completed,
                 last_delta_kind: None,
                 user_content: user_input.clone(),
                 text_buffer: String::new(),
                 reasoning_buffer: String::new(),
                 tool_output_buffer: String::new(),
+                patch_buffer: String::new(),
                 reasoning_summary_part_opened: false,
                 order_hint,
             },
@@ -691,17 +749,24 @@ impl ConversationNotificationProjector {
 
     pub(crate) fn turn_snapshot(&self, turn_id: &str) -> Option<ConversationTurn> {
         let turn = self.turns_by_turn_id.get(turn_id)?;
-        let items = self
-            .stable_item_ids_for_turn(turn_id)
-            .into_iter()
-            .filter_map(|item_id| self.items_by_item_id.get(&item_id))
+        let stable_item_ids = self.stable_item_ids_for_turn(turn_id);
+        let items = stable_item_ids
+            .iter()
+            .filter_map(|item_id| self.items_by_item_id.get(item_id))
             .filter_map(projected_item_to_transcript_item)
             .filter(|item| !projected_transcript_item_is_empty(item))
+            .collect::<Vec<_>>();
+        let runtime_items = stable_item_ids
+            .iter()
+            .filter_map(|item_id| self.items_by_item_id.get(item_id))
+            .filter(|item| item.status == ProjectedItemStatus::Started)
+            .map(ProjectedItemState::runtime_snapshot)
             .collect::<Vec<_>>();
         Some(ConversationTurn {
             id: turn_id.to_string(),
             state: turn.state.clone(),
             items,
+            runtime_items,
             rollout_start_index: turn.rollout_start_index,
             rollout_end_index: turn.rollout_end_index,
         })

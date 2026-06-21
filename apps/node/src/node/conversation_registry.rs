@@ -205,6 +205,7 @@ mod tests {
                         text: "world".to_string(),
                     },
                 ],
+                runtime_items: Vec::new(),
                 rollout_start_index: 0,
                 rollout_end_index: 0,
             }],

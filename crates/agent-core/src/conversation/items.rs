@@ -1,3 +1,4 @@
+use crate::runtime_item::RuntimeItemSnapshot;
 use crate::tool::{CommandExecutionStatus, StructuredToolResult, WriteFileStatus};
 use crate::turn::TurnState;
 use serde::{Deserialize, Serialize};
@@ -78,6 +79,8 @@ pub struct ConversationTurn {
     pub id: String,
     pub state: TurnState,
     pub items: Vec<TranscriptItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_items: Vec<RuntimeItemSnapshot>,
     pub rollout_start_index: usize,
     pub rollout_end_index: usize,
 }

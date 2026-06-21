@@ -1,12 +1,13 @@
-use super::tool_operation::{ToolOperation, classify_structured_result, classify_tool_name};
+use super::tool_operation::{ToolOperation, classify_tool_operation};
 use super::{ExplorationAggregate, HistoryCell, HistoryTone};
 use crate::app::conversation::exploration::{
     is_exploration_command, summarize_exploration_command,
 };
+use crate::runtime_metrics_display::format_runtime_metrics;
 use crate::tool_identity::WEB_SEARCH_TOOL_NAME;
 use agent_core::{
-    CommandExecutionStatus, SearchWorkspaceMode, SearchWorkspaceStatus, StructuredToolResult,
-    TurnItemKind, WriteFileStatus,
+    CommandExecutionStatus, RuntimeItem, SearchWorkspaceMode, SearchWorkspaceStatus,
+    StructuredToolResult, TurnItemKind, WriteFileStatus, web_search_detail,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +47,12 @@ pub(super) fn render_active_placeholder(kind: TurnItemKind, title: &str) -> Hist
             Some("running".to_string()),
             HistoryTone::Control,
         ),
+        TurnItemKind::FileChange => HistoryCell::edit(
+            humanize_tool_label(title),
+            "running",
+            None,
+            HistoryTone::Control,
+        ),
         TurnItemKind::ToolCall => HistoryCell::info(
             humanize_tool_label(title),
             "running".to_string(),
@@ -62,6 +69,43 @@ pub(super) fn render_active_placeholder(kind: TurnItemKind, title: &str) -> Hist
             HistoryTone::Control,
         ),
     }
+}
+
+pub(super) fn render_active_runtime_item(item: &RuntimeItem) -> HistoryCell {
+    let title = item.title.as_deref().unwrap_or("");
+    let mut cell = render_active_placeholder(item.kind.clone(), title);
+
+    let summary = match item.structured.as_ref() {
+        Some(StructuredToolResult::WebSearch { query, action, .. }) => {
+            let detail = web_search_detail(query, action.as_ref());
+            (!detail.trim().is_empty()).then_some(detail)
+        }
+        _ => item
+            .progress
+            .as_ref()
+            .and_then(|progress| progress.message.clone())
+            .or_else(|| item.summary.clone()),
+    };
+
+    if let Some(summary) = summary
+        && !summary.trim().is_empty()
+    {
+        match item.kind {
+            TurnItemKind::CommandExecution => {}
+            _ => cell.replace_body(summary),
+        }
+    }
+
+    if let Some(detail) = item.metrics.as_ref().and_then(format_runtime_metrics)
+        && matches!(
+            item.kind,
+            TurnItemKind::FileChange | TurnItemKind::ToolResult
+        )
+    {
+        cell.append_detail(&detail);
+    }
+
+    cell
 }
 
 pub(super) fn render_command_execution(
@@ -279,17 +323,15 @@ pub(super) fn render_tool_result(
         );
     }
 
-    if matches!(
-        structured.map(classify_structured_result),
-        Some(ToolOperation::Search | ToolOperation::Read)
-    ) {
+    let operation = classify_tool_operation(Some(tool_name), structured, None);
+    if matches!(operation, ToolOperation::Search | ToolOperation::Read) {
         let detail = content
             .lines()
             .find(|line| !line.trim().is_empty())
             .map(|line| compact_inline(line, 72))
             .unwrap_or_else(|| "completed".to_string());
         let mut aggregate = ExplorationAggregate::new(detail);
-        if matches!(classify_tool_name(tool_name), ToolOperation::Search) {
+        if matches!(operation, ToolOperation::Search) {
             aggregate.searches = 1;
         } else {
             aggregate.metadata_reads = 1;

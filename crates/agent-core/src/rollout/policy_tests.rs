@@ -1,22 +1,36 @@
 use super::*;
 use crate::conversation::TranscriptItem;
 use crate::model::ModelUsage;
+use crate::runtime_item::RuntimeItem;
 use crate::turn::{TurnItemDeltaKind, TurnItemKind};
 
 fn event_item(event: EventMsg) -> RolloutItem {
     RolloutItem::from(event)
 }
 
+fn started(turn_id: &str, item_id: &str, kind: TurnItemKind) -> EventMsg {
+    EventMsg::ItemStarted {
+        turn_id: turn_id.to_string(),
+        item: RuntimeItem::started(item_id, None, kind, None),
+    }
+}
+
+fn completed(turn_id: &str, item: TranscriptItem) -> EventMsg {
+    EventMsg::ItemCompleted {
+        turn_id: turn_id.to_string(),
+        runtime_item: RuntimeItem::completed(&item, None),
+        transcript_item: item,
+    }
+}
+
 #[test]
 fn filters_streaming_lifecycle_events() {
     let items = vec![
-        event_item(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:1".to_string(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: None,
-        }),
+        event_item(started(
+            "turn-1",
+            "assistant:1",
+            TurnItemKind::AssistantMessage,
+        )),
         event_item(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:1".to_string(),
@@ -25,15 +39,13 @@ fn filters_streaming_lifecycle_events() {
             segment_index: None,
             delta: "hello".to_string(),
         }),
-        event_item(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:1".to_string(),
-            call_id: None,
-            item: TranscriptItem::AgentMessage {
+        event_item(completed(
+            "turn-1",
+            TranscriptItem::AgentMessage {
                 id: "assistant:1".to_string(),
                 text: "hello".to_string(),
             },
-        }),
+        )),
     ];
 
     let persisted = persisted_rollout_items(&items, RolloutPersistenceMode::Limited);

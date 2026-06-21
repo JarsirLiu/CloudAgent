@@ -1,4 +1,5 @@
 use crate::conversation::TranscriptItem;
+use crate::runtime_item::RuntimeItem;
 use crate::turn::{EventMsg, TurnId, TurnItemDeltaKind};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +25,7 @@ pub enum CoreTranscriptEvent {
     ItemCompleted {
         turn_id: TurnId,
         call_id: Option<String>,
+        runtime_item: RuntimeItem,
         item: TranscriptItem,
     },
     AgentMessageDelta {
@@ -86,18 +88,18 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
             }),
             TurnItemDeltaKind::CommandExecutionOutput
             | TurnItemDeltaKind::ToolOutput
-            | TurnItemDeltaKind::FileChangeOutput
             | TurnItemDeltaKind::JsonPatch => None,
         },
         EventMsg::ItemCompleted {
             turn_id,
-            call_id,
-            item,
+            runtime_item,
+            transcript_item,
             ..
         } => Some(CoreTranscriptEvent::ItemCompleted {
             turn_id: turn_id.clone(),
-            call_id: call_id.clone(),
-            item: item.clone(),
+            call_id: runtime_item.call_id.clone(),
+            runtime_item: runtime_item.clone(),
+            item: transcript_item.clone(),
         }),
         EventMsg::TurnCompleted { turn_id, .. } => Some(CoreTranscriptEvent::TurnCompleted {
             turn_id: turn_id.clone(),
@@ -110,6 +112,8 @@ pub fn core_transcript_event_from_event_msg(event: &EventMsg) -> Option<CoreTran
         | EventMsg::ContextCompactionStarted { .. }
         | EventMsg::ModelRetrying { .. }
         | EventMsg::ItemStarted { .. }
+        | EventMsg::ItemProgress { .. }
+        | EventMsg::ItemMetricsUpdated { .. }
         | EventMsg::ServerRequestRequested { .. }
         | EventMsg::ServerRequestResolved { .. }
         | EventMsg::TurnFailed { .. }
@@ -125,9 +129,7 @@ pub fn classify_event_msg(event: &EventMsg) -> (EventStream, EventDelivery) {
             | TurnItemDeltaKind::ReasoningText => {
                 (EventStream::CoreTranscript, EventDelivery::Lossless)
             }
-            TurnItemDeltaKind::CommandExecutionOutput
-            | TurnItemDeltaKind::ToolOutput
-            | TurnItemDeltaKind::FileChangeOutput => {
+            TurnItemDeltaKind::CommandExecutionOutput | TurnItemDeltaKind::ToolOutput => {
                 (EventStream::Control, EventDelivery::BestEffort)
             }
             TurnItemDeltaKind::JsonPatch => (EventStream::Diagnostic, EventDelivery::InternalOnly),
@@ -136,6 +138,8 @@ pub fn classify_event_msg(event: &EventMsg) -> (EventStream, EventDelivery) {
             (EventStream::CoreTranscript, EventDelivery::Lossless)
         }
         EventMsg::ItemStarted { .. }
+        | EventMsg::ItemProgress { .. }
+        | EventMsg::ItemMetricsUpdated { .. }
         | EventMsg::ServerRequestRequested { .. }
         | EventMsg::ServerRequestResolved { .. }
         | EventMsg::TurnStarted { .. }

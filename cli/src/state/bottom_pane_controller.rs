@@ -11,7 +11,9 @@ use crate::ui::bottom_pane::input_pane::{
 };
 use agent_core::InputItem;
 use agent_core::SkillMetadata;
-use agent_core::{ConversationSummary, ModelRetryStage, TurnItemKind};
+use agent_core::{
+    ConversationSummary, ModelRetryStage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress,
+};
 use agent_protocol::{FrontendMode, PlatformConfigResponse, PlatformControlEntry, RequestId};
 use config::ReasoningEffort;
 use crossterm::event::KeyEvent;
@@ -72,6 +74,22 @@ impl BottomPaneController {
         self.runtime.on_tool_output_delta(item_id, delta);
     }
 
+    pub(crate) fn on_item_progress(
+        &mut self,
+        item_id: Option<&str>,
+        progress: &RuntimeItemProgress,
+    ) {
+        self.runtime.on_item_progress(item_id, progress);
+    }
+
+    pub(crate) fn on_item_metrics_updated(
+        &mut self,
+        item_id: Option<&str>,
+        metrics: &RuntimeItemMetrics,
+    ) {
+        self.runtime.on_item_metrics_updated(item_id, metrics);
+    }
+
     pub(crate) fn on_command_finished(&mut self, item_id: &str) {
         self.runtime.on_command_finished(item_id);
     }
@@ -98,13 +116,8 @@ impl BottomPaneController {
             .on_model_retrying(stage, attempt, next_delay_ms);
     }
 
-    pub(crate) fn on_active_item_started(
-        &mut self,
-        item_id: &str,
-        kind: &TurnItemKind,
-        title: Option<&str>,
-    ) {
-        self.runtime.on_active_item_started(item_id, kind, title);
+    pub(crate) fn on_active_item_started(&mut self, item: &RuntimeItem) {
+        self.runtime.on_active_item_started(item);
     }
 
     pub(crate) fn prepare_for_submit(&mut self) {

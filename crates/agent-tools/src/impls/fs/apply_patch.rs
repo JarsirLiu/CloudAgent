@@ -4,8 +4,8 @@ use crate::registry::shared::{
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{
-    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
-    TurnItemDeltaKind, TurnItemKind, WriteFileStatus,
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolOutputDelta,
+    ToolOutputKind, ToolOutputStream, ToolSpec, TurnItemDeltaKind, TurnItemKind, WriteFileStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -121,6 +121,7 @@ impl LocalTool for ApplyPatchLocalTool {
             .payload
             .parse_arguments()
             .map_err(format_apply_patch_failure)?;
+        emit_patch_delta(&args.patch, ctx);
         let file_patches = parse_unified_patch(&args.patch).map_err(format_apply_patch_failure)?;
         if file_patches.is_empty() {
             anyhow::bail!(invalid_patch_message(&args.patch));
@@ -143,6 +144,20 @@ impl LocalTool for ApplyPatchLocalTool {
             }),
         })
     }
+}
+
+fn emit_patch_delta(patch: &str, ctx: &ToolExecutionContext) {
+    let Some(output_tx) = &ctx.output_tx else {
+        return;
+    };
+    if patch.trim().is_empty() {
+        return;
+    }
+    let _ = output_tx.send(ToolOutputDelta {
+        stream: ToolOutputStream::Stdout,
+        kind: ToolOutputKind::JsonPatch,
+        chunk: patch.to_string(),
+    });
 }
 
 fn format_apply_patch_failure(err: anyhow::Error) -> anyhow::Error {

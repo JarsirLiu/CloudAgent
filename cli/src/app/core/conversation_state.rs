@@ -7,8 +7,9 @@ use crate::state::bottom_pane_controller::BottomPaneController;
 use crate::state::reducer::TurnDispatch;
 use crate::ui::history_cell::{HistoryCell, HistoryTone};
 use crate::ui::transcript_render_cache::TranscriptRenderCache;
+use agent_core::RuntimeItem;
 use agent_core::conversation::InputItem;
-use agent_core::turn::{ModelRetryStage, TurnItemKind};
+use agent_core::turn::ModelRetryStage;
 use agent_protocol::{
     ConversationActiveFlag, ConversationViewSnapshot, ConversationViewStatus, FrontendMode,
     RequestId,
@@ -103,14 +104,8 @@ impl TuiApp {
             .on_model_retrying(stage, attempt, next_delay_ms);
     }
 
-    pub(crate) fn on_server_active_item_started(
-        &mut self,
-        item_id: &str,
-        kind: &TurnItemKind,
-        title: Option<&str>,
-    ) {
-        self.bottom_pane
-            .on_active_item_started(item_id, kind, title);
+    pub(crate) fn on_server_active_item_started(&mut self, item: &RuntimeItem) {
+        self.bottom_pane.on_active_item_started(item);
     }
 
     pub(crate) fn show_server_request_prompt(

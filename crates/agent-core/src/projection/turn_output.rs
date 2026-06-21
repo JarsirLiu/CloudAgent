@@ -26,7 +26,10 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
 
     for event in events {
         match event {
-            EventMsg::ItemCompleted { item, .. } => match item {
+            EventMsg::ItemCompleted {
+                transcript_item: item,
+                ..
+            } => match item {
                 TranscriptItem::CommandExecution {
                     tool_name,
                     status,
@@ -95,6 +98,8 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
             | EventMsg::ContextCompactionStarted { .. }
             | EventMsg::ItemStarted { .. }
             | EventMsg::ItemDelta { .. }
+            | EventMsg::ItemProgress { .. }
+            | EventMsg::ItemMetricsUpdated { .. }
             | EventMsg::ServerRequestRequested { .. }
             | EventMsg::ServerRequestResolved { .. }
             | EventMsg::TurnCompleted { .. }

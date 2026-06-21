@@ -1,5 +1,5 @@
 use crate::gateway_event::{GatewayEvent, GatewayItemDeltaKind, OutboundTarget};
-use agent_core::TranscriptItem;
+use agent_core::{RuntimeItem, TranscriptItem, TurnItemKind};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -39,10 +39,15 @@ impl WeixinOutboundRenderer {
                 delta,
                 ..
             } => self.render_item_delta(target, kind, delta),
-            GatewayEvent::ReasoningSummaryPartAdded { .. } => Vec::new(),
-            GatewayEvent::ItemCompleted { target, item, .. } => {
-                self.render_item_completed(target, item)
+            GatewayEvent::ItemProgress { .. } | GatewayEvent::ItemMetricsUpdated { .. } => {
+                Vec::new()
             }
+            GatewayEvent::ReasoningSummaryPartAdded { .. } => Vec::new(),
+            GatewayEvent::ItemCompleted {
+                target,
+                transcript_item,
+                ..
+            } => self.render_item_completed(target, transcript_item),
             GatewayEvent::ServerRequestRequested { .. }
             | GatewayEvent::ServerRequestResolved { .. }
             | GatewayEvent::TokenUsageUpdated { .. }
@@ -76,16 +81,17 @@ impl WeixinOutboundRenderer {
     fn render_item_started(
         &mut self,
         target: OutboundTarget,
-        item: TranscriptItem,
+        item: RuntimeItem,
     ) -> Vec<WeixinOutboundMessage> {
-        match item {
-            TranscriptItem::Reasoning { .. } => self.enter_reasoning(target.chat_id),
-            TranscriptItem::CommandExecution { .. }
-            | TranscriptItem::FileChange { .. }
-            | TranscriptItem::ToolResult { .. } => self.enter_tool(target.chat_id),
-            TranscriptItem::AgentMessage { .. }
-            | TranscriptItem::UserMessage { .. }
-            | TranscriptItem::SystemMessage { .. } => Vec::new(),
+        match item.kind {
+            TurnItemKind::Reasoning => self.enter_reasoning(target.chat_id),
+            TurnItemKind::CommandExecution
+            | TurnItemKind::FileChange
+            | TurnItemKind::ToolCall
+            | TurnItemKind::ToolResult => self.enter_tool(target.chat_id),
+            TurnItemKind::AssistantMessage
+            | TurnItemKind::UserMessage
+            | TurnItemKind::SystemNote => Vec::new(),
         }
     }
 
@@ -111,7 +117,7 @@ impl WeixinOutboundRenderer {
             }
             GatewayItemDeltaKind::CommandExecutionOutput
             | GatewayItemDeltaKind::ToolOutput
-            | GatewayItemDeltaKind::FileChangeOutput => Vec::new(),
+            | GatewayItemDeltaKind::JsonPatch => Vec::new(),
             GatewayItemDeltaKind::Plan => Vec::new(),
         }
     }

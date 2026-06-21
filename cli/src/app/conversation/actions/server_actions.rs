@@ -182,20 +182,10 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             app.transcript_owner
                 .bind_turn_id(turn_id, app.run_state.expand_tool_details);
         }
-        ServerAction::StartActiveTurnItem {
-            turn_id,
-            item_id,
-            kind,
-            title,
-        } => {
-            app.on_server_active_item_started(&item_id, &kind, title.as_deref());
-            app.transcript_owner.start_item(
-                turn_id,
-                item_id,
-                kind,
-                title,
-                app.run_state.expand_tool_details,
-            );
+        ServerAction::StartActiveTurnItem { turn_id, item } => {
+            app.on_server_active_item_started(&item);
+            app.transcript_owner
+                .start_item(turn_id, item, app.run_state.expand_tool_details);
         }
         ServerAction::AppendActiveAgentDelta {
             turn_id,
@@ -234,24 +224,64 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 app.run_state.expand_tool_details,
             );
         }
+        ServerAction::AppendActivePatchDelta {
+            turn_id,
+            item_id,
+            delta,
+        } => {
+            app.transcript_owner.append_patch_delta(
+                turn_id,
+                item_id,
+                delta,
+                app.run_state.expand_tool_details,
+            );
+        }
+        ServerAction::UpdateActiveItemProgress {
+            turn_id,
+            item_id,
+            progress,
+        } => {
+            app.bottom_pane.on_item_progress(Some(&item_id), &progress);
+            app.transcript_owner.update_item_progress(
+                turn_id,
+                item_id,
+                progress,
+                app.run_state.expand_tool_details,
+            );
+        }
+        ServerAction::UpdateActiveItemMetrics {
+            turn_id,
+            item_id,
+            metrics,
+        } => {
+            app.bottom_pane
+                .on_item_metrics_updated(Some(&item_id), &metrics);
+            app.transcript_owner.update_item_metrics(
+                turn_id,
+                item_id,
+                metrics,
+                app.run_state.expand_tool_details,
+            );
+        }
         ServerAction::AppendCommandOutputDelta { item_id, delta } => {
             app.bottom_pane
                 .on_command_output_delta(Some(&item_id), &delta);
         }
         ServerAction::CompleteActiveTurnItem {
             turn_id,
-            item_id,
             item,
+            transcript_item,
         } => {
-            if let agent_core::conversation::TranscriptItem::CommandExecution { status, .. } = &item
+            if let agent_core::conversation::TranscriptItem::CommandExecution { status, .. } =
+                &transcript_item
                 && !matches!(status, agent_core::CommandExecutionStatus::InProgress)
             {
-                app.bottom_pane.on_command_finished(&item_id);
+                app.bottom_pane.on_command_finished(&item.id);
             }
             app.transcript_owner.complete_item(
                 turn_id,
-                item_id,
-                item,
+                item.id,
+                transcript_item,
                 app.run_state.expand_tool_details,
             );
         }

@@ -1,4 +1,8 @@
 use super::*;
+use agent_core::{
+    RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress, RuntimeItemSnapshot, TurnItemKind,
+    TurnState,
+};
 use agent_protocol::{
     AppServerMessage, ConversationActiveFlag, ConversationViewStatus, ServerRequestViewKind,
 };
@@ -133,6 +137,69 @@ async fn user_input_guard_sets_and_clears_waiting_on_user_input() {
     ));
 }
 
+#[tokio::test]
+async fn runtime_item_snapshot_change_rebroadcasts_conversation_view() {
+    let (manager, mut rx) = test_manager();
+    manager
+        .note_turn_started(CONVERSATION_ID, "turn-1".to_string())
+        .await;
+    let _started = recv_conversation_view_changed(&mut rx).await;
+
+    manager
+        .note_active_turn_snapshot(
+            CONVERSATION_ID,
+            Some(runtime_turn(runtime_item_snapshot(
+                "ws-1",
+                "first query",
+                Some(2),
+            ))),
+        )
+        .await;
+    let initial = recv_conversation_view_changed(&mut rx).await;
+    assert_eq!(
+        initial
+            .active_turn
+            .as_ref()
+            .expect("active turn")
+            .runtime_items
+            .len(),
+        1
+    );
+
+    manager
+        .note_active_turn_snapshot(
+            CONVERSATION_ID,
+            Some(runtime_turn(runtime_item_snapshot(
+                "ws-1",
+                "refined query",
+                Some(4),
+            ))),
+        )
+        .await;
+    let updated = recv_conversation_view_changed(&mut rx).await;
+    let runtime_item = &updated
+        .active_turn
+        .as_ref()
+        .expect("active turn")
+        .runtime_items[0];
+    assert_eq!(
+        runtime_item
+            .item
+            .progress
+            .as_ref()
+            .and_then(|p| p.message.as_deref()),
+        Some("refined query")
+    );
+    assert_eq!(
+        runtime_item
+            .item
+            .metrics
+            .as_ref()
+            .and_then(|m| m.result_count),
+        Some(4)
+    );
+}
+
 fn test_manager() -> (
     ConversationWatchManager,
     mpsc::UnboundedReceiver<AppServerMessage>,
@@ -171,5 +238,47 @@ fn pending_request(request_id: RequestId) -> PendingServerRequestView {
         reason: "needs approval".to_string(),
         preview: "git status".to_string(),
         created_at_ms: 42,
+    }
+}
+
+fn runtime_turn(snapshot: RuntimeItemSnapshot) -> ConversationTurn {
+    ConversationTurn {
+        id: "turn-1".to_string(),
+        state: TurnState::Running,
+        items: Vec::new(),
+        runtime_items: vec![snapshot],
+        rollout_start_index: 0,
+        rollout_end_index: 0,
+    }
+}
+
+fn runtime_item_snapshot(
+    item_id: &str,
+    progress_message: &str,
+    result_count: Option<usize>,
+) -> RuntimeItemSnapshot {
+    RuntimeItemSnapshot {
+        item: RuntimeItem::started(
+            item_id,
+            Some("call-1".to_string()),
+            TurnItemKind::ToolResult,
+            Some("web_search".to_string()),
+        )
+        .with_progress(RuntimeItemProgress::message(progress_message))
+        .with_metrics(RuntimeItemMetrics {
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
+            elapsed_ms: None,
+            bytes_read: None,
+            bytes_written: None,
+            file_count: None,
+            source_count: Some(1),
+            result_count,
+        }),
+        text_buffer: String::new(),
+        reasoning_buffer: String::new(),
+        tool_output_buffer: progress_message.to_string(),
+        patch_buffer: String::new(),
     }
 }

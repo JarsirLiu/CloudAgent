@@ -463,6 +463,7 @@ mod tests {
                     text: "final answer".to_string(),
                 },
             ],
+            runtime_items: Vec::new(),
             rollout_start_index: 1,
             rollout_end_index: 4,
         }];
@@ -477,6 +478,7 @@ mod tests {
                     title: "Reasoning".to_string(),
                     text: "thinking".to_string(),
                 }],
+                runtime_items: Vec::new(),
                 rollout_start_index: 1,
                 rollout_end_index: 3,
             }),
@@ -511,6 +513,7 @@ mod tests {
                 id: format!("assistant:{id}"),
                 text: text.to_string(),
             }],
+            runtime_items: Vec::new(),
             rollout_start_index: 0,
             rollout_end_index: 0,
         }

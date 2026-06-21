@@ -1,7 +1,8 @@
 use super::{AutoCompactTokenLimitScope, AutoCompactWindow, RequestTokenBaseline, TurnHost};
 use crate::{
     ContextManager, EventMsg, ModelResponse, RolloutItem, TokenUsageState,
-    emit_assistant_message_item, emit_event, web_search_transcript_item,
+    emit_assistant_message_item, emit_event, web_search_runtime_item_completed,
+    web_search_transcript_item,
 };
 use anyhow::Result;
 
@@ -29,15 +30,18 @@ pub(super) async fn record_model_response<H: TurnHost>(
             .web_searches
             .iter()
             .map(|web_search| {
+                let transcript_item = web_search_transcript_item(
+                    web_search.id.clone(),
+                    web_search.query.clone(),
+                    web_search.action.clone(),
+                );
                 RolloutItem::from(EventMsg::ItemCompleted {
                     turn_id: turn_id.to_string(),
-                    item_id: web_search.id.clone(),
-                    call_id: Some(web_search.id.clone()),
-                    item: web_search_transcript_item(
+                    runtime_item: web_search_runtime_item_completed(
+                        &transcript_item,
                         web_search.id.clone(),
-                        web_search.query.clone(),
-                        web_search.action.clone(),
                     ),
+                    transcript_item,
                 })
             })
             .collect::<Vec<_>>();

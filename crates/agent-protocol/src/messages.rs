@@ -3,8 +3,8 @@ use crate::view_state::ConversationViewSnapshot;
 use crate::{RequestId, UserTurnInput};
 use agent_core::{
     CompactionPhase, CompactionReason, CompactionTrigger, ConversationSummary, ConversationTurn,
-    ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecision, SkillMetadata,
-    TranscriptItem, TurnId,
+    ModelRetryStage, ModelUsage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress,
+    ServerRequest, ServerRequestDecision, SkillMetadata, TranscriptItem, TurnId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -368,6 +368,7 @@ impl AppClientCommand {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppServerNotification {
     ConversationViewChanged {
@@ -381,8 +382,7 @@ pub enum AppServerNotification {
     ItemStarted {
         conversation_id: String,
         turn_id: TurnId,
-        call_id: Option<String>,
-        item: TranscriptItem,
+        item: RuntimeItem,
     },
     AgentMessageDelta {
         conversation_id: String,
@@ -430,12 +430,26 @@ pub enum AppServerNotification {
         call_id: Option<String>,
         delta: String,
     },
-    FileChangeOutputDelta {
+    JsonPatchDelta {
         conversation_id: String,
         turn_id: TurnId,
         item_id: String,
         call_id: Option<String>,
         delta: String,
+    },
+    ItemProgress {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        call_id: Option<String>,
+        progress: RuntimeItemProgress,
+    },
+    ItemMetricsUpdated {
+        conversation_id: String,
+        turn_id: TurnId,
+        item_id: String,
+        call_id: Option<String>,
+        metrics: RuntimeItemMetrics,
     },
     TokenUsageUpdated {
         conversation_id: String,
@@ -474,8 +488,8 @@ pub enum AppServerNotification {
     ItemCompleted {
         conversation_id: String,
         turn_id: TurnId,
-        call_id: Option<String>,
-        item: TranscriptItem,
+        item: RuntimeItem,
+        transcript_item: TranscriptItem,
     },
     ServerRequestRequested {
         conversation_id: String,
@@ -590,7 +604,13 @@ impl AppServerNotification {
             | Self::ToolOutputDelta {
                 conversation_id, ..
             }
-            | Self::FileChangeOutputDelta {
+            | Self::JsonPatchDelta {
+                conversation_id, ..
+            }
+            | Self::ItemProgress {
+                conversation_id, ..
+            }
+            | Self::ItemMetricsUpdated {
                 conversation_id, ..
             }
             | Self::TokenUsageUpdated {
@@ -721,6 +741,8 @@ pub fn classify_notification(
         AppServerNotification::TurnStarted { .. }
         | AppServerNotification::ConversationViewChanged { .. }
         | AppServerNotification::ItemStarted { .. }
+        | AppServerNotification::ItemProgress { .. }
+        | AppServerNotification::ItemMetricsUpdated { .. }
         | AppServerNotification::ServerRequestRequested { .. }
         | AppServerNotification::ServerRequestResolved { .. }
         | AppServerNotification::TokenUsageUpdated { .. }
@@ -739,9 +761,11 @@ pub fn classify_notification(
         | AppServerNotification::ConversationSubscriptionChanged { .. } => {
             (NotificationStream::Control, NotificationDelivery::Lossless)
         }
+        AppServerNotification::JsonPatchDelta { .. } => {
+            (NotificationStream::Control, NotificationDelivery::Lossless)
+        }
         AppServerNotification::CommandExecutionOutputDelta { .. }
-        | AppServerNotification::ToolOutputDelta { .. }
-        | AppServerNotification::FileChangeOutputDelta { .. } => (
+        | AppServerNotification::ToolOutputDelta { .. } => (
             NotificationStream::Control,
             NotificationDelivery::BestEffort,
         ),

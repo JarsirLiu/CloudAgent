@@ -64,6 +64,8 @@ fn should_persist_event_msg_limited(event: &EventMsg) -> bool {
         | EventMsg::ModelRetrying { .. }
         | EventMsg::ContextCompactionStarted { .. }
         | EventMsg::ItemStarted { .. }
+        | EventMsg::ItemProgress { .. }
+        | EventMsg::ItemMetricsUpdated { .. }
         | EventMsg::ItemDelta { .. }
         | EventMsg::ItemCompleted { .. } => false,
     }

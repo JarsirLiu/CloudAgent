@@ -6,7 +6,7 @@ use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
 use agent_app_server_client::{AppServerClient, AppServerEvent};
-use agent_core::text_input_items;
+use agent_core::{TurnItemKind, text_input_items};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, TurnPolicy, UserTurnInput,
 };
@@ -194,7 +194,9 @@ fn notification_turn_id(notification: &AppServerNotification) -> Option<&str> {
         | AppServerNotification::ReasoningTextDelta { turn_id, .. }
         | AppServerNotification::CommandExecutionOutputDelta { turn_id, .. }
         | AppServerNotification::ToolOutputDelta { turn_id, .. }
-        | AppServerNotification::FileChangeOutputDelta { turn_id, .. }
+        | AppServerNotification::JsonPatchDelta { turn_id, .. }
+        | AppServerNotification::ItemProgress { turn_id, .. }
+        | AppServerNotification::ItemMetricsUpdated { turn_id, .. }
         | AppServerNotification::TokenUsageUpdated { turn_id, .. }
         | AppServerNotification::ModelRetrying { turn_id, .. }
         | AppServerNotification::ItemCompleted { turn_id, .. }
@@ -217,13 +219,13 @@ fn event_name(event: &AppServerEvent) -> &'static str {
             AppServerNotification::ReasoningTextDelta { .. } => "reasoning_text_delta",
             AppServerNotification::CommandExecutionOutputDelta { .. } => "command_output_delta",
             AppServerNotification::ToolOutputDelta { .. } => "tool_output_delta",
-            AppServerNotification::FileChangeOutputDelta { .. } => "file_change_output_delta",
-            AppServerNotification::ItemCompleted { item, .. } => match item {
-                agent_core::TranscriptItem::AgentMessage { .. } => "agent_message_completed",
-                agent_core::TranscriptItem::Reasoning { .. } => "reasoning_completed",
-                agent_core::TranscriptItem::CommandExecution { .. } => "command_completed",
-                agent_core::TranscriptItem::FileChange { .. } => "file_change_completed",
-                agent_core::TranscriptItem::ToolResult { .. } => "tool_result_completed",
+            AppServerNotification::JsonPatchDelta { .. } => "json_patch_delta",
+            AppServerNotification::ItemCompleted { item, .. } => match item.kind {
+                TurnItemKind::AssistantMessage => "agent_message_completed",
+                TurnItemKind::Reasoning => "reasoning_completed",
+                TurnItemKind::CommandExecution => "command_completed",
+                TurnItemKind::FileChange => "file_change_completed",
+                TurnItemKind::ToolCall | TurnItemKind::ToolResult => "tool_result_completed",
                 _ => "item_completed_other",
             },
             AppServerNotification::TurnCompleted { .. } => "turn_completed",
@@ -257,6 +259,26 @@ fn log_outbounds(session_key: &str, event_name: &str, outbounds: &[GatewayEvent]
                 kind = ?kind,
                 chars = delta.chars().count(),
                 preview = %preview(delta, 120),
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::ItemProgress {
+                item_id, progress, ..
+            } => debug!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "item_progress",
+                item_id,
+                progress = ?progress,
+                "weixin.runtime.outbound.generated"
+            ),
+            GatewayEvent::ItemMetricsUpdated {
+                item_id, metrics, ..
+            } => debug!(
+                session_key = %session_key,
+                event = event_name,
+                kind = "item_metrics_updated",
+                item_id,
+                metrics = ?metrics,
                 "weixin.runtime.outbound.generated"
             ),
             GatewayEvent::ReasoningSummaryPartAdded {

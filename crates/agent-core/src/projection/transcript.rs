@@ -2,6 +2,7 @@ use crate::conversation::{
     ConversationTurn, ResponseItem, TranscriptItem, input_items_to_plain_text,
 };
 use crate::rollout::RolloutItem;
+use crate::runtime_item::RuntimeItem;
 use crate::tool::StructuredToolResult;
 use crate::turn::{EventMsg, TurnItemDeltaKind, TurnItemKind, TurnState};
 use std::collections::HashMap;
@@ -157,16 +158,9 @@ impl ConversationHistoryBuilder {
                     user_input.clone(),
                 ));
             }
-            EventMsg::ItemStarted {
-                turn_id,
-                item_id,
-                kind,
-                title,
-                ..
-            } => {
-                if let Some(item) = transcript_item_from_item_start(item_id, kind, title.as_deref())
-                {
-                    self.upsert_item_in_turn_id_allow_empty(turn_id, item);
+            EventMsg::ItemStarted { turn_id, item, .. } => {
+                if let Some(transcript_item) = transcript_item_from_item_start(item) {
+                    self.upsert_item_in_turn_id_allow_empty(turn_id, transcript_item);
                 }
             }
             EventMsg::ItemDelta {
@@ -178,8 +172,12 @@ impl ConversationHistoryBuilder {
             } => {
                 self.append_delta_to_item(turn_id, item_id, kind, delta);
             }
-            EventMsg::ItemCompleted { turn_id, item, .. } => {
-                self.upsert_item_in_turn_id(turn_id, item.clone());
+            EventMsg::ItemCompleted {
+                turn_id,
+                transcript_item,
+                ..
+            } => {
+                self.upsert_item_in_turn_id(turn_id, transcript_item.clone());
             }
             EventMsg::TurnFailed { turn_id, error } => {
                 self.mark_unfinished_items_in_turn(turn_id, "failed");
@@ -213,7 +211,9 @@ impl ConversationHistoryBuilder {
             | EventMsg::ContextCompacted { .. }
             | EventMsg::ContextCompactionStarted { .. }
             | EventMsg::ServerRequestRequested { .. }
-            | EventMsg::ServerRequestResolved { .. } => {}
+            | EventMsg::ServerRequestResolved { .. }
+            | EventMsg::ItemProgress { .. }
+            | EventMsg::ItemMetricsUpdated { .. } => {}
         }
     }
 
@@ -432,9 +432,6 @@ fn append_delta_to_transcript_item(
             }
             summary.push_str(delta);
         }
-        (TranscriptItem::FileChange { summary, .. }, TurnItemDeltaKind::FileChangeOutput) => {
-            summary.push_str(delta);
-        }
         (
             TranscriptItem::ToolResult {
                 summary, content, ..
@@ -448,19 +445,15 @@ fn append_delta_to_transcript_item(
     }
 }
 
-fn transcript_item_from_item_start(
-    item_id: &str,
-    kind: &TurnItemKind,
-    title: Option<&str>,
-) -> Option<TranscriptItem> {
-    let title = title.unwrap_or_default().to_string();
-    match kind {
+fn transcript_item_from_item_start(item: &RuntimeItem) -> Option<TranscriptItem> {
+    let title = item.title.as_deref().unwrap_or_default().to_string();
+    match item.kind {
         TurnItemKind::AssistantMessage => Some(TranscriptItem::AgentMessage {
-            id: item_id.to_string(),
+            id: item.id.clone(),
             text: String::new(),
         }),
         TurnItemKind::Reasoning => Some(TranscriptItem::Reasoning {
-            id: item_id.to_string(),
+            id: item.id.clone(),
             title: if title.is_empty() {
                 "reasoning".to_string()
             } else {
@@ -469,7 +462,7 @@ fn transcript_item_from_item_start(
             text: String::new(),
         }),
         TurnItemKind::CommandExecution => Some(TranscriptItem::CommandExecution {
-            id: item_id.to_string(),
+            id: item.id.clone(),
             tool_name: "exec_command".to_string(),
             command: title,
             current_directory: String::new(),
@@ -480,7 +473,7 @@ fn transcript_item_from_item_start(
             summary: String::new(),
         }),
         TurnItemKind::FileChange => Some(TranscriptItem::FileChange {
-            id: item_id.to_string(),
+            id: item.id.clone(),
             tool_name: "edit_file".to_string(),
             path: title,
             status: crate::tool::WriteFileStatus::InProgress,
@@ -488,7 +481,7 @@ fn transcript_item_from_item_start(
             summary: String::new(),
         }),
         TurnItemKind::ToolCall | TurnItemKind::ToolResult => Some(TranscriptItem::ToolResult {
-            id: item_id.to_string(),
+            id: item.id.clone(),
             tool_name: title,
             content: String::new(),
             summary: String::new(),
@@ -504,6 +497,7 @@ impl From<&PendingConversationTurn> for ConversationTurn {
             id: turn.id.clone(),
             state: turn.state.clone(),
             items: turn.items.clone(),
+            runtime_items: Vec::new(),
             rollout_start_index: turn.rollout_start_index,
             rollout_end_index: turn.rollout_end_index,
         }

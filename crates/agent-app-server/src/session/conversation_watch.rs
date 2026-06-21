@@ -327,11 +327,42 @@ fn same_active_turn(left: Option<&ConversationTurn>, right: Option<&Conversation
             left.id == right.id
                 && left.state == right.state
                 && left.items.len() == right.items.len()
+                && same_runtime_items(&left.runtime_items, &right.runtime_items)
                 && left.rollout_start_index == right.rollout_start_index
                 && left.rollout_end_index == right.rollout_end_index
         }
         _ => false,
     }
+}
+
+fn same_runtime_items(
+    left: &[agent_core::RuntimeItemSnapshot],
+    right: &[agent_core::RuntimeItemSnapshot],
+) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right.iter())
+            .all(|(left, right)| same_runtime_item_snapshot(left, right))
+}
+
+fn same_runtime_item_snapshot(
+    left: &agent_core::RuntimeItemSnapshot,
+    right: &agent_core::RuntimeItemSnapshot,
+) -> bool {
+    left.item.id == right.item.id
+        && left.item.call_id == right.item.call_id
+        && left.item.kind == right.item.kind
+        && left.item.title == right.item.title
+        && left.item.status == right.item.status
+        && left.item.summary == right.item.summary
+        && left.item.tool_identity == right.item.tool_identity
+        && left.item.progress == right.item.progress
+        && left.item.metrics == right.item.metrics
+        && left.text_buffer == right.text_buffer
+        && left.reasoning_buffer == right.reasoning_buffer
+        && left.tool_output_buffer == right.tool_output_buffer
+        && left.patch_buffer == right.patch_buffer
 }
 
 fn same_pending_requests(

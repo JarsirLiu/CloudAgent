@@ -8,6 +8,7 @@ pub mod observability;
 pub mod output_truncation;
 pub mod projection;
 pub mod rollout;
+pub mod runtime_item;
 pub mod skill;
 pub mod state;
 pub mod tool;
@@ -56,6 +57,9 @@ pub use rollout::{
     policy::{RolloutPersistenceMode, persisted_rollout_item, persisted_rollout_items},
     reconstruction::conversation_history_from_rollout_items,
 };
+pub use runtime_item::{
+    RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress, RuntimeItemSnapshot, RuntimeItemStatus,
+};
 pub use skill::{
     SkillCatalog, SkillDependencies, SkillDocument, SkillInvocationMode, SkillMetadata,
     SkillRuntime, SkillScaffoldOutcome, SkillScaffoldSpec, SkillScope, SkillValidationReport,
@@ -70,9 +74,9 @@ pub use tool::{
     ReadFileStatus, ResolvedToolSet, SearchWorkspaceHit, SearchWorkspaceMode,
     SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult, ToolBackend,
     ToolBatchExecutionStrategy, ToolCall, ToolEvent, ToolExecutionPolicy, ToolExecutor,
-    ToolIdentity, ToolOutputDelta, ToolOutputStream, ToolResult, ToolSearchHit, ToolSource,
-    ToolSpec, WriteFileStatus, execute_tool_call_streaming, run_parallel_tool_invocations,
-    summarize_arguments,
+    ToolIdentity, ToolOutputDelta, ToolOutputKind, ToolOutputStream, ToolResult, ToolSearchHit,
+    ToolSource, ToolSpec, WriteFileStatus, execute_tool_call_streaming,
+    run_parallel_tool_invocations, summarize_arguments,
 };
 pub use turn::{
     AgentTurnOutput, ApprovalPolicy, CONVERSATION_BUSY_ERROR_CODE, CONVERSATION_BUSY_ERROR_MESSAGE,
@@ -87,7 +91,8 @@ pub use turn::{
     execute_chat_turn, next_turn_id, paginate_turns, run_manual_compaction, run_turn_with_approval,
 };
 pub use web_search_presentation::{
-    WEB_SEARCH_TOOL_NAME, web_search_detail, web_search_summary, web_search_transcript_item,
+    WEB_SEARCH_TOOL_NAME, web_search_detail, web_search_runtime_item_completed,
+    web_search_runtime_item_started, web_search_summary, web_search_transcript_item,
 };
 
 pub fn crate_name() -> &'static str {

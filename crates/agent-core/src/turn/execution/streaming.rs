@@ -2,7 +2,10 @@ use super::TurnHost;
 use crate::model::{
     ModelRequest, ModelResponse, ModelStreamObserver, ReasoningDelta, WebSearchAction,
 };
-use crate::web_search_presentation::web_search_transcript_item;
+use crate::runtime_item::{RuntimeItem, RuntimeItemProgress};
+use crate::web_search_presentation::{
+    web_search_runtime_item_completed, web_search_runtime_item_started, web_search_transcript_item,
+};
 use crate::{EventMsg, TranscriptItem, TurnItemDeltaKind, TurnItemKind, emit_event};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -51,9 +54,14 @@ where
             on_event,
             EventMsg::ItemCompleted {
                 turn_id: turn_id.to_string(),
-                item_id: item_id.clone(),
-                call_id: None,
-                item: TranscriptItem::AgentMessage {
+                runtime_item: RuntimeItem::completed(
+                    &TranscriptItem::AgentMessage {
+                        id: item_id.clone(),
+                        text: response.content.clone().unwrap_or_default(),
+                    },
+                    None,
+                ),
+                transcript_item: TranscriptItem::AgentMessage {
                     id: item_id,
                     text: response.content.clone().unwrap_or_default(),
                 },
@@ -66,9 +74,18 @@ where
             on_event,
             EventMsg::ItemCompleted {
                 turn_id: turn_id.to_string(),
-                item_id: item_id.clone(),
-                call_id: None,
-                item: TranscriptItem::Reasoning {
+                runtime_item: RuntimeItem::completed(
+                    &TranscriptItem::Reasoning {
+                        id: item_id.clone(),
+                        title: "reasoning".to_string(),
+                        text: response
+                            .reasoning
+                            .clone()
+                            .unwrap_or_else(|| reasoning_text_buffer.clone()),
+                    },
+                    None,
+                ),
+                transcript_item: TranscriptItem::Reasoning {
                     id: item_id,
                     title: "reasoning".to_string(),
                     text: response
@@ -110,10 +127,12 @@ impl<E: FnMut(&EventMsg) + Send + ?Sized> ModelStreamObserver for TurnStreamObse
                 self.on_event,
                 EventMsg::ItemStarted {
                     turn_id: self.turn_id.to_string(),
-                    item_id: id.clone(),
-                    call_id: None,
-                    kind: TurnItemKind::AssistantMessage,
-                    title: Some("assistant_message".to_string()),
+                    item: RuntimeItem::started(
+                        id.clone(),
+                        None,
+                        TurnItemKind::AssistantMessage,
+                        Some("assistant_message".to_string()),
+                    ),
                 },
             );
             id
@@ -158,10 +177,12 @@ impl<E: FnMut(&EventMsg) + Send + ?Sized> ModelStreamObserver for TurnStreamObse
                 self.on_event,
                 EventMsg::ItemStarted {
                     turn_id: self.turn_id.to_string(),
-                    item_id: id.clone(),
-                    call_id: None,
-                    kind: TurnItemKind::Reasoning,
-                    title: Some("reasoning".to_string()),
+                    item: RuntimeItem::started(
+                        id.clone(),
+                        None,
+                        TurnItemKind::Reasoning,
+                        Some("reasoning".to_string()),
+                    ),
                 },
             );
             id
@@ -200,28 +221,24 @@ impl<E: FnMut(&EventMsg) + Send + ?Sized> ModelStreamObserver for TurnStreamObse
     }
 
     fn on_web_search_started(&mut self, id: String, query: String) {
+        let progress_message = (!query.trim().is_empty()).then(|| query.clone());
         emit_event(
             self.events,
             self.on_event,
             EventMsg::ItemStarted {
                 turn_id: self.turn_id.to_string(),
-                item_id: id.clone(),
-                call_id: Some(id.clone()),
-                kind: TurnItemKind::ToolResult,
-                title: Some("web_search".to_string()),
+                item: web_search_runtime_item_started(id.clone(), query.clone()),
             },
         );
-        if !query.trim().is_empty() {
+        if let Some(progress_message) = progress_message {
             emit_event(
                 self.events,
                 self.on_event,
-                EventMsg::ItemDelta {
+                EventMsg::ItemProgress {
                     turn_id: self.turn_id.to_string(),
                     item_id: id.clone(),
-                    call_id: Some(id),
-                    kind: TurnItemDeltaKind::ToolOutput,
-                    segment_index: None,
-                    delta: query,
+                    call_id: Some(id.clone()),
+                    progress: RuntimeItemProgress::message(progress_message),
                 },
             );
         }
@@ -233,14 +250,14 @@ impl<E: FnMut(&EventMsg) + Send + ?Sized> ModelStreamObserver for TurnStreamObse
         query: String,
         action: Option<WebSearchAction>,
     ) {
+        let transcript_item = web_search_transcript_item(id.clone(), query, action);
         emit_event(
             self.events,
             self.on_event,
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
-                item_id: id.clone(),
-                call_id: Some(id.clone()),
-                item: web_search_transcript_item(id, query, action),
+                runtime_item: web_search_runtime_item_completed(&transcript_item, id),
+                transcript_item,
             },
         );
     }

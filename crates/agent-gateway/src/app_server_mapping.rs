@@ -51,17 +51,13 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
                 turn_id: turn_id.clone(),
             }])
         }
-        AppServerNotification::ItemStarted {
-            turn_id,
-            call_id,
-            item,
-            ..
-        } => EventFlow::Continue(vec![GatewayEvent::ItemStarted {
-            target: target.clone(),
-            turn_id: turn_id.clone(),
-            call_id: call_id.clone(),
-            item: item.clone(),
-        }]),
+        AppServerNotification::ItemStarted { turn_id, item, .. } => {
+            EventFlow::Continue(vec![GatewayEvent::ItemStarted {
+                target: target.clone(),
+                turn_id: turn_id.clone(),
+                item: item.clone(),
+            }])
+        }
         AppServerNotification::AgentMessageDelta {
             turn_id,
             item_id,
@@ -161,7 +157,7 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             segment_index: None,
             delta: delta.clone(),
         }]),
-        AppServerNotification::FileChangeOutputDelta {
+        AppServerNotification::JsonPatchDelta {
             turn_id,
             item_id,
             call_id,
@@ -172,20 +168,46 @@ fn map_notification(target: &OutboundTarget, notification: &AppServerNotificatio
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
             call_id: call_id.clone(),
-            kind: GatewayItemDeltaKind::FileChangeOutput,
+            kind: GatewayItemDeltaKind::JsonPatch,
             segment_index: None,
             delta: delta.clone(),
         }]),
+        AppServerNotification::ItemProgress {
+            turn_id,
+            item_id,
+            call_id,
+            progress,
+            ..
+        } => EventFlow::Continue(vec![GatewayEvent::ItemProgress {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+            call_id: call_id.clone(),
+            progress: progress.clone(),
+        }]),
+        AppServerNotification::ItemMetricsUpdated {
+            turn_id,
+            item_id,
+            call_id,
+            metrics,
+            ..
+        } => EventFlow::Continue(vec![GatewayEvent::ItemMetricsUpdated {
+            target: target.clone(),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+            call_id: call_id.clone(),
+            metrics: metrics.clone(),
+        }]),
         AppServerNotification::ItemCompleted {
             turn_id,
-            call_id,
             item,
+            transcript_item,
             ..
         } => EventFlow::Continue(vec![GatewayEvent::ItemCompleted {
             target: target.clone(),
             turn_id: turn_id.clone(),
-            call_id: call_id.clone(),
             item: item.clone(),
+            transcript_item: transcript_item.clone(),
         }]),
         AppServerNotification::ServerRequestRequested {
             turn_id, request, ..
@@ -362,3 +384,7 @@ fn preview(text: &str, max_chars: usize) -> String {
     }
     out.replace('\n', "\\n")
 }
+
+#[cfg(test)]
+#[path = "app_server_mapping_tests.rs"]
+mod tests;

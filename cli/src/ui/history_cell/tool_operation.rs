@@ -1,5 +1,5 @@
 use crate::tool_identity::is_web_search_tool_name;
-use agent_core::StructuredToolResult;
+use agent_core::{StructuredToolResult, ToolIdentity, ToolSource};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ToolOperation {
@@ -46,3 +46,30 @@ pub(crate) fn classify_structured_result(structured: &StructuredToolResult) -> T
         }
     }
 }
+
+pub(crate) fn classify_tool_operation(
+    tool_name: Option<&str>,
+    structured: Option<&StructuredToolResult>,
+    identity: Option<&ToolIdentity>,
+) -> ToolOperation {
+    if let Some(structured) = structured {
+        return classify_structured_result(structured);
+    }
+    if let Some(identity) = identity {
+        return classify_tool_identity(identity);
+    }
+    tool_name
+        .map(classify_tool_name)
+        .unwrap_or(ToolOperation::External)
+}
+
+fn classify_tool_identity(identity: &ToolIdentity) -> ToolOperation {
+    match identity.source {
+        ToolSource::BuiltIn => classify_tool_name(&identity.wire_name),
+        ToolSource::Hosted | ToolSource::Mcp | ToolSource::Dynamic => ToolOperation::External,
+    }
+}
+
+#[cfg(test)]
+#[path = "tool_operation_tests.rs"]
+mod tests;

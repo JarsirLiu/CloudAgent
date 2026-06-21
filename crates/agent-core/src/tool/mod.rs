@@ -19,6 +19,7 @@ pub use execution::{
 #[derive(Clone, Debug)]
 pub struct ToolOutputDelta {
     pub stream: ToolOutputStream,
+    pub kind: ToolOutputKind,
     pub chunk: String,
 }
 
@@ -26,6 +27,12 @@ pub struct ToolOutputDelta {
 pub enum ToolOutputStream {
     Stdout,
     Stderr,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolOutputKind {
+    Text,
+    JsonPatch,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -47,7 +54,9 @@ impl ApprovalGrantKey {
 #[serde(rename_all = "snake_case")]
 pub enum ToolSource {
     BuiltIn,
+    Hosted,
     Mcp,
+    Dynamic,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -67,6 +76,15 @@ impl ToolIdentity {
         }
     }
 
+    pub fn hosted(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            source: ToolSource::Hosted,
+            namespace: None,
+            wire_name: name,
+        }
+    }
+
     pub fn mcp(
         namespace: impl Into<String>,
         _tool: impl Into<String>,
@@ -74,6 +92,14 @@ impl ToolIdentity {
     ) -> Self {
         Self {
             source: ToolSource::Mcp,
+            namespace: Some(namespace.into()),
+            wire_name: wire_name.into(),
+        }
+    }
+
+    pub fn dynamic(namespace: impl Into<String>, wire_name: impl Into<String>) -> Self {
+        Self {
+            source: ToolSource::Dynamic,
             namespace: Some(namespace.into()),
             wire_name: wire_name.into(),
         }

@@ -9,6 +9,7 @@ fn turn(id: &str, state: TurnState) -> ConversationTurn {
             id: format!("assistant:{id}"),
             text: "partial".to_string(),
         }],
+        runtime_items: Vec::new(),
         rollout_start_index: 0,
         rollout_end_index: 0,
     }

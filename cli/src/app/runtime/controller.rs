@@ -6,7 +6,7 @@ use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animat
 use crate::app::runtime::paste_coordinator::PasteCoordinator;
 use crate::terminal::{FrameRequester, UiEvent};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
-use agent_core::conversation::TranscriptItem;
+use agent_core::{RuntimeItem, TurnItemKind};
 use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -160,18 +160,18 @@ pub(super) fn should_stop_after_event_boundary(event: Option<&AppServerEvent>) -
         AppServerNotification::ItemStarted { item, .. } => is_runtime_render_boundary_item(item),
         AppServerNotification::CommandExecutionOutputDelta { .. }
         | AppServerNotification::ToolOutputDelta { .. }
-        | AppServerNotification::FileChangeOutputDelta { .. } => true,
+        | AppServerNotification::JsonPatchDelta { .. }
+        | AppServerNotification::ItemProgress { .. }
+        | AppServerNotification::ItemMetricsUpdated { .. } => true,
         AppServerNotification::ItemCompleted { item, .. } => is_runtime_render_boundary_item(item),
         _ => false,
     }
 }
 
-fn is_runtime_render_boundary_item(item: &TranscriptItem) -> bool {
+fn is_runtime_render_boundary_item(item: &RuntimeItem) -> bool {
     matches!(
-        item,
-        TranscriptItem::CommandExecution { .. }
-            | TranscriptItem::FileChange { .. }
-            | TranscriptItem::ToolResult { .. }
+        item.kind,
+        TurnItemKind::CommandExecution | TurnItemKind::FileChange | TurnItemKind::ToolResult
     )
 }
 
@@ -271,14 +271,14 @@ fn try_merge_messages(existing: &mut AppServerEvent, next: &AppServerMessage) ->
             true
         }
         (
-            AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
+            AppServerMessage::Notification(AppServerNotification::JsonPatchDelta {
                 conversation_id: left_conversation_id,
                 turn_id: left_turn_id,
                 item_id: left_item_id,
                 call_id: left_call_id,
                 delta: left_delta,
             }),
-            AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
+            AppServerMessage::Notification(AppServerNotification::JsonPatchDelta {
                 conversation_id: right_conversation_id,
                 turn_id: right_turn_id,
                 item_id: right_item_id,
@@ -290,6 +290,9 @@ fn try_merge_messages(existing: &mut AppServerEvent, next: &AppServerMessage) ->
             && left_item_id == right_item_id
             && left_call_id == right_call_id =>
         {
+            if !left_delta.is_empty() && !right_delta.is_empty() && !left_delta.ends_with('\n') {
+                left_delta.push('\n');
+            }
             left_delta.push_str(right_delta);
             true
         }

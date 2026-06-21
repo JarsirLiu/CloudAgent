@@ -144,6 +144,8 @@ fn replay_model_history_suffix(history: &mut ConversationHistory, items: &[Rollo
                 | EventMsg::ContextCompacted { .. }
                 | EventMsg::ItemStarted { .. }
                 | EventMsg::ItemDelta { .. }
+                | EventMsg::ItemProgress { .. }
+                | EventMsg::ItemMetricsUpdated { .. }
                 | EventMsg::ItemCompleted { .. }
                 | EventMsg::ServerRequestRequested { .. }
                 | EventMsg::ServerRequestResolved { .. } => {}

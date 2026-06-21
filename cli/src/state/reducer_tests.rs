@@ -1,7 +1,7 @@
 use super::*;
 use agent_core::{
-    CommandExecutionStatus, CompactionPhase, InputItem, StructuredToolResult, TranscriptItem,
-    TurnState,
+    CommandExecutionStatus, CompactionPhase, InputItem, RuntimeItem, StructuredToolResult,
+    TranscriptItem, TurnState,
 };
 
 #[test]
@@ -34,6 +34,7 @@ fn conversation_history_action_preserves_turns() {
                     text: "hello".to_string(),
                 },
             ],
+            runtime_items: Vec::new(),
             rollout_start_index: 0,
             rollout_end_index: 1,
         }],
@@ -58,6 +59,7 @@ fn conversation_history_page_action_preserves_paging_metadata() {
             id: "turn-2".to_string(),
             state: TurnState::Completed,
             items: Vec::new(),
+            runtime_items: Vec::new(),
             rollout_start_index: 0,
             rollout_end_index: 1,
         }],
@@ -193,23 +195,50 @@ fn tool_output_delta_updates_active_tool_item() {
 }
 
 #[test]
+fn json_patch_delta_updates_active_file_change_item() {
+    let message = AppServerMessage::Notification(AppServerNotification::JsonPatchDelta {
+        conversation_id: "default".to_string(),
+        turn_id: "turn-1".to_string(),
+        item_id: "edit-1".to_string(),
+        call_id: Some("call-1".to_string()),
+        delta: "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch".to_string(),
+    });
+
+    let reduced = apply_server_message(&message);
+
+    assert!(reduced.actions.iter().any(|action| {
+        matches!(
+            action,
+            ServerAction::AppendActivePatchDelta {
+                turn_id,
+                item_id,
+                delta,
+            } if turn_id == "turn-1"
+                && item_id == "edit-1"
+                && delta.contains("*** Begin Patch")
+        )
+    }));
+}
+
+#[test]
 fn completed_tool_result_clears_active_tool_and_commits_item() {
+    let transcript_item = TranscriptItem::ToolResult {
+        id: "ws-1".to_string(),
+        tool_name: "web_search".to_string(),
+        content: "weather seattle".to_string(),
+        summary: "searched the web".to_string(),
+        structured: Some(StructuredToolResult::WebSearch {
+            query: "weather seattle".to_string(),
+            action: None,
+            result_count: None,
+            source_count: None,
+        }),
+    };
     let message = AppServerMessage::Notification(AppServerNotification::ItemCompleted {
         conversation_id: "default".to_string(),
         turn_id: "turn-1".to_string(),
-        call_id: Some("ws-1".to_string()),
-        item: TranscriptItem::ToolResult {
-            id: "ws-1".to_string(),
-            tool_name: "web_search".to_string(),
-            content: "weather seattle".to_string(),
-            summary: "searched the web".to_string(),
-            structured: Some(StructuredToolResult::WebSearch {
-                query: "weather seattle".to_string(),
-                action: None,
-                result_count: None,
-                source_count: None,
-            }),
-        },
+        item: RuntimeItem::completed(&transcript_item, Some("ws-1".to_string())),
+        transcript_item,
     });
 
     let reduced = apply_server_message(&message);
@@ -222,11 +251,15 @@ fn completed_tool_result_clears_active_tool_and_commits_item() {
     assert!(reduced.actions.iter().any(|action| {
         matches!(
             action,
-            ServerAction::CompleteActiveTurnItem { turn_id, item_id, item }
+            ServerAction::CompleteActiveTurnItem {
+                turn_id,
+                item,
+                transcript_item,
+            }
                 if turn_id == "turn-1"
-                    && item_id == "ws-1"
+                    && item.id == "ws-1"
                     && matches!(
-                        item,
+                        transcript_item,
                         TranscriptItem::ToolResult { id, tool_name, structured, .. }
                             if id == "ws-1"
                                 && tool_name == "web_search"
@@ -238,27 +271,6 @@ fn completed_tool_result_clears_active_tool_and_commits_item() {
                     )
         )
     }));
-}
-
-#[test]
-fn file_change_output_delta_still_waits_for_completed_item() {
-    let file_message =
-        AppServerMessage::Notification(AppServerNotification::FileChangeOutputDelta {
-            conversation_id: "default".to_string(),
-            turn_id: "turn-1".to_string(),
-            item_id: "edit-1".to_string(),
-            call_id: Some("call-2".to_string()),
-            delta: "patch output".to_string(),
-        });
-
-    let file_reduced = apply_server_message(&file_message);
-
-    assert!(
-        file_reduced
-            .actions
-            .iter()
-            .all(|action| !matches!(action, ServerAction::AppendActiveToolDelta { .. }))
-    );
 }
 
 #[test]

@@ -1,5 +1,8 @@
 use agent_core::conversation::InputItem;
-use agent_core::{TurnItemDeltaKind, TurnItemKind, TurnState};
+use agent_core::{
+    RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress, RuntimeItemSnapshot, RuntimeItemStatus,
+    StructuredToolResult, ToolIdentity, TurnItemDeltaKind, TurnItemKind, TurnState,
+};
 
 #[derive(Clone, Debug)]
 pub(super) struct ActiveLifecycle {
@@ -22,37 +25,45 @@ pub(super) struct ProjectedItemState {
     pub(super) call_id: Option<String>,
     pub(super) kind: TurnItemKind,
     pub(super) title: Option<String>,
+    pub(super) summary: Option<String>,
+    pub(super) tool_identity: Option<ToolIdentity>,
+    pub(super) structured: Option<StructuredToolResult>,
+    pub(super) progress: Option<RuntimeItemProgress>,
+    pub(super) metrics: Option<RuntimeItemMetrics>,
     pub(super) status: ProjectedItemStatus,
     pub(super) last_delta_kind: Option<TurnItemDeltaKind>,
     pub(super) user_content: Vec<InputItem>,
     pub(super) text_buffer: String,
     pub(super) reasoning_buffer: String,
     pub(super) tool_output_buffer: String,
+    pub(super) patch_buffer: String,
     pub(super) reasoning_summary_part_opened: bool,
     pub(super) order_hint: u64,
 }
 
 impl ProjectedItemState {
-    pub(super) fn new(
-        turn_id: String,
-        item_id: String,
-        call_id: Option<String>,
-        kind: TurnItemKind,
-        title: Option<String>,
-        order_hint: u64,
-    ) -> Self {
+    pub(super) fn from_runtime_item(turn_id: String, item: RuntimeItem, order_hint: u64) -> Self {
         Self {
             turn_id,
-            item_id,
-            call_id,
-            kind,
-            title,
-            status: ProjectedItemStatus::Started,
+            item_id: item.id,
+            call_id: item.call_id,
+            kind: item.kind,
+            title: item.title,
+            summary: item.summary,
+            tool_identity: item.tool_identity,
+            structured: item.structured,
+            progress: item.progress,
+            metrics: item.metrics,
+            status: match item.status {
+                RuntimeItemStatus::InProgress => ProjectedItemStatus::Started,
+                RuntimeItemStatus::Completed => ProjectedItemStatus::Completed,
+            },
             last_delta_kind: None,
             user_content: Vec::new(),
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
             tool_output_buffer: String::new(),
+            patch_buffer: String::new(),
             reasoning_summary_part_opened: false,
             order_hint,
         }
@@ -65,10 +76,42 @@ impl ProjectedItemState {
             TurnItemDeltaKind::ReasoningSummary | TurnItemDeltaKind::ReasoningText => {
                 self.reasoning_buffer.push_str(delta)
             }
-            TurnItemDeltaKind::CommandExecutionOutput
-            | TurnItemDeltaKind::ToolOutput
-            | TurnItemDeltaKind::FileChangeOutput => self.tool_output_buffer.push_str(delta),
-            TurnItemDeltaKind::JsonPatch => {}
+            TurnItemDeltaKind::CommandExecutionOutput | TurnItemDeltaKind::ToolOutput => {
+                self.tool_output_buffer.push_str(delta)
+            }
+            TurnItemDeltaKind::JsonPatch => self.patch_buffer.push_str(delta),
+        }
+    }
+
+    pub(super) fn update_progress(&mut self, progress: RuntimeItemProgress) {
+        self.progress = Some(progress);
+    }
+
+    pub(super) fn update_metrics(&mut self, metrics: RuntimeItemMetrics) {
+        self.metrics = Some(metrics);
+    }
+
+    pub(super) fn runtime_snapshot(&self) -> RuntimeItemSnapshot {
+        RuntimeItemSnapshot {
+            item: RuntimeItem {
+                id: self.item_id.clone(),
+                call_id: self.call_id.clone(),
+                kind: self.kind.clone(),
+                title: self.title.clone(),
+                status: match self.status {
+                    ProjectedItemStatus::Started => RuntimeItemStatus::InProgress,
+                    ProjectedItemStatus::Completed => RuntimeItemStatus::Completed,
+                },
+                summary: self.summary.clone(),
+                tool_identity: self.tool_identity.clone(),
+                structured: self.structured.clone(),
+                progress: self.progress.clone(),
+                metrics: self.metrics.clone(),
+            },
+            text_buffer: self.text_buffer.clone(),
+            reasoning_buffer: self.reasoning_buffer.clone(),
+            tool_output_buffer: self.tool_output_buffer.clone(),
+            patch_buffer: self.patch_buffer.clone(),
         }
     }
 }

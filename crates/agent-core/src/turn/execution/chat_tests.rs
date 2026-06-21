@@ -431,11 +431,9 @@ async fn reasoning_item_ids_advance_across_tool_roundtrips() {
         .events
         .iter()
         .filter_map(|event| match event {
-            EventMsg::ItemStarted {
-                kind: TurnItemKind::Reasoning,
-                item_id,
-                ..
-            } => Some(item_id.clone()),
+            EventMsg::ItemStarted { item, .. } if matches!(item.kind, TurnItemKind::Reasoning) => {
+                Some(item.id.clone())
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -547,28 +545,27 @@ async fn streaming_web_search_events_arrive_before_assistant_completion() {
         matches!(
             event,
             EventMsg::ItemStarted {
-                item_id,
-                title,
+                item,
                 ..
-            } if item_id == "ws_1" && title.as_deref() == Some("web_search")
+            } if item.id == "ws_1" && item.title.as_deref() == Some("web_search")
         )
     });
-    let web_search_delta = outcome.events.iter().position(|event| {
+    let web_search_progress = outcome.events.iter().position(|event| {
         matches!(
             event,
-            EventMsg::ItemDelta {
+            EventMsg::ItemProgress {
                 item_id,
-                kind: crate::TurnItemDeltaKind::ToolOutput,
-                delta,
+                progress,
                 ..
-            } if item_id == "ws_1" && delta == "weather seattle"
+            } if item_id == "ws_1"
+                && progress.message.as_deref() == Some("weather seattle")
         )
     });
     let web_search_completed = outcome.events.iter().position(|event| {
         matches!(
             event,
             EventMsg::ItemCompleted {
-                item: crate::TranscriptItem::ToolResult {
+                transcript_item: crate::TranscriptItem::ToolResult {
                     id,
                     tool_name,
                     structured,
@@ -588,7 +585,7 @@ async fn streaming_web_search_events_arrive_before_assistant_completion() {
         matches!(
             event,
             EventMsg::ItemCompleted {
-                item: crate::TranscriptItem::AgentMessage { text, .. },
+                transcript_item: crate::TranscriptItem::AgentMessage { text, .. },
                 ..
             } if text == "final answer"
         )
@@ -599,8 +596,8 @@ async fn streaming_web_search_events_arrive_before_assistant_completion() {
         "web search should start during streaming"
     );
     assert!(
-        web_search_delta.is_some(),
-        "web search query should stream into the active tool item"
+        web_search_progress.is_some(),
+        "web search progress should stream into the active tool item"
     );
     assert!(
         web_search_completed.is_some(),
@@ -611,8 +608,8 @@ async fn streaming_web_search_events_arrive_before_assistant_completion() {
         "assistant message should still complete"
     );
     assert!(web_search_started < assistant_completed);
-    assert!(web_search_started < web_search_delta);
-    assert!(web_search_delta < web_search_completed);
+    assert!(web_search_started < web_search_progress);
+    assert!(web_search_progress < web_search_completed);
     assert!(web_search_completed < assistant_completed);
 }
 

@@ -3,6 +3,7 @@ pub mod app;
 pub mod console_entry;
 pub mod input;
 pub mod local_node;
+mod runtime_metrics_display;
 pub mod state;
 pub mod terminal;
 mod text_width;

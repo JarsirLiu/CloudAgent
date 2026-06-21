@@ -7,8 +7,8 @@ use crate::registry::shared::{
 };
 use crate::spec::{ToolCategory, ToolDescriptor, ToolPermissionTier, ToolRisk, ToolUsageGuidance};
 use agent_core::{
-    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolSpec,
-    TurnItemDeltaKind, TurnItemKind, WriteFileStatus,
+    StructuredToolResult, ToolExecutionContext, ToolExecutionPolicy, ToolIdentity, ToolOutputDelta,
+    ToolOutputKind, ToolOutputStream, ToolSpec, TurnItemDeltaKind, TurnItemKind, WriteFileStatus,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -264,6 +264,7 @@ impl EditFileLocalTool {
         plan: PreparedEdit,
         ctx: &ToolExecutionContext,
     ) -> Result<ToolInvocationOutput> {
+        emit_edit_patch_delta(&plan, ctx);
         if !fs::try_exists(&plan.path).await? {
             let Some(parent) = plan.path.parent() else {
                 bail!(
@@ -307,6 +308,54 @@ impl EditFileLocalTool {
             .await;
         Ok(completed_edit_output(plan.changed_path, version_token))
     }
+}
+
+fn emit_edit_patch_delta(plan: &PreparedEdit, ctx: &ToolExecutionContext) {
+    let Some(output_tx) = &ctx.output_tx else {
+        return;
+    };
+    let patch = render_edit_patch(plan);
+    if patch.trim().is_empty() {
+        return;
+    }
+    let _ = output_tx.send(ToolOutputDelta {
+        stream: ToolOutputStream::Stdout,
+        kind: ToolOutputKind::JsonPatch,
+        chunk: patch,
+    });
+}
+
+fn render_edit_patch(plan: &PreparedEdit) -> String {
+    let mut lines = vec![
+        "*** Begin Patch".to_string(),
+        format!("*** Update File: {}", plan.changed_path),
+    ];
+    for edit in &plan.edits {
+        lines.push("@@".to_string());
+        if edit.old_string.is_empty() {
+            for line in edit.new_string.lines() {
+                lines.push(format!("+{line}"));
+            }
+            if edit.new_string.ends_with('\n') {
+                lines.push("+".to_string());
+            }
+            continue;
+        }
+        for line in edit.old_string.lines() {
+            lines.push(format!("-{line}"));
+        }
+        if edit.old_string.ends_with('\n') {
+            lines.push("-".to_string());
+        }
+        for line in edit.new_string.lines() {
+            lines.push(format!("+{line}"));
+        }
+        if edit.new_string.ends_with('\n') {
+            lines.push("+".to_string());
+        }
+    }
+    lines.push("*** End Patch".to_string());
+    lines.join("\n")
 }
 
 fn completed_edit_output(changed_path: String, version_token: String) -> ToolInvocationOutput {

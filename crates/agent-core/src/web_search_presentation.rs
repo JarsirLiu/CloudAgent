@@ -1,6 +1,7 @@
 use crate::conversation::TranscriptItem;
 use crate::model::WebSearchAction;
-use crate::tool::StructuredToolResult;
+use crate::tool::{StructuredToolResult, ToolIdentity};
+use crate::{RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress, TurnItemKind};
 
 pub const WEB_SEARCH_TOOL_NAME: &str = "web_search";
 
@@ -65,4 +66,41 @@ pub fn web_search_transcript_item(
             source_count: None,
         }),
     }
+}
+
+pub fn web_search_runtime_item_started(
+    item_id: impl Into<String>,
+    query: impl Into<String>,
+) -> RuntimeItem {
+    let item_id = item_id.into();
+    let query = query.into();
+    RuntimeItem::started(
+        item_id.clone(),
+        Some(item_id),
+        TurnItemKind::ToolResult,
+        Some(WEB_SEARCH_TOOL_NAME.to_string()),
+    )
+    .with_tool_identity(ToolIdentity::hosted(WEB_SEARCH_TOOL_NAME))
+    .with_structured(StructuredToolResult::WebSearch {
+        query: query.clone(),
+        action: None,
+        result_count: None,
+        source_count: None,
+    })
+    .with_progress(RuntimeItemProgress::message(web_search_detail(
+        &query, None,
+    )))
+    .with_summary(query)
+}
+
+pub fn web_search_runtime_item_completed(
+    transcript_item: &TranscriptItem,
+    call_id: impl Into<String>,
+) -> RuntimeItem {
+    let mut item = RuntimeItem::completed(transcript_item, Some(call_id.into()))
+        .with_tool_identity(ToolIdentity::hosted(WEB_SEARCH_TOOL_NAME));
+    if let Some(metrics) = RuntimeItemMetrics::from_transcript_item(transcript_item) {
+        item = item.with_metrics(metrics);
+    }
+    item
 }

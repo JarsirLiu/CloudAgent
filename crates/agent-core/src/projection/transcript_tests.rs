@@ -1,7 +1,35 @@
 use super::*;
+use crate::runtime_item::RuntimeItem;
 use crate::tool::{CommandExecutionStatus, StructuredToolResult};
 use crate::turn::TurnItemKind;
 use crate::{input_items_to_plain_text, text_input_items};
+
+fn started(
+    turn_id: &str,
+    item_id: &str,
+    call_id: Option<&str>,
+    kind: TurnItemKind,
+    title: Option<&str>,
+) -> EventMsg {
+    EventMsg::ItemStarted {
+        turn_id: turn_id.to_string(),
+        item: RuntimeItem::started(
+            item_id,
+            call_id.map(str::to_string),
+            kind,
+            title.map(str::to_string),
+        ),
+    }
+}
+
+fn completed(turn_id: &str, item: TranscriptItem, call_id: Option<&str>) -> EventMsg {
+    let runtime_item = RuntimeItem::completed(&item, call_id.map(str::to_string));
+    EventMsg::ItemCompleted {
+        turn_id: turn_id.to_string(),
+        runtime_item,
+        transcript_item: item,
+    }
+}
 
 #[test]
 fn transcript_builder_projects_rollout_facts_without_duplicate_messages() {
@@ -18,12 +46,7 @@ fn transcript_builder_projects_rollout_facts_without_duplicate_messages() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("hi"),
         }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant-1".to_string(),
-            call_id: None,
-            item: assistant.clone(),
-        }),
+        RolloutItem::from(completed("turn-1", assistant.clone(), None)),
         RolloutItem::from(ResponseItem::Assistant {
             content: Some("hello".to_string()),
             reasoning: None,
@@ -54,13 +77,13 @@ fn active_turn_snapshot_projects_started_delta_before_completion() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("hi"),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:turn-1:0".to_string(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: Some("assistant_message".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "assistant:turn-1:0",
+            None,
+            TurnItemKind::AssistantMessage,
+            Some("assistant_message"),
+        )),
         RolloutItem::from(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:turn-1:0".to_string(),
@@ -92,13 +115,13 @@ fn failed_turn_preserves_streamed_partial_assistant_message() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("hi"),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:turn-1:0".to_string(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: Some("assistant_message".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "assistant:turn-1:0",
+            None,
+            TurnItemKind::AssistantMessage,
+            Some("assistant_message"),
+        )),
         RolloutItem::from(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:turn-1:0".to_string(),
@@ -135,13 +158,13 @@ fn item_completed_replaces_streamed_delta_projection() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("hi"),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:turn-1:0".to_string(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: Some("assistant_message".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "assistant:turn-1:0",
+            None,
+            TurnItemKind::AssistantMessage,
+            Some("assistant_message"),
+        )),
         RolloutItem::from(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:turn-1:0".to_string(),
@@ -150,15 +173,14 @@ fn item_completed_replaces_streamed_delta_projection() {
             segment_index: None,
             delta: "partial".to_string(),
         }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:turn-1:0".to_string(),
-            call_id: None,
-            item: TranscriptItem::AgentMessage {
+        RolloutItem::from(completed(
+            "turn-1",
+            TranscriptItem::AgentMessage {
                 id: "assistant:turn-1:0".to_string(),
                 text: "final".to_string(),
             },
-        }),
+            None,
+        )),
         RolloutItem::from(EventMsg::TurnCompleted {
             turn_id: "turn-1".to_string(),
         }),
@@ -247,13 +269,13 @@ fn transcript_builder_keeps_rich_tool_projection() {
 #[test]
 fn lifecycle_only_events_do_not_create_transcript_items() {
     let items = vec![
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "item-1".to_string(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: None,
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "item-1",
+            None,
+            TurnItemKind::AssistantMessage,
+            None,
+        )),
         RolloutItem::from(EventMsg::TurnCompleted {
             turn_id: "turn-1".to_string(),
         }),
@@ -277,15 +299,14 @@ fn conversation_history_builder_preserves_turn_boundaries() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("first"),
         }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant-1".to_string(),
-            call_id: None,
-            item: TranscriptItem::AgentMessage {
+        RolloutItem::from(completed(
+            "turn-1",
+            TranscriptItem::AgentMessage {
                 id: "assistant-1".to_string(),
                 text: "one".to_string(),
             },
-        }),
+            None,
+        )),
         RolloutItem::from(EventMsg::TurnCompleted {
             turn_id: "turn-1".to_string(),
         }),
@@ -297,15 +318,14 @@ fn conversation_history_builder_preserves_turn_boundaries() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("second"),
         }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-2".to_string(),
-            item_id: "assistant-2".to_string(),
-            call_id: None,
-            item: TranscriptItem::AgentMessage {
+        RolloutItem::from(completed(
+            "turn-2",
+            TranscriptItem::AgentMessage {
                 id: "assistant-2".to_string(),
                 text: "two".to_string(),
             },
-        }),
+            None,
+        )),
         RolloutItem::from(EventMsg::TurnCompleted {
             turn_id: "turn-2".to_string(),
         }),
@@ -493,6 +513,7 @@ fn filter_history_ui_turns_drops_reasoning_items_and_empty_turns() {
                     text: "answer".to_string(),
                 },
             ],
+            runtime_items: Vec::new(),
             rollout_start_index: 0,
             rollout_end_index: 1,
         },
@@ -504,6 +525,7 @@ fn filter_history_ui_turns_drops_reasoning_items_and_empty_turns() {
                 title: "reasoning".to_string(),
                 text: "only reasoning".to_string(),
             }],
+            runtime_items: Vec::new(),
             rollout_start_index: 2,
             rollout_end_index: 2,
         },
@@ -527,24 +549,22 @@ fn same_assistant_text_keeps_distinct_items_by_id() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("repeat"),
         }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant-1".to_string(),
-            call_id: None,
-            item: TranscriptItem::AgentMessage {
+        RolloutItem::from(completed(
+            "turn-1",
+            TranscriptItem::AgentMessage {
                 id: "assistant-1".to_string(),
                 text: "same".to_string(),
             },
-        }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant-2".to_string(),
-            call_id: None,
-            item: TranscriptItem::AgentMessage {
+            None,
+        )),
+        RolloutItem::from(completed(
+            "turn-1",
+            TranscriptItem::AgentMessage {
                 id: "assistant-2".to_string(),
                 text: "same".to_string(),
             },
-        }),
+            None,
+        )),
         RolloutItem::from(EventMsg::TurnCompleted {
             turn_id: "turn-1".to_string(),
         }),
@@ -581,15 +601,14 @@ fn late_item_completed_updates_original_turn_by_turn_id() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("second"),
         }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant-late".to_string(),
-            call_id: None,
-            item: TranscriptItem::AgentMessage {
+        RolloutItem::from(completed(
+            "turn-1",
+            TranscriptItem::AgentMessage {
                 id: "assistant-late".to_string(),
                 text: "late answer".to_string(),
             },
-        }),
+            None,
+        )),
         RolloutItem::from(EventMsg::TurnCompleted {
             turn_id: "turn-2".to_string(),
         }),
@@ -630,18 +649,8 @@ fn same_tool_summary_keeps_distinct_items_by_id() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("twice"),
         }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool-1".to_string(),
-            call_id: Some("call-1".to_string()),
-            item: command_item("tool-1"),
-        }),
-        RolloutItem::from(EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool-2".to_string(),
-            call_id: Some("call-2".to_string()),
-            item: command_item("tool-2"),
-        }),
+        RolloutItem::from(completed("turn-1", command_item("tool-1"), Some("call-1"))),
+        RolloutItem::from(completed("turn-1", command_item("tool-2"), Some("call-2"))),
         RolloutItem::from(EventMsg::TurnCompleted {
             turn_id: "turn-1".to_string(),
         }),
@@ -668,13 +677,13 @@ fn late_reasoning_stays_after_assistant_in_arrival_order() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("hi"),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:1".to_string(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: Some("assistant_message".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "assistant:1",
+            None,
+            TurnItemKind::AssistantMessage,
+            Some("assistant_message"),
+        )),
         RolloutItem::from(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "assistant:1".to_string(),
@@ -683,13 +692,13 @@ fn late_reasoning_stays_after_assistant_in_arrival_order() {
             segment_index: None,
             delta: "final".to_string(),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "reasoning:1".to_string(),
-            call_id: None,
-            kind: TurnItemKind::Reasoning,
-            title: Some("reasoning".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "reasoning:1",
+            None,
+            TurnItemKind::Reasoning,
+            Some("reasoning"),
+        )),
         RolloutItem::from(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "reasoning:1".to_string(),
@@ -721,20 +730,20 @@ fn late_reasoning_and_tools_preserve_arrival_order_after_assistant() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("hi"),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:1".to_string(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: Some("assistant_message".to_string()),
-        }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool:1".to_string(),
-            call_id: Some("call-1".to_string()),
-            kind: TurnItemKind::CommandExecution,
-            title: Some("pwd".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "assistant:1",
+            None,
+            TurnItemKind::AssistantMessage,
+            Some("assistant_message"),
+        )),
+        RolloutItem::from(started(
+            "turn-1",
+            "tool:1",
+            Some("call-1"),
+            TurnItemKind::CommandExecution,
+            Some("pwd"),
+        )),
         RolloutItem::from(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "tool:1".to_string(),
@@ -743,13 +752,13 @@ fn late_reasoning_and_tools_preserve_arrival_order_after_assistant() {
             segment_index: None,
             delta: "D:\\work".to_string(),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "reasoning:1".to_string(),
-            call_id: None,
-            kind: TurnItemKind::Reasoning,
-            title: Some("reasoning".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "reasoning:1",
+            None,
+            TurnItemKind::Reasoning,
+            Some("reasoning"),
+        )),
         RolloutItem::from(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "reasoning:1".to_string(),
@@ -782,13 +791,13 @@ fn later_reasoning_preserves_arrival_order_relative_to_existing_blocks() {
             conversation_id: "default".to_string(),
             user_input: crate::text_input_items("hi"),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "reasoning:1".to_string(),
-            call_id: None,
-            kind: TurnItemKind::Reasoning,
-            title: Some("reasoning".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "reasoning:1",
+            None,
+            TurnItemKind::Reasoning,
+            Some("reasoning"),
+        )),
         RolloutItem::from(EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "reasoning:1".to_string(),
@@ -797,27 +806,27 @@ fn later_reasoning_preserves_arrival_order_relative_to_existing_blocks() {
             segment_index: None,
             delta: "thinking 1".to_string(),
         }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool:1".to_string(),
-            call_id: Some("call-1".to_string()),
-            kind: TurnItemKind::CommandExecution,
-            title: Some("pwd".to_string()),
-        }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:1".to_string(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: Some("assistant_message".to_string()),
-        }),
-        RolloutItem::from(EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "reasoning:2".to_string(),
-            call_id: None,
-            kind: TurnItemKind::Reasoning,
-            title: Some("reasoning".to_string()),
-        }),
+        RolloutItem::from(started(
+            "turn-1",
+            "tool:1",
+            Some("call-1"),
+            TurnItemKind::CommandExecution,
+            Some("pwd"),
+        )),
+        RolloutItem::from(started(
+            "turn-1",
+            "assistant:1",
+            None,
+            TurnItemKind::AssistantMessage,
+            Some("assistant_message"),
+        )),
+        RolloutItem::from(started(
+            "turn-1",
+            "reasoning:2",
+            None,
+            TurnItemKind::Reasoning,
+            Some("reasoning"),
+        )),
         RolloutItem::from(EventMsg::TurnCompleted {
             turn_id: "turn-1".to_string(),
         }),

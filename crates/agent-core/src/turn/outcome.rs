@@ -1,4 +1,5 @@
 use crate::conversation::{ConversationHistory, TranscriptItem};
+use crate::runtime_item::RuntimeItem;
 use crate::turn::{EventMsg, TurnItemDeltaKind, TurnItemKind, TurnState, emit_event};
 
 #[derive(Clone, Debug)]
@@ -24,10 +25,12 @@ pub fn emit_assistant_message_item(
         on_event,
         EventMsg::ItemStarted {
             turn_id: turn_id.to_string(),
-            item_id: assistant_item_id.clone(),
-            call_id: None,
-            kind: TurnItemKind::AssistantMessage,
-            title: Some("assistant_message".to_string()),
+            item: RuntimeItem::started(
+                assistant_item_id.clone(),
+                None,
+                TurnItemKind::AssistantMessage,
+                Some("assistant_message".to_string()),
+            ),
         },
     );
     emit_event(
@@ -47,9 +50,14 @@ pub fn emit_assistant_message_item(
         on_event,
         EventMsg::ItemCompleted {
             turn_id: turn_id.to_string(),
-            item_id: assistant_item_id.clone(),
-            call_id: None,
-            item: TranscriptItem::AgentMessage {
+            runtime_item: RuntimeItem::completed(
+                &TranscriptItem::AgentMessage {
+                    id: assistant_item_id.clone(),
+                    text: content.to_string(),
+                },
+                None,
+            ),
+            transcript_item: TranscriptItem::AgentMessage {
                 id: assistant_item_id,
                 text: content.to_string(),
             },

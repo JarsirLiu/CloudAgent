@@ -279,7 +279,9 @@ fn notification_turn_id(notification: &AppServerNotification) -> Option<&str> {
         | AppServerNotification::ReasoningTextDelta { turn_id, .. }
         | AppServerNotification::CommandExecutionOutputDelta { turn_id, .. }
         | AppServerNotification::ToolOutputDelta { turn_id, .. }
-        | AppServerNotification::FileChangeOutputDelta { turn_id, .. }
+        | AppServerNotification::JsonPatchDelta { turn_id, .. }
+        | AppServerNotification::ItemProgress { turn_id, .. }
+        | AppServerNotification::ItemMetricsUpdated { turn_id, .. }
         | AppServerNotification::TokenUsageUpdated { turn_id, .. }
         | AppServerNotification::ModelRetrying { turn_id, .. }
         | AppServerNotification::ItemCompleted { turn_id, .. }

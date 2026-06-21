@@ -20,19 +20,203 @@
 
 当前 Phase B 的完成情况：
 
-- 尚未开始。
+- 核心链路已完成，仍有少量后续演进项未做。
 
 Phase B 仍未完成的核心项：
 
-- 还没有引入 `RuntimeItem` / `RuntimeMetrics`。
-- `ItemStarted` / `ItemCompleted` 还不是“完整 runtime item 协议”。
-- active 区仍然依赖当前 started 事件与本地推导，而不是消费标准 runtime item。
-- 未来 diff、metrics、token 展示所需的协议基础尚未搭建。
+- `RuntimeItem` / `RuntimeItemMetrics` 已引入，`EventMsg::ItemStarted / ItemCompleted` 以及 app-server / protocol started/completed 通知已切到 `RuntimeItem`。
+- `RuntimeItemProgress`、`EventMsg::ItemProgress / ItemMetricsUpdated` 以及 app-server / protocol / gateway 对应通知已接通，CLI active / bottom banner 已能消费标准 progress / metrics 更新。
+- `ToolSource` 已扩展为 `BuiltIn / Hosted / Mcp / Dynamic`，`web_search` 已作为第一批 hosted 工具接入统一 runtime item 元数据。
+- `JsonPatch` 已作为标准运行时 delta 打通到 CLI active 展示链路，文件编辑类工具不再依赖额外的文件变更输出特例。
+- 运行中 turn 的 restore 已切到 runtime-item-first，app-server 投影状态也已持久化 `tool_identity / structured / progress / metrics / patch`，并且 `ConversationViewChanged` 的 active-turn 去重现在会比较 runtime snapshot，避免 progress / metrics 更新被静默吞掉。
+- `web_search` 开始态的兼容 `ToolOutput` delta 桥接已删除，现在遵循 `ItemStarted / ItemProgress / ItemCompleted`。
+- CLI 的工具分类与部分聚合逻辑仍依赖 `tool_name` / `StructuredToolResult` / summary 字符串启发式，并非完全由统一 runtime metadata 驱动。
+- `RuntimeItemMetrics` 已在 CLI active / bottom banner 接入工具级 token 展示，但历史区仍没有 completed 后的 metrics 持久展示。
+- patch 目前已经能随 runtime snapshot 一起 restore 到 active 区，但历史区仍以 completed 摘要为主，还没有结构化 diff viewer。
+- gateway 已不再丢弃 `ItemProgress / ItemMetricsUpdated`，但各 adapter 仍以安全降级为主，尚未实现和 CLI 同等丰富的运行态 UI。
 
 结论：
 
-- 这份文档仍然是后续清理 CLI 特判、推进 Phase B 的实施清单。
-- 现在删除会直接丢掉下一阶段的文件级改造路线图。
+- 这份文档仍然保留价值，但它下面的大量 Phase A / 早期 Phase B 内容已经转为历史背景。
+- 以后继续实施时，应以 `0.1` 和 `0.2` 的“当前剩余项 + 下一步切片”为准，而不是继续参考后文那些已经完成的旧迁移步骤。
+
+### 0.1 本轮审计后的剩余问题清单（2026-06-21）
+
+下面这批问题，是当前代码中仍然还没走到最终形态的关键点。它们已经从“web search 能不能接入标准链路”转成“链路打通后，如何做长期可维护演进”。
+
+#### A. 历史区仍未具备结构化 diff / metrics 展示
+
+- [crates/agent-app-server/src/projection/transcript_item_projection.rs](D:\learn\gifti\cloudagent\crates\agent-app-server\src\projection\transcript_item_projection.rs)
+- [crates/agent-app-server/src/projection/turn_projection_state.rs](D:\learn\gifti\cloudagent\crates\agent-app-server\src\projection\turn_projection_state.rs)
+- [cli/src/ui/history_cell/render.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\render.rs)
+- [cli/src/ui/history_cell/tool_ui.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\tool_ui.rs)
+- [cli/src/ui/history_cell/display.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\display.rs)
+- [cli/src/ui/history_cell/render_entry_tests.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\render_entry_tests.rs)
+
+现状：
+
+- active 区的 patch / metrics 已经能恢复，completed 后却仍然只落成摘要文本。
+- `HistoryCell::edit(...)` 仍以“edited N files + path list”为主，缺少结构化 diff / metrics 的 completed 呈现。
+- 这意味着后端虽然已经保留了一部分 richer runtime metadata，但历史区没有把这些数据吃进去。
+
+#### B. CLI 分类仍有名称和字符串推断兜底
+
+- [cli/src/ui/history_cell/tool_operation.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\tool_operation.rs)
+- [cli/src/ui/history_cell/tool_ui.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\tool_ui.rs)
+- [crates/agent-core/src/projection/turn_output.rs](D:\learn\gifti\cloudagent\crates\agent-core\src\projection\turn_output.rs)
+- [cli/src/ui/history_cell/tool_operation_tests.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\tool_operation_tests.rs)
+
+现状：
+
+- `tool_identity` / `structured` 已经开始成为主判定来源，但仍保留 `tool_name` / summary 字符串 fallback。
+- `turn_output.rs` 里的普通工具聚合仍会读取 summary 文本做启发式归类。
+- 这层 fallback 现在主要是为了兼容未结构化的旧工具结果，而不是 web search 专项特判，但长期看仍会让新工具接入继续依赖经验规则。
+
+#### C. gateway 已接线，但还没有富展示
+
+- [crates/agent-gateway/src/adapter/weixin/runtime.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\weixin\runtime.rs)
+- [crates/agent-gateway/src/adapter/weixin/outbound.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\weixin\outbound.rs)
+- [crates/agent-gateway/src/adapter/wecom/runtime.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\wecom\runtime.rs)
+- [crates/agent-gateway/src/adapter/wecom/outbound.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\wecom\outbound.rs)
+- [crates/agent-gateway/src/adapter/feishu/runtime.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\feishu\runtime.rs)
+- [crates/agent-gateway/src/adapter/feishu/render.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\feishu\render.rs)
+
+现状：
+
+- `ItemProgress / ItemMetricsUpdated` 已能穿过 gateway，但 weixin / wecom / feishu 目前主要用于 runtime 协调、日志和 typing，不会像 CLI 一样展示完整工具卡片。
+- 这一块属于“跨前端一致性”后续演进，不再是 web search 基础接入阻塞项。
+
+#### D. 命令工具与通用工具的 active 路径仍有分裂
+
+- [cli/src/app/core/active_turn.rs](D:\learn\gifti\cloudagent\cli\src\app\core\active_turn.rs)
+- [cli/src/state/bottom_pane_runtime.rs](D:\learn\gifti\cloudagent\cli\src\state\bottom_pane_runtime.rs)
+- [cli/src/app/conversation/actions/server_actions.rs](D:\learn\gifti\cloudagent\cli\src\app\conversation\actions\server_actions.rs)
+
+现状：
+
+- `ActiveTurnAction::StartItem` 遇到 `TurnItemKind::CommandExecution` 仍不创建普通 live item，而是提前返回。
+- 命令运行态主要走 bottom banner 的 `CommandRuntimeState`，普通工具走 `ToolRuntimeState`。
+- 现在行为是对的，但底层仍是“命令一条链、其他工具另一条链”，这会让后续做统一 active history/diff/token 展示时持续遇到分支。
+
+## 0.2 下一阶段实施顺序（基于当前实际代码）
+
+这部分替代原来过于宽泛的 “继续做 Phase B” 表述。下面 4 个 slice 是按当前收益/风险排序后的真实下一步，不再包含已经做完的迁移动作。
+
+### Slice 1：历史区接入 completed metrics 与 patch 摘要
+
+目标：
+
+- completed 后的工具卡片，不再只显示“摘要文本”，而能显示结构化 metrics / patch 摘要。
+- 先做“摘要增强版历史卡片”，不在这一轮直接做完整 diff viewer。
+
+需要修改：
+
+- [cli/src/ui/history_cell/tool_ui.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\tool_ui.rs)
+  - 为 `StructuredToolResult::EditFile` / `CommandExecution` / `WebSearch` 增加统一的 completed metrics detail builder。
+  - 对 edit 类结果，把 `changed_paths + patch 摘要 + metrics` 组合成 detail，而不是只显示 path list。
+- [cli/src/ui/history_cell/render.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\render.rs)
+  - 保持 `render_history_entry(...)` 入口不变，但让 `ToolResult` / `FileChange` 都能走 richer detail。
+- [cli/src/ui/history_cell/display.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\display.rs)
+  - 如 detail 为多行 patch 摘要，确认 `Edit` 卡片展示格式稳定，不出现截断错乱。
+- [crates/agent-app-server/src/projection/transcript_item_projection.rs](D:\learn\gifti\cloudagent\crates\agent-app-server\src\projection\transcript_item_projection.rs)
+  - 评估是否需要把 `patch_buffer` 的摘要版投影到 completed transcript item 的 `summary` / `content`。
+  - 如果不投影全文 patch，至少要提供稳定的摘要来源，避免 CLI 再次自己猜。
+
+建议新增/抽离：
+
+- 在 CLI 新增一个小型 helper，例如 `completed_tool_detail.rs` 或复用 [cli/src/runtime_metrics_display.rs](D:\learn\gifti\cloudagent\cli\src\runtime_metrics_display.rs)，统一生成历史区 metrics 文案。
+
+测试：
+
+- [cli/src/ui/history_cell/render_entry_tests.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\render_entry_tests.rs)
+  - 新增 edit completed 带 metrics / patch 摘要的渲染断言。
+- [cli/src/app/tests.rs](D:\learn\gifti\cloudagent\cli\src\app\tests.rs)
+  - 新增 completed 后历史区保留 richer detail 的集成测试。
+
+### Slice 2：继续去掉 CLI / turn output 的名称启发式 fallback
+
+目标：
+
+- 让工具分类与 turn output 尽量从 `tool_identity + structured` 推导，而不是继续读 `tool_name` / `summary`。
+- 对无法结构化的旧工具结果，保留一个集中式 fallback，而不是分散在多个文件里各猜各的。
+
+需要修改：
+
+- [cli/src/ui/history_cell/tool_operation.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\tool_operation.rs)
+  - 把 `classify_tool_name(...)` 限制为最后 fallback。
+  - 新增一个“非结构化 fallback 只在单点生效”的 helper，例如 `classify_unstructured_tool_result(...)`。
+- [cli/src/ui/history_cell/tool_ui.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\tool_ui.rs)
+  - `render_tool_result(...)` 中优先吃 `structured`，其次吃 `identity`，最后才退到 `tool_name`。
+  - 移除对 `WEB_SEARCH_TOOL_NAME` 这类名称常量的直接依赖。
+- [crates/agent-core/src/projection/turn_output.rs](D:\learn\gifti\cloudagent\crates\agent-core\src\projection\turn_output.rs)
+  - 把普通工具输出聚合逻辑中的 summary 文本启发式收缩到一个 helper。
+  - 对 `StructuredToolResult::ToolError` 优先走 `tool_name + identity`，不再直接从错误 summary 猜类型。
+
+测试：
+
+- [cli/src/ui/history_cell/tool_operation_tests.rs](D:\learn\gifti\cloudagent\cli\src\ui\history_cell\tool_operation_tests.rs)
+  - 增加 built-in / hosted / mcp / dynamic 四类 identity 断言。
+- [crates/agent-core/src/projection/turn_output_tests.rs](D:\learn\gifti\cloudagent\crates\agent-core\src\projection\turn_output_tests.rs)
+  - 锁住 structured 优先、summary fallback 最后触发。
+
+### Slice 3：统一命令与通用工具的 active 展示内核
+
+目标：
+
+- 把“命令工具单独一套 active 流程、其他工具另一套流程”收成统一的 runtime item 展示内核。
+- 不要求这轮就把 UI 全改成同一视觉组件，但内部状态机要尽量统一。
+
+- [cli/src/app/core/active_turn.rs](D:\learn\gifti\cloudagent\cli\src\app\core\active_turn.rs)
+  - 改掉 `StartItem` 遇到 `CommandExecution` 直接提前返回的特殊分支。
+  - 让命令也能拥有一个标准 live item，只是底部 banner 继续可选地投影最近输出。
+- [cli/src/state/bottom_pane_runtime.rs](D:\learn\gifti\cloudagent\cli\src\state\bottom_pane_runtime.rs)
+  - 把 `CommandRuntimeState` 与 `ToolRuntimeState` 的重复字段和逻辑继续抽象。
+  - 保留命令输出 delta 特殊能力，但避免“是否命令”决定整条 active 生命周期分裂。
+- [cli/src/app/conversation/actions/server_actions.rs](D:\learn\gifti\cloudagent\cli\src\app\conversation\actions\server_actions.rs)
+  - completed 收尾统一经一个 helper 处理，避免 command / tool 两套完成路径继续发散。
+- [cli/src/app/tests.rs](D:\learn\gifti\cloudagent\cli\src\app\tests.rs)
+  - 增加 command 与 generic tool 在 start/progress/completed 生命周期上的一致性断言。
+
+### Slice 4：gateway 的富运行态展示第一版
+
+目标：
+
+- 在不引入复杂前端状态机的前提下，让 gateway 适配器至少能把 progress / metrics 变成稳定的“运行态文案”，而不是仅用于 typing / ignore。
+
+需要修改：
+
+- [crates/agent-gateway/src/adapter/weixin/runtime.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\weixin\runtime.rs)
+  - 为 `GatewayEvent::ItemProgress` / `ItemMetricsUpdated` 增加统一的“工具运行态文案”聚合，不只打日志。
+- [crates/agent-gateway/src/adapter/wecom/runtime.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\wecom\runtime.rs)
+  - 同上，保持和 weixin 同一套文案 helper。
+- [crates/agent-gateway/src/adapter/feishu/render.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\feishu\render.rs)
+  - 支持 progress / metrics 的安全文本渲染，先不做复杂卡片。
+- [crates/agent-gateway/src/adapter/weixin/outbound.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\weixin\outbound.rs)
+- [crates/agent-gateway/src/adapter/wecom/outbound.rs](D:\learn\gifti\cloudagent\crates\agent-gateway\src\adapter\wecom\outbound.rs)
+  - 决定这些 runtime 文案是合并发送、节流发送还是只更新 typing，不要让每个 adapter 自己散落判断。
+
+建议新增/抽离：
+
+- 在 `agent-gateway` 新增一个共享 helper，例如 `runtime_progress_text.rs`，从 `RuntimeItemProgress` / `RuntimeItemMetrics` 统一生成跨 adapter 文案。
+
+测试：
+
+- `crates/agent-gateway/src/adapter/*/*_tests.rs`
+  - 增加 progress / metrics 文案或安全降级行为的断言。
+
+### 暂不在本轮推进的事项
+
+- 完整历史 diff viewer
+- completed 后可展开查看完整 patch
+- Web / IDE 前端复用同一套 richer runtime 卡片
+
+这些能力需要单独开下一轮，不建议和上面 4 个 slice 混做。
+
+## 0.3 文档使用说明
+
+- 本文档从这里往下的 `Phase A / Phase B` 大段内容，主要用于保留历史迁移背景和设计动机。
+- 它们包含大量已经完成的改造步骤，不能再直接当作待办清单执行。
+- 真正还要继续做什么，以 `0.1` 和 `0.2` 为准。
 
 ## 1. 文档目的
 

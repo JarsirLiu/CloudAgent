@@ -2,7 +2,7 @@ use crate::app::TuiApp;
 use crate::state::NoticeLevel;
 use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
 use crate::ui::bottom_pane::input_pane::InputPaneAction;
-use agent_core::ConversationSummary;
+use agent_core::{ConversationSummary, RuntimeItem, RuntimeItemMetrics, TurnItemKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 
@@ -43,6 +43,10 @@ fn summary(id: &str) -> ConversationSummary {
         message_count: 1,
         updated_at_ms: 1,
     }
+}
+
+fn started_runtime_item(item_id: &str, kind: TurnItemKind, title: Option<&str>) -> RuntimeItem {
+    RuntimeItem::started(item_id, None, kind, title.map(str::to_string))
 }
 
 #[test]
@@ -113,11 +117,12 @@ fn command_output_delta_stays_in_runtime_banner() {
     let mut app = test_app();
     app.run_state.live_animation_frame = 1;
     mark_running(&mut app);
-    app.bottom_pane.on_active_item_started(
-        "cmd-1",
-        &agent_core::TurnItemKind::CommandExecution,
-        Some("rg TODO"),
-    );
+    app.bottom_pane
+        .on_active_item_started(&started_runtime_item(
+            "cmd-1",
+            TurnItemKind::CommandExecution,
+            Some("rg TODO"),
+        ));
     app.bottom_pane
         .on_command_output_delta(Some("cmd-1"), "src/main.rs:12: TODO clean this up\n");
 
@@ -134,21 +139,24 @@ fn command_output_delta_stays_in_runtime_banner() {
 }
 
 #[test]
-fn web_search_delta_updates_runtime_banner() {
+fn web_search_progress_updates_runtime_banner() {
     let mut app = test_app();
     app.run_state.live_animation_frame = 1;
     mark_running(&mut app);
-    app.bottom_pane.on_active_item_started(
-        "ws-1",
-        &agent_core::TurnItemKind::ToolResult,
-        Some("web_search"),
-    );
+    app.bottom_pane
+        .on_active_item_started(&started_runtime_item(
+            "ws-1",
+            TurnItemKind::ToolResult,
+            Some("web_search"),
+        ));
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(status.live_banner.as_deref(), Some("Web search"));
 
-    app.bottom_pane
-        .on_tool_output_delta(Some("ws-1"), "weather seattle");
+    app.bottom_pane.on_item_progress(
+        Some("ws-1"),
+        &agent_core::RuntimeItemProgress::message("weather seattle"),
+    );
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
         status.live_banner.as_deref(),
@@ -161,14 +169,48 @@ fn web_search_delta_updates_runtime_banner() {
 }
 
 #[test]
+fn tool_metrics_update_runtime_banner_with_tokens() {
+    let mut app = test_app();
+    mark_running(&mut app);
+    app.bottom_pane
+        .on_active_item_started(&started_runtime_item(
+            "ws-1",
+            TurnItemKind::ToolResult,
+            Some("web_search"),
+        ));
+
+    app.bottom_pane.on_item_metrics_updated(
+        Some("ws-1"),
+        &RuntimeItemMetrics {
+            input_tokens: Some(1_250),
+            output_tokens: Some(42),
+            total_tokens: Some(1_292),
+            elapsed_ms: Some(480),
+            bytes_read: None,
+            bytes_written: None,
+            file_count: None,
+            source_count: None,
+            result_count: None,
+        },
+    );
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(
+        status.live_banner.as_deref(),
+        Some("Web search · 1.2k input tok · 42 output tok · 1.3k total tok · 480 ms")
+    );
+}
+
+#[test]
 fn command_output_delta_keeps_recent_tail_compact() {
     let mut app = test_app();
     mark_running(&mut app);
-    app.bottom_pane.on_active_item_started(
-        "cmd-1",
-        &agent_core::TurnItemKind::CommandExecution,
-        Some("long command"),
-    );
+    app.bottom_pane
+        .on_active_item_started(&started_runtime_item(
+            "cmd-1",
+            TurnItemKind::CommandExecution,
+            Some("long command"),
+        ));
 
     app.bottom_pane
         .on_command_output_delta(Some("cmd-1"), &"alpha ".repeat(80));
@@ -186,11 +228,12 @@ fn command_output_delta_keeps_recent_tail_compact() {
 fn stale_command_output_delta_does_not_update_current_banner() {
     let mut app = test_app();
     mark_running(&mut app);
-    app.bottom_pane.on_active_item_started(
-        "cmd-current",
-        &agent_core::TurnItemKind::CommandExecution,
-        Some("cargo check"),
-    );
+    app.bottom_pane
+        .on_active_item_started(&started_runtime_item(
+            "cmd-current",
+            TurnItemKind::CommandExecution,
+            Some("cargo check"),
+        ));
 
     app.bottom_pane
         .on_command_output_delta(Some("cmd-old"), "old command output");
@@ -206,11 +249,12 @@ fn stale_command_output_delta_does_not_update_current_banner() {
 fn stale_command_finish_does_not_clear_current_banner() {
     let mut app = test_app();
     mark_running(&mut app);
-    app.bottom_pane.on_active_item_started(
-        "cmd-current",
-        &agent_core::TurnItemKind::CommandExecution,
-        Some("cargo test"),
-    );
+    app.bottom_pane
+        .on_active_item_started(&started_runtime_item(
+            "cmd-current",
+            TurnItemKind::CommandExecution,
+            Some("cargo test"),
+        ));
 
     app.bottom_pane.on_command_finished("cmd-old");
 
@@ -225,11 +269,12 @@ fn stale_command_finish_does_not_clear_current_banner() {
 fn in_progress_completion_keeps_command_runtime_until_final_completion() {
     let mut app = test_app();
     mark_running(&mut app);
-    app.bottom_pane.on_active_item_started(
-        "cmd-1",
-        &agent_core::TurnItemKind::CommandExecution,
-        Some("slow command"),
-    );
+    app.bottom_pane
+        .on_active_item_started(&started_runtime_item(
+            "cmd-1",
+            TurnItemKind::CommandExecution,
+            Some("slow command"),
+        ));
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(

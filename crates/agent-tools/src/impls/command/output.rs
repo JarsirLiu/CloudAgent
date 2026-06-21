@@ -139,6 +139,7 @@ where
             {
                 let _ = output_tx.send(agent_core::ToolOutputDelta {
                     stream: stream.clone(),
+                    kind: agent_core::ToolOutputKind::Text,
                     chunk: delta,
                 });
             }
@@ -162,6 +163,7 @@ where
         {
             let _ = output_tx.send(agent_core::ToolOutputDelta {
                 stream,
+                kind: agent_core::ToolOutputKind::Text,
                 chunk: delta,
             });
         }

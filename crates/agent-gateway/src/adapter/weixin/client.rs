@@ -3,6 +3,7 @@ use super::inbound::WeixinInboundEnvelope;
 use super::outbound::{WeixinOutboundMessage, WeixinOutboundRenderer};
 use crate::gateway_event::GatewayEvent;
 use crate::platform::{MessageHandler, PlatformAdapter};
+use agent_core::TurnItemKind;
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -721,15 +722,18 @@ impl PlatformAdapter for WeixinAdapter {
 
 fn typing_chat_id(event: &GatewayEvent) -> Option<String> {
     match event {
-        GatewayEvent::ItemStarted {
-            target,
-            item:
-                agent_core::TranscriptItem::Reasoning { .. }
-                | agent_core::TranscriptItem::CommandExecution { .. }
-                | agent_core::TranscriptItem::FileChange { .. }
-                | agent_core::TranscriptItem::ToolResult { .. },
-            ..
-        } => Some(target.chat_id.clone()),
+        GatewayEvent::ItemStarted { target, item, .. }
+            if matches!(
+                item.kind,
+                TurnItemKind::Reasoning
+                    | TurnItemKind::CommandExecution
+                    | TurnItemKind::FileChange
+                    | TurnItemKind::ToolCall
+                    | TurnItemKind::ToolResult
+            ) =>
+        {
+            Some(target.chat_id.clone())
+        }
         GatewayEvent::ItemDelta {
             target,
             kind:
@@ -739,6 +743,8 @@ fn typing_chat_id(event: &GatewayEvent) -> Option<String> {
             ..
         } => Some(target.chat_id.clone()),
         GatewayEvent::ReasoningSummaryPartAdded { target, .. } => Some(target.chat_id.clone()),
+        GatewayEvent::ItemProgress { target, .. }
+        | GatewayEvent::ItemMetricsUpdated { target, .. } => Some(target.chat_id.clone()),
         _ => None,
     }
 }

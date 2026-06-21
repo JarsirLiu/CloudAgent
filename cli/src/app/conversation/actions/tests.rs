@@ -6,6 +6,7 @@ fn turn(id: &str) -> ConversationTurn {
         id: id.to_string(),
         state: TurnState::Completed,
         items: Vec::new(),
+        runtime_items: Vec::new(),
         rollout_start_index: 0,
         rollout_end_index: 0,
     }

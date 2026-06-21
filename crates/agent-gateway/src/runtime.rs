@@ -135,9 +135,7 @@ fn event_name(event: &agent_app_server_client::AppServerEvent) -> &'static str {
                 agent_protocol::AppServerNotification::ToolOutputDelta { .. } => {
                     "tool_output_delta"
                 }
-                agent_protocol::AppServerNotification::FileChangeOutputDelta { .. } => {
-                    "file_change_output_delta"
-                }
+                agent_protocol::AppServerNotification::JsonPatchDelta { .. } => "json_patch_delta",
                 agent_protocol::AppServerNotification::ItemCompleted { .. } => "item_completed",
                 agent_protocol::AppServerNotification::TurnCompleted { .. } => "turn_completed",
                 agent_protocol::AppServerNotification::Info { .. } => "info",

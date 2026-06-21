@@ -30,7 +30,7 @@ impl WebSearchTool {
             },
             ToolSpec {
                 name: "web_search".to_string(),
-                identity: ToolIdentity::built_in("web_search"),
+                identity: ToolIdentity::hosted("web_search"),
                 description:
                     "Use a provider-hosted web search tool when the configured OpenAI-compatible Responses endpoint supports it."
                         .to_string(),

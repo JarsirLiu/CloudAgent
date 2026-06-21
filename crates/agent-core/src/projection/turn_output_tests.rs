@@ -1,17 +1,45 @@
 use super::*;
+use crate::runtime_item::RuntimeItem;
 use crate::tool::StructuredToolResult;
 use crate::turn::TurnItemDeltaKind;
+
+fn started(
+    turn_id: &str,
+    item_id: &str,
+    call_id: Option<&str>,
+    kind: crate::turn::TurnItemKind,
+    title: Option<&str>,
+) -> EventMsg {
+    EventMsg::ItemStarted {
+        turn_id: turn_id.to_string(),
+        item: RuntimeItem::started(
+            item_id,
+            call_id.map(str::to_string),
+            kind,
+            title.map(str::to_string),
+        ),
+    }
+}
+
+fn completed(turn_id: &str, item: TranscriptItem, call_id: Option<&str>) -> EventMsg {
+    let runtime_item = RuntimeItem::completed(&item, call_id.map(str::to_string));
+    EventMsg::ItemCompleted {
+        turn_id: turn_id.to_string(),
+        runtime_item,
+        transcript_item: item,
+    }
+}
 
 #[test]
 fn tool_event_uses_completed_item_not_streamed_delta() {
     let events = vec![
-        EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool-1".to_string(),
-            call_id: Some("call-1".to_string()),
-            kind: crate::turn::TurnItemKind::CommandExecution,
-            title: Some("exec_command".to_string()),
-        },
+        started(
+            "turn-1",
+            "tool-1",
+            Some("call-1"),
+            crate::turn::TurnItemKind::CommandExecution,
+            Some("exec_command"),
+        ),
         EventMsg::ItemDelta {
             turn_id: "turn-1".to_string(),
             item_id: "tool-1".to_string(),
@@ -20,11 +48,9 @@ fn tool_event_uses_completed_item_not_streamed_delta() {
             segment_index: None,
             delta: "streamed stdout".to_string(),
         },
-        EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool-1".to_string(),
-            call_id: Some("call-1".to_string()),
-            item: TranscriptItem::CommandExecution {
+        completed(
+            "turn-1",
+            TranscriptItem::CommandExecution {
                 id: "tool-1".to_string(),
                 tool_name: "exec_command".to_string(),
                 command: "pwd".to_string(),
@@ -35,7 +61,8 @@ fn tool_event_uses_completed_item_not_streamed_delta() {
                 duration_ms: Some(1),
                 summary: "completed summary".to_string(),
             },
-        },
+            Some("call-1"),
+        ),
     ];
 
     let tool_events = tool_events_from_turn_events(&events);
@@ -49,18 +76,16 @@ fn tool_event_uses_completed_item_not_streamed_delta() {
 #[test]
 fn completed_tool_item_projects_tool_event() {
     let events = vec![
-        EventMsg::ItemStarted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool-1".to_string(),
-            call_id: Some("call-1".to_string()),
-            kind: crate::turn::TurnItemKind::ToolCall,
-            title: Some("get_metadata".to_string()),
-        },
-        EventMsg::ItemCompleted {
-            turn_id: "turn-1".to_string(),
-            item_id: "tool-1".to_string(),
-            call_id: Some("call-1".to_string()),
-            item: TranscriptItem::ToolResult {
+        started(
+            "turn-1",
+            "tool-1",
+            Some("call-1"),
+            crate::turn::TurnItemKind::ToolCall,
+            Some("get_metadata"),
+        ),
+        completed(
+            "turn-1",
+            TranscriptItem::ToolResult {
                 id: "tool-1".to_string(),
                 tool_name: "get_metadata".to_string(),
                 content: "ok".to_string(),
@@ -77,7 +102,8 @@ fn completed_tool_item_projects_tool_event() {
                     modified_at_ms: None,
                 }),
             },
-        },
+            Some("call-1"),
+        ),
     ];
 
     let tool_events = tool_events_from_turn_events(&events);

@@ -1,6 +1,7 @@
 use super::compaction::{CompactionPhase, CompactionReason, CompactionTrigger};
 use crate::conversation::{InputItem, TranscriptItem};
 use crate::model::ModelUsage;
+use crate::runtime_item::{RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress};
 use crate::turn::RequestId;
 use serde::{Deserialize, Serialize};
 
@@ -122,13 +123,13 @@ pub enum TurnItemDeltaKind {
     Text,
     CommandExecutionOutput,
     ToolOutput,
-    FileChangeOutput,
     ReasoningText,
     ReasoningSummary,
     JsonPatch,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventMsg {
     TurnStarted {
@@ -180,10 +181,7 @@ pub enum EventMsg {
     },
     ItemStarted {
         turn_id: TurnId,
-        item_id: String,
-        call_id: Option<String>,
-        kind: TurnItemKind,
-        title: Option<String>,
+        item: RuntimeItem,
     },
     ItemDelta {
         turn_id: TurnId,
@@ -193,11 +191,22 @@ pub enum EventMsg {
         segment_index: Option<usize>,
         delta: String,
     },
-    ItemCompleted {
+    ItemProgress {
         turn_id: TurnId,
         item_id: String,
         call_id: Option<String>,
-        item: TranscriptItem,
+        progress: RuntimeItemProgress,
+    },
+    ItemMetricsUpdated {
+        turn_id: TurnId,
+        item_id: String,
+        call_id: Option<String>,
+        metrics: RuntimeItemMetrics,
+    },
+    ItemCompleted {
+        turn_id: TurnId,
+        runtime_item: RuntimeItem,
+        transcript_item: TranscriptItem,
     },
     ServerRequestRequested {
         turn_id: TurnId,

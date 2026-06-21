@@ -2,8 +2,11 @@ use crate::input::intent::GatewayConfigUpdate;
 use crate::state::NoticeLevel;
 use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation;
 use agent_core::conversation::{ConversationSummary, ConversationTurn, TranscriptItem};
-use agent_core::turn::{TurnId, TurnItemKind};
-use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
+use agent_core::turn::TurnId;
+use agent_core::{
+    ModelRetryStage, ModelUsage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress,
+    ServerRequest, ServerRequestDecisionKind, TurnItemKind,
+};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest,
     ConversationViewSnapshot, InterruptDisposition, RequestId,
@@ -117,9 +120,7 @@ pub(crate) enum ServerAction {
     BindActiveTurn(TurnId),
     StartActiveTurnItem {
         turn_id: TurnId,
-        item_id: String,
-        kind: TurnItemKind,
-        title: Option<String>,
+        item: RuntimeItem,
     },
     AppendActiveAgentDelta {
         turn_id: TurnId,
@@ -136,14 +137,29 @@ pub(crate) enum ServerAction {
         item_id: String,
         delta: String,
     },
+    AppendActivePatchDelta {
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    UpdateActiveItemProgress {
+        turn_id: TurnId,
+        item_id: String,
+        progress: RuntimeItemProgress,
+    },
+    UpdateActiveItemMetrics {
+        turn_id: TurnId,
+        item_id: String,
+        metrics: RuntimeItemMetrics,
+    },
     AppendCommandOutputDelta {
         item_id: String,
         delta: String,
     },
     CompleteActiveTurnItem {
         turn_id: TurnId,
-        item_id: String,
-        item: TranscriptItem,
+        item: RuntimeItem,
+        transcript_item: TranscriptItem,
     },
     PushNoticeCell {
         label: String,
@@ -189,12 +205,9 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                 actions.push(ServerAction::UpsertTurnSnapshot(turn.clone()));
             }
             AppServerNotification::ItemStarted { turn_id, item, .. } => {
-                let item_id = item.id().to_string();
                 actions.push(ServerAction::StartActiveTurnItem {
                     turn_id: turn_id.clone(),
-                    item_id,
-                    kind: turn_item_kind(item),
-                    title: turn_item_title(item),
+                    item: item.clone(),
                 });
             }
             AppServerNotification::AgentMessageDelta {
@@ -252,17 +265,57 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     delta: delta.clone(),
                 });
             }
-            AppServerNotification::FileChangeOutputDelta { .. } => {}
-            AppServerNotification::ItemCompleted { turn_id, item, .. } => {
-                if matches!(item, TranscriptItem::ToolResult { .. }) {
+            AppServerNotification::JsonPatchDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            } => {
+                actions.push(ServerAction::AppendActivePatchDelta {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    delta: delta.clone(),
+                });
+            }
+            AppServerNotification::ItemProgress {
+                turn_id,
+                item_id,
+                progress,
+                ..
+            } => {
+                actions.push(ServerAction::UpdateActiveItemProgress {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    progress: progress.clone(),
+                });
+            }
+            AppServerNotification::ItemMetricsUpdated {
+                turn_id,
+                item_id,
+                metrics,
+                ..
+            } => {
+                actions.push(ServerAction::UpdateActiveItemMetrics {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    metrics: metrics.clone(),
+                });
+            }
+            AppServerNotification::ItemCompleted {
+                turn_id,
+                item,
+                transcript_item,
+                ..
+            } => {
+                if matches!(item.kind, TurnItemKind::ToolCall | TurnItemKind::ToolResult) {
                     actions.push(ServerAction::ClearActiveTool {
-                        item_id: Some(item.id().to_string()),
+                        item_id: Some(item.id.clone()),
                     });
                 }
                 actions.push(ServerAction::CompleteActiveTurnItem {
                     turn_id: turn_id.clone(),
-                    item_id: item.id().to_string(),
                     item: item.clone(),
+                    transcript_item: transcript_item.clone(),
                 });
             }
             AppServerNotification::ConversationListPage {
@@ -421,29 +474,6 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
     }
 
     ServerMessageReduce { actions }
-}
-
-fn turn_item_kind(item: &TranscriptItem) -> TurnItemKind {
-    match item {
-        TranscriptItem::SystemMessage { .. } => TurnItemKind::SystemNote,
-        TranscriptItem::UserMessage { .. } => TurnItemKind::UserMessage,
-        TranscriptItem::AgentMessage { .. } => TurnItemKind::AssistantMessage,
-        TranscriptItem::CommandExecution { .. } => TurnItemKind::CommandExecution,
-        TranscriptItem::FileChange { .. } => TurnItemKind::FileChange,
-        TranscriptItem::ToolResult { .. } => TurnItemKind::ToolResult,
-        TranscriptItem::Reasoning { .. } => TurnItemKind::Reasoning,
-    }
-}
-
-fn turn_item_title(item: &TranscriptItem) -> Option<String> {
-    match item {
-        TranscriptItem::SystemMessage { .. } | TranscriptItem::UserMessage { .. } => None,
-        TranscriptItem::AgentMessage { .. } => Some("assistant_message".to_string()),
-        TranscriptItem::CommandExecution { command, .. } => Some(command.clone()),
-        TranscriptItem::FileChange { path, .. } => Some(path.clone()),
-        TranscriptItem::ToolResult { tool_name, .. } => Some(tool_name.clone()),
-        TranscriptItem::Reasoning { title, .. } => Some(title.clone()),
-    }
 }
 
 fn summarize_args_preview(arguments_preview: &str) -> String {

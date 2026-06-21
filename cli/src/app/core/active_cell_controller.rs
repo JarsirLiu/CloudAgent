@@ -4,7 +4,8 @@ use crate::app::core::active_turn::{
 use crate::app::core::running_turn_restore::restore_running_turn_cells;
 use crate::ui::history_cell::{HistoryCell, HistoryTone, Transcript};
 use agent_core::conversation::{ConversationTurn, InputItem, TranscriptItem};
-use agent_core::turn::{TurnId, TurnItemKind};
+use agent_core::turn::TurnId;
+use agent_core::{RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress};
 
 #[derive(Default)]
 pub(crate) struct ActiveCellController {
@@ -107,18 +108,11 @@ impl ActiveCellController {
     pub(crate) fn start_item(
         &mut self,
         turn_id: TurnId,
-        item_id: String,
-        kind: TurnItemKind,
-        title: Option<String>,
+        item: RuntimeItem,
         expand_details: bool,
     ) -> AppliedActiveTurnEffects {
         self.apply_active_turn(
-            ActiveTurnAction::StartItem {
-                turn_id,
-                item_id,
-                kind,
-                title,
-            },
+            ActiveTurnAction::StartItem { turn_id, item },
             expand_details,
         )
     }
@@ -169,6 +163,57 @@ impl ActiveCellController {
                 turn_id,
                 item_id,
                 delta,
+            },
+            expand_details,
+        )
+    }
+
+    pub(crate) fn append_patch_delta(
+        &mut self,
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+        expand_details: bool,
+    ) -> AppliedActiveTurnEffects {
+        self.apply_active_turn(
+            ActiveTurnAction::AppendPatchDelta {
+                turn_id,
+                item_id,
+                delta,
+            },
+            expand_details,
+        )
+    }
+
+    pub(crate) fn update_item_progress(
+        &mut self,
+        turn_id: TurnId,
+        item_id: String,
+        progress: RuntimeItemProgress,
+        expand_details: bool,
+    ) -> AppliedActiveTurnEffects {
+        self.apply_active_turn(
+            ActiveTurnAction::UpdateItemProgress {
+                turn_id,
+                item_id,
+                progress,
+            },
+            expand_details,
+        )
+    }
+
+    pub(crate) fn update_item_metrics(
+        &mut self,
+        turn_id: TurnId,
+        item_id: String,
+        metrics: RuntimeItemMetrics,
+        expand_details: bool,
+    ) -> AppliedActiveTurnEffects {
+        self.apply_active_turn(
+            ActiveTurnAction::UpdateItemMetrics {
+                turn_id,
+                item_id,
+                metrics,
             },
             expand_details,
         )

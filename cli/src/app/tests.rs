@@ -10,8 +10,8 @@ use crate::ui::chat_surface_model::{ChatSurfaceBody, build_chat_surface_model};
 use crate::ui::transcript_line_builder::{TranscriptLineOptions, build_transcript_lines};
 use agent_core::{
     CommandExecutionStatus, ConversationTurn, InputItem, ReadFileEntry, ReadFileStatus,
-    SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus, StructuredToolResult,
-    TranscriptItem, TurnItemKind, TurnState,
+    RuntimeItem, SearchWorkspaceMode, SearchWorkspaceOperation, SearchWorkspaceStatus,
+    StructuredToolResult, TranscriptItem, TurnItemKind, TurnState,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
@@ -143,6 +143,67 @@ fn turn(id: &str, state: TurnState, items: Vec<TranscriptItem>) -> ConversationT
         rollout_start_index: 0,
         rollout_end_index: items.len(),
         items,
+        runtime_items: Vec::new(),
+    }
+}
+
+fn started_runtime_item(
+    item_id: &str,
+    call_id: Option<&str>,
+    kind: TurnItemKind,
+    title: Option<&str>,
+) -> RuntimeItem {
+    RuntimeItem::started(
+        item_id,
+        call_id.map(str::to_string),
+        kind,
+        title.map(str::to_string),
+    )
+}
+
+fn completed_runtime_item(item: &TranscriptItem, call_id: Option<&str>) -> RuntimeItem {
+    RuntimeItem::completed(item, call_id.map(str::to_string))
+}
+
+fn owner_start_item(
+    owner: &mut TranscriptOwner,
+    turn_id: &str,
+    item_id: &str,
+    call_id: Option<&str>,
+    kind: TurnItemKind,
+    title: Option<&str>,
+    expand_details: bool,
+) {
+    owner.start_item(
+        turn_id.to_string(),
+        started_runtime_item(item_id, call_id, kind, title),
+        expand_details,
+    );
+}
+
+fn start_active_turn_item_action(
+    turn_id: &str,
+    item_id: &str,
+    call_id: Option<&str>,
+    kind: TurnItemKind,
+    title: Option<&str>,
+) -> crate::state::reducer::ServerAction {
+    crate::state::reducer::ServerAction::StartActiveTurnItem {
+        turn_id: turn_id.to_string(),
+        item: started_runtime_item(item_id, call_id, kind, title),
+    }
+}
+
+fn complete_active_turn_item_action(
+    turn_id: &str,
+    transcript_item: TranscriptItem,
+    call_id: Option<&str>,
+) -> crate::state::reducer::ServerAction {
+    let item = completed_runtime_item(&transcript_item, call_id);
+    crate::state::reducer::ServerAction::CompleteActiveTurnItem {
+        turn_id: turn_id.to_string(),
+        item,
+        transcript_item,
     }
 }
 
@@ -409,11 +470,13 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "r1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "r1",
+        None,
         TurnItemKind::Reasoning,
-        Some("Reasoning".to_string()),
+        Some("Reasoning"),
         false,
     );
     owner.append_reasoning_delta(
@@ -428,11 +491,13 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
         reasoning("r1", "thinking"),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "c1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "c1",
+        None,
         TurnItemKind::CommandExecution,
-        Some("rg *".to_string()),
+        Some("rg *"),
         false,
     );
 
@@ -450,9 +515,11 @@ fn transcript_owner_keeps_streaming_turn_visible_across_item_boundaries() {
         command("c1", "rg *"),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -478,9 +545,11 @@ fn completing_older_item_does_not_flush_current_live_item() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -491,11 +560,13 @@ fn completing_older_item_does_not_flush_current_live_item() {
         "partial answer".to_string(),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "c1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "c1",
+        None,
         TurnItemKind::CommandExecution,
-        Some("rg esc".to_string()),
+        Some("rg esc"),
         false,
     );
 
@@ -519,9 +590,11 @@ fn completed_agent_message_consolidates_after_item_boundary() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -532,11 +605,13 @@ fn completed_agent_message_consolidates_after_item_boundary() {
         "visible prefix".to_string(),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "c1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "c1",
+        None,
         TurnItemKind::CommandExecution,
-        Some("rg esc".to_string()),
+        Some("rg esc"),
         false,
     );
 
@@ -561,9 +636,11 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -574,11 +651,13 @@ fn completed_agent_message_consolidates_provisional_cells_by_item_id() {
         "first stable\n\n".to_string(),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "c1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "c1",
+        None,
         TurnItemKind::CommandExecution,
-        Some("rg esc".to_string()),
+        Some("rg esc"),
         false,
     );
     owner.complete_item(
@@ -647,11 +726,13 @@ fn runtime_non_agent_cells_do_not_become_stream_continuations() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "r1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "r1",
+        None,
         TurnItemKind::Reasoning,
-        Some("Reasoning".to_string()),
+        Some("Reasoning"),
         false,
     );
     owner.append_reasoning_delta(
@@ -666,11 +747,13 @@ fn runtime_non_agent_cells_do_not_become_stream_continuations() {
         reasoning("r1", "thinking"),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "c1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "c1",
+        None,
         TurnItemKind::CommandExecution,
-        Some("Run command".to_string()),
+        Some("Run command"),
         false,
     );
     owner.complete_item(
@@ -702,11 +785,13 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "toolcall-1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "toolcall-1",
+        None,
         TurnItemKind::ToolCall,
-        Some("read_file".to_string()),
+        Some("read_file"),
         false,
     );
 
@@ -717,9 +802,11 @@ fn tool_result_completion_replaces_matching_toolcall_placeholder() {
         false,
     );
 
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -752,30 +839,38 @@ fn parallel_toolcall_placeholders_do_not_commit_running_cards() {
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
 
-    owner.start_item(
-        "turn-1".to_string(),
-        "toolcall-1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "toolcall-1",
+        None,
         TurnItemKind::ToolCall,
-        Some("read_file".to_string()),
+        Some("read_file"),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "toolcall-2".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "toolcall-2",
+        None,
         TurnItemKind::ToolCall,
-        Some("read_file".to_string()),
+        Some("read_file"),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "toolcall-3".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "toolcall-3",
+        None,
         TurnItemKind::ToolCall,
-        Some("read_file".to_string()),
+        Some("read_file"),
         false,
     );
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -846,11 +941,13 @@ fn running_snapshot_updates_history_cache_without_touching_live_transcript() {
         .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
-    app.transcript_owner.start_item(
-        "turn-1".to_string(),
-        "r1".to_string(),
+    owner_start_item(
+        &mut app.transcript_owner,
+        "turn-1",
+        "r1",
+        None,
         TurnItemKind::Reasoning,
-        Some("Reasoning".to_string()),
+        Some("Reasoning"),
         false,
     );
     app.transcript_owner.append_reasoning_delta(
@@ -905,11 +1002,13 @@ fn chat_surface_model_renders_streaming_visible_tail() {
         .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
-    app.transcript_owner.start_item(
-        "turn-1".to_string(),
-        "r1".to_string(),
+    owner_start_item(
+        &mut app.transcript_owner,
+        "turn-1",
+        "r1",
+        None,
         TurnItemKind::Reasoning,
-        Some("Reasoning".to_string()),
+        Some("Reasoning"),
         false,
     );
     app.transcript_owner.append_reasoning_delta(
@@ -983,11 +1082,13 @@ fn streaming_reasoning_stays_fully_visible_until_completion() {
         .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
-    app.transcript_owner.start_item(
-        "turn-1".to_string(),
-        "r1".to_string(),
+    owner_start_item(
+        &mut app.transcript_owner,
+        "turn-1",
+        "r1",
+        None,
         TurnItemKind::Reasoning,
-        Some("Reasoning".to_string()),
+        Some("Reasoning"),
         false,
     );
     app.transcript_owner.append_reasoning_delta(
@@ -1028,11 +1129,13 @@ fn live_reasoning_tail_shows_latest_lines_without_history_collapse() {
         .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
-    app.transcript_owner.start_item(
-        "turn-1".to_string(),
-        "r1".to_string(),
+    owner_start_item(
+        &mut app.transcript_owner,
+        "turn-1",
+        "r1",
+        None,
         TurnItemKind::Reasoning,
-        Some("Reasoning".to_string()),
+        Some("Reasoning"),
         false,
     );
     let text = (0..30)
@@ -1075,11 +1178,13 @@ fn chat_surface_model_renders_placeholder_before_first_delta() {
         .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
-    app.transcript_owner.start_item(
-        "turn-1".to_string(),
-        "r1".to_string(),
+    owner_start_item(
+        &mut app.transcript_owner,
+        "turn-1",
+        "r1",
+        None,
         TurnItemKind::Reasoning,
-        Some("Reasoning".to_string()),
+        Some("Reasoning"),
         false,
     );
 
@@ -1529,12 +1634,13 @@ fn command_output_delta_updates_status_without_transcript_history() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::StartActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "cmd-1".to_string(),
-            kind: TurnItemKind::CommandExecution,
-            title: Some("rg TODO".to_string()),
-        },
+        start_active_turn_item_action(
+            "turn-1",
+            "cmd-1",
+            None,
+            TurnItemKind::CommandExecution,
+            Some("rg TODO"),
+        ),
     );
     execute_server_action(
         &mut app,
@@ -1554,26 +1660,27 @@ fn command_output_delta_updates_status_without_transcript_history() {
 }
 
 #[test]
-fn web_search_tool_output_delta_updates_active_transcript_cell() {
+fn web_search_progress_updates_active_transcript_cell() {
     let mut app = test_app();
     mark_running(&mut app);
     app.bottom_pane.on_turn_started();
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::StartActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "ws-1".to_string(),
-            kind: TurnItemKind::ToolResult,
-            title: Some("web_search".to_string()),
-        },
+        start_active_turn_item_action(
+            "turn-1",
+            "ws-1",
+            Some("ws-1"),
+            TurnItemKind::ToolResult,
+            Some("web_search"),
+        ),
     );
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::AppendActiveToolDelta {
+        crate::state::reducer::ServerAction::UpdateActiveItemProgress {
             turn_id: "turn-1".to_string(),
             item_id: "ws-1".to_string(),
-            delta: "weather seattle".to_string(),
+            progress: agent_core::RuntimeItemProgress::message("weather seattle"),
         },
     );
 
@@ -1594,12 +1701,13 @@ fn web_search_active_placeholder_uses_codex_like_summary() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::StartActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "ws-1".to_string(),
-            kind: TurnItemKind::ToolResult,
-            title: Some("web_search".to_string()),
-        },
+        start_active_turn_item_action(
+            "turn-1",
+            "ws-1",
+            Some("ws-1"),
+            TurnItemKind::ToolResult,
+            Some("web_search"),
+        ),
     );
 
     let active = app
@@ -1618,19 +1726,20 @@ fn completed_web_search_matches_standard_tool_result_lifecycle() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::StartActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "ws-1".to_string(),
-            kind: TurnItemKind::ToolResult,
-            title: Some("web_search".to_string()),
-        },
+        start_active_turn_item_action(
+            "turn-1",
+            "ws-1",
+            Some("ws-1"),
+            TurnItemKind::ToolResult,
+            Some("web_search"),
+        ),
     );
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::AppendActiveToolDelta {
+        crate::state::reducer::ServerAction::UpdateActiveItemProgress {
             turn_id: "turn-1".to_string(),
             item_id: "ws-1".to_string(),
-            delta: "weather seattle".to_string(),
+            progress: agent_core::RuntimeItemProgress::message("weather seattle"),
         },
     );
 
@@ -1649,10 +1758,9 @@ fn completed_web_search_matches_standard_tool_result_lifecycle() {
     );
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::CompleteActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "ws-1".to_string(),
-            item: TranscriptItem::ToolResult {
+        complete_active_turn_item_action(
+            "turn-1",
+            TranscriptItem::ToolResult {
                 id: "ws-1".to_string(),
                 tool_name: "web_search".to_string(),
                 content: "weather seattle".to_string(),
@@ -1664,7 +1772,8 @@ fn completed_web_search_matches_standard_tool_result_lifecycle() {
                     source_count: None,
                 }),
             },
-        },
+            Some("ws-1"),
+        ),
     );
 
     let active = app
@@ -1705,20 +1814,21 @@ fn in_progress_command_completion_keeps_status_until_final_completion() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::StartActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "cmd-1".to_string(),
-            kind: TurnItemKind::CommandExecution,
-            title: Some("slow command".to_string()),
-        },
+        start_active_turn_item_action(
+            "turn-1",
+            "cmd-1",
+            None,
+            TurnItemKind::CommandExecution,
+            Some("slow command"),
+        ),
     );
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::CompleteActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "cmd-1".to_string(),
-            item: command_with_status("cmd-1", "slow command", CommandExecutionStatus::InProgress),
-        },
+        complete_active_turn_item_action(
+            "turn-1",
+            command_with_status("cmd-1", "slow command", CommandExecutionStatus::InProgress),
+            None,
+        ),
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
@@ -1729,11 +1839,7 @@ fn in_progress_command_completion_keeps_status_until_final_completion() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::CompleteActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "cmd-1".to_string(),
-            item: command("cmd-1", "slow command"),
-        },
+        complete_active_turn_item_action("turn-1", command("cmd-1", "slow command"), None),
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
@@ -1759,12 +1865,13 @@ fn completed_streamed_agent_item_survives_turn_completion() {
     );
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::StartActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:1".to_string(),
-            kind: TurnItemKind::AssistantMessage,
-            title: None,
-        },
+        start_active_turn_item_action(
+            "turn-1",
+            "assistant:1",
+            None,
+            TurnItemKind::AssistantMessage,
+            None,
+        ),
     );
     execute_server_action(
         &mut app,
@@ -1776,14 +1883,14 @@ fn completed_streamed_agent_item_survives_turn_completion() {
     );
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::CompleteActiveTurnItem {
-            turn_id: "turn-1".to_string(),
-            item_id: "assistant:1".to_string(),
-            item: agent(
+        complete_active_turn_item_action(
+            "turn-1",
+            agent(
                 "assistant:1",
                 "visible during stream\n\nfinal line one\nfinal line two",
             ),
-        },
+            None,
+        ),
     );
     execute_server_action(
         &mut app,
@@ -1812,9 +1919,11 @@ fn completed_streamed_agent_item_consolidates_canonical_transcript() {
 
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "assistant:1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "assistant:1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -2100,9 +2209,11 @@ fn agent_stream_commits_complete_lines_and_keeps_tail_live() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -2136,9 +2247,11 @@ fn completing_streamed_agent_message_only_commits_remaining_tail() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -2179,9 +2292,11 @@ fn completing_unflushed_stream_keeps_canonical_transcript() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -2213,9 +2328,11 @@ fn completing_partially_streamed_message_consolidates_source() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -2262,9 +2379,11 @@ fn completing_streamed_agent_message_commits_source_backed_text() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("hello"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
-    owner.start_item(
-        "turn-1".to_string(),
-        "a1".to_string(),
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "a1",
+        None,
         TurnItemKind::AssistantMessage,
         None,
         false,
@@ -2369,11 +2488,13 @@ fn finalized_reasoning_history_matches_live_reasoning_card_ui() {
         .start_local_user(local_input("hello"), false);
     app.transcript_owner
         .bind_turn_id("turn-1".to_string(), false);
-    app.transcript_owner.start_item(
-        "turn-1".to_string(),
-        "r1".to_string(),
+    owner_start_item(
+        &mut app.transcript_owner,
+        "turn-1",
+        "r1",
+        None,
         TurnItemKind::Reasoning,
-        Some("Reasoning".to_string()),
+        Some("Reasoning"),
         false,
     );
     app.transcript_owner.append_reasoning_delta(
@@ -2651,4 +2772,35 @@ fn transcript_surface_uses_centered_width_metrics() {
 
     assert_eq!(metrics.width, 112);
     assert_eq!(metrics.left_padding, 4);
+}
+
+#[test]
+fn active_file_change_cell_shows_patch_preview_in_detail_area() {
+    let mut owner = TranscriptOwner::default();
+    owner.start_local_user(local_input("edit it"), false);
+    owner.bind_turn_id("turn-1".to_string(), false);
+    owner_start_item(
+        &mut owner,
+        "turn-1",
+        "edit-1",
+        Some("call-edit"),
+        TurnItemKind::FileChange,
+        Some("edit_file"),
+        false,
+    );
+
+    owner.append_patch_delta(
+        "turn-1".to_string(),
+        "edit-1".to_string(),
+        "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch".to_string(),
+        false,
+    );
+
+    let active = owner.active_cell().expect("active file change cell");
+    assert_eq!(active.label(), "Edit file");
+    assert_eq!(active.body(), "running");
+    assert_eq!(
+        active.detail(),
+        Some("*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch")
+    );
 }

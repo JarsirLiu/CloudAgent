@@ -14,14 +14,50 @@
 
 当前仍未完成的部分：
 
-- 文档里的 `RuntimeItem` 协议尚未开始实施，当前仍是 `ItemStarted { item_id, kind, title }` 的旧 started 载荷模型，见 `crates/agent-core/src/turn/events.rs`。
-- active / history / bottom banner 仍然依赖当前 started/completed 事件与前端本地推导，而不是消费完整 runtime item 协议。
-- diff、metrics、token 展示等长期目标尚未开始落地。
+- `RuntimeItem` 协议已经开始实施，`agent-core` 的 `EventMsg::ItemStarted / ItemCompleted` 以及 app-server / protocol started/completed 通知已切到 `RuntimeItem`。
+- `RuntimeItemProgress` 与 `ItemProgress / ItemMetricsUpdated` 事件链路已经接上，CLI active / bottom banner 已消费标准运行时进度、基础指标和工具级 token 指标。
+- `ToolSource` 已扩展为 `BuiltIn / Hosted / Mcp / Dynamic`，hosted `web_search` 已不再伪装成本地 built-in 工具来源。
+- `JsonPatch` 运行时 delta 已经打通到 CLI active 展示链路，文件改动类工具可以在 active 区实时展示 patch 预览。
+- 运行中 turn 的 restore 已收敛到 runtime-item-first，app-server 投影状态已保存 `tool_identity / structured / progress / metrics / patch`，并且 active-turn 快照发布去重已纳入 `runtime_items` 比较。
+- `web_search` started 的兼容 `ToolOutput` delta 桥接已删除，现在遵循纯标准 `ItemStarted / ItemProgress / ItemCompleted`。
+- CLI 的工具分类与 turn output 聚合仍存在 `tool_name` / `StructuredToolResult` / summary 字符串启发式。
+- gateway 已不再忽略 `ItemProgress / ItemMetricsUpdated`，但各 adapter 目前仍是安全降级而非富展示。
+- diff viewer、历史区 richer metrics 展示、进一步去掉名称启发式 fallback 等长期目标仍未完成。
 
 结论：
 
 - 这份文档的“Phase 2 之后的目标架构”仍然有效。
-- 当前实现只完成了从旧特例收口到标准工具结果这一步，距离文档的最终目标还有明显差距。
+- 当前实现已经走到“标准工具结果 + RuntimeItem started/completed/progress/metrics + patch delta active 展示”这一步，但距离文档的最终目标仍有明显差距。
+
+补充说明：
+
+- 现在不能把当前状态定义为“所有工具都已彻底标准化接入 CLI”。
+- 更准确的表述应是：
+  - 核心生命周期链路已打通
+  - `web_search` 已迁入标准工具结果与 runtime item 元数据
+  - 但跨前端富展示、历史 diff/metrics、以及少量 fallback heuristic 仍未完全收口
+
+## 0.1 下一步聚焦范围（2026-06-21）
+
+后续不再围绕 “web search 能否进入标准工具链路” 继续打补丁，下一阶段只做下面 4 类工作：
+
+1. 历史区 richer completed 卡片
+   - 让 edit / web search / command 这类 completed 工具项展示 structured metrics 与 patch 摘要。
+   - 这一轮先做摘要增强，不直接做完整 diff viewer。
+
+2. 继续消除名称启发式 fallback
+   - 让 CLI 的工具分类和 `turn_output` 聚合尽量从 `tool_identity + structured` 推导。
+   - 名称和 summary 文本判断只保留在单点 fallback。
+
+3. 收敛 command 与 generic tool 的 active 内核
+   - 当前命令和普通工具的 active 生命周期虽然都可用，但底层仍是两套状态机。
+   - 下一步要先把内部状态收拢，避免后续做 richer progress / diff / metrics 时反复分叉。
+
+4. gateway 富运行态第一版
+   - gateway 已经能拿到 `ItemProgress / ItemMetricsUpdated`，但目前主要只做 typing 和日志。
+   - 下一步至少要能稳定产出运行态文案，逐步靠近 CLI 的运行体验。
+
+更细的文件级实施清单，统一以 [docs/tooling-pipeline-implementation-plan.zh-CN.md](D:\learn\gifti\cloudagent\docs\tooling-pipeline-implementation-plan.zh-CN.md) 的 `0.2` 为准。
 
 ## 1. 背景
 

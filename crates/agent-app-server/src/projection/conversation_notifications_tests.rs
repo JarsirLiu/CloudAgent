@@ -1,9 +1,41 @@
 use super::ConversationNotificationProjector;
 use agent_core::{
     CommandExecutionStatus, CompactionPhase, CompactionReason, CompactionTrigger, EventMsg,
-    ModelRetryStage, ModelUsage, TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState,
+    ModelRetryStage, ModelUsage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress,
+    TranscriptItem, TurnItemDeltaKind, TurnItemKind, TurnState,
 };
 use agent_protocol::AppServerNotification;
+
+fn started_item(
+    turn_id: &str,
+    item_id: &str,
+    call_id: Option<&str>,
+    kind: TurnItemKind,
+    title: Option<&str>,
+) -> EventMsg {
+    EventMsg::ItemStarted {
+        turn_id: turn_id.to_string(),
+        item: RuntimeItem::started(
+            item_id,
+            call_id.map(str::to_string),
+            kind,
+            title.map(str::to_string),
+        ),
+    }
+}
+
+fn completed_item(
+    turn_id: &str,
+    transcript_item: TranscriptItem,
+    call_id: Option<&str>,
+) -> EventMsg {
+    let runtime_item = RuntimeItem::completed(&transcript_item, call_id.map(str::to_string));
+    EventMsg::ItemCompleted {
+        turn_id: turn_id.to_string(),
+        runtime_item,
+        transcript_item,
+    }
+}
 
 #[test]
 fn terminal_notifications_are_deferred_until_finish() {
@@ -39,51 +71,16 @@ fn system_error_projects_error_notification() {
 }
 
 #[test]
-fn file_change_output_delta_projects_to_file_change_notification() {
-    let mut projector = ConversationNotificationProjector::new("default");
-
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:write".to_string(),
-        call_id: Some("call-write".to_string()),
-        kind: TurnItemKind::FileChange,
-        title: Some("edit_file".to_string()),
-    });
-    let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:write".to_string(),
-        call_id: Some("call-write".to_string()),
-        kind: TurnItemDeltaKind::FileChangeOutput,
-        segment_index: None,
-        delta: "wrote note.txt".to_string(),
-    });
-
-    assert_eq!(notifications.len(), 1);
-    assert!(matches!(
-        &notifications[0],
-        AppServerNotification::FileChangeOutputDelta {
-            item_id,
-            call_id,
-            delta,
-            ..
-        }
-            if item_id == "tool:write"
-                && call_id.as_deref() == Some("call-write")
-                && delta == "wrote note.txt"
-    ));
-}
-
-#[test]
 fn command_execution_output_delta_projects_to_command_notification() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:shell".to_string(),
-        call_id: Some("call-shell".to_string()),
-        kind: TurnItemKind::CommandExecution,
-        title: Some("exec_command".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "tool:shell",
+        Some("call-shell"),
+        TurnItemKind::CommandExecution,
+        Some("exec_command"),
+    ));
     let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "tool:shell".to_string(),
@@ -112,13 +109,13 @@ fn command_execution_output_delta_projects_to_command_notification() {
 fn generic_tool_output_delta_projects_to_tool_notification() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:custom".to_string(),
-        call_id: Some("call-custom".to_string()),
-        kind: TurnItemKind::ToolCall,
-        title: Some("custom_tool".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "tool:custom",
+        Some("call-custom"),
+        TurnItemKind::ToolCall,
+        Some("custom_tool"),
+    ));
     let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "tool:custom".to_string(),
@@ -140,6 +137,41 @@ fn generic_tool_output_delta_projects_to_tool_notification() {
             if item_id == "tool:custom"
                 && call_id.as_deref() == Some("call-custom")
                 && delta == "custom output"
+    ));
+}
+
+#[test]
+fn json_patch_delta_projects_to_notification() {
+    let mut projector = ConversationNotificationProjector::new("default");
+
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "tool:write",
+        Some("call-write"),
+        TurnItemKind::FileChange,
+        Some("edit_file"),
+    ));
+    let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
+        turn_id: "turn-1".to_string(),
+        item_id: "tool:write".to_string(),
+        call_id: Some("call-write".to_string()),
+        kind: TurnItemDeltaKind::JsonPatch,
+        segment_index: None,
+        delta: "*** Begin Patch\n*** End Patch".to_string(),
+    });
+
+    assert_eq!(notifications.len(), 1);
+    assert!(matches!(
+        &notifications[0],
+        AppServerNotification::JsonPatchDelta {
+            item_id,
+            call_id,
+            delta,
+            ..
+        }
+            if item_id == "tool:write"
+                && call_id.as_deref() == Some("call-write")
+                && delta.contains("*** Begin Patch")
     ));
 }
 
@@ -256,13 +288,13 @@ fn context_compaction_notifications_preserve_phase() {
 fn assistant_text_delta_projects_to_notification() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::AssistantMessage,
-        title: Some("assistant_message".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "assistant:1",
+        None,
+        TurnItemKind::AssistantMessage,
+        Some("assistant_message"),
+    ));
     let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "assistant:1".to_string(),
@@ -288,16 +320,96 @@ fn assistant_text_delta_projects_to_notification() {
 }
 
 #[test]
+fn active_turn_snapshot_preserves_runtime_progress_metrics_and_patch() {
+    let mut projector = ConversationNotificationProjector::new("default");
+    projector.project_turn_event(&EventMsg::TurnStarted {
+        turn_id: "turn-1".to_string(),
+        conversation_id: "default".to_string(),
+        user_input: Vec::new(),
+    });
+
+    let item = RuntimeItem::started(
+        "edit-1",
+        Some("call-edit-1".to_string()),
+        TurnItemKind::FileChange,
+        Some("edit_file".to_string()),
+    )
+    .with_summary("editing src/lib.rs")
+    .with_progress(RuntimeItemProgress::message("editing src/lib.rs"));
+    projector.project_turn_event(&EventMsg::ItemStarted {
+        turn_id: "turn-1".to_string(),
+        item,
+    });
+    projector.project_turn_event(&EventMsg::ItemProgress {
+        turn_id: "turn-1".to_string(),
+        item_id: "edit-1".to_string(),
+        call_id: Some("call-edit-1".to_string()),
+        progress: RuntimeItemProgress::message("rewriting function body"),
+    });
+    projector.project_turn_event(&EventMsg::ItemMetricsUpdated {
+        turn_id: "turn-1".to_string(),
+        item_id: "edit-1".to_string(),
+        call_id: Some("call-edit-1".to_string()),
+        metrics: RuntimeItemMetrics {
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
+            elapsed_ms: Some(42),
+            bytes_read: None,
+            bytes_written: None,
+            file_count: Some(1),
+            source_count: None,
+            result_count: None,
+        },
+    });
+    projector.project_turn_event(&EventMsg::ItemDelta {
+        turn_id: "turn-1".to_string(),
+        item_id: "edit-1".to_string(),
+        call_id: Some("call-edit-1".to_string()),
+        kind: TurnItemDeltaKind::JsonPatch,
+        segment_index: None,
+        delta: "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch".to_string(),
+    });
+
+    let snapshot = projector.active_turn_snapshot().expect("active snapshot");
+    assert_eq!(snapshot.runtime_items.len(), 1);
+    let runtime_item = &snapshot.runtime_items[0];
+    assert_eq!(runtime_item.item.id, "edit-1");
+    assert_eq!(
+        runtime_item
+            .item
+            .progress
+            .as_ref()
+            .and_then(|progress| progress.message.as_deref()),
+        Some("rewriting function body")
+    );
+    assert_eq!(
+        runtime_item
+            .item
+            .metrics
+            .as_ref()
+            .and_then(|m| m.file_count),
+        Some(1)
+    );
+    assert!(
+        runtime_item
+            .patch_buffer
+            .contains("*** Update File: src/lib.rs"),
+        "patch buffer should be preserved in active snapshot"
+    );
+}
+
+#[test]
 fn reasoning_text_delta_projects_to_notification() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "reasoning:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::Reasoning,
-        title: Some("reasoning".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "reasoning:1",
+        None,
+        TurnItemKind::Reasoning,
+        Some("reasoning"),
+    ));
     let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "reasoning:1".to_string(),
@@ -327,13 +439,13 @@ fn reasoning_text_delta_projects_to_notification() {
 fn reasoning_summary_delta_projects_to_notification() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "reasoning:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::Reasoning,
-        title: Some("reasoning".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "reasoning:1",
+        None,
+        TurnItemKind::Reasoning,
+        Some("reasoning"),
+    ));
     let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "reasoning:1".to_string(),
@@ -377,22 +489,21 @@ fn reasoning_summary_delta_projects_to_notification() {
 fn item_completed_clears_active_lifecycle() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::AssistantMessage,
-        title: Some("assistant_message".to_string()),
-    });
-    let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        item: TranscriptItem::AgentMessage {
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "assistant:1",
+        None,
+        TurnItemKind::AssistantMessage,
+        Some("assistant_message"),
+    ));
+    let completed = projector.project_turn_event(&completed_item(
+        "turn-1",
+        TranscriptItem::AgentMessage {
             id: "assistant:1".to_string(),
             text: "done".to_string(),
         },
-    });
+        None,
+    ));
     let terminal = projector.project_turn_event(&EventMsg::TurnCompleted {
         turn_id: "turn-1".to_string(),
     });
@@ -400,9 +511,9 @@ fn item_completed_clears_active_lifecycle() {
 
     assert!(matches!(
         completed.as_slice(),
-        [AppServerNotification::ItemCompleted { item, .. }]
+        [AppServerNotification::ItemCompleted { transcript_item, .. }]
             if matches!(
-                item,
+                transcript_item,
                 TranscriptItem::AgentMessage { id, text }
                     if id == "assistant:1" && text == "done"
             )
@@ -426,35 +537,34 @@ fn item_completed_clears_active_lifecycle() {
 fn assistant_item_completed_projects_final_source() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::AssistantMessage,
-        title: Some("assistant_message".to_string()),
-    });
-    let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        item: TranscriptItem::AgentMessage {
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "assistant:1",
+        None,
+        TurnItemKind::AssistantMessage,
+        Some("assistant_message"),
+    ));
+    let completed = projector.project_turn_event(&completed_item(
+        "turn-1",
+        TranscriptItem::AgentMessage {
             id: "assistant:1".to_string(),
             text: "done".to_string(),
         },
-    });
+        None,
+    ));
 
     assert!(matches!(
         completed.as_slice(),
         [AppServerNotification::ItemCompleted {
             conversation_id,
             turn_id,
-            call_id,
             item,
+            transcript_item,
         }] if conversation_id == "default"
             && turn_id == "turn-1"
-            && call_id.is_none()
+            && item.call_id.is_none()
             && matches!(
-                item,
+                transcript_item,
                 TranscriptItem::AgentMessage { id, text }
                     if id == "assistant:1" && text == "done"
             )
@@ -465,36 +575,35 @@ fn assistant_item_completed_projects_final_source() {
 fn reasoning_item_completed_projects_final_source() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "reasoning:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::Reasoning,
-        title: Some("thinking".to_string()),
-    });
-    let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
-        turn_id: "turn-1".to_string(),
-        item_id: "reasoning:1".to_string(),
-        call_id: None,
-        item: TranscriptItem::Reasoning {
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "reasoning:1",
+        None,
+        TurnItemKind::Reasoning,
+        Some("thinking"),
+    ));
+    let completed = projector.project_turn_event(&completed_item(
+        "turn-1",
+        TranscriptItem::Reasoning {
             id: "reasoning:1".to_string(),
             title: "thinking".to_string(),
             text: "final reasoning".to_string(),
         },
-    });
+        None,
+    ));
 
     assert!(matches!(
         completed.as_slice(),
         [AppServerNotification::ItemCompleted {
             conversation_id,
             turn_id,
-            call_id,
             item,
+            transcript_item,
         }] if conversation_id == "default"
             && turn_id == "turn-1"
-            && call_id.is_none()
+            && item.call_id.is_none()
             && matches!(
-                item,
+                transcript_item,
                 TranscriptItem::Reasoning { id, title, text }
                     if id == "reasoning:1"
                         && title == "thinking"
@@ -507,13 +616,13 @@ fn reasoning_item_completed_projects_final_source() {
 fn mismatched_call_id_reports_lifecycle_error() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:shell".to_string(),
-        call_id: Some("call-shell".to_string()),
-        kind: TurnItemKind::CommandExecution,
-        title: Some("exec_command".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "tool:shell",
+        Some("call-shell"),
+        TurnItemKind::CommandExecution,
+        Some("exec_command"),
+    ));
     let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "tool:shell".to_string(),
@@ -535,23 +644,22 @@ fn mismatched_call_id_reports_lifecycle_error() {
 fn item_completed_prefers_event_call_id_when_lifecycle_is_missing() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    let completed = projector.project_turn_event(&EventMsg::ItemCompleted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:shell".to_string(),
-        call_id: Some("call-shell".to_string()),
-        item: TranscriptItem::ToolResult {
+    let completed = projector.project_turn_event(&completed_item(
+        "turn-1",
+        TranscriptItem::ToolResult {
             id: "tool:shell".to_string(),
             tool_name: "exec_command".to_string(),
             content: "done".to_string(),
             summary: "done".to_string(),
             structured: None,
         },
-    });
+        Some("call-shell"),
+    ));
 
     assert!(matches!(
         completed.last(),
-        Some(AppServerNotification::ItemCompleted { call_id, .. })
-            if call_id.as_deref() == Some("call-shell")
+        Some(AppServerNotification::ItemCompleted { item, .. })
+            if item.call_id.as_deref() == Some("call-shell")
     ));
 }
 
@@ -559,18 +667,16 @@ fn item_completed_prefers_event_call_id_when_lifecycle_is_missing() {
 fn completed_item_removes_call_id_index() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:shell".to_string(),
-        call_id: Some("call-shell".to_string()),
-        kind: TurnItemKind::CommandExecution,
-        title: Some("exec_command".to_string()),
-    });
-    let _ = projector.project_turn_event(&EventMsg::ItemCompleted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:shell".to_string(),
-        call_id: Some("call-shell".to_string()),
-        item: TranscriptItem::CommandExecution {
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "tool:shell",
+        Some("call-shell"),
+        TurnItemKind::CommandExecution,
+        Some("exec_command"),
+    ));
+    let _ = projector.project_turn_event(&completed_item(
+        "turn-1",
+        TranscriptItem::CommandExecution {
             id: "tool:shell".to_string(),
             tool_name: "exec_command".to_string(),
             command: "pwd".to_string(),
@@ -581,7 +687,8 @@ fn completed_item_removes_call_id_index() {
             duration_ms: Some(1),
             summary: "D:\\work".to_string(),
         },
-    });
+        Some("call-shell"),
+    ));
 
     let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
@@ -603,13 +710,13 @@ fn completed_item_removes_call_id_index() {
 fn call_id_turn_mismatch_reports_lifecycle_error() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:shell".to_string(),
-        call_id: Some("call-shell".to_string()),
-        kind: TurnItemKind::CommandExecution,
-        title: Some("exec_command".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "tool:shell",
+        Some("call-shell"),
+        TurnItemKind::CommandExecution,
+        Some("exec_command"),
+    ));
     let notifications = projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-2".to_string(),
         item_id: "tool:shell".to_string(),
@@ -630,13 +737,13 @@ fn call_id_turn_mismatch_reports_lifecycle_error() {
 fn turn_completed_reports_dangling_active_items() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::AssistantMessage,
-        title: Some("assistant_message".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "assistant:1",
+        None,
+        TurnItemKind::AssistantMessage,
+        Some("assistant_message"),
+    ));
     projector.project_turn_event(&EventMsg::TurnCompleted {
         turn_id: "turn-1".to_string(),
     });
@@ -653,20 +760,20 @@ fn turn_completed_reports_dangling_active_items() {
 fn stable_item_ids_preserve_arrival_order_when_reasoning_starts_late() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::AssistantMessage,
-        title: Some("assistant_message".to_string()),
-    });
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "reasoning:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::Reasoning,
-        title: Some("reasoning".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "assistant:1",
+        None,
+        TurnItemKind::AssistantMessage,
+        Some("assistant_message"),
+    ));
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "reasoning:1",
+        None,
+        TurnItemKind::Reasoning,
+        Some("reasoning"),
+    ));
 
     let ordered = projector.stable_item_ids_for_turn("turn-1");
     assert_eq!(ordered, vec!["assistant:1", "reasoning:1"]);
@@ -676,27 +783,27 @@ fn stable_item_ids_preserve_arrival_order_when_reasoning_starts_late() {
 fn tool_items_preserve_arrival_order_relative_to_assistant() {
     let mut projector = ConversationNotificationProjector::new("default");
 
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::AssistantMessage,
-        title: Some("assistant_message".to_string()),
-    });
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:1".to_string(),
-        call_id: Some("call-1".to_string()),
-        kind: TurnItemKind::CommandExecution,
-        title: Some("exec_command".to_string()),
-    });
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "reasoning:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::Reasoning,
-        title: Some("reasoning".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "assistant:1",
+        None,
+        TurnItemKind::AssistantMessage,
+        Some("assistant_message"),
+    ));
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "tool:1",
+        Some("call-1"),
+        TurnItemKind::CommandExecution,
+        Some("exec_command"),
+    ));
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "reasoning:1",
+        None,
+        TurnItemKind::Reasoning,
+        Some("reasoning"),
+    ));
 
     let ordered = projector.stable_item_ids_for_turn("turn-1");
     assert_eq!(ordered, vec!["assistant:1", "tool:1", "reasoning:1"]);
@@ -711,13 +818,13 @@ fn active_turn_snapshot_preserves_late_reasoning_after_assistant_when_it_arrives
         conversation_id: "default".to_string(),
         user_input: agent_core::text_input_items("hi"),
     });
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "reasoning:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::Reasoning,
-        title: Some("reasoning".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "reasoning:1",
+        None,
+        TurnItemKind::Reasoning,
+        Some("reasoning"),
+    ));
     projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "reasoning:1".to_string(),
@@ -726,13 +833,13 @@ fn active_turn_snapshot_preserves_late_reasoning_after_assistant_when_it_arrives
         segment_index: None,
         delta: "first".to_string(),
     });
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "tool:1".to_string(),
-        call_id: Some("call-1".to_string()),
-        kind: TurnItemKind::CommandExecution,
-        title: Some("pwd".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "tool:1",
+        Some("call-1"),
+        TurnItemKind::CommandExecution,
+        Some("pwd"),
+    ));
     projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "tool:1".to_string(),
@@ -741,13 +848,13 @@ fn active_turn_snapshot_preserves_late_reasoning_after_assistant_when_it_arrives
         segment_index: None,
         delta: "D:\\work".to_string(),
     });
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "assistant:1".to_string(),
-        call_id: None,
-        kind: TurnItemKind::AssistantMessage,
-        title: Some("assistant_message".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "assistant:1",
+        None,
+        TurnItemKind::AssistantMessage,
+        Some("assistant_message"),
+    ));
     projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "assistant:1".to_string(),
@@ -756,13 +863,13 @@ fn active_turn_snapshot_preserves_late_reasoning_after_assistant_when_it_arrives
         segment_index: None,
         delta: "answer".to_string(),
     });
-    projector.project_turn_event(&EventMsg::ItemStarted {
-        turn_id: "turn-1".to_string(),
-        item_id: "reasoning:2".to_string(),
-        call_id: None,
-        kind: TurnItemKind::Reasoning,
-        title: Some("reasoning".to_string()),
-    });
+    projector.project_turn_event(&started_item(
+        "turn-1",
+        "reasoning:2",
+        None,
+        TurnItemKind::Reasoning,
+        Some("reasoning"),
+    ));
     projector.project_turn_event(&EventMsg::ItemDelta {
         turn_id: "turn-1".to_string(),
         item_id: "reasoning:2".to_string(),

@@ -1,9 +1,11 @@
 use super::streaming::{AgentStreamController, AgentStreamFinish, AgentStreamOutput};
+use crate::runtime_metrics_display::format_runtime_metrics;
 use crate::ui::history_cell::{
-    HistoryCell, humanize_tool_label, render_active_item_placeholder, render_history_entry,
+    HistoryCell, humanize_tool_label, render_active_runtime_item, render_history_entry,
 };
 use agent_core::conversation::{InputItem, TranscriptItem, input_items_to_plain_text};
 use agent_core::turn::{TurnId, TurnItemKind};
+use agent_core::{RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
@@ -18,9 +20,7 @@ pub(crate) enum ActiveTurnAction {
     },
     StartItem {
         turn_id: TurnId,
-        item_id: String,
-        kind: TurnItemKind,
-        title: Option<String>,
+        item: RuntimeItem,
     },
     AppendAgentDelta {
         turn_id: TurnId,
@@ -36,6 +36,21 @@ pub(crate) enum ActiveTurnAction {
         turn_id: TurnId,
         item_id: String,
         delta: String,
+    },
+    AppendPatchDelta {
+        turn_id: TurnId,
+        item_id: String,
+        delta: String,
+    },
+    UpdateItemProgress {
+        turn_id: TurnId,
+        item_id: String,
+        progress: RuntimeItemProgress,
+    },
+    UpdateItemMetrics {
+        turn_id: TurnId,
+        item_id: String,
+        metrics: RuntimeItemMetrics,
     },
     CompleteItem {
         turn_id: TurnId,
@@ -99,12 +114,20 @@ impl ActiveItemView {
         self.cell.append_body(delta);
     }
 
+    fn append_detail(&mut self, delta: &str) {
+        self.cell.append_detail(delta);
+    }
+
     fn replace_body(&mut self, body: impl Into<String>) {
         self.cell.replace_body(body);
     }
 
     fn body(&self) -> &str {
         self.cell.body()
+    }
+
+    fn set_body(&mut self, body: impl Into<String>) {
+        self.cell.replace_body(body);
     }
 
     fn label(&self) -> &str {
@@ -150,21 +173,17 @@ impl ActiveTurnState {
                 self.ensure_turn(&turn_id);
                 self.snapshot_effects()
             }
-            ActiveTurnAction::StartItem {
-                turn_id,
-                item_id,
-                kind,
-                title,
-            } => {
+            ActiveTurnAction::StartItem { turn_id, item } => {
                 self.ensure_turn(&turn_id);
+                let item_id = item.id.clone();
                 let replay_cells = self.flush_live_tail_if_different(&item_id);
-                if matches!(kind, TurnItemKind::CommandExecution) {
+                if matches!(item.kind, TurnItemKind::CommandExecution) {
                     return self.snapshot_effects_with_replay(replay_cells);
                 }
                 self.live_item = Some(ActiveItemView::new(
                     item_id,
-                    kind.clone(),
-                    render_active_item_placeholder(kind, title.as_deref().unwrap_or("")),
+                    item.kind.clone(),
+                    render_active_runtime_item(&item),
                 ));
                 self.snapshot_effects_with_replay(replay_cells)
             }
@@ -213,8 +232,54 @@ impl ActiveTurnState {
                 {
                     match live_item.body().trim() {
                         "" | "running" => live_item.replace_body(delta),
+                        current if current == delta.trim() => {}
                         _ => live_item.append_body(&delta),
                     }
+                }
+                self.snapshot_effects_with_replay(replay_cells)
+            }
+            ActiveTurnAction::AppendPatchDelta {
+                turn_id,
+                item_id,
+                delta,
+            } => {
+                self.ensure_turn(&turn_id);
+                let replay_cells = self.flush_live_tail_if_different(&item_id);
+                if let Some(live_item) = self.live_item.as_mut()
+                    && live_item.item_id == item_id
+                {
+                    live_item.append_detail(&delta);
+                }
+                self.snapshot_effects_with_replay(replay_cells)
+            }
+            ActiveTurnAction::UpdateItemProgress {
+                turn_id,
+                item_id,
+                progress,
+            } => {
+                self.ensure_turn(&turn_id);
+                let replay_cells = self.flush_live_tail_if_different(&item_id);
+                if let Some(message) = progress.message
+                    && let Some(live_item) = self.live_item.as_mut()
+                    && live_item.item_id == item_id
+                    && !message.trim().is_empty()
+                {
+                    live_item.set_body(message);
+                }
+                self.snapshot_effects_with_replay(replay_cells)
+            }
+            ActiveTurnAction::UpdateItemMetrics {
+                turn_id,
+                item_id,
+                metrics,
+            } => {
+                self.ensure_turn(&turn_id);
+                let replay_cells = self.flush_live_tail_if_different(&item_id);
+                if let Some(live_item) = self.live_item.as_mut()
+                    && live_item.item_id == item_id
+                    && let Some(detail) = format_runtime_metrics(&metrics)
+                {
+                    live_item.append_detail(&detail);
                 }
                 self.snapshot_effects_with_replay(replay_cells)
             }

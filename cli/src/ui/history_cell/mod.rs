@@ -10,7 +10,7 @@ mod wrapping;
 use ratatui::text::Line;
 
 pub(crate) use render::{
-    RenderContext, humanize_tool_label, render_active_item_placeholder, render_history_entry,
+    RenderContext, humanize_tool_label, render_active_runtime_item, render_history_entry,
 };
 pub(crate) use transcript::Transcript;
 
@@ -320,6 +320,26 @@ impl HistoryCell {
             HistoryContent::Exec(cell) => cell.summary.push_str(delta),
             HistoryContent::Edit(cell) => cell.summary.push_str(delta),
             HistoryContent::ToolGroup(cell) => cell.summary.push_str(delta),
+        }
+        self.invalidate_cache();
+    }
+
+    pub fn append_detail(&mut self, delta: &str) {
+        let push = |detail: &mut Option<String>| match detail {
+            Some(existing) if !existing.is_empty() && !delta.is_empty() => {
+                if !existing.ends_with('\n') {
+                    existing.push('\n');
+                }
+                existing.push_str(delta);
+            }
+            Some(existing) => existing.push_str(delta),
+            None => *detail = Some(delta.to_string()),
+        };
+
+        match &mut self.content {
+            HistoryContent::Exec(cell) => push(&mut cell.detail),
+            HistoryContent::Edit(cell) => push(&mut cell.detail),
+            _ => self.append_body(delta),
         }
         self.invalidate_cache();
     }

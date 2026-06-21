@@ -1,7 +1,7 @@
 use crate::message::ReplyContext;
 use agent_core::{
-    CompactionPhase, CompactionReason, CompactionTrigger, ModelRetryStage, ModelUsage,
-    ServerRequest, ServerRequestDecision, TranscriptItem,
+    CompactionPhase, CompactionReason, CompactionTrigger, ModelRetryStage, ModelUsage, RuntimeItem,
+    RuntimeItemMetrics, RuntimeItemProgress, ServerRequest, ServerRequestDecision, TranscriptItem,
 };
 use agent_protocol::RequestId;
 
@@ -22,10 +22,11 @@ pub enum GatewayItemDeltaKind {
     ReasoningText,
     CommandExecutionOutput,
     ToolOutput,
-    FileChangeOutput,
+    JsonPatch,
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum GatewayEvent {
     TurnStarted {
         target: OutboundTarget,
@@ -34,8 +35,7 @@ pub enum GatewayEvent {
     ItemStarted {
         target: OutboundTarget,
         turn_id: String,
-        call_id: Option<String>,
-        item: TranscriptItem,
+        item: RuntimeItem,
     },
     ItemDelta {
         target: OutboundTarget,
@@ -46,6 +46,20 @@ pub enum GatewayEvent {
         segment_index: Option<usize>,
         delta: String,
     },
+    ItemProgress {
+        target: OutboundTarget,
+        turn_id: String,
+        item_id: String,
+        call_id: Option<String>,
+        progress: RuntimeItemProgress,
+    },
+    ItemMetricsUpdated {
+        target: OutboundTarget,
+        turn_id: String,
+        item_id: String,
+        call_id: Option<String>,
+        metrics: RuntimeItemMetrics,
+    },
     ReasoningSummaryPartAdded {
         target: OutboundTarget,
         turn_id: String,
@@ -55,8 +69,8 @@ pub enum GatewayEvent {
     ItemCompleted {
         target: OutboundTarget,
         turn_id: String,
-        call_id: Option<String>,
-        item: TranscriptItem,
+        item: RuntimeItem,
+        transcript_item: TranscriptItem,
     },
     ServerRequestRequested {
         target: OutboundTarget,

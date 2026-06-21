@@ -13,6 +13,7 @@ use crate::{
     ApprovalPolicy, PermissionProfile, TurnInterruptedError, emit_event,
     execute_tool_call_streaming, run_parallel_tool_invocations,
 };
+use crate::{RuntimeItem, RuntimeItemMetrics};
 use anyhow::Result;
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
@@ -123,10 +124,13 @@ impl<'a> ToolBatchRunner<'a> {
                 on_event,
                 EventMsg::ItemStarted {
                     turn_id: self.turn_id.to_string(),
-                    item_id: tool_item_id.clone(),
-                    call_id: Some(call.id.clone()),
-                    kind: spec.item_kind.clone(),
-                    title: Some(self.host.tools().tool_item_title(&call)),
+                    item: RuntimeItem::started(
+                        tool_item_id.clone(),
+                        Some(call.id.clone()),
+                        spec.item_kind.clone(),
+                        Some(self.host.tools().tool_item_title(&call)),
+                    )
+                    .with_tool_identity(call.identity.clone()),
                 },
             );
             self.host
@@ -269,9 +273,18 @@ impl<'a> ToolBatchRunner<'a> {
                 tool_ctx,
                 |delta| {
                     tool_streamed_output = true;
-                    let rendered = match delta.stream {
-                        crate::ToolOutputStream::Stdout => delta.chunk,
-                        crate::ToolOutputStream::Stderr => format!("stderr: {}", delta.chunk),
+                    let kind = match delta.kind {
+                        crate::tool::ToolOutputKind::JsonPatch => TurnItemDeltaKind::JsonPatch,
+                        crate::tool::ToolOutputKind::Text => ready.spec.delta_kind.clone(),
+                    };
+                    let rendered = match (delta.kind, delta.stream) {
+                        (crate::tool::ToolOutputKind::JsonPatch, _) => delta.chunk,
+                        (crate::tool::ToolOutputKind::Text, crate::ToolOutputStream::Stdout) => {
+                            delta.chunk
+                        }
+                        (crate::tool::ToolOutputKind::Text, crate::ToolOutputStream::Stderr) => {
+                            format!("stderr: {}", delta.chunk)
+                        }
                     };
                     emit_event(
                         events,
@@ -280,7 +293,7 @@ impl<'a> ToolBatchRunner<'a> {
                             turn_id: self.turn_id.to_string(),
                             item_id: ready.tool_item_id.clone(),
                             call_id: Some(ready.call.id.clone()),
-                            kind: ready.spec.delta_kind.clone(),
+                            kind,
                             segment_index: None,
                             delta: rendered,
                         },
@@ -377,17 +390,30 @@ impl<'a> ToolBatchRunner<'a> {
                 },
             );
         }
+        let transcript_item =
+            self.host
+                .tools()
+                .transcript_item_from_result(tool_item_id, call, &result);
+        if let Some(metrics) = RuntimeItemMetrics::from_transcript_item(&transcript_item) {
+            emit_event(
+                events,
+                on_event,
+                EventMsg::ItemMetricsUpdated {
+                    turn_id: self.turn_id.to_string(),
+                    item_id: tool_item_id.to_string(),
+                    call_id: Some(call.id.clone()),
+                    metrics,
+                },
+            );
+        }
         emit_event(
             events,
             on_event,
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
-                item_id: tool_item_id.to_string(),
-                call_id: Some(call.id.clone()),
-                item: self
-                    .host
-                    .tools()
-                    .transcript_item_from_result(tool_item_id, call, &result),
+                runtime_item: RuntimeItem::completed(&transcript_item, Some(call.id.clone()))
+                    .with_tool_identity(call.identity.clone()),
+                transcript_item,
             },
         );
         self.host
@@ -460,12 +486,19 @@ impl<'a> ToolBatchRunner<'a> {
             on_event,
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
-                item_id: tool_item_id.to_string(),
-                call_id: Some(call.id.clone()),
-                item: self
-                    .host
-                    .tools()
-                    .denied_transcript_item(tool_item_id, call, reason),
+                runtime_item: RuntimeItem::completed(
+                    &self
+                        .host
+                        .tools()
+                        .denied_transcript_item(tool_item_id, call, reason),
+                    Some(call.id.clone()),
+                )
+                .with_tool_identity(call.identity.clone()),
+                transcript_item: self.host.tools().denied_transcript_item(
+                    tool_item_id,
+                    call,
+                    reason,
+                ),
             },
         );
         self.record_tool_result(context_manager, result).await
@@ -542,10 +575,13 @@ impl<'a> ToolBatchRunner<'a> {
             on_event,
             EventMsg::ItemStarted {
                 turn_id: self.turn_id.to_string(),
-                item_id: tool_item_id.to_string(),
-                call_id: Some(call.id.clone()),
-                kind: TurnItemKind::ToolCall,
-                title: Some(self.host.tools().tool_item_title(call)),
+                item: RuntimeItem::started(
+                    tool_item_id.to_string(),
+                    Some(call.id.clone()),
+                    TurnItemKind::ToolCall,
+                    Some(self.host.tools().tool_item_title(call)),
+                )
+                .with_tool_identity(call.identity.clone()),
             },
         );
         emit_event(
@@ -565,12 +601,19 @@ impl<'a> ToolBatchRunner<'a> {
             on_event,
             EventMsg::ItemCompleted {
                 turn_id: self.turn_id.to_string(),
-                item_id: tool_item_id.to_string(),
-                call_id: Some(call.id.clone()),
-                item: self
-                    .host
-                    .tools()
-                    .transcript_item_from_result(tool_item_id, call, &result),
+                runtime_item: RuntimeItem::completed(
+                    &self
+                        .host
+                        .tools()
+                        .transcript_item_from_result(tool_item_id, call, &result),
+                    Some(call.id.clone()),
+                )
+                .with_tool_identity(call.identity.clone()),
+                transcript_item: self.host.tools().transcript_item_from_result(
+                    tool_item_id,
+                    call,
+                    &result,
+                ),
             },
         );
         self.record_tool_result(context_manager, result).await
