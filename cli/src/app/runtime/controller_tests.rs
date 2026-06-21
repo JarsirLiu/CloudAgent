@@ -70,6 +70,27 @@ fn web_search_completed(query: &str) -> AppServerEvent {
     ))
 }
 
+fn command_started() -> AppServerEvent {
+    AppServerEvent::Message(AppServerMessage::Notification(
+        AppServerNotification::ItemStarted {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            call_id: Some("call-1".to_string()),
+            item: TranscriptItem::CommandExecution {
+                id: "tool:1".to_string(),
+                tool_name: "exec_command".to_string(),
+                command: "pwd".to_string(),
+                current_directory: String::new(),
+                status: agent_core::CommandExecutionStatus::InProgress,
+                exit_code: None,
+                output: Some(String::new()),
+                duration_ms: None,
+                summary: String::new(),
+            },
+        },
+    ))
+}
+
 #[test]
 fn coalesces_adjacent_command_output_deltas_for_same_item() {
     let events = vec![
@@ -122,6 +143,11 @@ fn web_search_started_is_a_runtime_render_boundary() {
 }
 
 #[test]
+fn command_started_is_a_runtime_render_boundary() {
+    assert!(should_stop_after_event_boundary(Some(&command_started())));
+}
+
+#[test]
 fn web_search_output_delta_is_a_runtime_render_boundary() {
     assert!(should_stop_after_event_boundary(Some(&web_search_delta(
         "weather seattle"
@@ -133,4 +159,18 @@ fn web_search_completed_is_a_runtime_render_boundary() {
     assert!(should_stop_after_event_boundary(Some(
         &web_search_completed("weather seattle")
     )));
+}
+
+#[test]
+fn file_change_output_delta_is_a_runtime_render_boundary() {
+    let event = AppServerEvent::Message(AppServerMessage::Notification(
+        AppServerNotification::FileChangeOutputDelta {
+            conversation_id: "default".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "edit-1".to_string(),
+            call_id: Some("call-edit".to_string()),
+            delta: "updated 2 files".to_string(),
+        },
+    ));
+    assert!(should_stop_after_event_boundary(Some(&event)));
 }

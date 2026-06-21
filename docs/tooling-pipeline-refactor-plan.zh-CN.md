@@ -1,5 +1,28 @@
 # CloudAgent 工具链路重构方案（对齐 Codex 标准化方向）
 
+## 当前状态（2026-06-21）
+
+这份文档暂时不建议删除。
+
+当前已经完成的部分：
+
+- `TranscriptItem::WebSearch` 已被移除，web search 完成态已统一落到 `TranscriptItem::ToolResult + StructuredToolResult::WebSearch`。
+- `agent-core` 已新增共享的 web search 表达 helper，避免多处重复拼文案。
+- CLI 已具备与 Codex 相同的大方向：active 运行态先显示，完成后再提交到历史区。
+- app-server / protocol / gateway 的基础链路已经同步到新的 `ToolResult` 表达，不再依赖旧的 transcript 特例。
+- CLI 底部运行态与 active item 展示已清理 web search 专门分支，web search 现在沿用标准工具 runtime / history 流程。
+
+当前仍未完成的部分：
+
+- 文档里的 `RuntimeItem` 协议尚未开始实施，当前仍是 `ItemStarted { item_id, kind, title }` 的旧 started 载荷模型，见 `crates/agent-core/src/turn/events.rs`。
+- active / history / bottom banner 仍然依赖当前 started/completed 事件与前端本地推导，而不是消费完整 runtime item 协议。
+- diff、metrics、token 展示等长期目标尚未开始落地。
+
+结论：
+
+- 这份文档的“Phase 2 之后的目标架构”仍然有效。
+- 当前实现只完成了从旧特例收口到标准工具结果这一步，距离文档的最终目标还有明显差距。
+
 ## 1. 背景
 
 当前 `cloudagent` 已经具备一套较完整的本地工具执行骨架：
@@ -702,4 +725,3 @@ active 区应遵循统一规则：
 - 工具级 token / metrics
 - 多前端一致协议
 - 长期迭代而不反复返工
-

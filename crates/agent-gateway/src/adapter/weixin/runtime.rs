@@ -223,11 +223,6 @@ fn event_name(event: &AppServerEvent) -> &'static str {
                 agent_core::TranscriptItem::Reasoning { .. } => "reasoning_completed",
                 agent_core::TranscriptItem::CommandExecution { .. } => "command_completed",
                 agent_core::TranscriptItem::FileChange { .. } => "file_change_completed",
-                agent_core::TranscriptItem::ToolResult { tool_name, .. }
-                    if tool_name == agent_core::WEB_SEARCH_TOOL_NAME =>
-                {
-                    "web_search_completed"
-                }
                 agent_core::TranscriptItem::ToolResult { .. } => "tool_result_completed",
                 _ => "item_completed_other",
             },

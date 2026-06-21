@@ -1,4 +1,7 @@
-use super::{render_skill_catalog, render_skill_injection};
+use super::{
+    render_skill_budget_summary, render_skill_injection, render_skill_summary_item,
+    render_truncated_skill_injection,
+};
 use crate::skill::{
     SkillDependencies, SkillDocument, SkillInvocationMode, SkillMetadata, SkillScope,
 };
@@ -20,12 +23,21 @@ fn sample_skill(name: &str) -> SkillMetadata {
 }
 
 #[test]
-fn render_skill_catalog_lists_name_description_and_path() {
-    let catalog = render_skill_catalog(&[sample_skill("repo-reader")]).expect("catalog");
-    assert!(catalog.contains("## Skills"));
-    assert!(catalog.contains("repo-reader"));
-    assert!(catalog.contains("Use repo-reader for repository tasks"));
-    assert!(catalog.contains("file: D:\\repo\\.cloudagent\\skills\\repo-reader\\SKILL.md"));
+fn render_skill_budget_summary_is_more_compact_but_keeps_path() {
+    let summary = render_skill_budget_summary(&[sample_skill("repo-reader")]).expect("summary");
+    assert!(summary.contains("## Skills"));
+    assert!(summary.contains("Available local skills for this turn"));
+    assert!(summary.contains("repo-reader"));
+    assert!(summary.contains("file: D:\\repo\\.cloudagent\\skills\\repo-reader\\SKILL.md"));
+    assert!(!summary.contains("### How to use skills"));
+}
+
+#[test]
+fn render_skill_summary_item_includes_metadata_suffixes() {
+    let line = render_skill_summary_item(&sample_skill("repo-reader"));
+    assert!(line.contains("repo-reader"));
+    assert!(line.contains("version: 1.0.0"));
+    assert!(line.contains("deps: rg, git"));
 }
 
 #[test]
@@ -45,4 +57,21 @@ fn render_skill_injection_wraps_full_document_with_metadata() {
     assert!(text.contains("<name>repo-reader</name>"));
     assert!(text.contains("<path>D:\\repo\\.cloudagent\\skills\\repo-reader\\SKILL.md</path>"));
     assert!(text.contains("# Repo Reader"));
+}
+
+#[test]
+fn render_truncated_skill_injection_marks_budget_truncation() {
+    let document = SkillDocument {
+        metadata: sample_skill("repo-reader"),
+        body: "# Repo Reader\nUse this skill.\n".to_string(),
+        contents: "---\nname: repo-reader\ndescription: Use repo-reader for repository tasks\n---\n\n# Repo Reader\nUse this skill with a longer body section that will be truncated.\n".to_string(),
+    };
+
+    let rendered = render_truncated_skill_injection(&document, 96);
+    let text = match rendered {
+        ResponseItem::User { content } => input_items_to_plain_text(&content),
+        _ => panic!("expected user response item"),
+    };
+    assert!(text.contains("<name>repo-reader</name>"));
+    assert!(text.contains("[truncated for budget]"));
 }

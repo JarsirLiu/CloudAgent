@@ -89,8 +89,8 @@ impl TuiApp {
         self.bottom_pane.on_turn_started();
     }
 
-    pub(crate) fn on_server_tool_finished(&mut self) {
-        self.bottom_pane.on_tool_finished();
+    pub(crate) fn on_server_tool_finished(&mut self, item_id: Option<&str>) {
+        self.bottom_pane.on_tool_finished_for_item(item_id);
     }
 
     pub(crate) fn on_server_retrying(

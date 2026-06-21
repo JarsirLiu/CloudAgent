@@ -3,7 +3,6 @@ use crate::ui::history_cell::{
     HistoryCell, humanize_tool_label, render_active_item_placeholder, render_history_entry,
 };
 use agent_core::conversation::{InputItem, TranscriptItem, input_items_to_plain_text};
-use agent_core::is_web_search_tool_result;
 use agent_core::turn::{TurnId, TurnItemKind};
 use std::collections::HashSet;
 
@@ -499,9 +498,6 @@ fn turn_item_kind(item: &TranscriptItem) -> TurnItemKind {
 }
 
 fn should_keep_completed_item_live(item: &TranscriptItem) -> bool {
-    if is_web_search_tool_result(item) {
-        return false;
-    }
     matches!(
         item,
         TranscriptItem::CommandExecution { .. }

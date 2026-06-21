@@ -3,10 +3,7 @@ use crate::state::NoticeLevel;
 use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation;
 use agent_core::conversation::{ConversationSummary, ConversationTurn, TranscriptItem};
 use agent_core::turn::{TurnId, TurnItemKind};
-use agent_core::{
-    ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind,
-    is_web_search_tool_result,
-};
+use agent_core::{ModelRetryStage, ModelUsage, ServerRequest, ServerRequestDecisionKind};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest,
     ConversationViewSnapshot, InterruptDisposition, RequestId,
@@ -102,7 +99,9 @@ pub(crate) enum ServerAction {
     ClearServerRequestView,
     DismissServerRequestView(RequestId),
     ClearServerRequestStatus,
-    ClearLastToolName,
+    ClearActiveTool {
+        item_id: Option<String>,
+    },
     ReplaceHistory(Vec<ConversationTurn>),
     ReplaceHistoryPage {
         turns: Vec<ConversationTurn>,
@@ -255,8 +254,10 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             AppServerNotification::FileChangeOutputDelta { .. } => {}
             AppServerNotification::ItemCompleted { turn_id, item, .. } => {
-                if is_web_search_tool_result(item) {
-                    actions.push(ServerAction::ClearLastToolName);
+                if matches!(item, TranscriptItem::ToolResult { .. }) {
+                    actions.push(ServerAction::ClearActiveTool {
+                        item_id: Some(item.id().to_string()),
+                    });
                 }
                 actions.push(ServerAction::CompleteActiveTurnItem {
                     turn_id: turn_id.clone(),
@@ -331,7 +332,7 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     level: NoticeLevel::Warn,
                 });
                 actions.push(ServerAction::ClearContextCompactionStatus);
-                actions.push(ServerAction::ClearLastToolName);
+                actions.push(ServerAction::ClearActiveTool { item_id: None });
             }
             AppServerNotification::ContextCompactionStarted {
                 estimated_tokens, ..
@@ -345,7 +346,7 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
                     actions.push(ServerAction::ClearContextCompactionStatus);
                     actions.push(ServerAction::ClearServerRequestStatus);
                     actions.push(ServerAction::ClearServerRequestView);
-                    actions.push(ServerAction::ClearLastToolName);
+                    actions.push(ServerAction::ClearActiveTool { item_id: None });
                     actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
                         error: message,
                     }));

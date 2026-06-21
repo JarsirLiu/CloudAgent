@@ -9,10 +9,13 @@ mod markers;
 mod tool_context;
 
 #[cfg(test)]
+mod budget_tests;
+
+#[cfg(test)]
 mod fragments_tests;
 
 pub use budget::{
-    BucketAudit, BudgetedFragments, ContextBudgetSource, SkillBudgetSource,
+    BucketAudit, BudgetedFragments, ContextBudgetSource, SkillBucketAudit, SkillBudgetSource,
     build_context_budgeted_fragments,
 };
 pub use compaction::{

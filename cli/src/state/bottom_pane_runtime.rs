@@ -58,8 +58,14 @@ impl BottomPaneRuntimeState {
         self.active_tool = None;
     }
 
-    pub(crate) fn on_tool_finished(&mut self) {
-        self.active_tool = None;
+    pub(crate) fn on_tool_finished_for_item(&mut self, item_id: Option<&str>) {
+        let should_clear = match self.active_tool.as_ref() {
+            Some(ActiveToolRuntimeState::Tool(tool)) => tool.matches_item(item_id),
+            _ => false,
+        };
+        if should_clear {
+            self.active_tool = None;
+        }
         if self.live_label.is_none() {
             self.live_label = Some("Working".to_string());
         }
@@ -142,22 +148,19 @@ impl BottomPaneRuntimeState {
                 self.live_label = Some("Working".to_string());
             }
             TurnItemKind::ToolCall => {
-                self.active_tool = Some(ActiveToolRuntimeState::Generic(
-                    GenericToolRuntimeState::started(title),
+                self.active_tool = Some(ActiveToolRuntimeState::Tool(
+                    ToolRuntimeState::tool_call_started(item_id, title),
                 ));
                 self.live_label = Some("Working".to_string());
             }
             TurnItemKind::ToolResult => {
-                self.active_tool = Some(ActiveToolRuntimeState::WebSearch(
-                    WebSearchRuntimeState::started(item_id, title),
+                self.active_tool = Some(ActiveToolRuntimeState::Tool(
+                    ToolRuntimeState::tool_result_started(item_id, title),
                 ));
                 self.live_label = Some("Working".to_string());
             }
             _ => {
-                self.active_tool = title
-                    .map(GenericToolRuntimeState::completed)
-                    .filter(|tool| !tool.banner_text().trim().is_empty())
-                    .map(ActiveToolRuntimeState::Generic);
+                self.active_tool = None;
             }
         }
     }
@@ -177,8 +180,8 @@ impl BottomPaneRuntimeState {
     }
 
     pub(crate) fn on_tool_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
-        if let Some(ActiveToolRuntimeState::WebSearch(web_search)) = self.active_tool.as_mut() {
-            web_search.append_query(item_id, delta);
+        if let Some(ActiveToolRuntimeState::Tool(tool)) = self.active_tool.as_mut() {
+            tool.append_output(item_id, delta);
         }
     }
 
@@ -190,8 +193,8 @@ impl BottomPaneRuntimeState {
     #[cfg(test)]
     pub(crate) fn set_active_tool_title_for_test(&mut self, title: Option<String>) {
         self.active_tool = title
-            .map(|banner| GenericToolRuntimeState { banner })
-            .map(ActiveToolRuntimeState::Generic);
+            .map(ToolRuntimeState::static_banner)
+            .map(ActiveToolRuntimeState::Tool);
     }
 
     #[cfg(test)]
@@ -204,86 +207,70 @@ impl BottomPaneRuntimeState {
 
 #[derive(Clone, Debug)]
 pub(crate) enum ActiveToolRuntimeState {
-    Generic(GenericToolRuntimeState),
     Command(CommandRuntimeState),
-    WebSearch(WebSearchRuntimeState),
+    Tool(ToolRuntimeState),
 }
 
 impl ActiveToolRuntimeState {
     pub(crate) fn banner_text(&self) -> String {
         match self {
-            Self::Generic(tool) => tool.banner_text(),
             Self::Command(command) => command.banner_text(),
-            Self::WebSearch(web_search) => web_search.banner_text(),
+            Self::Tool(tool) => tool.banner_text(),
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct GenericToolRuntimeState {
+pub(crate) struct ToolRuntimeState {
+    pub(crate) item_id: Option<String>,
     banner: String,
+    output: Option<String>,
 }
 
-impl GenericToolRuntimeState {
-    fn started(title: Option<&str>) -> Self {
-        let banner = match title.map(str::trim).filter(|s| !s.is_empty()) {
+impl ToolRuntimeState {
+    fn tool_call_started(item_id: &str, title: Option<&str>) -> Self {
+        let banner = match title.map(str::trim).filter(|value| !value.is_empty()) {
             Some(tool) => format!("executing tool: {}", humanize_tool_label(tool)),
             None => "executing tool".to_string(),
         };
-        Self { banner }
-    }
-
-    fn completed(title: impl AsRef<str>) -> Self {
         Self {
-            banner: humanize_tool_label(title.as_ref()),
-        }
-    }
-
-    fn banner_text(&self) -> String {
-        self.banner.clone()
-    }
-}
-
-fn compact_number(value: u64) -> String {
-    if value >= 1_000_000 {
-        format!("{:.1}m", value as f64 / 1_000_000.0)
-    } else if value >= 1_000 {
-        format!("{:.1}k", value as f64 / 1_000.0)
-    } else {
-        value.to_string()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct CommandRuntimeState {
-    pub(crate) item_id: String,
-    pub(crate) title: String,
-    pub(crate) recent_output: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct WebSearchRuntimeState {
-    pub(crate) item_id: String,
-    pub(crate) title: String,
-    pub(crate) output: Option<String>,
-}
-
-impl WebSearchRuntimeState {
-    fn started(item_id: &str, title: Option<&str>) -> Self {
-        Self {
-            item_id: item_id.to_string(),
-            title: title
-                .map(humanize_tool_label)
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or_else(|| "Tool".to_string()),
+            item_id: Some(item_id.to_string()),
+            banner,
             output: None,
         }
     }
 
-    fn append_query(&mut self, item_id: Option<&str>, delta: &str) {
-        if let Some(item_id) = item_id
-            && item_id != self.item_id
-        {
+    fn tool_result_started(item_id: &str, title: Option<&str>) -> Self {
+        let banner = title
+            .map(humanize_tool_label)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "Tool".to_string());
+        Self {
+            item_id: Some(item_id.to_string()),
+            banner,
+            output: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn static_banner(banner: String) -> Self {
+        Self {
+            item_id: None,
+            banner,
+            output: None,
+        }
+    }
+
+    fn matches_item(&self, item_id: Option<&str>) -> bool {
+        match (self.item_id.as_deref(), item_id) {
+            (_, None) => true,
+            (Some(active), Some(item_id)) => active == item_id,
+            (None, Some(_)) => false,
+        }
+    }
+
+    fn append_output(&mut self, item_id: Option<&str>, delta: &str) {
+        if !self.matches_item(item_id) {
             return;
         }
         let delta = delta.trim();
@@ -299,16 +286,23 @@ impl WebSearchRuntimeState {
         });
     }
 
-    pub(crate) fn banner_text(&self) -> String {
+    fn banner_text(&self) -> String {
         match self
             .output
             .as_deref()
-            .filter(|output| !output.trim().is_empty())
+            .filter(|value| !value.trim().is_empty())
         {
-            Some(output) => format!("{} · {output}", self.title),
-            None => self.title.clone(),
+            Some(output) => format!("{} · {output}", self.banner),
+            None => self.banner.clone(),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CommandRuntimeState {
+    pub(crate) item_id: String,
+    pub(crate) title: String,
+    pub(crate) recent_output: Option<String>,
 }
 
 impl CommandRuntimeState {
@@ -352,6 +346,16 @@ impl CommandRuntimeState {
             Some(output) => format!("{} · {output}", self.title),
             None => self.title.clone(),
         }
+    }
+}
+
+fn compact_number(value: u64) -> String {
+    if value >= 1_000_000 {
+        format!("{:.1}m", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.1}k", value as f64 / 1_000.0)
+    } else {
+        value.to_string()
     }
 }
 

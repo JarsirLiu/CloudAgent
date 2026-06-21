@@ -8,7 +8,10 @@ pub use model::{
     SkillCatalog, SkillDependencies, SkillDocument, SkillInvocationMode, SkillMetadata, SkillScope,
     TurnSkillContext,
 };
-pub use render::{render_skill_catalog, render_skill_injection};
+pub use render::{
+    render_skill_budget_summary, render_skill_injection, render_skill_summary_item,
+    render_truncated_skill_injection,
+};
 pub use runtime::SkillRuntime;
 pub use scaffold::{
     SkillScaffoldOutcome, SkillScaffoldSpec, create_skill_scaffold, render_skill_template,

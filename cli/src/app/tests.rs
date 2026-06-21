@@ -1611,7 +1611,7 @@ fn web_search_active_placeholder_uses_codex_like_summary() {
 }
 
 #[test]
-fn completed_web_search_commits_immediately_and_clears_active_state() {
+fn completed_web_search_matches_standard_tool_result_lifecycle() {
     let mut app = test_app();
     mark_running(&mut app);
     app.bottom_pane.on_turn_started();
@@ -1643,7 +1643,9 @@ fn completed_web_search_commits_immediately_and_clears_active_state() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::ClearLastToolName,
+        crate::state::reducer::ServerAction::ClearActiveTool {
+            item_id: Some("ws-1".to_string()),
+        },
     );
     execute_server_action(
         &mut app,
@@ -1665,13 +1667,27 @@ fn completed_web_search_commits_immediately_and_clears_active_state() {
         },
     );
 
-    assert!(app.transcript_owner.active_cell().is_none());
+    let active = app
+        .transcript_owner
+        .active_cell()
+        .expect("completed web search remains active until flushed");
+    assert_eq!(active.label(), "Web search");
+    assert_eq!(active.body(), "weather seattle");
+
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(status.live_banner, None);
+    assert!(app.transcript_owner.pending_history_cells().is_empty());
+
+    execute_server_action(
+        &mut app,
+        crate::state::reducer::ServerAction::TurnDispatch(
+            crate::state::reducer::TurnDispatch::Completed,
+        ),
+    );
 
     let committed = app
         .transcript_owner
-        .pending_history_cells()
+        .committed_history_cells()
         .into_iter()
         .map(|cell| (cell.label().to_string(), cell.body().to_string()))
         .collect::<Vec<_>>();

@@ -155,7 +155,7 @@ fn web_search_delta_updates_runtime_banner() {
         Some("Web search · weather seattle")
     );
 
-    app.bottom_pane.on_tool_finished();
+    app.bottom_pane.on_tool_finished_for_item(Some("ws-1"));
     let after = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(after.live_banner, None);
 }

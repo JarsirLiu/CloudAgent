@@ -193,7 +193,7 @@ fn tool_output_delta_updates_active_tool_item() {
 }
 
 #[test]
-fn completed_web_search_clears_runtime_banner_and_commits_item() {
+fn completed_tool_result_clears_active_tool_and_commits_item() {
     let message = AppServerMessage::Notification(AppServerNotification::ItemCompleted {
         conversation_id: "default".to_string(),
         turn_id: "turn-1".to_string(),
@@ -214,12 +214,11 @@ fn completed_web_search_clears_runtime_banner_and_commits_item() {
 
     let reduced = apply_server_message(&message);
 
-    assert!(
-        reduced
-            .actions
-            .iter()
-            .any(|action| matches!(action, ServerAction::ClearLastToolName))
-    );
+    assert!(reduced.actions.iter().any(|action| matches!(
+        action,
+        ServerAction::ClearActiveTool { item_id }
+            if item_id.as_deref() == Some("ws-1")
+    )));
     assert!(reduced.actions.iter().any(|action| {
         matches!(
             action,

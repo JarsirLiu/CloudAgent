@@ -10,7 +10,7 @@ use super::model::{
     SkillCatalog, SkillDependencies, SkillDocument, SkillInvocationMode, SkillMetadata, SkillScope,
     TurnSkillContext,
 };
-use super::render::{latest_user_items, render_skill_catalog};
+use super::render::{latest_user_items, render_skill_budget_summary};
 
 const SKILL_FILENAME: &str = "SKILL.md";
 const SYSTEM_SKILL_CREATOR_NAME: &str = "skill-creator";
@@ -67,12 +67,35 @@ impl SkillRuntime {
             return Vec::new();
         }
 
+        let matched = self.collect_turn_skill_candidates(messages, catalog);
+        self.load_skill_documents_for_explicit_use(&matched)
+    }
+
+    pub fn collect_turn_skill_candidates(
+        &self,
+        messages: &[crate::ResponseItem],
+        catalog: &SkillCatalog,
+    ) -> Vec<SkillMetadata> {
+        if !self.enabled {
+            return Vec::new();
+        }
+
         let Some(items) = latest_user_items(messages) else {
             return Vec::new();
         };
-        let matched = match_skills(items, &catalog.skills);
-        matched
-            .into_iter()
+        match_skills(items, &catalog.skills)
+    }
+
+    pub fn load_skill_documents_for_explicit_use(
+        &self,
+        skills: &[SkillMetadata],
+    ) -> Vec<SkillDocument> {
+        if !self.enabled {
+            return Vec::new();
+        }
+
+        skills
+            .iter()
             .filter_map(|skill| load_skill_document(&skill.path, skill.scope.clone()).ok())
             .collect()
     }
@@ -83,11 +106,12 @@ impl SkillRuntime {
         messages: &[crate::ResponseItem],
     ) -> TurnSkillContext {
         let catalog = self.load_catalog(workspace_root);
+        let matched = self.collect_turn_skill_candidates(messages, &catalog);
         TurnSkillContext {
-            catalog_summary: render_skill_catalog(
+            catalog_summary: render_skill_budget_summary(
                 &catalog.skills_allowed_for_implicit_invocation(),
             ),
-            explicit_documents: self.collect_turn_explicit_skill_documents(messages, &catalog),
+            explicit_documents: self.load_skill_documents_for_explicit_use(&matched),
         }
     }
 

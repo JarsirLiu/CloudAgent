@@ -66,15 +66,3 @@ pub fn web_search_transcript_item(
         }),
     }
 }
-
-pub fn is_web_search_tool_result(item: &TranscriptItem) -> bool {
-    matches!(
-        item,
-        TranscriptItem::ToolResult {
-            tool_name,
-            structured,
-            ..
-        } if tool_name == WEB_SEARCH_TOOL_NAME
-            || matches!(structured, Some(StructuredToolResult::WebSearch { .. }))
-    )
-}

@@ -189,3 +189,60 @@ fn ensure_system_skills_writes_creator_skill_markdown() {
     }
     let _ = fs::remove_dir_all(&temp_home);
 }
+
+#[test]
+fn collect_turn_skill_candidates_returns_explicit_matches_only() {
+    let runtime = SkillRuntime::new(true, Vec::new());
+    let repo_reader = SkillMetadata {
+        name: "repo-reader".to_string(),
+        description: "Read repos".to_string(),
+        version: None,
+        invocation_mode: SkillInvocationMode::Explicit,
+        dependencies: SkillDependencies::default(),
+        path: PathBuf::from("D:\\repo\\.cloudagent\\skills\\repo-reader\\SKILL.md"),
+        scope: SkillScope::Workspace,
+    };
+    let catalog = crate::skill::SkillCatalog {
+        skills: vec![repo_reader.clone()],
+        errors: Vec::new(),
+    };
+    let messages = vec![ResponseItem::User {
+        content: text_input_items("please use $repo-reader"),
+    }];
+
+    let matched = runtime.collect_turn_skill_candidates(&messages, &catalog);
+    assert_eq!(matched, vec![repo_reader]);
+}
+
+#[test]
+fn load_skill_documents_for_explicit_use_reads_full_documents() {
+    let temp_root =
+        std::env::temp_dir().join(format!("cloudagent-skill-doc-load-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_root);
+    let skill_dir = temp_root.join("repo-reader");
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    let skill_path = skill_dir.join("SKILL.md");
+    fs::write(
+        &skill_path,
+        "---\nname: repo-reader\ndescription: Read repos\n---\n\n# Repo Reader\nUse this skill.\n",
+    )
+    .expect("write skill");
+
+    let runtime = SkillRuntime::new(true, Vec::new());
+    let skills = vec![SkillMetadata {
+        name: "repo-reader".to_string(),
+        description: "Read repos".to_string(),
+        version: None,
+        invocation_mode: SkillInvocationMode::Explicit,
+        dependencies: SkillDependencies::default(),
+        path: skill_path.clone(),
+        scope: SkillScope::Workspace,
+    }];
+
+    let loaded = runtime.load_skill_documents_for_explicit_use(&skills);
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].metadata.path, skill_path);
+    assert!(loaded[0].contents.contains("# Repo Reader"));
+
+    let _ = fs::remove_dir_all(&temp_root);
+}

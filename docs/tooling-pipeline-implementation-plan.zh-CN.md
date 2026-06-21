@@ -1,5 +1,39 @@
 # CloudAgent 工具链路重构实施方案（细节版）
 
+## 当前状态（2026-06-21）
+
+这份文档暂时不建议删除。
+
+当前 Phase A 的完成情况：
+
+- `TranscriptItem::WebSearch` 已删除。
+- `StructuredToolResult::WebSearch` 已接入完成态工具结果。
+- `agent-core` / `agent-app-server` / `agent-protocol` / `agent-gateway` 已完成第一轮迁移，能围绕标准 `ToolResult` 继续工作。
+- CLI 的历史区与 active 区已经能围绕标准 `ToolResult` 表达 web search 结果，不再依赖旧 transcript 变体。
+- CLI 底部运行态已删除 `WebSearchRuntimeState` 特例，web search 与其他工具共用 `ToolRuntimeState`。
+- CLI 运行时事件边界已收敛为基于 `TranscriptItem` 种类的通用判断，不再对 web search 做独立 render boundary 特判。
+- `cli/src/app/core/active_turn.rs` 与 `crates/agent-gateway/src/adapter/weixin/runtime.rs` 的 web search 完成态专门分支已清理，web search 现在遵循标准 `ToolResult` 生命周期。
+
+当前 Phase A 剩余状态：
+
+- 已完成，无额外收尾项。
+
+当前 Phase B 的完成情况：
+
+- 尚未开始。
+
+Phase B 仍未完成的核心项：
+
+- 还没有引入 `RuntimeItem` / `RuntimeMetrics`。
+- `ItemStarted` / `ItemCompleted` 还不是“完整 runtime item 协议”。
+- active 区仍然依赖当前 started 事件与本地推导，而不是消费标准 runtime item。
+- 未来 diff、metrics、token 展示所需的协议基础尚未搭建。
+
+结论：
+
+- 这份文档仍然是后续清理 CLI 特判、推进 Phase B 的实施清单。
+- 现在删除会直接丢掉下一阶段的文件级改造路线图。
+
 ## 1. 文档目的
 
 本文档是 [tooling-pipeline-refactor-plan.zh-CN.md](D:\learn\gifti\cloudagent\docs\tooling-pipeline-refactor-plan.zh-CN.md) 的实施级细化版本。
@@ -588,7 +622,6 @@ Phase A 可先用 helper，Phase B 再升级成强类型 runtime item 判断。
 
 在该文件新增：
 
-- `is_web_search_tool_result(item: &TranscriptItem) -> bool`
 - `tool_result_name(item: &TranscriptItem) -> Option<&str>`
 
 ---
@@ -1138,4 +1171,3 @@ active cell 不再由 transcript placeholder 推导，而是直接由 runtime it
 2. 再收口 app-server / protocol
 3. 再清理 CLI 和 gateway 的展示特判
 4. 最后升级到完整 runtime item 协议
-

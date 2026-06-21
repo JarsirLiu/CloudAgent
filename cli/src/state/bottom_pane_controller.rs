@@ -60,8 +60,8 @@ impl BottomPaneController {
         self.runtime.on_turn_started();
     }
 
-    pub(crate) fn on_tool_finished(&mut self) {
-        self.runtime.on_tool_finished();
+    pub(crate) fn on_tool_finished_for_item(&mut self, item_id: Option<&str>) {
+        self.runtime.on_tool_finished_for_item(item_id);
     }
 
     pub(crate) fn on_command_output_delta(&mut self, item_id: Option<&str>, delta: &str) {

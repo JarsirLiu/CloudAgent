@@ -1,6 +1,6 @@
 use crate::context::{FilterPolicy, facade::ContextFacade};
 use crate::conversation::{ResponseItem, input_items_to_plain_text, text_input_items};
-use crate::skill::{SkillDocument, render_skill_injection};
+use crate::skill::{SkillDocument, render_skill_injection, render_truncated_skill_injection};
 use std::path::Path;
 
 #[derive(Clone, Debug, Default)]
@@ -32,9 +32,18 @@ pub struct BucketAudit {
     pub memory_after: usize,
     pub skills_before: usize,
     pub skills_after: usize,
+    pub skill_bucket: SkillBucketAudit,
     pub mcp_before: usize,
     pub mcp_after: usize,
     pub hard_cap_triggered: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SkillBucketAudit {
+    pub before: usize,
+    pub after: usize,
+    pub truncated: bool,
+    pub kept_items: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -55,9 +64,14 @@ pub fn build_context_budgeted_fragments(
     source: ContextBudgetSource,
 ) -> BudgetedFragments {
     let mut fragments = vec![environment_fragment.clone()];
+    let skill_before = estimate_skill_context_tokens(&source.skills);
     let mut audit = BucketAudit {
         memory_before: estimate_text_tokens(source.memory.as_deref().unwrap_or("")),
-        skills_before: estimate_skill_context_tokens(&source.skills),
+        skills_before: skill_before,
+        skill_bucket: SkillBucketAudit {
+            before: skill_before,
+            ..SkillBucketAudit::default()
+        },
         mcp_before: estimate_text_tokens(source.mcp.as_deref().unwrap_or("")),
         ..BucketAudit::default()
     };
@@ -107,10 +121,11 @@ pub fn build_context_budgeted_fragments(
     let skill_budget = remaining.min(source.skills.post_compact_budget_tokens);
     let budgeted_skills = budget_skill_bucket(&source.skills, skill_budget);
     if !budgeted_skills.fragments.is_empty() {
-        audit.skills_after = budgeted_skills.used_tokens;
-        remaining = remaining.saturating_sub(budgeted_skills.used_tokens);
+        remaining = remaining.saturating_sub(budgeted_skills.audit.after);
         fragments.extend(budgeted_skills.fragments);
     }
+    audit.skills_after = budgeted_skills.audit.after;
+    audit.skill_bucket = budgeted_skills.audit;
     if source.enable_mcp_bucket {
         let mcp_budget = remaining
             .min(source.post_compact_mcp_budget_tokens)
@@ -131,12 +146,20 @@ pub fn build_context_budgeted_fragments(
 #[derive(Clone, Debug, Default)]
 struct BudgetedSkillBucket {
     fragments: Vec<ResponseItem>,
-    used_tokens: usize,
+    audit: SkillBucketAudit,
 }
 
 fn budget_skill_bucket(source: &SkillBudgetSource, remaining_tokens: usize) -> BudgetedSkillBucket {
+    let before = estimate_skill_context_tokens(source);
     if remaining_tokens < 32 {
-        return BudgetedSkillBucket::default();
+        return BudgetedSkillBucket {
+            fragments: Vec::new(),
+            audit: SkillBucketAudit {
+                before,
+                truncated: before > 0,
+                ..SkillBucketAudit::default()
+            },
+        };
     }
 
     let mut fragments = Vec::new();
@@ -166,9 +189,8 @@ fn budget_skill_bucket(source: &SkillBudgetSource, remaining_tokens: usize) -> B
         if remaining < 32 {
             break;
         }
-        let rendered = render_skill_injection(document);
-        let Some(item) = fit_response_item_bucket(&rendered, remaining.min(max_tokens_per_item))
-        else {
+        let item_budget = remaining.min(max_tokens_per_item);
+        let Some(item) = fit_skill_document_bucket(document, item_budget) else {
             continue;
         };
         let item_tokens = estimate_response_item_tokens(&item).max(1);
@@ -177,9 +199,15 @@ fn budget_skill_bucket(source: &SkillBudgetSource, remaining_tokens: usize) -> B
         remaining = remaining.saturating_sub(item_tokens);
     }
 
+    let kept_items = fragments.len();
     BudgetedSkillBucket {
         fragments,
-        used_tokens,
+        audit: SkillBucketAudit {
+            before,
+            after: used_tokens,
+            truncated: used_tokens < before,
+            kept_items,
+        },
     }
 }
 
@@ -198,19 +226,32 @@ fn fit_bucket(text: Option<&str>, remaining_tokens: usize) -> Option<(String, us
     }
 }
 
-fn estimate_text_tokens(text: &str) -> usize {
-    text.chars().count().saturating_div(3).max(1)
+fn fit_skill_document_bucket(
+    document: &SkillDocument,
+    remaining_tokens: usize,
+) -> Option<ResponseItem> {
+    if remaining_tokens < 32 {
+        return None;
+    }
+
+    let mut char_budget = remaining_tokens.saturating_mul(3);
+    while char_budget > 0 {
+        let item = render_truncated_skill_injection(document, char_budget);
+        let item_tokens = estimate_response_item_tokens(&item);
+        if item_tokens > 0 && item_tokens <= remaining_tokens {
+            return Some(item);
+        }
+        if char_budget <= 16 {
+            break;
+        }
+        char_budget = char_budget.saturating_sub(16);
+    }
+
+    None
 }
 
-fn fit_response_item_bucket(item: &ResponseItem, remaining_tokens: usize) -> Option<ResponseItem> {
-    let ResponseItem::User { content } = item else {
-        return None;
-    };
-    let text = input_items_to_plain_text(content);
-    let trimmed = fit_bucket(Some(text.as_str()), remaining_tokens)?.0;
-    Some(ResponseItem::User {
-        content: text_input_items(trimmed),
-    })
+fn estimate_text_tokens(text: &str) -> usize {
+    text.chars().count().saturating_div(3).max(1)
 }
 
 fn estimate_response_item_tokens(item: &ResponseItem) -> usize {

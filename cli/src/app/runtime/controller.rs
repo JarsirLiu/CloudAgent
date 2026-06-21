@@ -5,9 +5,8 @@ use crate::app::input::clipboard_paste::paste_clipboard_text;
 use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animation_for_input};
 use crate::app::runtime::paste_coordinator::PasteCoordinator;
 use crate::terminal::{FrameRequester, UiEvent};
-use crate::tool_identity::is_web_search_tool_name;
 use agent_app_server_client::{AppServerClient, AppServerEvent};
-use agent_core::is_web_search_tool_result;
+use agent_core::conversation::TranscriptItem;
 use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -158,20 +157,22 @@ pub(super) fn should_stop_after_event_boundary(event: Option<&AppServerEvent>) -
         return false;
     };
     match notification {
-        AppServerNotification::ItemStarted { item, .. } => is_web_search_started_item(item),
-        AppServerNotification::ToolOutputDelta { .. } => true,
-        AppServerNotification::ItemCompleted { item, .. } => is_web_search_tool_result(item),
+        AppServerNotification::ItemStarted { item, .. } => is_runtime_render_boundary_item(item),
+        AppServerNotification::CommandExecutionOutputDelta { .. }
+        | AppServerNotification::ToolOutputDelta { .. }
+        | AppServerNotification::FileChangeOutputDelta { .. } => true,
+        AppServerNotification::ItemCompleted { item, .. } => is_runtime_render_boundary_item(item),
         _ => false,
     }
 }
 
-fn is_web_search_started_item(item: &agent_core::conversation::TranscriptItem) -> bool {
-    match item {
-        agent_core::conversation::TranscriptItem::ToolResult { tool_name, .. } => {
-            is_web_search_tool_name(tool_name)
-        }
-        _ => false,
-    }
+fn is_runtime_render_boundary_item(item: &TranscriptItem) -> bool {
+    matches!(
+        item,
+        TranscriptItem::CommandExecution { .. }
+            | TranscriptItem::FileChange { .. }
+            | TranscriptItem::ToolResult { .. }
+    )
 }
 
 pub(super) fn coalesce_client_events(events: Vec<AppServerEvent>) -> Vec<AppServerEvent> {

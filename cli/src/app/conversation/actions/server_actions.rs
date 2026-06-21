@@ -145,8 +145,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::ClearServerRequestStatus => {
             app.bottom_pane.clear_server_request();
         }
-        ServerAction::ClearLastToolName => {
-            app.on_server_tool_finished();
+        ServerAction::ClearActiveTool { item_id } => {
+            app.on_server_tool_finished(item_id.as_deref());
         }
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
