@@ -24,7 +24,7 @@ pub(crate) use server_actions::load_older_history_page_if_available;
 pub(crate) use server_actions::prepend_turn_page;
 
 pub(crate) fn show_local_notice(app: &mut TuiApp, level: NoticeLevel, message: impl Into<String>) {
-    app.bottom_pane.show_transient_notice(level, message.into());
+    app.bottom_pane.push_toast(level, message.into());
 }
 
 pub(crate) fn platform_request_notice(action: &str, err: &impl Display) -> String {

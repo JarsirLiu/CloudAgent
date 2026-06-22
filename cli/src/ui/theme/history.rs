@@ -92,6 +92,14 @@ pub(crate) fn history_tool_style() -> Style {
     ))
 }
 
+pub(crate) fn history_patch_style() -> Style {
+    Style::default().fg(Color::Rgb(120, 200, 180))
+}
+
+pub(crate) fn history_search_style() -> Style {
+    Style::default().fg(Color::Rgb(120, 170, 255))
+}
+
 pub(crate) fn history_notice_warning_style() -> Style {
     Style::default().fg(Color::Rgb(255, 196, 108))
 }

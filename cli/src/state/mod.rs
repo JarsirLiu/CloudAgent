@@ -9,6 +9,8 @@
 
 pub mod bottom_pane_controller;
 pub mod bottom_pane_runtime;
+pub mod notification;
+pub mod notification_store;
 pub mod reducer;
 pub mod selectors;
 pub mod turn_lifecycle;

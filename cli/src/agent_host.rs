@@ -38,16 +38,14 @@ pub fn build_agent_host(config: AgentConfig) -> Result<Arc<AgentHost>> {
         default_shell_timeout_ms: config.tools.default_shell_timeout_ms,
         tool_output_token_limit: config.runtime.tool_output_token_limit,
     };
-    let policy = ExecutionPolicy::new(config.runtime.max_tool_roundtrips);
+    let policy = ExecutionPolicy::new(None);
     let chat_turn_settings = ChatTurnSettings {
         workspace_root: config.workspace_root.clone(),
         data_root_dir: config.runtime.data_root_dir.clone(),
         llm_temperature: config.llm.temperature,
         pre_llm_filter_enabled: config.cli.pre_llm_filter_enabled,
-        max_tool_roundtrips: policy.max_tool_roundtrips,
-        max_tool_only_roundtrips_after_compaction: config
-            .runtime
-            .max_tool_only_roundtrips_after_compaction,
+        max_tool_roundtrips: None,
+        max_tool_only_roundtrips_after_compaction: usize::MAX,
         model_context_window: config.runtime.model_context_window,
         model_auto_compact_token_limit: config.runtime.model_auto_compact_token_limit,
         model_auto_compact_token_limit_scope: match config

@@ -11,7 +11,7 @@ pub(crate) fn handle_clipboard_paste(app: &mut TuiApp) {
             let _ = app.bottom_pane.handle_paste(&text);
         }
         Err(err) => {
-            app.bottom_pane.show_transient_notice(
+            app.bottom_pane.push_toast(
                 NoticeLevel::Warn,
                 format!("Failed to paste clipboard content: {err}"),
             );

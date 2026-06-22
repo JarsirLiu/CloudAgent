@@ -6,7 +6,7 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
     match arg.as_str() {
         "on" => {
             app.run_state.pre_llm_filter_enabled = true;
-            app.bottom_pane.show_transient_notice(
+            app.bottom_pane.push_toast(
                 NoticeLevel::Info,
                 "Pre-LLM input filter enabled for this project.".to_string(),
             );
@@ -14,7 +14,7 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
         }
         "off" => {
             app.run_state.pre_llm_filter_enabled = false;
-            app.bottom_pane.show_transient_notice(
+            app.bottom_pane.push_toast(
                 NoticeLevel::Info,
                 "Pre-LLM input filter disabled for this project.".to_string(),
             );
@@ -26,7 +26,7 @@ pub(crate) fn apply_filter_toggle(app: &mut TuiApp, raw_args: &str) -> Result<()
             } else {
                 "off"
             };
-            app.bottom_pane.show_transient_notice(
+            app.bottom_pane.push_toast(
                 NoticeLevel::Info,
                 format!("Pre-LLM input filter is currently `{state}`."),
             );

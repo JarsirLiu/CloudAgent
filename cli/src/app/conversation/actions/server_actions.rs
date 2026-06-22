@@ -293,12 +293,12 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             if app.should_suppress_notice(&label, &message) {
                 return;
             }
-            app.bottom_pane.show_transient_notice(level, message);
+            app.bottom_pane.push_toast(level, message);
         }
         ServerAction::InterruptResult(disposition) => match disposition {
             InterruptDisposition::Requested => {
                 app.bottom_pane
-                    .show_transient_notice(NoticeLevel::Info, "interrupt requested".to_string());
+                    .push_toast(NoticeLevel::Info, "interrupt requested".to_string());
             }
             InterruptDisposition::NoActiveTurn => {
                 app.run_state.turn_lifecycle.clear_pending_submission();
@@ -308,13 +308,12 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                     .clear_active_turn(app.run_state.expand_tool_details);
                 app.transcript_scroll.reset();
                 app.bottom_pane
-                    .show_transient_notice(NoticeLevel::Warn, "no active turn".to_string());
+                    .push_toast(NoticeLevel::Warn, "no active turn".to_string());
             }
         },
         ServerAction::PushErrorCell(message) => {
             app.bottom_pane.clear_views();
-            app.bottom_pane
-                .show_transient_notice(NoticeLevel::Error, message);
+            app.bottom_pane.push_toast(NoticeLevel::Error, message);
         }
         ServerAction::TurnDispatch(dispatch) => {
             conversation_facade::apply_turn_dispatch(app, dispatch);
@@ -330,7 +329,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 },
             );
             app.bottom_pane
-                .show_transient_notice(NoticeLevel::Warn, request.notice_text());
+                .push_toast(NoticeLevel::Warn, request.notice_text());
         }
     }
 }

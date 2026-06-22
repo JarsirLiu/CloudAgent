@@ -382,25 +382,25 @@ fn compaction_runtime_status_renders_as_live_banner_and_clears_cleanly() {
 }
 
 #[test]
-fn transient_notice_renders_above_runtime_banner_and_expires() {
+fn toast_renders_independently_and_expires() {
     let mut app = test_app();
     app.run_state.live_animation_frame = 1;
     mark_running(&mut app);
     app.bottom_pane
         .active_tool_title_override_for_test(Some("running command: rg cli".to_string()));
-    app.bottom_pane.show_transient_notice(
+    app.bottom_pane.push_toast(
         NoticeLevel::Info,
         "Deleted conversation `draft-1`".to_string(),
     );
 
     let during = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(during.live_banner.as_deref(), Some("running command: rg cli"));
     assert_eq!(
-        during.live_banner.as_deref(),
+        app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
         Some("Deleted conversation `draft-1`")
     );
-    assert_eq!(during.live_banner_level, Some(NoticeLevel::Info));
 
-    app.bottom_pane.expire_transient_notice_for_test();
+    app.bottom_pane.expire_toast_for_test();
     assert!(app.bottom_pane.handle_tick());
 
     let after = app.bottom_pane.build_status_view_model(&app);
@@ -408,5 +408,5 @@ fn transient_notice_renders_above_runtime_banner_and_expires() {
         after.live_banner.as_deref(),
         Some("running command: rg cli")
     );
-    assert_eq!(after.live_banner_level, None);
+    assert!(app.bottom_pane.active_toast().is_none());
 }

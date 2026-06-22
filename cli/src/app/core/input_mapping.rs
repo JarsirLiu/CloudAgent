@@ -50,7 +50,7 @@ impl TuiApp {
             self.run_state.expand_tool_details = !self.run_state.expand_tool_details;
             self.transcript_owner
                 .set_expand_details(self.run_state.expand_tool_details);
-            self.bottom_pane.show_transient_notice(
+            self.bottom_pane.push_toast(
                 NoticeLevel::Info,
                 if self.run_state.expand_tool_details {
                     "Tool details expanded".to_string()

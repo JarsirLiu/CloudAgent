@@ -4,8 +4,8 @@ use super::display_common::{
 use super::wrapping::{WrapOptions, word_wrap_text};
 use super::{HistoryCell, HistoryContent, ToolGroupCell};
 use crate::ui::theme::{
-    history_body_style, history_more_style, history_rail_style, history_title_accent_style,
-    history_tool_style,
+    history_body_style, history_more_style, history_patch_style, history_rail_style,
+    history_title_accent_style, history_tool_style,
 };
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -15,7 +15,7 @@ pub(super) fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
 }
 
 pub(super) fn render_patch(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    render_tool_like(cell, width, history_title_accent_style(), "◼")
+    render_patch_like(cell, width)
 }
 
 pub(super) fn render_tool(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
@@ -294,5 +294,91 @@ fn render_tool_like(
                 .map(tint_tail_style(history_more_style())),
         );
     }
+    lines
+}
+
+fn render_patch_like(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    let title = pretty_tool_title(cell.label());
+    let title = if cell.repeat_count() > 1 {
+        format!("{title} x{}", cell.repeat_count())
+    } else {
+        title
+    };
+    let mut lines = vec![Line::from(vec![
+        Span::raw("  "),
+        Span::styled("◼ ", history_patch_style()),
+        Span::styled(
+            title,
+            history_title_accent_style().add_modifier(Modifier::BOLD),
+        ),
+    ])];
+
+    let summary_lines = word_wrap_text(
+        cell.body(),
+        WrapOptions::new(width)
+            .initial_indent(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("╰─ ", history_rail_style()),
+            ]))
+            .subsequent_indent(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("╰─ ", history_rail_style()),
+            ])),
+    );
+    let max_lines = if cell.is_expanded() { 6usize } else { 2usize };
+    let mut output_lines: Vec<Line<'static>> = Vec::new();
+    if summary_lines.len() <= max_lines {
+        output_lines.extend(summary_lines);
+    } else {
+        output_lines.extend(summary_lines.iter().take(max_lines).cloned());
+        output_lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled("╰─ ", history_rail_style()),
+            Span::styled(
+                format!("... +{} lines", summary_lines.len().saturating_sub(max_lines)),
+                history_more_style(),
+            ),
+        ]));
+    }
+    lines.extend(output_lines.into_iter().map(tint_tail_style(history_more_style())));
+
+    if let Some(detail) = cell.detail() {
+        let mut detail_lines = detail
+            .lines()
+            .flat_map(|line| {
+                word_wrap_text(
+                    line,
+                    WrapOptions::new(width)
+                        .initial_indent(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled("╰─ ", history_rail_style()),
+                            Span::styled("↳ ", history_rail_style()),
+                        ]))
+                        .subsequent_indent(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled("╰─ ", history_rail_style()),
+                            Span::raw("  "),
+                        ])),
+                )
+            })
+            .collect::<Vec<_>>();
+        let max_detail_lines = if cell.is_expanded() { 10usize } else { 4usize };
+        if detail_lines.len() > max_detail_lines {
+            detail_lines.truncate(max_detail_lines);
+            detail_lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("╰─ ", history_rail_style()),
+                Span::styled(
+                    format!(
+                        "... +{} more lines",
+                        detail.lines().count().saturating_sub(max_detail_lines)
+                    ),
+                    history_more_style(),
+                ),
+            ]));
+        }
+        lines.extend(detail_lines.into_iter().map(tint_tail_style(history_more_style())));
+    }
+
     lines
 }

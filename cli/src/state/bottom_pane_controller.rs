@@ -1,6 +1,8 @@
 use crate::app::TuiApp;
 use crate::state::NoticeLevel;
 use crate::state::bottom_pane_runtime::BottomPaneRuntimeState;
+use crate::state::notification::ToastNotification;
+use crate::state::notification_store::NotificationStore;
 use crate::state::selectors::status_text_from_mode;
 use crate::terminal::Frame;
 use crate::ui::bottom_pane::dialogs::gateway_panel::WeixinLoginSessionView;
@@ -28,11 +30,11 @@ pub(crate) struct StatusViewModel {
     pub(crate) meta: String,
     pub(crate) hint_meta: String,
     pub(crate) live_banner: Option<String>,
-    pub(crate) live_banner_level: Option<NoticeLevel>,
 }
 
 pub(crate) struct BottomPaneController {
     runtime: BottomPaneRuntimeState,
+    notifications: NotificationStore,
     input_pane: InputPane,
     pending_session_picker: Option<PendingSessionPicker>,
     session_picker_loading_generation: Option<u64>,
@@ -50,6 +52,7 @@ impl BottomPaneController {
     pub(crate) fn new() -> Self {
         Self {
             runtime: BottomPaneRuntimeState::default(),
+            notifications: NotificationStore::default(),
             input_pane: InputPane::new(),
             pending_session_picker: None,
             session_picker_loading_generation: None,
@@ -145,6 +148,9 @@ impl BottomPaneController {
         if self.runtime.handle_tick() {
             needs_redraw = true;
         }
+        if self.notifications.handle_tick() {
+            needs_redraw = true;
+        }
         needs_redraw
     }
 
@@ -226,8 +232,12 @@ impl BottomPaneController {
         }
     }
 
-    pub(crate) fn show_transient_notice(&mut self, level: NoticeLevel, message: String) {
-        self.runtime.show_transient_notice(level, message);
+    pub(crate) fn push_toast(&mut self, level: NoticeLevel, message: String) {
+        self.notifications.push_toast(level, message);
+    }
+
+    pub(crate) fn active_toast(&self) -> Option<&ToastNotification> {
+        self.notifications.active_toast()
     }
 
     pub(crate) fn clear_composer(&mut self) {
@@ -380,7 +390,7 @@ impl BottomPaneController {
     pub(crate) fn build_status_view_model(&self, app: &TuiApp) -> StatusViewModel {
         let mode = app.current_mode();
         let fallback = status_text_from_mode(mode);
-        let (live_banner, live_banner_level) = self.runtime_banner_text();
+        let live_banner = self.runtime_banner_text();
         let text = fallback.to_string();
         let indicator = match mode {
             FrontendMode::Running | FrontendMode::WaitingForServerRequest => {
@@ -426,25 +436,21 @@ impl BottomPaneController {
             meta: parts.join(" · "),
             hint_meta,
             live_banner,
-            live_banner_level,
         }
     }
 
-    fn runtime_banner_text(&self) -> (Option<String>, Option<NoticeLevel>) {
-        if let Some(notice) = self.runtime.transient_notice.as_ref() {
-            return (Some(notice.message.clone()), Some(notice.level));
-        }
+    fn runtime_banner_text(&self) -> Option<String> {
         if let Some(tool) = self.runtime.active_tool.as_ref() {
-            return (Some(tool.banner_text()), None);
+            return Some(tool.banner_text());
         }
         let Some(live_label) = self.runtime.live_label.as_deref() else {
-            return (None, None);
+            return None;
         };
         let live_label = live_label.trim();
         if live_label.is_empty() || live_label.eq_ignore_ascii_case("working") {
-            return (None, None);
+            return None;
         }
-        (Some(live_label.to_string()), None)
+        Some(live_label.to_string())
     }
 
     #[cfg(test)]
@@ -458,8 +464,8 @@ impl BottomPaneController {
     }
 
     #[cfg(test)]
-    pub(crate) fn expire_transient_notice_for_test(&mut self) {
-        self.runtime.expire_transient_notice_for_test();
+    pub(crate) fn expire_toast_for_test(&mut self) {
+        self.notifications.expire_toast_for_test();
     }
 
     #[cfg(test)]

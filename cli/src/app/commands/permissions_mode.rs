@@ -10,7 +10,7 @@ pub(crate) fn apply_permission_mode(app: &mut TuiApp, mode: &str) -> Result<(), 
     }
     let canonical = canonical_permission_mode(mode);
     app.run_state.permission_mode = canonical.to_string();
-    app.bottom_pane.show_transient_notice(
+    app.bottom_pane.push_toast(
         NoticeLevel::Info,
         format!(
             "Project permission mode set to `{canonical}` ({}).",

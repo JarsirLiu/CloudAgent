@@ -16,8 +16,7 @@ pub(crate) fn handle_client_event(app: &mut TuiApp, event: AppServerEvent) {
                     error: message.clone(),
                 });
             }
-            app.bottom_pane
-                .show_transient_notice(NoticeLevel::Error, message);
+            app.bottom_pane.push_toast(NoticeLevel::Error, message);
             app.run_state.should_exit = true;
         }
     }
@@ -67,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    fn disconnected_event_uses_error_status_banner_instead_of_transcript_cell() {
+    fn disconnected_event_uses_error_toast_instead_of_transcript_cell() {
         let mut app = test_app();
 
         handle_client_event(
@@ -78,13 +77,10 @@ mod tests {
         );
 
         let status = app.bottom_pane.build_status_view_model(&app);
+        assert_eq!(status.live_banner.as_deref(), None);
         assert_eq!(
-            status.live_banner.as_deref(),
+            app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
             Some("worker app server closed unexpectedly")
-        );
-        assert_eq!(
-            status.live_banner_level,
-            Some(crate::state::NoticeLevel::Error)
         );
         assert!(app.transcript_owner.active_cell().is_none());
         assert!(app.run_state.should_exit);

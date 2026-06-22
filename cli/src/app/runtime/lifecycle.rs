@@ -87,7 +87,7 @@ async fn sync_model_catalog_runtime(app: &mut TuiApp) -> bool {
             && loading_picker_visible
         {
             app.bottom_pane.clear_views();
-            app.bottom_pane.show_transient_notice(
+            app.bottom_pane.push_toast(
                 NoticeLevel::Error,
                 format!("Failed to load model list: {message}"),
             );

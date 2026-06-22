@@ -1,6 +1,5 @@
 use crate::app::TuiApp;
 use crate::app::runtime::display::should_show_welcome;
-use crate::state::NoticeLevel;
 use crate::terminal::Frame;
 use crate::ui::bottom_pane::dialogs::welcome::WelcomeScreen;
 use crate::ui::chat_surface_model::{ChatSurfaceBody, ChatSurfaceModel, build_chat_surface_model};
@@ -33,6 +32,7 @@ pub(crate) struct ChatSurface;
 pub(crate) struct ChatSurfaceLayout {
     body_area: Rect,
     status_area: Rect,
+    toast_area: Rect,
     bottom_area: Rect,
 }
 
@@ -48,15 +48,18 @@ impl ChatSurface {
         let surface_area = viewport_surface_area(area, shows_welcome);
         let surface_layout = transcript_surface_layout(surface_area);
         let status = app.bottom_pane.build_status_view_model(app);
+        let toast = app.bottom_pane.active_toast().cloned();
         let render_width = surface_layout.render_metrics.width;
         let bottom_height = bottom_pane_height(app, surface_layout.content.width)
             .min(surface_layout.content.height)
             .max(1);
         let status_height = if status.live_banner.is_some() { 1 } else { 0 };
+        let toast_height = if toast.is_some() { 1 } else { 0 };
         let max_body_height = available_body_height(
             surface_layout.content,
             bottom_height,
             status_height,
+            toast_height,
             BODY_BOTTOM_GAP_HEIGHT,
         ) as usize;
         let surface_model = build_chat_surface_model(app, render_width, max_body_height);
@@ -65,16 +68,13 @@ impl ChatSurface {
             surface_layout,
             surface_model.body_height,
             status.live_banner.is_some(),
+            toast.is_some(),
             matches!(surface_model.body, ChatSurfaceBody::Welcome),
         );
 
         render_body_area(app, frame, layout.body_area, surface_model);
-        render_status_area(
-            frame,
-            layout.status_area,
-            status.live_banner.as_deref(),
-            status.live_banner_level,
-        );
+        render_status_area(frame, layout.status_area, status.live_banner.as_deref());
+        render_toast_area(frame, layout.toast_area, toast.as_ref());
         let bottom = app.bottom_pane.render(
             frame,
             layout.bottom_area,
@@ -97,15 +97,18 @@ impl ChatSurface {
         let surface_area = viewport_surface_area(terminal_area, shows_welcome);
         let surface_layout = transcript_surface_layout(surface_area);
         let status = app.bottom_pane.build_status_view_model(app);
+        let toast = app.bottom_pane.active_toast().cloned();
         let render_width = surface_layout.render_metrics.width;
         let bottom_height = bottom_pane_height(app, surface_layout.content.width)
             .min(surface_layout.content.height)
             .max(1);
         let status_height = if status.live_banner.is_some() { 1 } else { 0 };
+        let toast_height = if toast.is_some() { 1 } else { 0 };
         let max_body_height = available_body_height(
             surface_layout.content,
             bottom_height,
             status_height,
+            toast_height,
             BODY_BOTTOM_GAP_HEIGHT,
         ) as usize;
         let surface_model = build_chat_surface_model(app, render_width, max_body_height);
@@ -114,6 +117,7 @@ impl ChatSurface {
             surface_layout,
             surface_model.body_height,
             status.live_banner.is_some(),
+            toast.is_some(),
             matches!(surface_model.body, ChatSurfaceBody::Welcome),
         )
         .saturating_add(if shows_welcome {
@@ -143,6 +147,7 @@ fn compute_layout(
     surface_layout: TranscriptSurfaceLayout,
     body_height: u16,
     has_status_banner: bool,
+    has_toast: bool,
     is_welcome: bool,
 ) -> ChatSurfaceLayout {
     let content = surface_layout.content;
@@ -152,9 +157,11 @@ fn compute_layout(
 
     if is_welcome {
         let status_height = if has_status_banner { 1 } else { 0 };
-        let [body_area, status_area, bottom_area] = Layout::vertical([
+        let toast_height = if has_toast { 1 } else { 0 };
+        let [body_area, status_area, toast_area, bottom_area] = Layout::vertical([
             Constraint::Min(0),
             Constraint::Length(status_height),
+            Constraint::Length(toast_height),
             Constraint::Length(bottom_height),
         ])
         .areas(content);
@@ -162,34 +169,46 @@ fn compute_layout(
         return ChatSurfaceLayout {
             body_area,
             status_area,
+            toast_area,
             bottom_area,
         };
     }
 
     let status_height = if has_status_banner { 1 } else { 0 };
+    let toast_height = if has_toast { 1 } else { 0 };
     let gap_height = BODY_BOTTOM_GAP_HEIGHT;
     let reserved_bottom = bottom_height
         .saturating_add(status_height)
+        .saturating_add(toast_height)
         .saturating_add(gap_height)
         .min(content.height);
     let available_body = content.height.saturating_sub(reserved_bottom);
     let visible_body = body_height.min(available_body);
     let desired_height = visible_body
         .saturating_add(status_height)
+        .saturating_add(toast_height)
         .saturating_add(gap_height)
         .saturating_add(bottom_height)
         .min(content.height.max(1))
         .max(
             bottom_height
                 .saturating_add(status_height)
+                .saturating_add(toast_height)
                 .saturating_add(gap_height)
                 .max(1),
         );
     let stack_y = content.bottom().saturating_sub(desired_height);
     let stack_area = Rect::new(content.x, stack_y, content.width, desired_height);
-    let [body_area, status_area, _gap_area, bottom_area] = Layout::vertical([
+    let [body_area, status_area, toast_area, _gap_area, bottom_area] = Layout::vertical([
         Constraint::Length(visible_body.min(desired_height)),
         Constraint::Length(status_height.min(desired_height.saturating_sub(visible_body))),
+        Constraint::Length(
+            toast_height.min(
+                desired_height
+                    .saturating_sub(visible_body)
+                    .saturating_sub(status_height),
+            ),
+        ),
         Constraint::Length(
             gap_height.min(
                 desired_height
@@ -211,6 +230,7 @@ fn compute_layout(
     ChatSurfaceLayout {
         body_area,
         status_area,
+        toast_area,
         bottom_area,
     }
 }
@@ -220,6 +240,7 @@ fn desired_stack_height(
     surface_layout: TranscriptSurfaceLayout,
     body_height: u16,
     has_status_banner: bool,
+    has_toast: bool,
     is_welcome: bool,
 ) -> u16 {
     let content = surface_layout.content;
@@ -230,15 +251,18 @@ fn desired_stack_height(
         return content.height.max(1);
     }
     let status_height = if has_status_banner { 1 } else { 0 };
+    let toast_height = if has_toast { 1 } else { 0 };
     let gap_height = BODY_BOTTOM_GAP_HEIGHT;
     let visible_body = body_height.min(available_body_height(
         content,
         bottom_height,
         status_height,
+        toast_height,
         gap_height,
     ));
     visible_body
         .saturating_add(status_height)
+        .saturating_add(toast_height)
         .saturating_add(gap_height)
         .saturating_add(bottom_height)
         .min(content.height.max(1))
@@ -255,10 +279,12 @@ fn available_body_height(
     content: Rect,
     bottom_height: u16,
     status_height: u16,
+    toast_height: u16,
     gap_height: u16,
 ) -> u16 {
     let reserved_bottom = bottom_height
         .saturating_add(status_height)
+        .saturating_add(toast_height)
         .saturating_add(gap_height)
         .min(content.height);
     content.height.saturating_sub(reserved_bottom)
@@ -288,12 +314,7 @@ fn render_body_area(app: &mut TuiApp, frame: &mut Frame, area: Rect, model: Chat
     }
 }
 
-fn render_status_area(
-    frame: &mut Frame,
-    area: Rect,
-    live_banner: Option<&str>,
-    live_banner_level: Option<NoticeLevel>,
-) {
+fn render_status_area(frame: &mut Frame, area: Rect, live_banner: Option<&str>) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -303,13 +324,30 @@ fn render_status_area(
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             live_banner.to_string(),
-            Style::default().fg(match live_banner_level {
-                Some(NoticeLevel::Info) => Color::Rgb(120, 170, 235),
-                Some(NoticeLevel::Warn) => Color::Rgb(230, 185, 80),
-                Some(NoticeLevel::Error) => Color::Rgb(235, 120, 120),
-                None => Color::Rgb(140, 140, 155),
-            }),
+            Style::default().fg(Color::Rgb(140, 140, 155)),
         ))),
+        area,
+    );
+}
+
+fn render_toast_area(
+    frame: &mut Frame,
+    area: Rect,
+    toast: Option<&crate::state::notification::ToastNotification>,
+) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let Some(toast) = toast else {
+        return;
+    };
+    let color = match toast.level {
+        crate::state::NoticeLevel::Info => Color::Rgb(120, 170, 235),
+        crate::state::NoticeLevel::Warn => Color::Rgb(230, 185, 80),
+        crate::state::NoticeLevel::Error => Color::Rgb(235, 120, 120),
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(toast.message.clone(), Style::default().fg(color)))),
         area,
     );
 }
