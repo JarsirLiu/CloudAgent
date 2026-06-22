@@ -1,4 +1,4 @@
-# Item 卡片分型实施方案
+# Item 卡片实施方案
 
 ## 1. 文档目的
 
@@ -10,7 +10,7 @@
 - 卡片标题、正文、详情、状态的职责明确分离
 - 用户消息保持现有展示风格，不额外引入标题
 - 不做完整 diff viewer
-- 先做“可扫读的结构化摘要”，再考虑更深入的展开能力
+- 先做可扫读的结构化摘要，再考虑更深入的展开能力
 
 这份文档是实施级方案，目标是直接指导改代码，而不是继续讨论抽象架构。
 
@@ -25,14 +25,17 @@
 - active 区和 history 区的分离
 - `tool_ui.rs` 中对 `CommandExecution`、`ReadFile`、`SearchWorkspace`、`EditFile` 等结构化结果的分支渲染
 - `runtime_item` / `patch_buffer` / `metrics` 等运行时字段
+- `Search` 已经从探索卡中独立出来，作为单独的历史卡类型接入主渲染链
+- `Patch` 卡已经不再只是路径列表，开始承载变更摘要语义
 
 ### 2.2 当前问题
 
 目前的卡片展示还有几个明显问题：
 
 - 不同 item 的视觉语义还不够分明
-- `EditFile` 仍然更像“文件列表卡”，不像“变更卡”
-- `ToolResult`、`SearchWorkspace`、`CommandExecution` 的展示有时共享太多相似路径
+- `Patch` 还没有完全到位，仍需补齐更完整的变更摘要和失败信息
+- `CommandExecution` 仍然和部分工具结果共享较多布局逻辑
+- `Search` 已经拆分，但视觉和详情层次还可以继续细化
 - 一些工具结果仍然依赖名称或字符串启发式
 - 用户消息如果已经足够直接，就不应该再强行加标题
 
@@ -44,12 +47,13 @@
 - 不重构整个 app 的消息协议
 - 不要求把所有历史卡片都改成全新框架
 - 不要求 CLI、Web、IDE 三端同时完成一致化
+- 不要求一轮把所有卡片都独立成文件
 
 ## 3. 设计目标
 
 ### 3.1 核心目标
 
-1. 让 item 卡片“按语义分型”
+1. 让 item 卡片按语义分型
 2. 让用户一眼看出这是：
    - 消息
    - 推理
@@ -268,7 +272,7 @@
 - 标题要短
 - 标题尽量用动词或名词短语
 - 避免标题里塞太多字段
-- 同类型卡片标题风格统一
+- 同类卡片标题风格统一
 
 ### 6.3 正文风格
 
@@ -293,17 +297,6 @@
 - `Plan`：偏黄灰
 - `Notice`：黄 / 红 / 灰
 
-### 6.6 线条和符号建议
-
-- `›`：用户消息
-- `≈`：推理
-- `•`：执行 / 工具
-- `◦`：变更 / patch
-- `▣`：计划
-- `◆`：通知
-
-这些符号可以延续现有风格，只是重新分配语义。
-
 ## 7. 代码改造策略
 
 ### 7.1 总体策略
@@ -314,24 +307,25 @@
 
 1. 先保留现有卡片框架
 2. 增加更明确的卡片分型 helper
-3. 先把 `Patch` 卡片做出来
-4. 再拆分 `Search`、`Plan`、`Notice`
+3. 先把 `Patch` 卡做出来
+4. 再继续细化 `Search` 和 `Command`
 5. 最后收敛 `ToolResult` 的兜底逻辑
 
 ### 7.2 推荐目录结构
 
-建议把 `cli/src/ui/history_cell/` 内部进一步按语义拆开：
+建议继续按语义拆分 `cli/src/ui/history_cell/`：
 
 - `messages.rs`
 - `reasoning.rs`
 - `action.rs`
 - `patch.rs`
 - `search.rs`
+- `search_cards.rs`
 - `plan.rs`
 - `notices.rs`
 - `display.rs`
 
-如果暂时不想大迁移，也可以先在现有文件里按 helper 方式拆分，再逐步拆模块。
+如果暂时不想大迁移，也可以先在现有文件里按 helper 拆开，再逐步拆模块。
 
 ## 8. 需要改的文件
 
@@ -357,7 +351,7 @@
 建议修改：
 
 - 给不同类型卡片分派不同渲染路径
-- 用户消息保留现状
+- 用户消息保持现状
 - `Patch`、`Search`、`Plan` 使用更独立的布局分支
 - 减少 `render_tool_like(...)` 的滥用
 
@@ -383,10 +377,10 @@
 
 建议修改：
 
-- 对不同 `TranscriptItem` 类型调用更明确的 helper
+- 对不同 `TranscriptItem` 调用更明确的 helper
 - 不要把所有结构化结果都压进同一条渲染路径
 
-### 8.5 `cli/src/ui/theme/history.rs`
+### 8.5 `cli/src/ui/history_cell/theme/history.rs`
 
 职责调整：
 
@@ -428,13 +422,13 @@
 
 ### 9.1 `patch_buffer`
 
-这是 patch 卡片最重要的数据来源之一。
+这是 patch 卡最重要的数据来源之一。
 
 建议：
 
 - active 阶段继续保留
-- completed 历史卡片可以从 runtime snapshot 或 completed summary 中拿到结构化摘要
-- 不要求先做完整 diff viewer
+- completed 历史卡可以从 runtime snapshot 或 completed summary 中拿到结构化摘要
+- 不要要求先做完整 diff viewer
 
 ### 9.2 `metrics`
 
@@ -442,23 +436,23 @@
 
 建议：
 
-- patch / command / search 卡片可以显示轻量 metrics footer
+- patch / command / search 卡可以显示轻量 metrics footer
 - 不要让 metrics 抢正文
-- 如果实现复杂，可以晚于 patch 卡片再做
+- 如果实现复杂，可以晚一点再做
 
 ### 9.3 `structured`
 
-`StructuredToolResult` 应该尽可能决定卡片类型，而不是 `tool_name` 字符串。
+`StructuredToolResult` 应该优先决定卡片类型，而不是 `tool_name` 字符串。
 
-建议优先级：
+优先级建议：
 
 1. `structured`
 2. `tool_identity`
 3. `tool_name`
 
-## 10. 实施顺序建议
+## 10. 实施顺序
 
-### Slice 1：先把 Patch 卡做出来
+### Slice 1: 先把 Patch 卡做出来
 
 目标：
 
@@ -468,26 +462,26 @@
 
 涉及文件：
 
-- `cli/src/ui/history_cell/tool_ui.rs`
-- `cli/src/ui/history_cell/display.rs`
-- `cli/src/ui/history_cell/render.rs`
-- `cli/src/ui/history_cell/render_entry_tests.rs`
-- `cli/src/app/tests.rs`
+- [cli/src/ui/history_cell/tool_ui.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/tool_ui.rs)
+- [cli/src/ui/history_cell/display.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/display.rs)
+- [cli/src/ui/history_cell/render.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/render.rs)
+- [cli/src/ui/history_cell/render_entry_tests.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/render_entry_tests.rs)
+- [cli/src/app/tests.rs](D:/Software/Projects/CloudAgent/cli/src/app/tests.rs)
 
-### Slice 2：拆分 Search 和 Command
+### Slice 2: 拆 Search 和 Command
 
 目标：
 
 - 搜索卡和执行卡视觉上分家
-- 不再把所有 `ToolResult` 统一成同一种工具卡
+- 不再把所有 `ToolResult` 统一成同一类工具卡
 
 涉及文件：
 
-- `cli/src/ui/history_cell/tool_ui.rs`
-- `cli/src/ui/history_cell/display.rs`
-- `cli/src/ui/history_cell/render_entry_tests.rs`
+- [cli/src/ui/history_cell/tool_ui.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/tool_ui.rs)
+- [cli/src/ui/history_cell/display.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/display.rs)
+- [cli/src/ui/history_cell/render_entry_tests.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/render_entry_tests.rs)
 
-### Slice 3：抽出 Plan 卡
+### Slice 3: 抽 Plan 卡
 
 目标：
 
@@ -496,21 +490,21 @@
 
 涉及文件：
 
-- `cli/src/ui/history_cell/mod.rs`
-- `cli/src/ui/history_cell/display.rs`
-- `cli/src/ui/history_cell/render_entry_tests.rs`
+- [cli/src/ui/history_cell/mod.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/mod.rs)
+- [cli/src/ui/history_cell/display.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/display.rs)
+- [cli/src/ui/history_cell/render_entry_tests.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/render_entry_tests.rs)
 
-### Slice 4：整理 Notice 和兜底卡
+### Slice 4: 整理 Notice 和兜底卡
 
 目标：
 
 - 错误、警告、信息提示风格统一
-- 兜底逻辑变得轻量
+- 兜底卡退化
 
 涉及文件：
 
-- `cli/src/ui/history_cell/display.rs`
-- `cli/src/ui/theme/history.rs`
+- [cli/src/ui/history_cell/display.rs](D:/Software/Projects/CloudAgent/cli/src/ui/history_cell/display.rs)
+- [cli/src/ui/theme/history.rs](D:/Software/Projects/CloudAgent/cli/src/ui/theme/history.rs)
 
 ## 11. 验收标准
 
@@ -518,10 +512,10 @@
 
 - 用户消息没有标题
 - Reasoning 有独立层级
-- Patch 卡能明确看出“改了什么”
-- Search 卡能明确看出“搜了什么”
-- Command 卡能明确看出“执行了什么”
-- Plan 卡能明确看出“有哪些步骤”
+- Patch 卡能看出“改了什么”
+- Search 卡能看出“搜了什么”
+- Command 卡能看出“执行了什么”
+- Plan 卡能看出“有哪些步骤”
 
 ### 11.2 行为标准
 
@@ -534,17 +528,17 @@
 - 不把所有逻辑重新塞回一个巨大的 match
 - 能分 helper 就分 helper
 - 能按语义拆文件就拆文件
-- 新增测试覆盖主要卡片类型
+- 新增测试要覆盖主要卡片类型
 
 ## 12. 最后建议
 
-如果你要先落一刀，优先顺序我建议是：
+如果要先落一刀，优先顺序建议是：
 
-1. 先做 `Patch` 卡
-2. 再拆 `Search` 和 `Command`
+1. 先继续补完整 `Patch` 卡
+2. 再把 `Search` 视觉和 detail 细化好
 3. 然后做 `Plan`
 4. 最后收敛 `Notice`
 
 用户消息保持现状，不要动。
 
-这会让你的 CLI 历史区更接近 Codex，但不会一开始就把架构改得过重。
+这会让你的 CLI 历史区更接近 Codex，但不会一下子把架构改得过重。

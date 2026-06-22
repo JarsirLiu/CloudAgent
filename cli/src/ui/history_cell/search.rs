@@ -142,12 +142,10 @@ pub(super) fn render_tool_result(
                 format!("text search `{}`", compact_inline(query, 48))
             }
         };
-        let mut aggregate = ExplorationAggregate::new(detail);
-        aggregate.searches = 1;
-        return HistoryCell::exploration(
+        return HistoryCell::search(
             "Search workspace",
             summary,
-            aggregate,
+            Some(detail),
             HistoryTone::Control,
         );
     }
@@ -158,17 +156,15 @@ pub(super) fn render_tool_result(
         hits,
     }) = structured
     {
-        let mut aggregate =
-            ExplorationAggregate::new(format!("tool search `{}`", compact_inline(query, 48)));
-        aggregate.searches = 1;
-        aggregate.push_detail(format!(
-            "matched {match_count} tools, showing {} of {max_results}",
+        let detail = format!(
+            "tool search `{}`\nmatched {match_count} tools, showing {} of {max_results}",
+            compact_inline(query, 48),
             hits.len()
-        ));
-        return HistoryCell::exploration(
+        );
+        return HistoryCell::search(
             "Search tools",
             format!("matched {match_count} tools"),
-            aggregate,
+            Some(detail),
             HistoryTone::Control,
         );
     }
@@ -224,12 +220,10 @@ pub(super) fn render_tool_result(
     if let Some(StructuredToolResult::WebSearch { query, action, .. }) = structured {
         let detail = web_search_detail(query, action.as_ref());
         if !detail.trim().is_empty() {
-            let mut aggregate = ExplorationAggregate::new(detail);
-            aggregate.searches = 1;
-            return HistoryCell::exploration(
+            return HistoryCell::search(
                 "Web search",
                 "searched the web".to_string(),
-                aggregate,
+                Some(detail),
                 HistoryTone::Control,
             );
         }

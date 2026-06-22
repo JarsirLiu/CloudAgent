@@ -1,4 +1,5 @@
 use super::render_tool_result;
+use crate::ui::history_cell::search_cards::render_search;
 use crate::ui::history_cell::{HistoryCell, HistoryTone, RenderContext, render_history_entry};
 use agent_core::conversation::TranscriptItem;
 use agent_core::{
@@ -45,7 +46,9 @@ fn search_workspace_renders_as_exploration_card() {
 
     assert_eq!(cell.label(), "Search workspace");
     assert_eq!(cell.tone, HistoryTone::Control);
+    assert_eq!(cell.kind(), crate::ui::history_cell::HistoryKind::Search);
     assert!(cell.body().contains("matched 8 hits"));
+    assert!(cell.detail().unwrap_or("").contains("text search"));
 }
 
 #[test]
@@ -62,7 +65,9 @@ fn tool_search_renders_as_search_card() {
     );
 
     assert_eq!(cell.label(), "Search tools");
+    assert_eq!(cell.kind(), crate::ui::history_cell::HistoryKind::Search);
     assert!(cell.body().contains("matched 3 tools"));
+    assert!(cell.detail().unwrap_or("").contains("tool search"));
 }
 
 #[test]
@@ -82,8 +87,10 @@ fn web_search_renders_detail_as_search_card() {
     );
 
     assert_eq!(cell.label(), "Web search");
+    assert_eq!(cell.kind(), crate::ui::history_cell::HistoryKind::Search);
     assert!(cell.body().contains("searched the web"));
-    assert!(joined(&cell, 120).contains("OpenAI latest API pricing"));
+    assert!(cell.detail().is_some());
+    assert!(cell.detail().unwrap().contains("OpenAI latest API pricing"));
 }
 
 #[test]
@@ -102,4 +109,56 @@ fn file_change_rendering_stays_in_patch_module() {
 
     assert_eq!(cell.label(), "Edit file");
     assert!(cell.body().contains("patched 5 files") || cell.body().contains("edited 5 files"));
+}
+
+#[test]
+fn search_workspace_renders_with_search_card_entry() {
+    let cell = render_tool_result(
+        "search_workspace",
+        "",
+        Some(&StructuredToolResult::SearchWorkspace {
+            session_id: "session-2".to_string(),
+            operation: SearchWorkspaceOperation::Search,
+            mode: SearchWorkspaceMode::Text,
+            status: SearchWorkspaceStatus::Closed,
+            query: "codex item cards".to_string(),
+            path_scope: None,
+            case_sensitive: false,
+            context_lines: 2,
+            max_results: 20,
+            offset: 0,
+            file_count: 4,
+            match_count: 8,
+            truncated: false,
+            next_offset: None,
+            hits: vec![],
+        }),
+    );
+
+    let rendered = joined(&cell, 120);
+    assert_eq!(cell.label(), "Search workspace");
+    assert!(rendered.contains("Search workspace"));
+    assert!(rendered.contains("matched 8 hits"));
+}
+
+#[test]
+fn search_card_renders_detail_but_stays_compact() {
+    let mut cell = HistoryCell::search(
+        "Search workspace",
+        "matched 8 hits in 4 files".to_string(),
+        Some("text search `codex item cards`".to_string()),
+        HistoryTone::Control,
+    );
+    cell.append_detail("\nquery: codex item cards\nsources: 3\nresults: 12");
+
+    let rendered = render_search(&cell, 80)
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("Search workspace"));
+    assert!(rendered.contains("matched 8 hits in 4 files"));
+    assert!(rendered.contains("query: codex item cards"));
+    assert!(rendered.contains("sources: 3"));
 }

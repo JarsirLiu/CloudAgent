@@ -9,6 +9,10 @@ pub(crate) fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'
     exploration_cards::render_exploration(cell, width)
 }
 
+pub(crate) fn render_search(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
+    super::search_cards::render_search(cell, width)
+}
+
 pub(crate) fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     tool_cards::render_command(cell, width)
 }

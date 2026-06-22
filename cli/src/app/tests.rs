@@ -917,10 +917,8 @@ fn adjacent_exploration_history_cells_merge_without_crossing_reasoning_barrier()
         pending,
         vec![
             ("you".to_string(), "hello".to_string()),
-            (
-                "Read file".to_string(),
-                "searched 1 time, read 1 file".to_string()
-            ),
+            ("Read file".to_string(), "read 1 file".to_string()),
+            ("Search workspace".to_string(), "matched 3 hits in 2 files".to_string()),
             ("Reasoning".to_string(), "thinking".to_string()),
             ("Read file".to_string(), "read 1 file".to_string()),
         ]
@@ -1498,7 +1496,7 @@ fn reset_notice_is_suppressed_after_local_clear() {
 }
 
 #[test]
-fn server_notice_uses_transient_status_banner_instead_of_transcript_cell() {
+fn server_notice_uses_toast_instead_of_transcript_cell() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -1518,26 +1516,24 @@ fn server_notice_uses_transient_status_banner_instead_of_transcript_cell() {
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(status.live_banner.as_deref(), None);
     assert_eq!(
-        status.live_banner.as_deref(),
+        app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
         Some("Deleted conversation `draft-1778341755002`")
-    );
-    assert_eq!(
-        status.live_banner_level,
-        Some(crate::state::NoticeLevel::Info)
     );
     assert!(app.transcript_owner.active_cell().is_none());
     assert!(!app.transcript_owner.has_transcript_content());
 
-    app.bottom_pane.expire_transient_notice_for_test();
+    app.bottom_pane.expire_toast_for_test();
     assert!(app.bottom_pane.handle_tick());
 
     let cleared = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(cleared.live_banner, None);
+    assert!(app.bottom_pane.active_toast().is_none());
 }
 
 #[test]
-fn server_error_uses_transient_status_banner_instead_of_transcript_cell() {
+fn server_error_uses_toast_instead_of_transcript_cell() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -1553,10 +1549,10 @@ fn server_error_uses_transient_status_banner_instead_of_transcript_cell() {
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(status.live_banner.as_deref(), Some("interrupt requested"));
+    assert_eq!(status.live_banner.as_deref(), None);
     assert_eq!(
-        status.live_banner_level,
-        Some(crate::state::NoticeLevel::Error)
+        app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
+        Some("interrupt requested")
     );
     assert!(app.transcript_owner.active_cell().is_none());
     assert!(!app.transcript_owner.has_transcript_content());
@@ -1591,7 +1587,7 @@ fn interrupt_no_active_turn_result_recovers_stuck_running_state() {
 }
 
 #[test]
-fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell() {
+fn server_request_prompt_uses_toast_instead_of_transcript_cell() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -1614,13 +1610,10 @@ fn server_request_prompt_uses_warning_status_banner_instead_of_transcript_cell()
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
+    assert_eq!(status.live_banner.as_deref(), None);
     assert_eq!(
-        status.live_banner.as_deref(),
+        app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
         Some("Command approval required for exec_command")
-    );
-    assert_eq!(
-        status.live_banner_level,
-        Some(crate::state::NoticeLevel::Warn)
     );
     assert!(app.transcript_owner.active_cell().is_none());
     assert!(!app.transcript_owner.has_transcript_content());

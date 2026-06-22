@@ -8,6 +8,7 @@ mod notice_cards;
 mod patch;
 mod render;
 mod search;
+mod search_cards;
 pub(crate) mod tool_aggregation;
 mod tool_cards;
 mod tool_common;
@@ -64,6 +65,13 @@ pub struct ExplorationCell {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchCell {
+    pub label: String,
+    pub summary: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecCell {
     pub label: String,
     pub summary: String,
@@ -95,6 +103,7 @@ pub enum HistoryKind {
     Message,
     Reasoning,
     Exploration,
+    Search,
     Command,
     Patch,
     Tool,
@@ -177,6 +186,7 @@ enum HistoryContent {
     Agent(AgentCell),
     Reasoning(ReasoningCell),
     Exploration(ExplorationCell),
+    Search(SearchCell),
     Exec(ExecCell),
     Patch(PatchCell),
     ToolGroup(ToolGroupCell),
@@ -244,6 +254,24 @@ impl HistoryCell {
                 label: label.into(),
                 summary: summary.into(),
                 aggregate,
+            }),
+            view: HistoryCellView::default(),
+            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    pub fn search(
+        label: impl Into<String>,
+        summary: impl Into<String>,
+        detail: Option<String>,
+        tone: HistoryTone,
+    ) -> Self {
+        Self {
+            tone,
+            content: HistoryContent::Search(SearchCell {
+                label: label.into(),
+                summary: summary.into(),
+                detail,
             }),
             view: HistoryCellView::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -327,6 +355,7 @@ impl HistoryCell {
             HistoryContent::Info(cell) => cell.text.push_str(delta),
             HistoryContent::User(cell) => cell.text.push_str(delta),
             HistoryContent::Exploration(cell) => cell.summary.push_str(delta),
+            HistoryContent::Search(cell) => cell.summary.push_str(delta),
             HistoryContent::Exec(cell) => cell.summary.push_str(delta),
             HistoryContent::Patch(cell) => cell.summary.push_str(delta),
             HistoryContent::ToolGroup(cell) => cell.summary.push_str(delta),
@@ -349,6 +378,7 @@ impl HistoryCell {
         match &mut self.content {
             HistoryContent::Exec(cell) => push(&mut cell.detail),
             HistoryContent::Patch(cell) => push(&mut cell.detail),
+            HistoryContent::Search(cell) => push(&mut cell.detail),
             _ => self.append_body(delta),
         }
         self.invalidate_cache();
@@ -362,6 +392,7 @@ impl HistoryCell {
             HistoryContent::Info(cell) => cell.text = body,
             HistoryContent::User(cell) => cell.text = body,
             HistoryContent::Exploration(cell) => cell.summary = body,
+            HistoryContent::Search(cell) => cell.summary = body,
             HistoryContent::Exec(cell) => cell.summary = body,
             HistoryContent::Patch(cell) => cell.summary = body,
             HistoryContent::ToolGroup(cell) => cell.summary = body,
@@ -375,6 +406,7 @@ impl HistoryCell {
             HistoryContent::Agent(cell) => &cell.text,
             HistoryContent::Reasoning(cell) => &cell.text,
             HistoryContent::Exploration(cell) => &cell.summary,
+            HistoryContent::Search(cell) => &cell.summary,
             HistoryContent::Exec(cell) => &cell.summary,
             HistoryContent::Patch(cell) => &cell.summary,
             HistoryContent::ToolGroup(cell) => &cell.summary,
@@ -394,6 +426,7 @@ impl HistoryCell {
             HistoryContent::User(_) | HistoryContent::Agent(_) => HistoryKind::Message,
             HistoryContent::Reasoning(_) => HistoryKind::Reasoning,
             HistoryContent::Exploration(_) => HistoryKind::Exploration,
+            HistoryContent::Search(_) => HistoryKind::Search,
             HistoryContent::Exec(_) => HistoryKind::Command,
             HistoryContent::Patch(_) => HistoryKind::Patch,
             HistoryContent::ToolGroup(_) => HistoryKind::Tool,
@@ -458,6 +491,7 @@ impl HistoryCell {
         match &self.content {
             HistoryContent::Exec(cell) => cell.detail.as_deref(),
             HistoryContent::Patch(cell) => cell.detail.as_deref(),
+            HistoryContent::Search(cell) => cell.detail.as_deref(),
             _ => None,
         }
     }
@@ -487,6 +521,7 @@ impl HistoryCell {
         let summary = summary.into();
         match &mut self.content {
             HistoryContent::Exploration(cell) => cell.summary = summary,
+            HistoryContent::Search(cell) => cell.summary = summary,
             HistoryContent::Exec(cell) => cell.summary = summary,
             HistoryContent::Patch(cell) => cell.summary = summary,
             HistoryContent::ToolGroup(cell) => cell.summary = summary,
@@ -501,6 +536,7 @@ impl HistoryCell {
             HistoryContent::Agent(cell) => &cell.label,
             HistoryContent::Reasoning(cell) => &cell.label,
             HistoryContent::Exploration(cell) => &cell.label,
+            HistoryContent::Search(cell) => &cell.label,
             HistoryContent::Exec(cell) => &cell.label,
             HistoryContent::Patch(cell) => &cell.label,
             HistoryContent::ToolGroup(cell) => &cell.label,

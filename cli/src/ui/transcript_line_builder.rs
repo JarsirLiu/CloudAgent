@@ -125,14 +125,17 @@ fn should_insert_extra_tool_gap(
 ) -> bool {
     match mode {
         TranscriptLineMode::Live => previous_cell.is_some_and(|previous| {
-            matches!(
-                (previous.kind, current_cell.kind),
-                (
-                    HistoryKind::Message | HistoryKind::Reasoning | HistoryKind::Exploration,
-                    HistoryKind::Command | HistoryKind::Tool
+                matches!(
+                    (previous.kind, current_cell.kind),
+                    (
+                        HistoryKind::Message
+                            | HistoryKind::Reasoning
+                            | HistoryKind::Exploration
+                            | HistoryKind::Search,
+                        HistoryKind::Command | HistoryKind::Tool
+                    )
                 )
-            )
-        }),
+            }),
         TranscriptLineMode::Scrollback => false,
     }
 }

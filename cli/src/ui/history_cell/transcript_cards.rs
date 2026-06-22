@@ -13,6 +13,7 @@ pub(super) fn render_compact_transcript(
     let title = if cell.label().is_empty() {
         match cell.kind() {
             HistoryKind::Exploration => "Explored workspace".to_string(),
+            HistoryKind::Search => "Search".to_string(),
             HistoryKind::Command => "Command".to_string(),
             HistoryKind::Patch => "Patch".to_string(),
             HistoryKind::Tool => "Tool".to_string(),
