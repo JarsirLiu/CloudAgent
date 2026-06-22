@@ -1,3 +1,4 @@
+use super::patch;
 use super::tool_ui;
 use super::{HistoryCell, HistoryFormat, HistoryTone};
 use agent_core::{InputItem, RuntimeItem, TranscriptItem, TurnItemKind};
@@ -20,7 +21,9 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
             content,
             structured,
             ..
-        } => tool_ui::render_tool_result(tool_name, content, structured.as_ref()),
+        } => patch::render_patch_result(tool_name, structured.as_ref()).unwrap_or_else(|| {
+            tool_ui::render_tool_result(tool_name, content, structured.as_ref())
+        }),
         TranscriptItem::CommandExecution {
             tool_name,
             command,
@@ -45,7 +48,7 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
             files_changed,
             summary,
             ..
-        } => tool_ui::render_file_change(tool_name, path, status, *files_changed, summary),
+        } => patch::render_file_change(tool_name, path, status, *files_changed, summary),
         TranscriptItem::Reasoning { text, .. } => HistoryCell::reasoning("Reasoning", text.clone()),
     }
 }

@@ -1,17 +1,13 @@
-use super::humanize_tool_label;
+use super::display_cards;
 use super::markdown;
 use super::wrapping::{WrapOptions, word_wrap_text};
 use super::{
     HistoryCell, HistoryContent, HistoryFormat, HistoryKind, HistoryTone, ReasoningPresentation,
-    ToolGroupCell,
 };
 use crate::text_width::display_width;
 use crate::ui::theme::{
-    history_body_style, history_meta_marker_style, history_meta_style, history_more_style,
-    history_notice_control_style, history_notice_error_style, history_notice_warning_style,
-    history_rail_style, history_reasoning_style, history_strong_text_style,
-    history_title_accent_style, history_title_style, history_tool_style, user_marker_style,
-    user_message_style,
+    history_body_style, history_rail_style, history_reasoning_style, history_strong_text_style,
+    user_marker_style, user_message_style,
 };
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -22,10 +18,11 @@ pub(crate) fn render_cell_lines(cell: &HistoryCell, width: usize) -> Vec<Line<'s
         HistoryKind::Message if cell.tone == HistoryTone::User => render_user(cell, width),
         HistoryKind::Message => render_agent(cell, width),
         HistoryKind::Reasoning => render_reasoning(cell, width),
-        HistoryKind::Exploration => render_exploration(cell, width),
-        HistoryKind::Command => render_command(cell, width),
-        HistoryKind::Tool => render_tool(cell, width),
-        HistoryKind::Notice => render_notice(cell, width),
+        HistoryKind::Exploration => display_cards::render_exploration(cell, width),
+        HistoryKind::Command => display_cards::render_command(cell, width),
+        HistoryKind::Patch => display_cards::render_patch(cell, width),
+        HistoryKind::Tool => display_cards::render_tool(cell, width),
+        HistoryKind::Notice => display_cards::render_notice(cell, width),
     }
 }
 
@@ -34,10 +31,11 @@ pub(crate) fn render_transcript_lines(cell: &HistoryCell, width: usize) -> Vec<L
         HistoryKind::Message if cell.tone == HistoryTone::User => render_user(cell, width),
         HistoryKind::Message => render_agent_transcript(cell, width),
         HistoryKind::Reasoning => render_reasoning(cell, width),
-        HistoryKind::Exploration => render_compact_transcript(cell, width, "◦"),
-        HistoryKind::Command => render_compact_transcript(cell, width, "›"),
-        HistoryKind::Tool => render_compact_transcript(cell, width, "•"),
-        HistoryKind::Notice => render_notice_transcript(cell, width),
+        HistoryKind::Exploration => display_cards::render_compact_transcript(cell, width, "◦"),
+        HistoryKind::Command => display_cards::render_compact_transcript(cell, width, "›"),
+        HistoryKind::Patch => display_cards::render_compact_transcript(cell, width, "◦"),
+        HistoryKind::Tool => display_cards::render_compact_transcript(cell, width, "•"),
+        HistoryKind::Notice => display_cards::render_notice_transcript(cell, width),
     }
 }
 
@@ -56,6 +54,7 @@ pub(crate) fn rendered_line_count(lines: &[Line<'static>], width: usize) -> usiz
         .wrap(Wrap { trim: false })
         .line_count(width as u16)
 }
+
 fn render_user(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     if cell.body().trim().is_empty() {
         return Vec::new();
@@ -163,7 +162,6 @@ fn render_reasoning_with_limit(
         );
         out.extend(lines);
         if index + 1 < paragraph_count && !out.is_empty() {
-            // Preserve paragraph spacing while keeping the same continuous reasoning gutter.
             out.push(Line::from(vec![
                 Span::raw("    "),
                 Span::styled("│ ", history_rail_style()),
@@ -188,7 +186,10 @@ fn render_reasoning_with_limit(
     kept.push(Line::from(vec![
         Span::raw("    "),
         Span::styled("│ ", history_rail_style()),
-        Span::styled(format!("… +{} lines", hidden_lines), history_more_style()),
+        Span::styled(
+            format!("… +{} lines", hidden_lines),
+            crate::ui::theme::history_more_style(),
+        ),
     ]));
     kept
 }
@@ -197,7 +198,7 @@ fn render_reasoning_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stati
     render_reasoning_lines(
         cell.body(),
         width,
-        history_more_style().add_modifier(Modifier::ITALIC),
+        crate::ui::theme::history_more_style().add_modifier(Modifier::ITALIC),
     )
 }
 
@@ -259,141 +260,6 @@ fn reasoning_paragraphs(text: &str) -> Vec<String> {
     paragraphs
 }
 
-fn render_exploration(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let title = if cell.label().is_empty() {
-        "Explored workspace".to_string()
-    } else {
-        cell.label().to_string()
-    };
-    let details = cell
-        .aggregate()
-        .map(|aggregate| aggregate.details.as_slice())
-        .unwrap_or(&[]);
-    let max_details = if cell.is_expanded() { 8 } else { 2 };
-    let mut lines = vec![Line::from(vec![
-        Span::raw("  "),
-        Span::styled("◦ ", history_tool_style()),
-        Span::styled(title, history_title_style()),
-    ])];
-
-    lines.extend(
-        word_wrap_text(
-            cell.body(),
-            WrapOptions::new(width)
-                .initial_indent(Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled("│ ", history_rail_style()),
-                ]))
-                .subsequent_indent(Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled("│ ", history_rail_style()),
-                ])),
-        )
-        .into_iter()
-        .map(tint_tail_style(history_body_style())),
-    );
-
-    for (index, detail) in details.iter().take(max_details).enumerate() {
-        let indent = if index == 0 { "    └ " } else { "      " };
-        lines.extend(
-            word_wrap_text(
-                detail,
-                WrapOptions::new(width)
-                    .initial_indent(Line::from(indent))
-                    .subsequent_indent(Line::from("    ")),
-            )
-            .into_iter()
-            .map(tint_all_style(history_body_style())),
-        );
-    }
-
-    if details.len() > max_details {
-        lines.push(Line::from(vec![
-            Span::raw("    "),
-            Span::styled(
-                format!("… +{} more", details.len().saturating_sub(max_details)),
-                history_more_style(),
-            ),
-        ]));
-    }
-
-    lines
-}
-
-fn render_command(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let title = if cell.label().is_empty() {
-        "Command".to_string()
-    } else {
-        cell.label().to_string()
-    };
-
-    let mut lines = vec![Line::from(vec![
-        Span::raw("  "),
-        Span::styled("› ", history_tool_style()),
-        Span::styled(title, history_title_style()),
-    ])];
-
-    lines.extend(
-        word_wrap_text(
-            cell.body(),
-            WrapOptions::new(width)
-                .initial_indent(Line::from("    "))
-                .subsequent_indent(Line::from("    ")),
-        )
-        .into_iter()
-        .map(tint_all_style(history_body_style())),
-    );
-
-    if let Some(detail) = cell.detail() {
-        let raw_lines = detail
-            .lines()
-            .flat_map(|line| {
-                word_wrap_text(
-                    line,
-                    WrapOptions::new(width)
-                        .initial_indent(Line::from(vec![
-                            Span::raw("    "),
-                            Span::styled("↳ ", history_rail_style()),
-                        ]))
-                        .subsequent_indent(Line::from("      ")),
-                )
-            })
-            .collect::<Vec<_>>();
-        let max_lines = if cell.is_expanded() { 24usize } else { 5usize };
-        let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_lines {
-            raw_lines
-        } else {
-            let mut kept = raw_lines.into_iter().take(max_lines).collect::<Vec<_>>();
-            kept.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("↳ ", history_rail_style()),
-                Span::styled(
-                    format!(
-                        "… +{} lines",
-                        detail.lines().count().saturating_sub(max_lines)
-                    ),
-                    history_more_style(),
-                ),
-            ]));
-            kept
-        };
-        lines.extend(
-            display_lines
-                .into_iter()
-                .map(tint_tail_style(history_more_style())),
-        );
-    }
-
-    lines
-}
-
-fn render_tool(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    match &cell.content {
-        HistoryContent::ToolGroup(group) => render_tool_group(cell, group, width),
-        _ => render_tool_like(cell, width, history_tool_style(), "•"),
-    }
-}
-
 fn apply_full_width_style(mut line: Line<'static>, style: Style, width: usize) -> Line<'static> {
     let padding = width.saturating_sub(line_display_width(&line));
     if padding > 0 {
@@ -411,422 +277,4 @@ fn line_display_width(line: &Line<'_>) -> usize {
         .iter()
         .map(|span| display_width(span.content.as_ref()))
         .sum()
-}
-
-fn render_tool_group(
-    cell: &HistoryCell,
-    group: &ToolGroupCell,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let title = pretty_tool_title(&group.label);
-    let mut lines = vec![Line::from(vec![
-        Span::raw("  "),
-        Span::styled("• ", history_tool_style()),
-        Span::styled(
-            title,
-            history_title_accent_style().add_modifier(Modifier::BOLD),
-        ),
-    ])];
-
-    if !is_generic_tool_group_summary(&group.summary) {
-        lines.extend(
-            word_wrap_text(
-                &group.summary,
-                WrapOptions::new(width)
-                    .initial_indent(Line::from(vec![
-                        Span::raw("    "),
-                        Span::styled("│ ", history_rail_style()),
-                    ]))
-                    .subsequent_indent(Line::from(vec![
-                        Span::raw("    "),
-                        Span::styled("│ ", history_rail_style()),
-                    ])),
-            )
-            .into_iter()
-            .map(tint_tail_style(history_body_style())),
-        );
-    }
-
-    if !cell.is_expanded() {
-        let preview_count = group.children.len().min(2);
-        for (index, child) in group.children.iter().take(preview_count).enumerate() {
-            let step_title = if child.label().is_empty() {
-                "Step".to_string()
-            } else {
-                child.label().to_string()
-            };
-            let preview_body = compact_inline_preview(child.body(), 72);
-            lines.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("│ ", history_rail_style()),
-                Span::styled(
-                    if index + 1 == preview_count && group.children.len() == 1 {
-                        "└ "
-                    } else {
-                        "├ "
-                    },
-                    history_rail_style(),
-                ),
-                Span::styled(
-                    step_title,
-                    history_title_accent_style().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled(preview_body, history_body_style()),
-            ]));
-        }
-        let hidden_count = group.children.len().saturating_sub(preview_count);
-        if hidden_count > 0 {
-            lines.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("│ ", history_rail_style()),
-                Span::styled(
-                    format!(
-                        "{} more step{}",
-                        hidden_count,
-                        if hidden_count == 1 { "" } else { "s" }
-                    ),
-                    history_more_style(),
-                ),
-            ]));
-        }
-        return lines;
-    }
-
-    for (index, child) in group.children.iter().enumerate() {
-        let is_last = index + 1 == group.children.len();
-        lines.extend(render_tool_group_child(child, width, is_last));
-    }
-
-    lines
-}
-
-fn render_tool_group_child(cell: &HistoryCell, width: usize, is_last: bool) -> Vec<Line<'static>> {
-    let branch = if is_last { "└ " } else { "├ " };
-    let rail = if is_last { "  " } else { "│ " };
-    let title = if cell.label().is_empty() {
-        "Step".to_string()
-    } else {
-        cell.label().to_string()
-    };
-
-    let mut lines = vec![Line::from(vec![
-        Span::raw("    "),
-        Span::styled(branch, history_rail_style()),
-        Span::styled(
-            title,
-            history_title_accent_style().add_modifier(Modifier::BOLD),
-        ),
-    ])];
-
-    lines.extend(
-        word_wrap_text(
-            cell.body(),
-            WrapOptions::new(width)
-                .initial_indent(Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled(rail, history_rail_style()),
-                ]))
-                .subsequent_indent(Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled(rail, history_rail_style()),
-                ])),
-        )
-        .into_iter()
-        .map(tint_tail_style(history_body_style())),
-    );
-
-    if let Some(detail) = cell.detail() {
-        let raw_lines = detail
-            .lines()
-            .flat_map(|line| {
-                word_wrap_text(
-                    line,
-                    WrapOptions::new(width)
-                        .initial_indent(Line::from(vec![
-                            Span::raw("    "),
-                            Span::styled(rail, history_rail_style()),
-                            Span::styled("↳ ", history_rail_style()),
-                        ]))
-                        .subsequent_indent(Line::from(vec![
-                            Span::raw("    "),
-                            Span::styled(rail, history_rail_style()),
-                            Span::raw("  "),
-                        ])),
-                )
-            })
-            .collect::<Vec<_>>();
-        let max_lines = if cell.is_expanded() { 12usize } else { 3usize };
-        let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_lines {
-            raw_lines
-        } else {
-            let mut kept = raw_lines.into_iter().take(max_lines).collect::<Vec<_>>();
-            kept.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled(rail, history_rail_style()),
-                Span::styled(
-                    format!(
-                        "… +{} more lines",
-                        detail.lines().count().saturating_sub(max_lines)
-                    ),
-                    history_more_style(),
-                ),
-            ]));
-            kept
-        };
-        lines.extend(
-            display_lines
-                .into_iter()
-                .map(tint_tail_style(history_more_style())),
-        );
-    }
-
-    lines
-}
-
-fn render_tool_like(
-    cell: &HistoryCell,
-    width: usize,
-    accent: Style,
-    dot: &str,
-) -> Vec<Line<'static>> {
-    let title = pretty_tool_title(cell.label());
-    let title = if cell.repeat_count() > 1 {
-        format!("{title} x{}", cell.repeat_count())
-    } else {
-        title
-    };
-    let mut lines = vec![Line::from(vec![
-        Span::raw("  "),
-        Span::styled(format!("{dot} "), accent),
-        Span::styled(
-            title,
-            history_title_accent_style().add_modifier(Modifier::BOLD),
-        ),
-    ])];
-    let wrapped = word_wrap_text(
-        cell.body(),
-        WrapOptions::new(width)
-            .initial_indent(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("│ ", history_rail_style()),
-            ]))
-            .subsequent_indent(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("│ ", history_rail_style()),
-            ])),
-    );
-    let max_lines = if cell.is_expanded() { 24usize } else { 2usize };
-    let mut output_lines: Vec<Line<'static>> = Vec::new();
-    if wrapped.len() <= max_lines {
-        output_lines.extend(wrapped);
-    } else {
-        output_lines.extend(wrapped.iter().take(max_lines).cloned());
-        output_lines.push(Line::from(vec![
-            Span::raw("    "),
-            Span::styled("│ ", history_rail_style()),
-            Span::styled(
-                format!("… +{} lines", wrapped.len().saturating_sub(max_lines)),
-                history_more_style(),
-            ),
-        ]));
-    }
-    lines.extend(
-        output_lines
-            .into_iter()
-            .filter(|line| !line.spans.is_empty())
-            .map(tint_tail_style(history_more_style())),
-    );
-
-    if let Some(detail) = cell.detail() {
-        let raw_lines = detail
-            .lines()
-            .flat_map(|line| {
-                word_wrap_text(
-                    line,
-                    WrapOptions::new(width)
-                        .initial_indent(Line::from(vec![
-                            Span::raw("    "),
-                            Span::styled("└ ", history_rail_style()),
-                        ]))
-                        .subsequent_indent(Line::from(vec![
-                            Span::raw("      "),
-                            Span::styled("  ", history_rail_style()),
-                        ])),
-                )
-            })
-            .collect::<Vec<_>>();
-        let max_detail_lines = if cell.is_expanded() { 12usize } else { 3usize };
-        let display_lines: Vec<Line<'static>> = if raw_lines.len() <= max_detail_lines {
-            raw_lines
-        } else {
-            let mut kept = raw_lines
-                .into_iter()
-                .take(max_detail_lines)
-                .collect::<Vec<_>>();
-            kept.push(Line::from(vec![
-                Span::raw("      "),
-                Span::styled(
-                    format!(
-                        "… +{} more lines",
-                        detail.lines().count().saturating_sub(max_detail_lines)
-                    ),
-                    history_more_style(),
-                ),
-            ]));
-            kept
-        };
-        lines.extend(
-            display_lines
-                .into_iter()
-                .map(tint_tail_style(history_more_style())),
-        );
-    }
-    lines
-}
-
-fn render_meta(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    word_wrap_text(
-        cell.body(),
-        WrapOptions::new(width)
-            .initial_indent(Line::from(vec![Span::styled(
-                "· ",
-                history_meta_marker_style(),
-            )]))
-            .subsequent_indent(Line::from("  ")),
-    )
-    .into_iter()
-    .map(tint_tail_style(history_meta_style()))
-    .collect()
-}
-
-fn render_notice(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    match cell.tone {
-        HistoryTone::Warning => render_tool_like(cell, width, history_notice_warning_style(), "◆"),
-        HistoryTone::Error => render_tool_like(cell, width, history_notice_error_style(), "◆"),
-        HistoryTone::Meta => render_meta(cell, width),
-        _ => render_tool_like(cell, width, history_tool_style(), "•"),
-    }
-}
-
-fn render_notice_transcript(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let accent = match cell.tone {
-        HistoryTone::Error => history_notice_error_style(),
-        HistoryTone::Warning => history_notice_warning_style(),
-        HistoryTone::Control => history_notice_control_style(),
-        _ => history_notice_control_style(),
-    };
-    let mut title = cell.label().to_string();
-    if title.is_empty() {
-        title = "Notice".to_string();
-    }
-    let body_lines = word_wrap_text(
-        cell.body(),
-        WrapOptions::new(width)
-            .initial_indent(Line::from("  "))
-            .subsequent_indent(Line::from("  ")),
-    )
-    .into_iter()
-    .map(tint_tail_style(history_body_style()))
-    .collect::<Vec<_>>();
-
-    let mut lines = vec![Line::from(vec![
-        Span::styled("• ", accent),
-        Span::styled(
-            title,
-            history_title_accent_style().add_modifier(Modifier::BOLD),
-        ),
-    ])];
-    lines.extend(body_lines);
-    lines
-}
-
-fn render_compact_transcript(cell: &HistoryCell, width: usize, bullet: &str) -> Vec<Line<'static>> {
-    let title = if cell.label().is_empty() {
-        match cell.kind() {
-            HistoryKind::Exploration => "Explored workspace".to_string(),
-            HistoryKind::Command => "Command".to_string(),
-            HistoryKind::Tool => "Tool".to_string(),
-            _ => "Step".to_string(),
-        }
-    } else {
-        cell.label().to_string()
-    };
-
-    let mut lines = vec![Line::from(vec![
-        Span::styled(format!("{bullet} "), history_tool_style()),
-        Span::styled(
-            title,
-            history_title_accent_style().add_modifier(Modifier::BOLD),
-        ),
-    ])];
-    lines.extend(
-        word_wrap_text(
-            cell.body(),
-            WrapOptions::new(width)
-                .initial_indent(Line::from("  "))
-                .subsequent_indent(Line::from("  ")),
-        )
-        .into_iter()
-        .map(tint_tail_style(history_body_style())),
-    );
-    lines
-}
-
-fn pretty_tool_title(label: &str) -> String {
-    match label {
-        "context" => "Context".to_string(),
-        "conversation" => "conversation".to_string(),
-        "reasoning" => "reasoning".to_string(),
-        other => humanize_tool_label(other),
-    }
-}
-
-fn compact_inline_preview(input: &str, max_chars: usize) -> String {
-    let trimmed = input.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut out = String::new();
-    for (index, ch) in trimmed.chars().enumerate() {
-        if index >= max_chars {
-            out.push('…');
-            return out;
-        }
-        out.push(ch);
-    }
-    out
-}
-
-fn is_generic_tool_group_summary(summary: &str) -> bool {
-    matches!(
-        summary.trim().to_ascii_lowercase().as_str(),
-        "exploring workspace" | "running tool"
-    )
-}
-
-fn tint_all_style(style: Style) -> impl Fn(Line<'static>) -> Line<'static> {
-    move |line| {
-        let spans = line
-            .spans
-            .into_iter()
-            .map(|span| Span::styled(span.content.into_owned(), style))
-            .collect::<Vec<_>>();
-        Line::from(spans)
-    }
-}
-
-fn tint_tail_style(style: Style) -> impl Fn(Line<'static>) -> Line<'static> {
-    move |line| {
-        let spans = line
-            .spans
-            .into_iter()
-            .enumerate()
-            .map(|(index, span)| {
-                if index == 0 {
-                    span
-                } else {
-                    Span::styled(span.content.into_owned(), style)
-                }
-            })
-            .collect::<Vec<_>>();
-        Line::from(spans)
-    }
 }

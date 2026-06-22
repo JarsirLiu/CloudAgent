@@ -1,10 +1,19 @@
+mod command;
 mod display;
+mod display_cards;
+mod display_common;
+mod exploration_cards;
 mod markdown;
+mod notice_cards;
+mod patch;
 mod render;
+mod search;
 pub(crate) mod tool_aggregation;
-mod tool_operation;
+mod tool_cards;
+mod tool_common;
 mod tool_ui;
 mod transcript;
+mod transcript_cards;
 mod wrapping;
 
 use ratatui::text::Line;
@@ -62,7 +71,7 @@ pub struct ExecCell {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EditCell {
+pub struct PatchCell {
     pub label: String,
     pub summary: String,
     pub detail: Option<String>,
@@ -87,6 +96,7 @@ pub enum HistoryKind {
     Reasoning,
     Exploration,
     Command,
+    Patch,
     Tool,
     Notice,
 }
@@ -168,7 +178,7 @@ enum HistoryContent {
     Reasoning(ReasoningCell),
     Exploration(ExplorationCell),
     Exec(ExecCell),
-    Edit(EditCell),
+    Patch(PatchCell),
     ToolGroup(ToolGroupCell),
     Info(InfoCell),
 }
@@ -258,7 +268,7 @@ impl HistoryCell {
         }
     }
 
-    pub fn edit(
+    pub fn patch(
         label: impl Into<String>,
         summary: impl Into<String>,
         detail: Option<String>,
@@ -266,7 +276,7 @@ impl HistoryCell {
     ) -> Self {
         Self {
             tone,
-            content: HistoryContent::Edit(EditCell {
+            content: HistoryContent::Patch(PatchCell {
                 label: label.into(),
                 summary: summary.into(),
                 detail,
@@ -318,7 +328,7 @@ impl HistoryCell {
             HistoryContent::User(cell) => cell.text.push_str(delta),
             HistoryContent::Exploration(cell) => cell.summary.push_str(delta),
             HistoryContent::Exec(cell) => cell.summary.push_str(delta),
-            HistoryContent::Edit(cell) => cell.summary.push_str(delta),
+            HistoryContent::Patch(cell) => cell.summary.push_str(delta),
             HistoryContent::ToolGroup(cell) => cell.summary.push_str(delta),
         }
         self.invalidate_cache();
@@ -338,7 +348,7 @@ impl HistoryCell {
 
         match &mut self.content {
             HistoryContent::Exec(cell) => push(&mut cell.detail),
-            HistoryContent::Edit(cell) => push(&mut cell.detail),
+            HistoryContent::Patch(cell) => push(&mut cell.detail),
             _ => self.append_body(delta),
         }
         self.invalidate_cache();
@@ -353,7 +363,7 @@ impl HistoryCell {
             HistoryContent::User(cell) => cell.text = body,
             HistoryContent::Exploration(cell) => cell.summary = body,
             HistoryContent::Exec(cell) => cell.summary = body,
-            HistoryContent::Edit(cell) => cell.summary = body,
+            HistoryContent::Patch(cell) => cell.summary = body,
             HistoryContent::ToolGroup(cell) => cell.summary = body,
         }
         self.invalidate_cache();
@@ -366,7 +376,7 @@ impl HistoryCell {
             HistoryContent::Reasoning(cell) => &cell.text,
             HistoryContent::Exploration(cell) => &cell.summary,
             HistoryContent::Exec(cell) => &cell.summary,
-            HistoryContent::Edit(cell) => &cell.summary,
+            HistoryContent::Patch(cell) => &cell.summary,
             HistoryContent::ToolGroup(cell) => &cell.summary,
             HistoryContent::Info(cell) => &cell.text,
         }
@@ -385,7 +395,8 @@ impl HistoryCell {
             HistoryContent::Reasoning(_) => HistoryKind::Reasoning,
             HistoryContent::Exploration(_) => HistoryKind::Exploration,
             HistoryContent::Exec(_) => HistoryKind::Command,
-            HistoryContent::Edit(_) | HistoryContent::ToolGroup(_) => HistoryKind::Tool,
+            HistoryContent::Patch(_) => HistoryKind::Patch,
+            HistoryContent::ToolGroup(_) => HistoryKind::Tool,
             HistoryContent::Info(_) => default_kind_for_tone(self.tone),
         }
     }
@@ -446,7 +457,7 @@ impl HistoryCell {
     pub fn detail(&self) -> Option<&str> {
         match &self.content {
             HistoryContent::Exec(cell) => cell.detail.as_deref(),
-            HistoryContent::Edit(cell) => cell.detail.as_deref(),
+            HistoryContent::Patch(cell) => cell.detail.as_deref(),
             _ => None,
         }
     }
@@ -477,7 +488,7 @@ impl HistoryCell {
         match &mut self.content {
             HistoryContent::Exploration(cell) => cell.summary = summary,
             HistoryContent::Exec(cell) => cell.summary = summary,
-            HistoryContent::Edit(cell) => cell.summary = summary,
+            HistoryContent::Patch(cell) => cell.summary = summary,
             HistoryContent::ToolGroup(cell) => cell.summary = summary,
             _ => {}
         }
@@ -491,7 +502,7 @@ impl HistoryCell {
             HistoryContent::Reasoning(cell) => &cell.label,
             HistoryContent::Exploration(cell) => &cell.label,
             HistoryContent::Exec(cell) => &cell.label,
-            HistoryContent::Edit(cell) => &cell.label,
+            HistoryContent::Patch(cell) => &cell.label,
             HistoryContent::ToolGroup(cell) => &cell.label,
             HistoryContent::Info(cell) => &cell.label,
         }
@@ -548,6 +559,8 @@ fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
     }
 }
 
+#[cfg(test)]
+mod patch_tests;
 #[cfg(test)]
 mod render_entry_tests;
 #[cfg(test)]

@@ -1781,7 +1781,7 @@ fn completed_web_search_matches_standard_tool_result_lifecycle() {
         .active_cell()
         .expect("completed web search remains active until flushed");
     assert_eq!(active.label(), "Web search");
-    assert_eq!(active.body(), "weather seattle");
+    assert_eq!(active.body(), "searched the web");
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(status.live_banner, None);
@@ -1802,7 +1802,7 @@ fn completed_web_search_matches_standard_tool_result_lifecycle() {
         .collect::<Vec<_>>();
     assert_eq!(
         committed,
-        vec![("Web search".to_string(), "weather seattle".to_string())]
+        vec![("Web search".to_string(), "searched the web".to_string())]
     );
 }
 
