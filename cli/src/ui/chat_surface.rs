@@ -347,7 +347,10 @@ fn render_toast_area(
         crate::state::NoticeLevel::Error => Color::Rgb(235, 120, 120),
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(toast.message.clone(), Style::default().fg(color)))),
+        Paragraph::new(Line::from(Span::styled(
+            toast.message.clone(),
+            Style::default().fg(color),
+        ))),
         area,
     );
 }

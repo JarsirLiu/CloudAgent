@@ -394,9 +394,14 @@ fn toast_renders_independently_and_expires() {
     );
 
     let during = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(during.live_banner.as_deref(), Some("running command: rg cli"));
     assert_eq!(
-        app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
+        during.live_banner.as_deref(),
+        Some("running command: rg cli")
+    );
+    assert_eq!(
+        app.bottom_pane
+            .active_toast()
+            .map(|toast| toast.message.as_str()),
         Some("Deleted conversation `draft-1`")
     );
 

@@ -40,7 +40,7 @@ pub(crate) enum ActiveTurnAction {
     AppendPatchDelta {
         turn_id: TurnId,
         item_id: String,
-        delta: String,
+        _delta: String,
     },
     UpdateItemProgress {
         turn_id: TurnId,
@@ -241,15 +241,10 @@ impl ActiveTurnState {
             ActiveTurnAction::AppendPatchDelta {
                 turn_id,
                 item_id,
-                delta,
+                _delta,
             } => {
                 self.ensure_turn(&turn_id);
                 let replay_cells = self.flush_live_tail_if_different(&item_id);
-                if let Some(live_item) = self.live_item.as_mut()
-                    && live_item.item_id == item_id
-                {
-                    live_item.append_detail(&delta);
-                }
                 self.snapshot_effects_with_replay(replay_cells)
             }
             ActiveTurnAction::UpdateItemProgress {

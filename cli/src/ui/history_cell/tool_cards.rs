@@ -335,12 +335,19 @@ fn render_patch_like(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
             Span::raw("    "),
             Span::styled("╰─ ", history_rail_style()),
             Span::styled(
-                format!("... +{} lines", summary_lines.len().saturating_sub(max_lines)),
+                format!(
+                    "... +{} lines",
+                    summary_lines.len().saturating_sub(max_lines)
+                ),
                 history_more_style(),
             ),
         ]));
     }
-    lines.extend(output_lines.into_iter().map(tint_tail_style(history_more_style())));
+    lines.extend(
+        output_lines
+            .into_iter()
+            .map(tint_tail_style(history_more_style())),
+    );
 
     if let Some(detail) = cell.detail() {
         let mut detail_lines = detail
@@ -377,7 +384,11 @@ fn render_patch_like(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
                 ),
             ]));
         }
-        lines.extend(detail_lines.into_iter().map(tint_tail_style(history_more_style())));
+        lines.extend(
+            detail_lines
+                .into_iter()
+                .map(tint_tail_style(history_more_style())),
+        );
     }
 
     lines

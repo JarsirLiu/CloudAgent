@@ -1,4 +1,5 @@
 use super::HistoryCell;
+use super::card_layout::{truncate_lines, wrap_multiline_detail};
 use super::display_common::tint_all_style;
 use super::wrapping::{WrapOptions, word_wrap_text};
 use crate::ui::theme::{
@@ -37,7 +38,11 @@ pub(crate) fn render_search(cell: &HistoryCell, width: usize) -> Vec<Line<'stati
     );
     let max_lines = if cell.is_expanded() { 6usize } else { 2usize };
     if body_lines.len() <= max_lines {
-        lines.extend(body_lines.into_iter().map(tint_all_style(history_body_style())));
+        lines.extend(
+            body_lines
+                .into_iter()
+                .map(tint_all_style(history_body_style())),
+        );
     } else {
         lines.extend(
             body_lines
@@ -57,48 +62,33 @@ pub(crate) fn render_search(cell: &HistoryCell, width: usize) -> Vec<Line<'stati
     }
 
     if let Some(detail) = cell.detail() {
-        let detail_lines = detail
-            .lines()
-            .flat_map(|line| {
-                word_wrap_text(
-                    line,
-                    WrapOptions::new(width)
-                        .initial_indent(Line::from(vec![
-                            Span::raw("    "),
-                            Span::styled("╰─ ", history_rail_style()),
-                            Span::styled("↳ ", history_rail_style()),
-                        ]))
-                        .subsequent_indent(Line::from(vec![
-                            Span::raw("    "),
-                            Span::styled("╰─ ", history_rail_style()),
-                            Span::raw("  "),
-                        ])),
-                )
-            })
-            .collect::<Vec<_>>();
-        let max_detail_lines = if cell.is_expanded() { 8usize } else { 3usize };
-        if detail_lines.len() <= max_detail_lines {
-            lines.extend(detail_lines.into_iter().map(tint_all_style(history_more_style())));
-        } else {
-            lines.extend(
-                detail_lines
-                    .iter()
-                    .take(max_detail_lines)
-                    .cloned()
-                    .map(tint_all_style(history_more_style())),
-            );
-            lines.push(Line::from(vec![
+        let detail_lines = wrap_multiline_detail(
+            Some(detail),
+            width,
+            Line::from(vec![
                 Span::raw("    "),
                 Span::styled("╰─ ", history_rail_style()),
-                Span::styled(
-                    format!(
-                        "... +{} more lines",
-                        detail.lines().count().saturating_sub(max_detail_lines)
-                    ),
-                    history_more_style(),
-                ),
-            ]));
-        }
+                Span::styled("↳ ", history_rail_style()),
+            ]),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled("╰─ ", history_rail_style()),
+                Span::raw("  "),
+            ]),
+        );
+        let max_detail_lines = if cell.is_expanded() { 8usize } else { 3usize };
+        let detail_lines = truncate_lines(detail_lines, max_detail_lines, |hidden| {
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled("╰─ ", history_rail_style()),
+                Span::styled(format!("... +{hidden} more lines"), history_more_style()),
+            ])
+        });
+        lines.extend(
+            detail_lines
+                .into_iter()
+                .map(tint_all_style(history_more_style())),
+        );
     }
 
     lines

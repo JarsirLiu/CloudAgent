@@ -443,9 +443,7 @@ impl BottomPaneController {
         if let Some(tool) = self.runtime.active_tool.as_ref() {
             return Some(tool.banner_text());
         }
-        let Some(live_label) = self.runtime.live_label.as_deref() else {
-            return None;
-        };
+        let live_label = self.runtime.live_label.as_deref()?;
         let live_label = live_label.trim();
         if live_label.is_empty() || live_label.eq_ignore_ascii_case("working") {
             return None;

@@ -194,7 +194,6 @@ impl BottomPaneRuntimeState {
             .map(ToolRuntimeState::static_banner)
             .map(ActiveToolRuntimeState::Tool);
     }
-
 }
 
 #[derive(Clone, Debug)]

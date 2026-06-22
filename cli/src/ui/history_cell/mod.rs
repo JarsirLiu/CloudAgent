@@ -1,3 +1,4 @@
+mod card_layout;
 mod command;
 mod display;
 mod display_cards;
@@ -595,6 +596,8 @@ fn default_kind_for_tone(tone: HistoryTone) -> HistoryKind {
     }
 }
 
+#[cfg(test)]
+mod card_layout_tests;
 #[cfg(test)]
 mod patch_tests;
 #[cfg(test)]

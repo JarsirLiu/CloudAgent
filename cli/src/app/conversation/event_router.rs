@@ -79,7 +79,9 @@ mod tests {
         let status = app.bottom_pane.build_status_view_model(&app);
         assert_eq!(status.live_banner.as_deref(), None);
         assert_eq!(
-            app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
+            app.bottom_pane
+                .active_toast()
+                .map(|toast| toast.message.as_str()),
             Some("worker app server closed unexpectedly")
         );
         assert!(app.transcript_owner.active_cell().is_none());

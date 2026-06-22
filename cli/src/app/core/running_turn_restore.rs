@@ -122,9 +122,6 @@ fn render_runtime_snapshot_cell(snapshot: &RuntimeItemSnapshot) -> Option<Histor
                     _ => cell.append_body(&body),
                 }
             }
-            if !snapshot.patch_buffer.trim().is_empty() {
-                cell.append_detail(&snapshot.patch_buffer);
-            }
             Some(cell)
         }
     }

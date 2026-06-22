@@ -918,7 +918,10 @@ fn adjacent_exploration_history_cells_merge_without_crossing_reasoning_barrier()
         vec![
             ("you".to_string(), "hello".to_string()),
             ("Read file".to_string(), "read 1 file".to_string()),
-            ("Search workspace".to_string(), "matched 3 hits in 2 files".to_string()),
+            (
+                "Search workspace".to_string(),
+                "matched 3 hits in 2 files".to_string()
+            ),
             ("Reasoning".to_string(), "thinking".to_string()),
             ("Read file".to_string(), "read 1 file".to_string()),
         ]
@@ -1518,7 +1521,9 @@ fn server_notice_uses_toast_instead_of_transcript_cell() {
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(status.live_banner.as_deref(), None);
     assert_eq!(
-        app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
+        app.bottom_pane
+            .active_toast()
+            .map(|toast| toast.message.as_str()),
         Some("Deleted conversation `draft-1778341755002`")
     );
     assert!(app.transcript_owner.active_cell().is_none());
@@ -1551,7 +1556,9 @@ fn server_error_uses_toast_instead_of_transcript_cell() {
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(status.live_banner.as_deref(), None);
     assert_eq!(
-        app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
+        app.bottom_pane
+            .active_toast()
+            .map(|toast| toast.message.as_str()),
         Some("interrupt requested")
     );
     assert!(app.transcript_owner.active_cell().is_none());
@@ -1612,7 +1619,9 @@ fn server_request_prompt_uses_toast_instead_of_transcript_cell() {
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(status.live_banner.as_deref(), None);
     assert_eq!(
-        app.bottom_pane.active_toast().map(|toast| toast.message.as_str()),
+        app.bottom_pane
+            .active_toast()
+            .map(|toast| toast.message.as_str()),
         Some("Command approval required for exec_command")
     );
     assert!(app.transcript_owner.active_cell().is_none());
@@ -2768,7 +2777,7 @@ fn transcript_surface_uses_centered_width_metrics() {
 }
 
 #[test]
-fn active_file_change_cell_shows_patch_preview_in_detail_area() {
+fn active_file_change_cell_keeps_patch_detail_hidden() {
     let mut owner = TranscriptOwner::default();
     owner.start_local_user(local_input("edit it"), false);
     owner.bind_turn_id("turn-1".to_string(), false);
@@ -2792,8 +2801,5 @@ fn active_file_change_cell_shows_patch_preview_in_detail_area() {
     let active = owner.active_cell().expect("active file change cell");
     assert_eq!(active.label(), "Edit file");
     assert_eq!(active.body(), "running");
-    assert_eq!(
-        active.detail(),
-        Some("*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch")
-    );
+    assert!(active.detail().is_none());
 }

@@ -179,7 +179,7 @@ impl ActiveCellController {
             ActiveTurnAction::AppendPatchDelta {
                 turn_id,
                 item_id,
-                delta,
+                _delta: delta,
             },
             expand_details,
         )
