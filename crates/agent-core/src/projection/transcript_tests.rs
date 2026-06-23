@@ -236,37 +236,6 @@ fn transcript_items_ignore_compaction_rollout_items() {
 }
 
 #[test]
-fn transcript_builder_keeps_rich_tool_projection() {
-    let item = transcript_item_from_response_item(&ResponseItem::Tool {
-        tool_call_id: "call-1".to_string(),
-        name: "exec_command".to_string(),
-        content: "D:\\learn\\gifti\\cloudagent".to_string(),
-        structured: Some(StructuredToolResult::CommandExecution {
-            command: "pwd".to_string(),
-            current_directory: "D:\\learn\\gifti\\cloudagent".to_string(),
-            session_id: None,
-            status: CommandExecutionStatus::Completed,
-            exit_code: Some(0),
-            success: Some(true),
-            output: Some("D:\\learn\\gifti\\cloudagent".to_string()),
-            duration_ms: Some(1),
-            original_token_count: Some(8),
-            max_output_tokens: Some(10_000),
-        }),
-    })
-    .expect("tool response should project");
-
-    assert!(matches!(
-        item,
-        TranscriptItem::CommandExecution {
-            command,
-            status: CommandExecutionStatus::Completed,
-            ..
-        } if command == "pwd"
-    ));
-}
-
-#[test]
 fn lifecycle_only_events_do_not_create_transcript_items() {
     let items = vec![
         RolloutItem::from(started(
@@ -390,6 +359,41 @@ fn explicit_turn_restores_response_items_without_item_completed_events() {
 }
 
 #[test]
+fn explicit_turn_keeps_reasoning_before_assistant_from_response_item() {
+    let items = vec![
+        RolloutItem::from(ResponseItem::User {
+            content: text_input_items("hi"),
+        }),
+        RolloutItem::from(EventMsg::TurnStarted {
+            turn_id: "turn-1".to_string(),
+            conversation_id: "default".to_string(),
+            user_input: crate::text_input_items("hi"),
+        }),
+        RolloutItem::from(ResponseItem::Assistant {
+            content: Some("hello".to_string()),
+            reasoning: Some("thinking".to_string()),
+            tool_calls: Vec::new(),
+        }),
+        RolloutItem::from(EventMsg::TurnCompleted {
+            turn_id: "turn-1".to_string(),
+        }),
+    ];
+
+    let turns = build_turns_from_rollout_items(&items);
+
+    assert!(matches!(
+        &turns[0].items[..],
+        [
+            TranscriptItem::UserMessage { content, .. },
+            TranscriptItem::Reasoning { text: reasoning, .. },
+            TranscriptItem::AgentMessage { text: answer, .. },
+        ] if input_items_to_plain_text(content) == "hi"
+            && reasoning == "thinking"
+            && answer == "hello"
+    ));
+}
+
+#[test]
 fn explicit_turn_restores_tool_response_items_without_item_completed_events() {
     let items = vec![
         RolloutItem::from(ResponseItem::User {
@@ -428,6 +432,68 @@ fn explicit_turn_restores_tool_response_items_without_item_completed_events() {
             TranscriptItem::ToolResult { tool_name, .. },
             TranscriptItem::AgentMessage { text, .. },
         ] if tool_name == "read_file" && text == "done"
+    ));
+}
+
+#[test]
+fn explicit_turn_does_not_overwrite_earlier_assistant_when_later_response_item_arrives() {
+    let items = vec![
+        RolloutItem::from(ResponseItem::User {
+            content: text_input_items("analyze"),
+        }),
+        RolloutItem::from(EventMsg::TurnStarted {
+            turn_id: "turn-1".to_string(),
+            conversation_id: "default".to_string(),
+            user_input: crate::text_input_items("analyze"),
+        }),
+        RolloutItem::from(ResponseItem::Assistant {
+            content: Some("let me inspect".to_string()),
+            reasoning: Some("plan".to_string()),
+            tool_calls: Vec::new(),
+        }),
+        RolloutItem::from(ResponseItem::Tool {
+            tool_call_id: "call-1".to_string(),
+            name: "exec_command".to_string(),
+            content: "Summary: done".to_string(),
+            structured: Some(StructuredToolResult::CommandExecution {
+                command: "git status".to_string(),
+                current_directory: "D:\\Software\\Projects\\CloudAgent".to_string(),
+                session_id: None,
+                status: CommandExecutionStatus::Completed,
+                exit_code: Some(0),
+                success: Some(true),
+                output: Some("ok".to_string()),
+                duration_ms: Some(1),
+                original_token_count: Some(1),
+                max_output_tokens: Some(10),
+            }),
+        }),
+        RolloutItem::from(ResponseItem::Assistant {
+            content: Some("final answer".to_string()),
+            reasoning: Some("summary thinking".to_string()),
+            tool_calls: Vec::new(),
+        }),
+        RolloutItem::from(EventMsg::TurnCompleted {
+            turn_id: "turn-1".to_string(),
+        }),
+    ];
+
+    let turns = build_turns_from_rollout_items(&items);
+
+    assert!(matches!(
+        &turns[0].items[..],
+        [
+            TranscriptItem::UserMessage { .. },
+            TranscriptItem::Reasoning { text: first_reasoning, .. },
+            TranscriptItem::AgentMessage { text: first_answer, .. },
+            TranscriptItem::CommandExecution { command, .. },
+            TranscriptItem::Reasoning { text: second_reasoning, .. },
+            TranscriptItem::AgentMessage { text: second_answer, .. },
+        ] if first_reasoning == "plan"
+            && first_answer == "let me inspect"
+            && command == "git status"
+            && second_reasoning == "summary thinking"
+            && second_answer == "final answer"
     ));
 }
 
@@ -493,51 +559,6 @@ fn explicit_turn_skips_duplicate_response_user_item() {
     assert!(matches!(
         turns[0].items.last(),
         Some(TranscriptItem::AgentMessage { text, .. }) if text == "hello"
-    ));
-}
-
-#[test]
-fn filter_history_ui_turns_drops_reasoning_items_and_empty_turns() {
-    let turns = vec![
-        ConversationTurn {
-            id: "turn-1".to_string(),
-            state: TurnState::Completed,
-            items: vec![
-                TranscriptItem::Reasoning {
-                    id: "reasoning:1".to_string(),
-                    title: "reasoning".to_string(),
-                    text: "thinking".to_string(),
-                },
-                TranscriptItem::AgentMessage {
-                    id: "assistant:1".to_string(),
-                    text: "answer".to_string(),
-                },
-            ],
-            runtime_items: Vec::new(),
-            rollout_start_index: 0,
-            rollout_end_index: 1,
-        },
-        ConversationTurn {
-            id: "turn-2".to_string(),
-            state: TurnState::Completed,
-            items: vec![TranscriptItem::Reasoning {
-                id: "reasoning:2".to_string(),
-                title: "reasoning".to_string(),
-                text: "only reasoning".to_string(),
-            }],
-            runtime_items: Vec::new(),
-            rollout_start_index: 2,
-            rollout_end_index: 2,
-        },
-    ];
-
-    let filtered = filter_history_ui_turns(turns);
-
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].id, "turn-1");
-    assert!(matches!(
-        &filtered[0].items[..],
-        [TranscriptItem::AgentMessage { text, .. }] if text == "answer"
     ));
 }
 

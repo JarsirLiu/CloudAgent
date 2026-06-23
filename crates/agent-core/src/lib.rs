@@ -48,9 +48,8 @@ pub use observability::{
 pub use projection::{
     ConversationHistoryBuilder, CoreTranscriptEvent, EventDelivery, EventStream, TranscriptBuilder,
     agent_turn_output_from_events, build_turns_from_rollout_items, classify_event_msg,
-    core_transcript_event_from_event_msg, filter_history_ui_turn, filter_history_ui_turns,
-    flatten_conversation_turns, tool_events_from_turn_events, transcript_item_from_response_item,
-    transcript_items_from_response_items, transcript_items_from_rollout_items,
+    core_transcript_event_from_event_msg, flatten_conversation_turns, tool_events_from_turn_events,
+    transcript_items_from_rollout_items,
 };
 pub use rollout::{
     RolloutItem,

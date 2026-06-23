@@ -94,46 +94,36 @@ impl ConversationHistoryBuilder {
         {
             return;
         }
-        if self.merge_explicit_turn_assistant_response(item) {
+        let projected_items = project_transcript_items_from_response_item(item, self.current_rollout_index);
+        if projected_items.is_empty() {
             return;
         }
-        if let Some(mut item) = transcript_item_from_response_item(item) {
-            assign_response_item_id(&mut item, self.current_rollout_index);
+        if self.skip_duplicate_explicit_turn_response_items(&projected_items) {
+            return;
+        }
+        for item in projected_items {
             self.upsert_item_in_current_turn(item);
         }
     }
 
-    fn merge_explicit_turn_assistant_response(&mut self, item: &ResponseItem) -> bool {
-        let ResponseItem::Assistant {
-            content: Some(content),
-            ..
-        } = item
-        else {
-            return false;
-        };
-        if content.trim().is_empty() {
-            return false;
-        }
+    fn skip_duplicate_explicit_turn_response_items(
+        &self,
+        projected_items: &[TranscriptItem],
+    ) -> bool {
         let Some(turn) = self
             .current_turn
-            .as_mut()
+            .as_ref()
             .filter(|turn| turn.opened_explicitly)
         else {
             return false;
         };
-        let Some(index) = turn
-            .items
-            .iter()
-            .rposition(|item| matches!(item, TranscriptItem::AgentMessage { .. }))
-        else {
+        if projected_items.len() > turn.items.len() {
             return false;
-        };
-        if let TranscriptItem::AgentMessage { text, .. } = &mut turn.items[index] {
-            *text = content.clone();
-            turn.rollout_end_index = self.current_rollout_index;
-            return true;
         }
-        false
+        turn.items[turn.items.len() - projected_items.len()..]
+            .iter()
+            .zip(projected_items.iter())
+            .all(|(existing, projected)| transcript_items_match_ignoring_id(existing, projected))
     }
 
     fn push_event_msg(&mut self, event: &EventMsg) {
@@ -535,66 +525,11 @@ pub fn transcript_items_from_rollout_items(items: &[RolloutItem]) -> Vec<Transcr
     flatten_conversation_turns(&build_turns_from_rollout_items(items))
 }
 
-pub fn transcript_items_from_response_items(items: &[ResponseItem]) -> Vec<TranscriptItem> {
-    let mut builder = ConversationHistoryBuilder::new();
-    for (index, item) in items.iter().enumerate() {
-        builder.current_rollout_index = index;
-        builder.push_response_item(item);
-    }
-    flatten_conversation_turns(&builder.finish())
-}
-
 pub fn flatten_conversation_turns(turns: &[ConversationTurn]) -> Vec<TranscriptItem> {
     turns
         .iter()
         .flat_map(|turn| turn.items.iter().cloned())
         .collect()
-}
-
-pub fn filter_history_ui_turns(turns: Vec<ConversationTurn>) -> Vec<ConversationTurn> {
-    turns
-        .into_iter()
-        .filter_map(filter_history_ui_turn)
-        .collect()
-}
-
-pub fn filter_history_ui_turn(turn: ConversationTurn) -> Option<ConversationTurn> {
-    let items = turn
-        .items
-        .into_iter()
-        .filter(|item| !matches!(item, TranscriptItem::Reasoning { .. }))
-        .collect::<Vec<_>>();
-    if items.is_empty() {
-        return None;
-    }
-    Some(ConversationTurn { items, ..turn })
-}
-
-pub fn transcript_item_from_response_item(message: &ResponseItem) -> Option<TranscriptItem> {
-    match message {
-        ResponseItem::System { content } => Some(TranscriptItem::SystemMessage {
-            id: "system".to_string(),
-            text: content.clone(),
-        }),
-        ResponseItem::User { content } => {
-            Some(TranscriptItem::user_message(String::new(), content.clone()))
-        }
-        ResponseItem::Assistant { content, .. } => Some(TranscriptItem::AgentMessage {
-            id: String::new(),
-            text: content.clone().unwrap_or_default(),
-        }),
-        ResponseItem::Tool {
-            tool_call_id,
-            name,
-            content,
-            structured,
-        } => Some(transcript_item_from_tool_response(
-            tool_call_id,
-            name,
-            content,
-            structured.as_ref(),
-        )),
-    }
 }
 
 fn transcript_item_from_tool_response(
@@ -646,18 +581,156 @@ fn transcript_item_from_tool_response(
     }
 }
 
-fn assign_response_item_id(item: &mut TranscriptItem, rollout_index: usize) {
-    let id = match item {
-        TranscriptItem::SystemMessage { id, .. }
-        | TranscriptItem::UserMessage { id, .. }
-        | TranscriptItem::AgentMessage { id, .. }
-        | TranscriptItem::CommandExecution { id, .. }
-        | TranscriptItem::FileChange { id, .. }
-        | TranscriptItem::ToolResult { id, .. }
-        | TranscriptItem::Reasoning { id, .. } => id,
-    };
-    if id.is_empty() {
-        *id = format!("response:{rollout_index}");
+fn project_transcript_items_from_response_item(
+    message: &ResponseItem,
+    rollout_index: usize,
+) -> Vec<TranscriptItem> {
+    match message {
+        ResponseItem::System { content } => vec![TranscriptItem::SystemMessage {
+            id: format!("response:{rollout_index}"),
+            text: content.clone(),
+        }],
+        ResponseItem::User { content } => vec![TranscriptItem::user_message(
+            format!("response:{rollout_index}"),
+            content.clone(),
+        )],
+        ResponseItem::Assistant {
+            content,
+            reasoning,
+            ..
+        } => {
+            let mut items = Vec::new();
+            if let Some(text) = reasoning.as_ref().filter(|text| !text.trim().is_empty()) {
+                items.push(TranscriptItem::Reasoning {
+                    id: format!("response:{rollout_index}:reasoning"),
+                    title: "reasoning".to_string(),
+                    text: text.clone(),
+                });
+            }
+            if let Some(text) = content.as_ref().filter(|text| !text.trim().is_empty()) {
+                items.push(TranscriptItem::AgentMessage {
+                    id: format!("response:{rollout_index}:assistant"),
+                    text: text.clone(),
+                });
+            }
+            items
+        }
+        ResponseItem::Tool {
+            tool_call_id,
+            name,
+            content,
+            structured,
+        } => vec![transcript_item_from_tool_response(
+            tool_call_id,
+            name,
+            content,
+            structured.as_ref(),
+        )],
+    }
+}
+
+fn transcript_items_match_ignoring_id(left: &TranscriptItem, right: &TranscriptItem) -> bool {
+    match (left, right) {
+        (
+            TranscriptItem::SystemMessage { text: left, .. },
+            TranscriptItem::SystemMessage { text: right, .. },
+        )
+        | (
+            TranscriptItem::AgentMessage { text: left, .. },
+            TranscriptItem::AgentMessage { text: right, .. },
+        ) => left == right,
+        (
+            TranscriptItem::UserMessage { content: left, .. },
+            TranscriptItem::UserMessage { content: right, .. },
+        ) => left == right,
+        (
+            TranscriptItem::Reasoning {
+                title: left_title,
+                text: left_text,
+                ..
+            },
+            TranscriptItem::Reasoning {
+                title: right_title,
+                text: right_text,
+                ..
+            },
+        ) => left_title == right_title && left_text == right_text,
+        (
+            TranscriptItem::CommandExecution {
+                tool_name: left_tool_name,
+                command: left_command,
+                current_directory: left_current_directory,
+                status: left_status,
+                exit_code: left_exit_code,
+                output: left_output,
+                duration_ms: left_duration_ms,
+                summary: left_summary,
+                ..
+            },
+            TranscriptItem::CommandExecution {
+                tool_name: right_tool_name,
+                command: right_command,
+                current_directory: right_current_directory,
+                status: right_status,
+                exit_code: right_exit_code,
+                output: right_output,
+                duration_ms: right_duration_ms,
+                summary: right_summary,
+                ..
+            },
+        ) => {
+            left_tool_name == right_tool_name
+                && left_command == right_command
+                && left_current_directory == right_current_directory
+                && left_status == right_status
+                && left_exit_code == right_exit_code
+                && left_output == right_output
+                && left_duration_ms == right_duration_ms
+                && left_summary == right_summary
+        }
+        (
+            TranscriptItem::FileChange {
+                tool_name: left_tool_name,
+                path: left_path,
+                status: left_status,
+                files_changed: left_files_changed,
+                summary: left_summary,
+                ..
+            },
+            TranscriptItem::FileChange {
+                tool_name: right_tool_name,
+                path: right_path,
+                status: right_status,
+                files_changed: right_files_changed,
+                summary: right_summary,
+                ..
+            },
+        ) => {
+            left_tool_name == right_tool_name
+                && left_path == right_path
+                && left_status == right_status
+                && left_files_changed == right_files_changed
+                && left_summary == right_summary
+        }
+        (
+            TranscriptItem::ToolResult {
+                tool_name: left_tool_name,
+                content: left_content,
+                summary: left_summary,
+                ..
+            },
+            TranscriptItem::ToolResult {
+                tool_name: right_tool_name,
+                content: right_content,
+                summary: right_summary,
+                ..
+            },
+        ) => {
+            left_tool_name == right_tool_name
+                && left_content == right_content
+                && left_summary == right_summary
+        }
+        _ => false,
     }
 }
 
