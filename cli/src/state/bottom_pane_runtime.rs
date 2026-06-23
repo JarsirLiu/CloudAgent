@@ -34,10 +34,10 @@ impl BottomPaneRuntimeState {
     }
 
     pub(crate) fn on_tool_finished_for_item(&mut self, item_id: Option<&str>) {
-        let should_clear = match self.active_tool.as_ref() {
-            Some(ActiveToolRuntimeState::Tool(tool)) => tool.matches_item(item_id),
-            _ => false,
-        };
+        let should_clear = self
+            .active_tool
+            .as_ref()
+            .is_some_and(|tool| tool.matches_tool_item(item_id));
         if should_clear {
             self.active_tool = None;
         }
@@ -136,23 +136,29 @@ impl BottomPaneRuntimeState {
     }
 
     pub(crate) fn on_command_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
-        if let Some(ActiveToolRuntimeState::Command(command)) = self.active_tool.as_mut() {
-            command.append_output(item_id, delta);
-        }
+        self.active_tool
+            .as_mut()
+            .and_then(|tool| tool.command_mut())
+            .into_iter()
+            .for_each(|command| command.append_output(item_id, delta));
     }
 
     pub(crate) fn on_command_finished(&mut self, item_id: &str) {
-        if self.active_tool.as_ref().is_some_and(
-            |tool| matches!(tool, ActiveToolRuntimeState::Command(command) if command.item_id == item_id),
-        ) {
+        if self
+            .active_tool
+            .as_ref()
+            .is_some_and(|tool| tool.matches_command_item(Some(item_id)))
+        {
             self.active_tool = None;
         }
     }
 
     pub(crate) fn on_tool_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
-        if let Some(ActiveToolRuntimeState::Tool(tool)) = self.active_tool.as_mut() {
-            tool.append_output(item_id, delta);
-        }
+        self.active_tool
+            .as_mut()
+            .and_then(|tool| tool.tool_mut())
+            .into_iter()
+            .for_each(|tool| tool.append_output(item_id, delta));
     }
 
     pub(crate) fn on_item_progress(
@@ -160,13 +166,10 @@ impl BottomPaneRuntimeState {
         item_id: Option<&str>,
         progress: &RuntimeItemProgress,
     ) {
-        match self.active_tool.as_mut() {
-            Some(ActiveToolRuntimeState::Command(command)) => {
-                command.update_progress(item_id, progress)
-            }
-            Some(ActiveToolRuntimeState::Tool(tool)) => tool.update_progress(item_id, progress),
-            None => {}
-        }
+        self.active_tool
+            .as_mut()
+            .into_iter()
+            .for_each(|tool| tool.update_progress(item_id, progress));
     }
 
     pub(crate) fn on_item_metrics_updated(
@@ -174,13 +177,16 @@ impl BottomPaneRuntimeState {
         item_id: Option<&str>,
         metrics: &RuntimeItemMetrics,
     ) {
-        match self.active_tool.as_mut() {
-            Some(ActiveToolRuntimeState::Command(command)) => {
-                command.update_metrics(item_id, metrics)
-            }
-            Some(ActiveToolRuntimeState::Tool(tool)) => tool.update_metrics(item_id, metrics),
-            None => {}
-        }
+        self.active_tool
+            .as_mut()
+            .into_iter()
+            .for_each(|tool| tool.update_metrics(item_id, metrics));
+    }
+
+    pub(crate) fn active_banner_text(&self) -> Option<String> {
+        self.active_tool
+            .as_ref()
+            .map(ActiveToolRuntimeState::banner_text)
     }
 
     #[cfg(test)]
@@ -209,87 +215,56 @@ impl ActiveToolRuntimeState {
             Self::Tool(tool) => tool.banner_text(),
         }
     }
+
+    fn matches_command_item(&self, item_id: Option<&str>) -> bool {
+        matches!(self, Self::Command(command) if command.matches_item(item_id))
+    }
+
+    fn matches_tool_item(&self, item_id: Option<&str>) -> bool {
+        matches!(self, Self::Tool(tool) if tool.matches_item(item_id))
+    }
+
+    fn command_mut(&mut self) -> Option<&mut CommandRuntimeState> {
+        match self {
+            Self::Command(command) => Some(command),
+            Self::Tool(_) => None,
+        }
+    }
+
+    fn tool_mut(&mut self) -> Option<&mut ToolRuntimeState> {
+        match self {
+            Self::Command(_) => None,
+            Self::Tool(tool) => Some(tool),
+        }
+    }
+
+    fn update_progress(&mut self, item_id: Option<&str>, progress: &RuntimeItemProgress) {
+        match self {
+            Self::Command(command) => command.update_progress(item_id, progress),
+            Self::Tool(tool) => tool.update_progress(item_id, progress),
+        }
+    }
+
+    fn update_metrics(&mut self, item_id: Option<&str>, metrics: &RuntimeItemMetrics) {
+        match self {
+            Self::Command(command) => command.update_metrics(item_id, metrics),
+            Self::Tool(tool) => tool.update_metrics(item_id, metrics),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ToolRuntimeState {
-    pub(crate) item_id: Option<String>,
+struct RuntimeBannerState {
+    item_id: Option<String>,
     banner: String,
     output: Option<String>,
     metrics: Option<String>,
 }
 
-impl ToolRuntimeState {
-    fn tool_call_started(item: &RuntimeItem) -> Self {
-        let banner = match item
-            .title
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            Some(tool) => format!("executing tool: {}", humanize_tool_label(tool)),
-            None => "executing tool".to_string(),
-        };
-        let mut state = Self {
-            item_id: Some(item.id.clone()),
-            banner,
-            output: None,
-            metrics: None,
-        };
-        state.update_progress(
-            Some(&item.id),
-            &item
-                .progress
-                .clone()
-                .unwrap_or_else(|| RuntimeItemProgress {
-                    message: item.summary.clone(),
-                    completed: None,
-                    total: None,
-                    unit: None,
-                }),
-        );
-        if let Some(metrics) = item.metrics.as_ref() {
-            state.update_metrics(Some(&item.id), metrics);
-        }
-        state
-    }
-
-    fn tool_result_started(item: &RuntimeItem) -> Self {
-        let banner = item
-            .title
-            .as_deref()
-            .map(humanize_tool_label)
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "Tool".to_string());
-        let mut state = Self {
-            item_id: Some(item.id.clone()),
-            banner,
-            output: None,
-            metrics: None,
-        };
-        state.update_progress(
-            Some(&item.id),
-            &RuntimeItemProgress {
-                message: item
-                    .progress
-                    .as_ref()
-                    .and_then(|progress| progress.message.clone())
-                    .or_else(|| item.summary.clone()),
-                completed: None,
-                total: None,
-                unit: None,
-            },
-        );
-        if let Some(metrics) = item.metrics.as_ref() {
-            state.update_metrics(Some(&item.id), metrics);
-        }
-        state
-    }
-
-    #[cfg(test)]
-    fn static_banner(banner: String) -> Self {
+impl RuntimeBannerState {
+    fn new(item_id: Option<String>, banner: String) -> Self {
         Self {
-            item_id: None,
+            item_id,
             banner,
             output: None,
             metrics: None,
@@ -366,11 +341,102 @@ impl ToolRuntimeState {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct ToolRuntimeState {
+    banner: RuntimeBannerState,
+}
+
+impl ToolRuntimeState {
+    fn tool_call_started(item: &RuntimeItem) -> Self {
+        let banner = match item
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(tool) => format!("executing tool: {}", humanize_tool_label(tool)),
+            None => "executing tool".to_string(),
+        };
+        let mut state = Self {
+            banner: RuntimeBannerState::new(Some(item.id.clone()), banner),
+        };
+        state.update_progress(
+            Some(&item.id),
+            &item
+                .progress
+                .clone()
+                .unwrap_or_else(|| RuntimeItemProgress {
+                    message: item.summary.clone(),
+                    completed: None,
+                    total: None,
+                    unit: None,
+                }),
+        );
+        if let Some(metrics) = item.metrics.as_ref() {
+            state.update_metrics(Some(&item.id), metrics);
+        }
+        state
+    }
+
+    fn tool_result_started(item: &RuntimeItem) -> Self {
+        let banner = item
+            .title
+            .as_deref()
+            .map(humanize_tool_label)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "Tool".to_string());
+        let mut state = Self {
+            banner: RuntimeBannerState::new(Some(item.id.clone()), banner),
+        };
+        state.update_progress(
+            Some(&item.id),
+            &RuntimeItemProgress {
+                message: item
+                    .progress
+                    .as_ref()
+                    .and_then(|progress| progress.message.clone())
+                    .or_else(|| item.summary.clone()),
+                completed: None,
+                total: None,
+                unit: None,
+            },
+        );
+        if let Some(metrics) = item.metrics.as_ref() {
+            state.update_metrics(Some(&item.id), metrics);
+        }
+        state
+    }
+
+    #[cfg(test)]
+    fn static_banner(banner: String) -> Self {
+        Self {
+            banner: RuntimeBannerState::new(None, banner),
+        }
+    }
+
+    fn matches_item(&self, item_id: Option<&str>) -> bool {
+        self.banner.matches_item(item_id)
+    }
+
+    fn append_output(&mut self, item_id: Option<&str>, delta: &str) {
+        self.banner.append_output(item_id, delta);
+    }
+
+    fn update_progress(&mut self, item_id: Option<&str>, progress: &RuntimeItemProgress) {
+        self.banner.update_progress(item_id, progress);
+    }
+
+    fn update_metrics(&mut self, item_id: Option<&str>, metrics: &RuntimeItemMetrics) {
+        self.banner.update_metrics(item_id, metrics);
+    }
+
+    fn banner_text(&self) -> String {
+        self.banner.banner_text()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CommandRuntimeState {
-    pub(crate) item_id: String,
-    pub(crate) title: String,
-    pub(crate) recent_output: Option<String>,
-    pub(crate) metrics: Option<String>,
+    banner: RuntimeBannerState,
 }
 
 impl CommandRuntimeState {
@@ -385,10 +451,7 @@ impl CommandRuntimeState {
             None => "running command".to_string(),
         };
         let mut state = Self {
-            item_id: item.id.clone(),
-            title,
-            recent_output: None,
-            metrics: None,
+            banner: RuntimeBannerState::new(Some(item.id.clone()), title),
         };
         state.update_progress(
             Some(&item.id),
@@ -406,69 +469,23 @@ impl CommandRuntimeState {
     }
 
     fn append_output(&mut self, item_id: Option<&str>, delta: &str) {
-        if let Some(item_id) = item_id
-            && item_id != self.item_id
-        {
-            return;
-        }
-        let delta = delta.trim();
-        if delta.is_empty() {
-            return;
-        }
-        let compact = compact_recent_output(delta, 120);
-        if self.recent_output.as_deref() == Some(compact.as_str()) {
-            return;
-        }
-        self.recent_output = Some(match self.recent_output.take() {
-            Some(previous) if !previous.trim().is_empty() => {
-                compact_recent_output(&format!("{previous} {compact}"), 120)
-            }
-            _ => compact,
-        });
+        self.banner.append_output(item_id, delta);
+    }
+
+    fn matches_item(&self, item_id: Option<&str>) -> bool {
+        self.banner.matches_item(item_id)
     }
 
     pub(crate) fn banner_text(&self) -> String {
-        let mut parts = vec![self.title.clone()];
-        if let Some(output) = self
-            .recent_output
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            parts.push(output.to_string());
-        }
-        if let Some(metrics) = self
-            .metrics
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            parts.push(metrics.to_string());
-        }
-        parts.join(" · ")
+        self.banner.banner_text()
     }
 
     fn update_progress(&mut self, item_id: Option<&str>, progress: &RuntimeItemProgress) {
-        if let Some(item_id) = item_id
-            && item_id != self.item_id
-        {
-            return;
-        }
-        let Some(message) = progress.message.as_deref() else {
-            return;
-        };
-        let message = message.trim();
-        if message.is_empty() {
-            return;
-        }
-        self.recent_output = Some(compact_recent_output(message, 120));
+        self.banner.update_progress(item_id, progress);
     }
 
     fn update_metrics(&mut self, item_id: Option<&str>, metrics: &RuntimeItemMetrics) {
-        if let Some(item_id) = item_id
-            && item_id != self.item_id
-        {
-            return;
-        }
-        self.metrics = format_runtime_metrics(metrics);
+        self.banner.update_metrics(item_id, metrics);
     }
 }
 

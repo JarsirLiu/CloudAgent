@@ -94,7 +94,8 @@ impl ConversationHistoryBuilder {
         {
             return;
         }
-        let projected_items = project_transcript_items_from_response_item(item, self.current_rollout_index);
+        let projected_items =
+            project_transcript_items_from_response_item(item, self.current_rollout_index);
         if projected_items.is_empty() {
             return;
         }
@@ -595,9 +596,7 @@ fn project_transcript_items_from_response_item(
             content.clone(),
         )],
         ResponseItem::Assistant {
-            content,
-            reasoning,
-            ..
+            content, reasoning, ..
         } => {
             let mut items = Vec::new();
             if let Some(text) = reasoning.as_ref().filter(|text| !text.trim().is_empty()) {

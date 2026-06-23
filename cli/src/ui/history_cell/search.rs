@@ -3,7 +3,8 @@ use super::{ExplorationAggregate, HistoryCell, HistoryTone};
 use crate::runtime_metrics_display::format_runtime_metrics;
 use agent_core::{
     RuntimeItem, SearchWorkspaceMode, SearchWorkspaceStatus, StructuredToolResult, TurnItemKind,
-    WebSearchAction, web_search_detail,
+    WebSearchAction,
+    web_search_presentation::web_search_presentation as web_search_card_presentation,
 };
 
 pub(super) fn render_active_placeholder(kind: TurnItemKind, title: &str) -> HistoryCell {
@@ -314,12 +315,7 @@ fn build_web_search_card(
     source_count: Option<usize>,
     result_count: Option<usize>,
 ) -> (String, Option<String>) {
-    let summary = match (source_count, result_count) {
-        (Some(count), _) if count > 0 => format!("searched {count} sources"),
-        (_, Some(count)) if count > 0 => format!("found {count} results"),
-        _ => "searched the web".to_string(),
-    };
-
+    let presentation = web_search_card_presentation(query, action, source_count, result_count);
     let mut fields = Vec::new();
     if let Some(count) = source_count {
         fields.push(("sources", count.to_string()));
@@ -328,8 +324,8 @@ fn build_web_search_card(
         fields.push(("results", count.to_string()));
     }
 
-    let detail = build_search_detail(web_search_detail(query, action), fields);
-    (summary, Some(detail))
+    let detail = build_search_detail(presentation.detail, fields);
+    (presentation.summary, Some(detail))
 }
 
 fn format_search_workspace_detail(

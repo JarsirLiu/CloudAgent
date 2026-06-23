@@ -457,6 +457,21 @@ pub struct ToolEvent {
     pub is_error: bool,
 }
 
+impl StructuredToolResult {
+    pub fn is_error(&self) -> bool {
+        match self {
+            Self::ToolError { .. } => true,
+            Self::CommandExecution { status, .. } => {
+                !matches!(status, CommandExecutionStatus::Completed)
+            }
+            Self::EditFile { status, .. } => !matches!(status, WriteFileStatus::Completed),
+            Self::CopyPath { status, .. } => !matches!(status, WriteFileStatus::Completed),
+            Self::RemovePath { status, .. } => !matches!(status, WriteFileStatus::Completed),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ChatTurnToolExposure {
     pub default_tools: Vec<ToolSpec>,

@@ -136,14 +136,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::ClearContextCompactionStatus => {
             app.bottom_pane.on_context_compaction_finished();
         }
-        ServerAction::ClearServerRequestView => {
-            app.clear_server_request_view();
-        }
         ServerAction::DismissServerRequestView(request_id) => {
             app.dismiss_server_request_view(&request_id);
-        }
-        ServerAction::ClearServerRequestStatus => {
-            app.bottom_pane.clear_server_request();
         }
         ServerAction::ClearActiveTool { item_id } => {
             app.on_server_tool_finished(item_id.as_deref());
@@ -314,6 +308,9 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::PushErrorCell(message) => {
             app.bottom_pane.clear_views();
             app.bottom_pane.push_toast(NoticeLevel::Error, message);
+        }
+        ServerAction::TransportClosedError(message) => {
+            app.handle_transport_closed_error(message);
         }
         ServerAction::TurnDispatch(dispatch) => {
             conversation_facade::apply_turn_dispatch(app, dispatch);

@@ -440,8 +440,8 @@ impl BottomPaneController {
     }
 
     fn runtime_banner_text(&self) -> Option<String> {
-        if let Some(tool) = self.runtime.active_tool.as_ref() {
-            return Some(tool.banner_text());
+        if let Some(text) = self.runtime.active_banner_text() {
+            return Some(text);
         }
         let live_label = self.runtime.live_label.as_deref()?;
         let live_label = live_label.trim();

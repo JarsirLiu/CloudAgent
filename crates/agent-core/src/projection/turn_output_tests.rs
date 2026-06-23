@@ -55,7 +55,7 @@ fn tool_event_uses_completed_item_not_streamed_delta() {
                 tool_name: "exec_command".to_string(),
                 command: "pwd".to_string(),
                 current_directory: "D:\\work".to_string(),
-                status: CommandExecutionStatus::Completed,
+                status: crate::tool::CommandExecutionStatus::Completed,
                 exit_code: Some(0),
                 output: Some("D:\\work".to_string()),
                 duration_ms: Some(1),
@@ -112,4 +112,28 @@ fn completed_tool_item_projects_tool_event() {
     assert_eq!(tool_events[0].name, "get_metadata");
     assert_eq!(tool_events[0].summary, "ok");
     assert!(!tool_events[0].is_error);
+}
+
+#[test]
+fn structured_tool_error_marks_event_as_error_without_summary_guessing() {
+    let events = vec![completed(
+        "turn-1",
+        TranscriptItem::ToolResult {
+            id: "tool-2".to_string(),
+            tool_name: "tool_search".to_string(),
+            content: "tool search failed".to_string(),
+            summary: "tool search completed".to_string(),
+            structured: Some(StructuredToolResult::ToolError {
+                tool_name: "tool_search".to_string(),
+                message: "not registered".to_string(),
+            }),
+        },
+        Some("call-1"),
+    )];
+
+    let tool_events = tool_events_from_turn_events(&events);
+
+    assert_eq!(tool_events.len(), 1);
+    assert_eq!(tool_events[0].summary, "tool search completed");
+    assert!(tool_events[0].is_error);
 }

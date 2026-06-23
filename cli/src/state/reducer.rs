@@ -99,9 +99,7 @@ pub(crate) enum ServerAction {
         estimated_tokens: u64,
     },
     ClearContextCompactionStatus,
-    ClearServerRequestView,
     DismissServerRequestView(RequestId),
-    ClearServerRequestStatus,
     ClearActiveTool {
         item_id: Option<String>,
     },
@@ -168,6 +166,7 @@ pub(crate) enum ServerAction {
     },
     InterruptResult(InterruptDisposition),
     PushErrorCell(String),
+    TransportClosedError(String),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
         request_id: RequestId,
@@ -396,13 +395,7 @@ pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageR
             }
             AppServerNotification::Error { message, .. } => {
                 if let Some(message) = transport_closed_message(message) {
-                    actions.push(ServerAction::ClearContextCompactionStatus);
-                    actions.push(ServerAction::ClearServerRequestStatus);
-                    actions.push(ServerAction::ClearServerRequestView);
-                    actions.push(ServerAction::ClearActiveTool { item_id: None });
-                    actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
-                        error: message,
-                    }));
+                    actions.push(ServerAction::TransportClosedError(message));
                 } else {
                     actions.push(ServerAction::PushErrorCell(message.clone()));
                 }

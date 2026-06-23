@@ -5,6 +5,24 @@ use crate::{RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress, TurnItemKind};
 
 pub const WEB_SEARCH_TOOL_NAME: &str = "web_search";
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSearchPresentation {
+    pub summary: String,
+    pub detail: String,
+}
+
+pub fn web_search_presentation(
+    query: &str,
+    action: Option<&WebSearchAction>,
+    source_count: Option<usize>,
+    result_count: Option<usize>,
+) -> WebSearchPresentation {
+    WebSearchPresentation {
+        summary: web_search_summary(query, action, source_count, result_count),
+        detail: web_search_detail(query, action),
+    }
+}
+
 pub fn web_search_detail(query: &str, action: Option<&WebSearchAction>) -> String {
     let detail = action
         .map(|action| match action {
@@ -41,8 +59,17 @@ pub fn web_search_detail(query: &str, action: Option<&WebSearchAction>) -> Strin
     }
 }
 
-pub fn web_search_summary(_query: &str, _action: Option<&WebSearchAction>) -> String {
-    "searched the web".to_string()
+pub fn web_search_summary(
+    _query: &str,
+    _action: Option<&WebSearchAction>,
+    source_count: Option<usize>,
+    result_count: Option<usize>,
+) -> String {
+    match (source_count, result_count) {
+        (Some(count), _) if count > 0 => format!("searched {count} sources"),
+        (_, Some(count)) if count > 0 => format!("found {count} results"),
+        _ => "searched the web".to_string(),
+    }
 }
 
 pub fn web_search_transcript_item(
@@ -52,13 +79,12 @@ pub fn web_search_transcript_item(
 ) -> TranscriptItem {
     let item_id = item_id.into();
     let query = query.into();
-    let detail = web_search_detail(&query, action.as_ref());
-    let summary = web_search_summary(&query, action.as_ref());
+    let presentation = web_search_presentation(&query, action.as_ref(), None, None);
     TranscriptItem::ToolResult {
         id: item_id,
         tool_name: WEB_SEARCH_TOOL_NAME.to_string(),
-        content: detail,
-        summary,
+        content: presentation.detail.clone(),
+        summary: presentation.summary,
         structured: Some(StructuredToolResult::WebSearch {
             query,
             action,
@@ -74,6 +100,7 @@ pub fn web_search_runtime_item_started(
 ) -> RuntimeItem {
     let item_id = item_id.into();
     let query = query.into();
+    let presentation = web_search_presentation(&query, None, None, None);
     RuntimeItem::started(
         item_id.clone(),
         Some(item_id),
@@ -87,9 +114,7 @@ pub fn web_search_runtime_item_started(
         result_count: None,
         source_count: None,
     })
-    .with_progress(RuntimeItemProgress::message(web_search_detail(
-        &query, None,
-    )))
+    .with_progress(RuntimeItemProgress::message(presentation.detail))
     .with_summary(query)
 }
 
@@ -104,3 +129,7 @@ pub fn web_search_runtime_item_completed(
     }
     item
 }
+
+#[cfg(test)]
+#[path = "web_search_presentation_tests.rs"]
+mod tests;

@@ -343,13 +343,19 @@ fn transport_closed_error_finishes_active_turn() {
 
     assert!(reduced.actions.iter().any(|action| matches!(
         action,
-        ServerAction::TurnDispatch(TurnDispatch::Failed { error })
-            if error == "worker app server closed unexpectedly"
+        ServerAction::TransportClosedError(message)
+            if message == "worker app server closed unexpectedly"
     )));
     assert!(
         !reduced
             .actions
             .iter()
             .any(|action| matches!(action, ServerAction::PushErrorCell(_)))
+    );
+    assert!(
+        !reduced
+            .actions
+            .iter()
+            .any(|action| matches!(action, ServerAction::TurnDispatch(_)))
     );
 }

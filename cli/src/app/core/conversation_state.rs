@@ -123,6 +123,13 @@ impl TuiApp {
         self.bottom_pane.dismiss_server_request(request_id);
     }
 
+    pub(crate) fn handle_transport_closed_error(&mut self, error: String) {
+        self.bottom_pane.on_context_compaction_finished();
+        self.bottom_pane.clear_server_request();
+        self.bottom_pane.on_tool_finished_for_item(None);
+        self.apply_turn_dispatch(TurnDispatch::Failed { error });
+    }
+
     pub(crate) fn prepare_submitted_turn(&mut self, content: &[InputItem]) {
         self.run_state.last_turn_usage = None;
         self.run_state.total_turn_usage = None;

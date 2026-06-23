@@ -1566,6 +1566,43 @@ fn server_error_uses_toast_instead_of_transcript_cell() {
 }
 
 #[test]
+fn transport_closed_error_clears_runtime_and_dispatches_failed_turn() {
+    let mut app = TuiApp::new(
+        "default".to_string(),
+        "test",
+        PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+
+    app.prepare_submitted_turn(&[InputItem::Text {
+        text: "hello".to_string(),
+    }]);
+    app.bottom_pane.on_context_compaction_started(12_345);
+
+    app.handle_transport_closed_error("worker app server closed unexpectedly".to_string());
+
+    assert!(app.bottom_pane.active_toast().is_none());
+    assert!(
+        app.bottom_pane
+            .build_status_view_model(&app)
+            .live_banner
+            .is_none()
+    );
+    assert!(app.transcript_owner.active_turn_id().is_none());
+    assert!(app.can_submit_turn());
+    assert_eq!(
+        app.transcript_owner
+            .scrollback_snapshot()
+            .cells
+            .last()
+            .map(|cell| cell.body()),
+        Some("failed: worker app server closed unexpectedly\ndraft restored for retry")
+    );
+}
+
+#[test]
 fn interrupt_no_active_turn_result_recovers_stuck_running_state() {
     let mut app = TuiApp::new(
         "default".to_string(),
