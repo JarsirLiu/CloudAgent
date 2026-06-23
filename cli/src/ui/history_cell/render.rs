@@ -21,9 +21,9 @@ pub fn render_history_entry(message: &TranscriptItem, context: &mut RenderContex
             content,
             structured,
             ..
-        } => patch::render_patch_result(tool_name, structured.as_ref()).unwrap_or_else(|| {
-            tool_ui::render_tool_result(tool_name, content, structured.as_ref())
-        }),
+        } => patch::render_patch_result(tool_name, content, structured.as_ref()).unwrap_or_else(
+            || tool_ui::render_tool_result(tool_name, content, structured.as_ref()),
+        ),
         TranscriptItem::CommandExecution {
             tool_name,
             command,

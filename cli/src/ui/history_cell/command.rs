@@ -5,44 +5,20 @@ use crate::app::conversation::exploration::{
 };
 use agent_core::{CommandExecutionStatus, RuntimeItem, TurnItemKind};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CommandUiKind {
-    Exploration,
-    Command,
-}
-
 pub(super) fn render_active_placeholder(title: &str) -> HistoryCell {
-    if classify_command_kind(title) == CommandUiKind::Exploration {
-        let command_preview = summarize_exploration_command(title);
-        let mut aggregate = ExplorationAggregate::new(command_preview.clone());
-        aggregate.inspect_commands = 1;
-        return HistoryCell::exploration(
-            "Explore workspace",
-            command_preview,
-            aggregate,
-            HistoryTone::Control,
-        );
+    if is_exploration_command(title) {
+        return render_exploration_placeholder(title);
     }
 
-    HistoryCell::exec(
-        "Run command",
-        summarize_command_head(title),
-        Some("running".to_string()),
-        HistoryTone::Control,
-    )
+    render_command_placeholder(title)
 }
 
 pub(super) fn render_active_runtime_item(item: &RuntimeItem) -> HistoryCell {
     let title = item.title.as_deref().unwrap_or("");
     let mut cell = render_active_placeholder(title);
 
-    if let Some(summary) = item
-        .progress
-        .as_ref()
-        .and_then(|progress| progress.message.clone())
-        .or_else(|| item.summary.clone())
-        && !summary.trim().is_empty()
-        && !matches!(item.kind, TurnItemKind::CommandExecution)
+    if !matches!(item.kind, TurnItemKind::CommandExecution)
+        && let Some(summary) = runtime_summary(item)
     {
         cell.replace_body(summary);
     }
@@ -66,30 +42,14 @@ pub(super) fn render_command_execution(
     }
 
     let summary = summarize_command_head(command);
+    let state = command_state(status, exit_code, detail);
+    let tone = command_tone(status);
     let cwd = compact_path(current_directory, 42);
-    let state = match status {
-        CommandExecutionStatus::InProgress => "running".to_string(),
-        CommandExecutionStatus::Completed => format!("completed{}", exit_suffix(exit_code)),
-        CommandExecutionStatus::Declined => "declined".to_string(),
-        CommandExecutionStatus::Failed => {
-            let reason = detail
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|value| compact_inline(value, 72))
-                .unwrap_or_else(|| "command failed".to_string());
-            format!("failed{} — {reason}", exit_suffix(exit_code))
-        }
-    };
-
     HistoryCell::exec(
         humanize_tool_label(tool_name),
         summary,
         Some(format!("{state} @ {cwd}")),
-        match status {
-            CommandExecutionStatus::Failed => HistoryTone::Error,
-            CommandExecutionStatus::Declined => HistoryTone::Warning,
-            _ => HistoryTone::Control,
-        },
+        tone,
     )
 }
 
@@ -107,28 +67,73 @@ fn is_empty_stdin_poll_result(
 }
 
 fn render_exploration_command(command: &str) -> Option<HistoryCell> {
-    if classify_command_kind(command) != CommandUiKind::Exploration {
+    if !is_exploration_command(command) {
         return None;
     }
 
+    Some(render_exploration_placeholder(command))
+}
+
+fn render_exploration_placeholder(command: &str) -> HistoryCell {
     let command_preview = summarize_exploration_command(command);
     let mut aggregate = ExplorationAggregate::new(command_preview.clone());
     aggregate.inspect_commands = 1;
 
-    Some(HistoryCell::exploration(
+    HistoryCell::exploration(
         "Explore workspace",
         command_preview,
         aggregate,
         HistoryTone::Control,
-    ))
+    )
 }
 
-fn classify_command_kind(command: &str) -> CommandUiKind {
-    if is_exploration_command(command) {
-        CommandUiKind::Exploration
-    } else {
-        CommandUiKind::Command
+fn render_command_placeholder(command: &str) -> HistoryCell {
+    HistoryCell::exec(
+        "Run command",
+        summarize_command_head(command),
+        Some("running".to_string()),
+        HistoryTone::Control,
+    )
+}
+
+fn runtime_summary(item: &RuntimeItem) -> Option<String> {
+    item.progress
+        .as_ref()
+        .and_then(|progress| progress.message.clone())
+        .or_else(|| item.summary.clone())
+        .filter(|summary| !summary.trim().is_empty())
+}
+
+fn command_state(
+    status: &CommandExecutionStatus,
+    exit_code: Option<i32>,
+    detail: Option<&str>,
+) -> String {
+    match status {
+        CommandExecutionStatus::InProgress => "running".to_string(),
+        CommandExecutionStatus::Completed => format!("completed{}", exit_suffix(exit_code)),
+        CommandExecutionStatus::Declined => "declined".to_string(),
+        CommandExecutionStatus::Failed => {
+            let reason = command_failure_reason(detail);
+            format!("failed{} 鈥?{reason}", exit_suffix(exit_code))
+        }
     }
+}
+
+fn command_tone(status: &CommandExecutionStatus) -> HistoryTone {
+    match status {
+        CommandExecutionStatus::Failed => HistoryTone::Error,
+        CommandExecutionStatus::Declined => HistoryTone::Warning,
+        _ => HistoryTone::Control,
+    }
+}
+
+fn command_failure_reason(detail: Option<&str>) -> String {
+    detail
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| compact_inline(value, 72))
+        .unwrap_or_else(|| "command failed".to_string())
 }
 
 fn exit_suffix(exit_code: Option<i32>) -> String {

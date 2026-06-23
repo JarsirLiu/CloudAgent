@@ -1,3 +1,4 @@
+use super::card_layout::{render_card_header, render_wrapped_body_limited};
 use super::display_common::{
     compact_inline_preview, is_generic_tool_group_summary, pretty_tool_title, tint_tail_style,
 };
@@ -31,14 +32,12 @@ pub(super) fn render_tool_group(
     width: usize,
 ) -> Vec<Line<'static>> {
     let title = pretty_tool_title(&group.label);
-    let mut lines = vec![Line::from(vec![
-        Span::raw("  "),
-        Span::styled("▸", history_tool_style()),
-        Span::styled(
-            title,
-            history_title_accent_style().add_modifier(Modifier::BOLD),
-        ),
-    ])];
+    let mut lines = vec![render_card_header(
+        "▸",
+        history_tool_style(),
+        title,
+        history_title_accent_style(),
+    )];
 
     if !is_generic_tool_group_summary(&group.summary) {
         lines.extend(
@@ -47,11 +46,11 @@ pub(super) fn render_tool_group(
                 WrapOptions::new(width)
                     .initial_indent(Line::from(vec![
                         Span::raw("    "),
-                        Span::styled("┆", history_rail_style()),
+                        Span::styled("└", history_rail_style()),
                     ]))
                     .subsequent_indent(Line::from(vec![
                         Span::raw("    "),
-                        Span::styled("┆", history_rail_style()),
+                        Span::styled("└", history_rail_style()),
                     ])),
             )
             .into_iter()
@@ -70,10 +69,10 @@ pub(super) fn render_tool_group(
             let preview_body = compact_inline_preview(child.body(), 72);
             lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled("┆", history_rail_style()),
+                Span::styled("└", history_rail_style()),
                 Span::styled(
                     if index + 1 == preview_count && group.children.len() == 1 {
-                        "└"
+                        "╰"
                     } else {
                         "├"
                     },
@@ -91,7 +90,7 @@ pub(super) fn render_tool_group(
         if hidden_count > 0 {
             lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled("┆", history_rail_style()),
+                Span::styled("└", history_rail_style()),
                 Span::styled(
                     format!(
                         "{} more step{}",
@@ -114,7 +113,7 @@ pub(super) fn render_tool_group(
 }
 
 fn render_tool_group_child(cell: &HistoryCell, width: usize, is_last: bool) -> Vec<Line<'static>> {
-    let branch = if is_last { "└" } else { "├" };
+    let branch = if is_last { "╰" } else { "├" };
     let rail = if is_last { "  " } else { "│" };
     let title = if cell.label().is_empty() {
         "Step".to_string()
@@ -158,7 +157,7 @@ fn render_tool_group_child(cell: &HistoryCell, width: usize, is_last: bool) -> V
                         .initial_indent(Line::from(vec![
                             Span::raw("    "),
                             Span::styled(rail, history_rail_style()),
-                            Span::styled("↳", history_rail_style()),
+                            Span::styled("→", history_rail_style()),
                         ]))
                         .subsequent_indent(Line::from(vec![
                             Span::raw("    "),
@@ -208,41 +207,34 @@ fn render_tool_like(
     } else {
         title
     };
-    let mut lines = vec![Line::from(vec![
-        Span::raw("  "),
-        Span::styled(format!("{dot} "), accent),
-        Span::styled(
-            title,
-            history_title_accent_style().add_modifier(Modifier::BOLD),
-        ),
-    ])];
-    let wrapped = word_wrap_text(
-        cell.body(),
-        WrapOptions::new(width)
-            .initial_indent(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("┆", history_rail_style()),
-            ]))
-            .subsequent_indent(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("┆", history_rail_style()),
-            ])),
-    );
+    let mut lines = vec![render_card_header(
+        dot,
+        accent,
+        title,
+        history_title_accent_style(),
+    )];
     let max_lines = if cell.is_expanded() { 24usize } else { 2usize };
-    let mut output_lines: Vec<Line<'static>> = Vec::new();
-    if wrapped.len() <= max_lines {
-        output_lines.extend(wrapped);
-    } else {
-        output_lines.extend(wrapped.iter().take(max_lines).cloned());
-        output_lines.push(Line::from(vec![
+    let output_lines = render_wrapped_body_limited(
+        cell.body(),
+        width,
+        Line::from(vec![
             Span::raw("    "),
-            Span::styled("┆", history_rail_style()),
-            Span::styled(
-                format!("… +{} lines", wrapped.len().saturating_sub(max_lines)),
-                history_more_style(),
-            ),
-        ]));
-    }
+            Span::styled("└", history_rail_style()),
+        ]),
+        Line::from(vec![
+            Span::raw("    "),
+            Span::styled("└", history_rail_style()),
+        ]),
+        history_more_style(),
+        max_lines,
+        |hidden| {
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled("└", history_rail_style()),
+                Span::styled(format!("… +{hidden} lines"), history_more_style()),
+            ])
+        },
+    );
     lines.extend(
         output_lines
             .into_iter()
@@ -259,7 +251,7 @@ fn render_tool_like(
                     WrapOptions::new(width)
                         .initial_indent(Line::from(vec![
                             Span::raw("    "),
-                            Span::styled("┆", history_rail_style()),
+                            Span::styled("└", history_rail_style()),
                         ]))
                         .subsequent_indent(Line::from(vec![
                             Span::raw("      "),
@@ -304,45 +296,35 @@ fn render_patch_like(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
     } else {
         title
     };
-    let mut lines = vec![Line::from(vec![
-        Span::raw("  "),
-        Span::styled("◼ ", history_patch_style()),
-        Span::styled(
-            title,
-            history_title_accent_style().add_modifier(Modifier::BOLD),
-        ),
-    ])];
+    let mut lines = vec![render_card_header(
+        "◼",
+        history_patch_style(),
+        title,
+        history_title_accent_style(),
+    )];
 
-    let summary_lines = word_wrap_text(
-        cell.body(),
-        WrapOptions::new(width)
-            .initial_indent(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("╰─ ", history_rail_style()),
-            ]))
-            .subsequent_indent(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("╰─ ", history_rail_style()),
-            ])),
-    );
     let max_lines = if cell.is_expanded() { 6usize } else { 2usize };
-    let mut output_lines: Vec<Line<'static>> = Vec::new();
-    if summary_lines.len() <= max_lines {
-        output_lines.extend(summary_lines);
-    } else {
-        output_lines.extend(summary_lines.iter().take(max_lines).cloned());
-        output_lines.push(Line::from(vec![
+    let output_lines = render_wrapped_body_limited(
+        cell.body(),
+        width,
+        Line::from(vec![
             Span::raw("    "),
-            Span::styled("╰─ ", history_rail_style()),
-            Span::styled(
-                format!(
-                    "... +{} lines",
-                    summary_lines.len().saturating_sub(max_lines)
-                ),
-                history_more_style(),
-            ),
-        ]));
-    }
+            Span::styled("└", history_rail_style()),
+        ]),
+        Line::from(vec![
+            Span::raw("    "),
+            Span::styled("└", history_rail_style()),
+        ]),
+        history_more_style(),
+        max_lines,
+        |hidden| {
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled("└", history_rail_style()),
+                Span::styled(format!("… +{hidden} lines"), history_more_style()),
+            ])
+        },
+    );
     lines.extend(
         output_lines
             .into_iter()
@@ -358,12 +340,12 @@ fn render_patch_like(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
                     WrapOptions::new(width)
                         .initial_indent(Line::from(vec![
                             Span::raw("    "),
-                            Span::styled("╰─ ", history_rail_style()),
-                            Span::styled("↳ ", history_rail_style()),
+                            Span::styled("└", history_rail_style()),
+                            Span::styled("→", history_rail_style()),
                         ]))
                         .subsequent_indent(Line::from(vec![
                             Span::raw("    "),
-                            Span::styled("╰─ ", history_rail_style()),
+                            Span::styled("└", history_rail_style()),
                             Span::raw("  "),
                         ])),
                 )
@@ -374,10 +356,10 @@ fn render_patch_like(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
             detail_lines.truncate(max_detail_lines);
             detail_lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled("╰─ ", history_rail_style()),
+                Span::styled("└", history_rail_style()),
                 Span::styled(
                     format!(
-                        "... +{} more lines",
+                        "… +{} more lines",
                         detail.lines().count().saturating_sub(max_detail_lines)
                     ),
                     history_more_style(),

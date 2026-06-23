@@ -3,17 +3,12 @@ use super::{ExplorationAggregate, HistoryCell, HistoryTone};
 use crate::runtime_metrics_display::format_runtime_metrics;
 use agent_core::{
     RuntimeItem, SearchWorkspaceMode, SearchWorkspaceStatus, StructuredToolResult, TurnItemKind,
-    web_search_detail,
+    WebSearchAction, web_search_detail,
 };
 
 pub(super) fn render_active_placeholder(kind: TurnItemKind, title: &str) -> HistoryCell {
     match kind {
-        TurnItemKind::ToolCall => HistoryCell::info(
-            humanize_tool_label(title),
-            "running".to_string(),
-            HistoryTone::Control,
-        ),
-        TurnItemKind::ToolResult => HistoryCell::info(
+        TurnItemKind::ToolCall | TurnItemKind::ToolResult => HistoryCell::info(
             humanize_tool_label(title),
             "running".to_string(),
             HistoryTone::Control,
@@ -31,15 +26,20 @@ pub(super) fn render_active_runtime_item(item: &RuntimeItem) -> HistoryCell {
     let mut cell = render_active_placeholder(item.kind.clone(), title);
 
     let summary = match item.structured.as_ref() {
-        Some(StructuredToolResult::WebSearch { query, action, .. }) => {
-            let detail = web_search_detail(query, action.as_ref());
-            (!detail.trim().is_empty()).then_some(detail)
+        Some(StructuredToolResult::WebSearch {
+            query,
+            action,
+            result_count,
+            source_count,
+        }) => {
+            let (summary, detail) =
+                build_web_search_card(query, action.as_ref(), *source_count, *result_count);
+            if let Some(detail) = detail {
+                cell.append_detail(&detail);
+            }
+            Some(summary)
         }
-        _ => item
-            .progress
-            .as_ref()
-            .and_then(|progress| progress.message.clone())
-            .or_else(|| item.summary.clone()),
+        _ => runtime_summary(item),
     };
 
     if let Some(summary) = summary
@@ -65,7 +65,44 @@ pub(super) fn render_tool_result(
     content: &str,
     structured: Option<&StructuredToolResult>,
 ) -> HistoryCell {
-    if let Some(StructuredToolResult::CommandExecution {
+    if let Some(cell) = render_command_result(tool_name, structured) {
+        return cell;
+    }
+    if let Some(cell) = render_read_file_result(structured) {
+        return cell;
+    }
+    if let Some(cell) = render_search_workspace_result(structured) {
+        return cell;
+    }
+    if let Some(cell) = render_tool_search_result(structured) {
+        return cell;
+    }
+    if let Some(cell) = render_read_directory_result(structured) {
+        return cell;
+    }
+    if let Some(cell) = render_metadata_result(tool_name, structured) {
+        return cell;
+    }
+    if let Some(cell) = render_web_search_result(structured) {
+        return cell;
+    }
+    if let Some(cell) = render_tool_error_result(tool_name, structured) {
+        return cell;
+    }
+
+    let first = first_non_empty_line(content);
+    HistoryCell::info(
+        humanize_tool_label(tool_name),
+        compact_inline(first, 100),
+        HistoryTone::Control,
+    )
+}
+
+fn render_command_result(
+    tool_name: &str,
+    structured: Option<&StructuredToolResult>,
+) -> Option<HistoryCell> {
+    let Some(StructuredToolResult::CommandExecution {
         command,
         current_directory,
         status,
@@ -73,42 +110,54 @@ pub(super) fn render_tool_result(
         output,
         ..
     }) = structured
-    {
-        return super::command::render_command_execution(
-            tool_name,
-            command,
-            current_directory,
-            status,
-            *exit_code,
-            output.as_deref(),
-        );
-    }
-    if let Some(StructuredToolResult::ReadFile {
+    else {
+        return None;
+    };
+
+    Some(super::command::render_command_execution(
+        tool_name,
+        command,
+        current_directory,
+        status,
+        *exit_code,
+        output.as_deref(),
+    ))
+}
+
+fn render_read_file_result(structured: Option<&StructuredToolResult>) -> Option<HistoryCell> {
+    let Some(StructuredToolResult::ReadFile {
         path,
         total_chars,
         read,
         ..
     }) = structured
-    {
-        let display_path = compact_path(path, 56);
-        let range_suffix = format_line_range(read.start_line, read.end_line);
-        let detail = format!(
-            "{}{} — {} chars{}",
-            display_path,
-            range_suffix,
-            total_chars,
-            if read.truncated { " truncated" } else { "" }
-        );
-        let mut aggregate = ExplorationAggregate::new(detail);
-        aggregate.read_files = 1;
-        return HistoryCell::exploration(
-            "Read file",
-            "read 1 file".to_string(),
-            aggregate,
-            HistoryTone::Control,
-        );
-    }
-    if let Some(StructuredToolResult::SearchWorkspace {
+    else {
+        return None;
+    };
+
+    let display_path = compact_path(path, 56);
+    let range_suffix = format_line_range(read.start_line, read.end_line);
+    let detail = format!(
+        "{}{} 鈥?{} chars{}",
+        display_path,
+        range_suffix,
+        total_chars,
+        if read.truncated { " truncated" } else { "" }
+    );
+    let mut aggregate = ExplorationAggregate::new(detail);
+    aggregate.read_files = 1;
+    Some(HistoryCell::exploration(
+        "Read file",
+        "read 1 file".to_string(),
+        aggregate,
+        HistoryTone::Control,
+    ))
+}
+
+fn render_search_workspace_result(
+    structured: Option<&StructuredToolResult>,
+) -> Option<HistoryCell> {
+    let Some(StructuredToolResult::SearchWorkspace {
         mode,
         status,
         query,
@@ -117,132 +166,245 @@ pub(super) fn render_tool_result(
         truncated,
         ..
     }) = structured
-    {
-        let status_suffix = match status {
-            SearchWorkspaceStatus::Active => "",
-            SearchWorkspaceStatus::Closed => " closed",
-            SearchWorkspaceStatus::NotFound => " missing",
-        };
-        let truncation = if *truncated { " truncated" } else { "" };
-        let summary = match mode {
-            SearchWorkspaceMode::Files => {
-                format!("found {file_count} files{truncation}{status_suffix}")
-            }
-            SearchWorkspaceMode::Text => {
-                format!(
-                    "matched {match_count} hits in {file_count} files{truncation}{status_suffix}"
-                )
-            }
-        };
-        let detail = match mode {
-            SearchWorkspaceMode::Files => {
-                format!("file search `{}`", compact_inline(query, 48))
-            }
-            SearchWorkspaceMode::Text => {
-                format!("text search `{}`", compact_inline(query, 48))
-            }
-        };
-        return HistoryCell::search(
-            "Search workspace",
-            summary,
-            Some(detail),
-            HistoryTone::Control,
-        );
-    }
-    if let Some(StructuredToolResult::ToolSearch {
+    else {
+        return None;
+    };
+
+    let status_suffix = search_status_suffix(status);
+    let truncation = if *truncated { " truncated" } else { "" };
+    let summary = match mode {
+        SearchWorkspaceMode::Files => {
+            format!("found {file_count} files{truncation}{status_suffix}")
+        }
+        SearchWorkspaceMode::Text => {
+            format!("matched {match_count} hits in {file_count} files{truncation}{status_suffix}")
+        }
+    };
+    let detail = format_search_workspace_detail(
+        query,
+        mode.clone(),
+        status.clone(),
+        *file_count,
+        *match_count,
+        *truncated,
+    );
+    Some(HistoryCell::search(
+        "Search workspace",
+        summary,
+        Some(detail),
+        HistoryTone::Control,
+    ))
+}
+
+fn render_tool_search_result(structured: Option<&StructuredToolResult>) -> Option<HistoryCell> {
+    let Some(StructuredToolResult::ToolSearch {
         query,
         max_results,
         match_count,
         hits,
     }) = structured
-    {
-        let detail = format!(
-            "tool search `{}`\nmatched {match_count} tools, showing {} of {max_results}",
-            compact_inline(query, 48),
-            hits.len()
-        );
-        return HistoryCell::search(
-            "Search tools",
-            format!("matched {match_count} tools"),
-            Some(detail),
-            HistoryTone::Control,
-        );
-    }
-    if let Some(StructuredToolResult::ReadDirectory {
+    else {
+        return None;
+    };
+
+    let detail = format_tool_search_detail(query, *match_count, hits.len(), *max_results);
+    Some(HistoryCell::search(
+        "Search tools",
+        format!("matched {match_count} tools"),
+        Some(detail),
+        HistoryTone::Control,
+    ))
+}
+
+fn render_read_directory_result(structured: Option<&StructuredToolResult>) -> Option<HistoryCell> {
+    let Some(StructuredToolResult::ReadDirectory {
         path,
         entry_count,
         truncated,
         ..
     }) = structured
-    {
-        let mut aggregate = ExplorationAggregate::new(format!(
-            "{} — {} entries{}",
-            compact_path(path, 56),
-            entry_count,
-            if *truncated { " truncated" } else { "" }
-        ));
-        aggregate.listed_directories = 1;
-        return HistoryCell::exploration(
-            "Read directory",
-            "listed 1 directory".to_string(),
-            aggregate,
-            HistoryTone::Control,
-        );
-    }
-    if let Some(StructuredToolResult::GetMetadata {
+    else {
+        return None;
+    };
+
+    let mut aggregate = ExplorationAggregate::new(format!(
+        "{} 鈥?{} entries{}",
+        compact_path(path, 56),
+        entry_count,
+        if *truncated { " truncated" } else { "" }
+    ));
+    aggregate.listed_directories = 1;
+    Some(HistoryCell::exploration(
+        "Read directory",
+        "listed 1 directory".to_string(),
+        aggregate,
+        HistoryTone::Control,
+    ))
+}
+
+fn render_metadata_result(
+    tool_name: &str,
+    structured: Option<&StructuredToolResult>,
+) -> Option<HistoryCell> {
+    let Some(StructuredToolResult::GetMetadata {
         path,
         size,
         exists,
         is_file,
         ..
     }) = structured
-    {
-        if *exists {
-            let kind = if *is_file { "file" } else { "directory" };
-            let mut aggregate = ExplorationAggregate::new(format!(
-                "metadata {} — {kind} ({size} bytes)",
-                compact_path(path, 56)
-            ));
-            aggregate.metadata_reads = 1;
-            return HistoryCell::exploration(
-                "File info",
-                "checked 1 path".to_string(),
-                aggregate,
-                HistoryTone::Control,
-            );
-        }
-        return HistoryCell::info(
-            humanize_tool_label(tool_name),
-            format!("metadata missing — {}", compact_path(path, 56)),
-            HistoryTone::Warning,
-        );
-    }
-    if let Some(StructuredToolResult::WebSearch { query, action, .. }) = structured {
-        let detail = web_search_detail(query, action.as_ref());
-        if !detail.trim().is_empty() {
-            return HistoryCell::search(
-                "Web search",
-                "searched the web".to_string(),
-                Some(detail),
-                HistoryTone::Control,
-            );
-        }
-    }
-    if let Some(StructuredToolResult::ToolError { message, .. }) = structured {
-        return HistoryCell::info(
-            humanize_tool_label(tool_name),
-            compact_inline(message, 100),
-            HistoryTone::Error,
-        );
+    else {
+        return None;
+    };
+
+    if *exists {
+        let kind = if *is_file { "file" } else { "directory" };
+        let mut aggregate = ExplorationAggregate::new(format!(
+            "metadata {} 鈥?{kind} ({size} bytes)",
+            compact_path(path, 56)
+        ));
+        aggregate.metadata_reads = 1;
+        return Some(HistoryCell::exploration(
+            "File info",
+            "checked 1 path".to_string(),
+            aggregate,
+            HistoryTone::Control,
+        ));
     }
 
-    let first = content
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("tool completed");
-    HistoryCell::info(
+    Some(HistoryCell::info(
         humanize_tool_label(tool_name),
-        compact_inline(first, 100),
+        format!("metadata missing 鈥?{}", compact_path(path, 56)),
+        HistoryTone::Warning,
+    ))
+}
+
+fn render_web_search_result(structured: Option<&StructuredToolResult>) -> Option<HistoryCell> {
+    let Some(StructuredToolResult::WebSearch { query, action, .. }) = structured else {
+        return None;
+    };
+
+    let (summary, detail) = build_web_search_card(query, action.as_ref(), None, None);
+    Some(HistoryCell::search(
+        "Web search",
+        summary,
+        detail,
         HistoryTone::Control,
+    ))
+}
+
+fn render_tool_error_result(
+    tool_name: &str,
+    structured: Option<&StructuredToolResult>,
+) -> Option<HistoryCell> {
+    let Some(StructuredToolResult::ToolError { message, .. }) = structured else {
+        return None;
+    };
+
+    Some(HistoryCell::info(
+        humanize_tool_label(tool_name),
+        compact_inline(message, 100),
+        HistoryTone::Error,
+    ))
+}
+
+fn build_web_search_card(
+    query: &str,
+    action: Option<&WebSearchAction>,
+    source_count: Option<usize>,
+    result_count: Option<usize>,
+) -> (String, Option<String>) {
+    let summary = match (source_count, result_count) {
+        (Some(count), _) if count > 0 => format!("searched {count} sources"),
+        (_, Some(count)) if count > 0 => format!("found {count} results"),
+        _ => "searched the web".to_string(),
+    };
+
+    let mut fields = Vec::new();
+    if let Some(count) = source_count {
+        fields.push(("sources", count.to_string()));
+    }
+    if let Some(count) = result_count {
+        fields.push(("results", count.to_string()));
+    }
+
+    let detail = build_search_detail(web_search_detail(query, action), fields);
+    (summary, Some(detail))
+}
+
+fn format_search_workspace_detail(
+    query: &str,
+    mode: SearchWorkspaceMode,
+    status: SearchWorkspaceStatus,
+    file_count: usize,
+    match_count: usize,
+    truncated: bool,
+) -> String {
+    let mode = match mode {
+        SearchWorkspaceMode::Files => "files",
+        SearchWorkspaceMode::Text => "text",
+    };
+    let status = match status {
+        SearchWorkspaceStatus::Active => "active",
+        SearchWorkspaceStatus::Closed => "closed",
+        SearchWorkspaceStatus::NotFound => "missing",
+    };
+    let mut fields = vec![
+        ("mode", mode.to_string()),
+        ("files", file_count.to_string()),
+        ("hits", match_count.to_string()),
+        ("status", status.to_string()),
+    ];
+    if truncated {
+        fields.push(("truncated", "yes".to_string()));
+    }
+    build_search_detail(compact_inline(query, 72), fields)
+}
+
+fn format_tool_search_detail(
+    query: &str,
+    match_count: usize,
+    shown_count: usize,
+    max_results: usize,
+) -> String {
+    build_search_detail(
+        compact_inline(query, 72),
+        vec![
+            ("matched", match_count.to_string()),
+            ("showing", shown_count.to_string()),
+            ("max", max_results.to_string()),
+        ],
     )
+}
+
+fn build_search_detail(query: String, fields: Vec<(&'static str, String)>) -> String {
+    let mut lines = vec![format!("query: {query}")];
+    lines.extend(
+        fields
+            .into_iter()
+            .map(|(label, value)| format!("{label}: {value}")),
+    );
+    lines.join("\n")
+}
+
+fn search_status_suffix(status: &SearchWorkspaceStatus) -> &'static str {
+    match status {
+        SearchWorkspaceStatus::Active => "",
+        SearchWorkspaceStatus::Closed => " closed",
+        SearchWorkspaceStatus::NotFound => " missing",
+    }
+}
+
+fn runtime_summary(item: &RuntimeItem) -> Option<String> {
+    item.progress
+        .as_ref()
+        .and_then(|progress| progress.message.clone())
+        .or_else(|| item.summary.clone())
+        .filter(|summary| !summary.trim().is_empty())
+}
+
+fn first_non_empty_line(text: &str) -> &str {
+    text.lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("tool completed")
 }
