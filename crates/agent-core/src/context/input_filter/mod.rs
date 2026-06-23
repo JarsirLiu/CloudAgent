@@ -118,12 +118,9 @@ impl CommandInvocation {
     }
 
     fn has_passthrough_flag(&self) -> bool {
-        self.args.iter().any(|arg| {
-            matches!(
-                arg.as_str(),
-                "--verbose" | "-vv" | "--nocapture" | "--full"
-            )
-        })
+        self.args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "--verbose" | "-vv" | "--nocapture" | "--full"))
     }
 
     fn family(&self) -> CommandFamily {
@@ -291,9 +288,15 @@ fn filter_command_execution_output(
     match invocation.family() {
         CommandFamily::Git => {
             let normalized_command = normalized_command_line(&invocation);
-            wrap_summary("git", &filter_git_output(&normalized_command, merged), merged)
+            wrap_summary(
+                "git",
+                &filter_git_output(&normalized_command, merged),
+                merged,
+            )
         }
-        CommandFamily::Cargo => wrap_summary("cargo", &filter_rust_build_test_output(merged), merged),
+        CommandFamily::Cargo => {
+            wrap_summary("cargo", &filter_rust_build_test_output(merged), merged)
+        }
         CommandFamily::TestRunner => wrap_summary("test", &filter_test_output(merged), merged),
         CommandFamily::Install => wrap_summary("install", &filter_install_output(merged), merged),
         CommandFamily::Generic => {
