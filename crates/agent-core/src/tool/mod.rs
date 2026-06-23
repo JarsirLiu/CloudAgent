@@ -558,12 +558,26 @@ pub fn summarize_arguments(arguments: &Value) -> String {
 }
 
 pub fn summarize_tool_arguments(tool_name: &str, arguments: &Value) -> String {
-    if tool_name == "apply_patch"
-        && let Some(patch) = arguments.get("patch").and_then(Value::as_str)
-    {
-        return summarize_patch_argument(patch);
+    if let Some(summarizer) = summarize_registered_tool_arguments(tool_name) {
+        if let Some(summary) = summarizer(arguments) {
+            return summary;
+        }
     }
     summarize_arguments(arguments)
+}
+
+type ToolArgumentSummarizer = fn(&Value) -> Option<String>;
+
+fn summarize_registered_tool_arguments(tool_name: &str) -> Option<ToolArgumentSummarizer> {
+    match tool_name {
+        "apply_patch" => Some(summarize_apply_patch_arguments),
+        _ => None,
+    }
+}
+
+fn summarize_apply_patch_arguments(arguments: &Value) -> Option<String> {
+    let patch = arguments.get("patch").and_then(Value::as_str)?;
+    Some(summarize_patch_argument(patch))
 }
 
 fn summarize_patch_argument(patch: &str) -> String {

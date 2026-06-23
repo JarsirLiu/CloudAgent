@@ -1,7 +1,6 @@
 use crate::conversation::{ConversationHistory, TranscriptItem};
 use crate::tool::{CommandExecutionStatus, StructuredToolResult, ToolEvent, WriteFileStatus};
 use crate::turn::{AgentTurnOutput, EventMsg, TurnState};
-use crate::web_search_presentation::{WEB_SEARCH_TOOL_NAME, web_search_presentation};
 
 pub fn agent_turn_output_from_events(
     turn_id: String,
@@ -48,27 +47,6 @@ pub fn tool_events_from_turn_events(events: &[EventMsg]) -> Vec<ToolEvent> {
                     structured,
                     ..
                 } => {
-                    if let Some(StructuredToolResult::WebSearch {
-                        query,
-                        action,
-                        source_count,
-                        result_count,
-                        ..
-                    }) = structured
-                    {
-                        let presentation = web_search_presentation(
-                            query,
-                            action.as_ref(),
-                            *source_count,
-                            *result_count,
-                        );
-                        tool_events.push(ToolEvent {
-                            name: WEB_SEARCH_TOOL_NAME.to_string(),
-                            summary: presentation.summary,
-                            is_error: false,
-                        });
-                        continue;
-                    }
                     tool_events.push(ToolEvent {
                         name: tool_name.clone(),
                         summary: summary.clone(),

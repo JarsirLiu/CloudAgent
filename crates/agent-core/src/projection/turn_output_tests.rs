@@ -115,6 +115,45 @@ fn completed_tool_item_projects_tool_event() {
 }
 
 #[test]
+fn completed_web_search_tool_item_uses_completed_summary() {
+    let events = vec![
+        started(
+            "turn-1",
+            "web-search-1",
+            Some("call-1"),
+            crate::turn::TurnItemKind::ToolCall,
+            Some("web_search"),
+        ),
+        completed(
+            "turn-1",
+            TranscriptItem::ToolResult {
+                id: "web-search-1".to_string(),
+                tool_name: "web_search".to_string(),
+                content: "weather in seattle".to_string(),
+                summary: "searched 3 sources".to_string(),
+                structured: Some(StructuredToolResult::WebSearch {
+                    query: "weather in seattle".to_string(),
+                    action: Some(crate::model::WebSearchAction::Search {
+                        query: Some("weather in seattle".to_string()),
+                        queries: Some(vec!["weather in seattle".to_string()]),
+                    }),
+                    result_count: Some(3),
+                    source_count: Some(3),
+                }),
+            },
+            Some("call-1"),
+        ),
+    ];
+
+    let tool_events = tool_events_from_turn_events(&events);
+
+    assert_eq!(tool_events.len(), 1);
+    assert_eq!(tool_events[0].name, "web_search");
+    assert_eq!(tool_events[0].summary, "searched 3 sources");
+    assert!(!tool_events[0].is_error);
+}
+
+#[test]
 fn structured_tool_error_marks_event_as_error_without_summary_guessing() {
     let events = vec![completed(
         "turn-1",

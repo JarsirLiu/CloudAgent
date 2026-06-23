@@ -87,6 +87,75 @@ fn filter_tool_output_for_item(
     filter_tool_output(content)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CommandInvocation {
+    program: String,
+    args: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommandFamily {
+    Git,
+    Cargo,
+    TestRunner,
+    Install,
+    Generic,
+}
+
+impl CommandInvocation {
+    fn parse(command: &str) -> Self {
+        let mut parts = command.split_whitespace().map(str::to_ascii_lowercase);
+        let program = parts.next().unwrap_or_default();
+        let args = parts.collect();
+        Self { program, args }
+    }
+
+    fn first_non_option_arg(&self) -> Option<&str> {
+        self.args
+            .iter()
+            .map(String::as_str)
+            .find(|arg| !arg.starts_with('-') && !arg.starts_with('+'))
+    }
+
+    fn has_passthrough_flag(&self) -> bool {
+        self.args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "--verbose" | "-vv" | "--nocapture" | "--full"
+            )
+        })
+    }
+
+    fn family(&self) -> CommandFamily {
+        match self.program.as_str() {
+            "git" => CommandFamily::Git,
+            "cargo" => match self.first_non_option_arg() {
+                Some("install") => CommandFamily::Install,
+                Some("test") | Some("build") => CommandFamily::Cargo,
+                _ => CommandFamily::Generic,
+            },
+            "pytest" | "py.test" => CommandFamily::TestRunner,
+            "python" | "python3" => {
+                if self
+                    .args
+                    .windows(2)
+                    .any(|window| window[0] == "-m" && window[1] == "pytest")
+                {
+                    CommandFamily::TestRunner
+                } else {
+                    CommandFamily::Generic
+                }
+            }
+            "npm" | "pnpm" => match self.first_non_option_arg() {
+                Some("test") => CommandFamily::TestRunner,
+                Some("install") => CommandFamily::Install,
+                _ => CommandFamily::Generic,
+            },
+            _ => CommandFamily::Generic,
+        }
+    }
+}
+
 fn collect_latest_dedupe_indexes(messages: &[ResponseItem]) -> HashMap<String, usize> {
     let mut latest = HashMap::new();
     for (index, item) in messages.iter().enumerate() {
@@ -214,36 +283,26 @@ fn filter_command_execution_output(
     output: Option<&str>,
     success: Option<bool>,
 ) -> String {
-    let cmd = command.trim().to_ascii_lowercase();
+    let invocation = CommandInvocation::parse(command.trim());
     let merged = output.unwrap_or_default();
-    if should_passthrough(&cmd) {
+    if invocation.has_passthrough_flag() {
         return merged.to_string();
     }
-    if cmd.starts_with("git ") {
-        return wrap_summary("git", &filter_git_output(&cmd, merged), merged);
+    match invocation.family() {
+        CommandFamily::Git => {
+            let normalized_command = normalized_command_line(&invocation);
+            wrap_summary("git", &filter_git_output(&normalized_command, merged), merged)
+        }
+        CommandFamily::Cargo => wrap_summary("cargo", &filter_rust_build_test_output(merged), merged),
+        CommandFamily::TestRunner => wrap_summary("test", &filter_test_output(merged), merged),
+        CommandFamily::Install => wrap_summary("install", &filter_install_output(merged), merged),
+        CommandFamily::Generic => {
+            if success == Some(false) {
+                return wrap_summary("fallback", &filter_failure_tail(merged), merged);
+            }
+            wrap_summary("generic", &filter_tool_output(merged), merged)
+        }
     }
-    if cmd.contains("cargo test") || cmd.contains("cargo build") {
-        return wrap_summary("cargo", &filter_rust_build_test_output(merged), merged);
-    }
-    if cmd.contains("pytest") || cmd.contains("npm test") || cmd.contains("pnpm test") {
-        return wrap_summary("test", &filter_test_output(merged), merged);
-    }
-    if cmd.contains("npm install") || cmd.contains("pnpm install") || cmd.contains("cargo install")
-    {
-        return wrap_summary("install", &filter_install_output(merged), merged);
-    }
-    if success == Some(false) {
-        return wrap_summary("fallback", &filter_failure_tail(merged), merged);
-    }
-    wrap_summary("generic", &filter_tool_output(merged), merged)
-}
-
-fn should_passthrough(cmd: &str) -> bool {
-    // Respect explicit detail requests where compression can remove needed evidence.
-    cmd.contains("--verbose")
-        || cmd.contains("-vv")
-        || cmd.contains("--nocapture")
-        || cmd.contains("--full")
 }
 
 fn wrap_summary(kind: &str, filtered: &str, raw: &str) -> String {
@@ -253,6 +312,13 @@ fn wrap_summary(kind: &str, filtered: &str, raw: &str) -> String {
         return raw.to_string();
     }
     stable
+}
+
+fn normalized_command_line(invocation: &CommandInvocation) -> String {
+    let mut parts = Vec::with_capacity(invocation.args.len() + 1);
+    parts.push(invocation.program.clone());
+    parts.extend(invocation.args.iter().cloned());
+    parts.join(" ")
 }
 
 #[cfg(test)]

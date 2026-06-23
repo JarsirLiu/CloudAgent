@@ -71,6 +71,20 @@ fn generic_output_has_stable_header() {
 }
 
 #[test]
+fn python_module_pytest_uses_test_header() {
+    let raw = "PASSED t1\nFAILED t2";
+    let out = run_filter("python -m pytest -q", Some(raw), None);
+    assert!(out.starts_with("[rtk:test]"));
+    assert!(out.contains("Test summary"));
+}
+
+#[test]
+fn cargo_install_uses_install_header() {
+    let out = run_filter("cargo install ripgrep", Some("installed ripgrep"), None);
+    assert!(out.starts_with("[rtk:install]"));
+}
+
+#[test]
 fn failed_command_keeps_tail_with_header() {
     let out = run_filter("unknown", Some("a\nb\nc"), Some(false));
     assert!(out.starts_with("[rtk:fallback]"));
