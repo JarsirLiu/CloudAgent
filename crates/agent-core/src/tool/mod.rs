@@ -558,10 +558,10 @@ pub fn summarize_arguments(arguments: &Value) -> String {
 }
 
 pub fn summarize_tool_arguments(tool_name: &str, arguments: &Value) -> String {
-    if let Some(summarizer) = summarize_registered_tool_arguments(tool_name) {
-        if let Some(summary) = summarizer(arguments) {
-            return summary;
-        }
+    if let Some(summarizer) = summarize_registered_tool_arguments(tool_name)
+        && let Some(summary) = summarizer(arguments)
+    {
+        return summary;
     }
     summarize_arguments(arguments)
 }
