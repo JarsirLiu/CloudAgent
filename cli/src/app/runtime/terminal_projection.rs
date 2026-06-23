@@ -1,4 +1,5 @@
 use crate::app::TuiApp;
+use crate::app::runtime::viewport_height::ViewportHeightPolicy;
 use crate::terminal::HistoryReplayBatch;
 use crate::terminal::PreparedHistoryProjection;
 use crate::terminal::TerminalGuard;
@@ -8,7 +9,6 @@ use crate::ui::transcript_line_builder::{
     HistoryCellGapKey, TranscriptLineOptions, build_transcript_lines,
 };
 use anyhow::Result;
-use ratatui::layout::Rect;
 
 #[derive(Default)]
 pub(crate) struct TerminalProjectionController {
@@ -16,6 +16,7 @@ pub(crate) struct TerminalProjectionController {
     last_scrollback_metrics: Option<TranscriptRenderMetrics>,
     last_viewport_height: Option<u16>,
     last_scrollback_cells: Vec<HistoryCell>,
+    viewport_height_policy: ViewportHeightPolicy,
 }
 
 impl TerminalProjectionController {
@@ -24,6 +25,7 @@ impl TerminalProjectionController {
         self.last_scrollback_metrics = None;
         self.last_viewport_height = None;
         self.last_scrollback_cells.clear();
+        self.viewport_height_policy.reset();
     }
 
     pub(crate) fn draw_frame(
@@ -32,8 +34,8 @@ impl TerminalProjectionController {
         terminal: &mut TerminalGuard,
     ) -> Result<()> {
         let size = terminal.terminal.size()?;
-        let area = Rect::new(0, 0, size.width, size.height);
-        let viewport_height = ChatSurface::desired_viewport_height(app, area);
+        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+        let viewport_height = self.viewport_height_policy.resolve(app, area);
         let render_metrics = ChatSurface::transcript_render_metrics_for_area(area);
         let projection = PreparedHistoryProjection {
             viewport_height,
