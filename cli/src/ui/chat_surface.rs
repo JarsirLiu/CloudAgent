@@ -53,7 +53,11 @@ impl ChatSurface {
         let bottom_height = bottom_pane_height(app, surface_layout.content.width)
             .min(surface_layout.content.height)
             .max(1);
-        let status_height = if status.live_banner.is_some() { 1 } else { 0 };
+        let status_height = if status.runtime_banner.is_some() {
+            1
+        } else {
+            0
+        };
         let toast_height = if toast.is_some() { 1 } else { 0 };
         let max_body_height = available_body_height(
             surface_layout.content,
@@ -67,13 +71,13 @@ impl ChatSurface {
             app,
             surface_layout,
             surface_model.body_height,
-            status.live_banner.is_some(),
+            status.runtime_banner.is_some(),
             toast.is_some(),
             matches!(surface_model.body, ChatSurfaceBody::Welcome),
         );
 
         render_body_area(app, frame, layout.body_area, surface_model);
-        render_status_area(frame, layout.status_area, status.live_banner.as_deref());
+        render_status_area(frame, layout.status_area, status.runtime_banner.as_deref());
         render_toast_area(frame, layout.toast_area, toast.as_ref());
         let bottom = app.bottom_pane.render(
             frame,
@@ -102,7 +106,11 @@ impl ChatSurface {
         let bottom_height = bottom_pane_height(app, surface_layout.content.width)
             .min(surface_layout.content.height)
             .max(1);
-        let status_height = if status.live_banner.is_some() { 1 } else { 0 };
+        let status_height = if status.runtime_banner.is_some() {
+            1
+        } else {
+            0
+        };
         let toast_height = if toast.is_some() { 1 } else { 0 };
         let max_body_height = available_body_height(
             surface_layout.content,
@@ -116,7 +124,7 @@ impl ChatSurface {
             app,
             surface_layout,
             surface_model.body_height,
-            status.live_banner.is_some(),
+            status.runtime_banner.is_some(),
             toast.is_some(),
             matches!(surface_model.body, ChatSurfaceBody::Welcome),
         )
@@ -314,16 +322,16 @@ fn render_body_area(app: &mut TuiApp, frame: &mut Frame, area: Rect, model: Chat
     }
 }
 
-fn render_status_area(frame: &mut Frame, area: Rect, live_banner: Option<&str>) {
+fn render_status_area(frame: &mut Frame, area: Rect, runtime_banner: Option<&str>) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let Some(live_banner) = live_banner else {
+    let Some(runtime_banner) = runtime_banner else {
         return;
     };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            live_banner.to_string(),
+            runtime_banner.to_string(),
             Style::default().fg(Color::Rgb(140, 140, 155)),
         ))),
         area,

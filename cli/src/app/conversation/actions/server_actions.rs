@@ -264,9 +264,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             item,
             transcript_item,
         } => {
-            if should_finish_active_runtime(&transcript_item) {
-                app.bottom_pane.on_active_runtime_finished(Some(&item.id));
-            }
+            app.bottom_pane
+                .on_active_item_completed(&item, &transcript_item);
             app.transcript_owner.complete_item(
                 turn_id,
                 item.id,
@@ -335,16 +334,4 @@ pub(crate) fn prepend_turn_page(
         }
     }
     merged
-}
-
-fn should_finish_active_runtime(
-    transcript_item: &agent_core::conversation::TranscriptItem,
-) -> bool {
-    !matches!(
-        transcript_item,
-        agent_core::conversation::TranscriptItem::CommandExecution {
-            status: agent_core::CommandExecutionStatus::InProgress,
-            ..
-        }
-    )
 }

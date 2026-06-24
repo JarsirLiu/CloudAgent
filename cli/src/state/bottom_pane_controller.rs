@@ -29,7 +29,7 @@ pub(crate) struct StatusViewModel {
     pub(crate) runtime_hint: Option<String>,
     pub(crate) meta: String,
     pub(crate) hint_meta: String,
-    pub(crate) live_banner: Option<String>,
+    pub(crate) runtime_banner: Option<String>,
 }
 
 pub(crate) struct BottomPaneController {
@@ -87,6 +87,14 @@ impl BottomPaneController {
 
     pub(crate) fn on_active_runtime_finished(&mut self, item_id: Option<&str>) {
         self.runtime.on_active_runtime_finished(item_id);
+    }
+
+    pub(crate) fn on_active_item_completed(
+        &mut self,
+        item: &RuntimeItem,
+        transcript_item: &agent_core::conversation::TranscriptItem,
+    ) {
+        self.runtime.on_active_item_completed(item, transcript_item);
     }
 
     pub(crate) fn on_context_compaction_started(&mut self, estimated_tokens: u64) {
@@ -382,7 +390,7 @@ impl BottomPaneController {
     pub(crate) fn build_status_view_model(&self, app: &TuiApp) -> StatusViewModel {
         let mode = app.current_mode();
         let fallback = status_text_from_mode(mode);
-        let live_banner = self.runtime_banner_text();
+        let runtime_banner = self.runtime_banner_text();
         let text = fallback.to_string();
         let indicator = match mode {
             FrontendMode::Running | FrontendMode::WaitingForServerRequest => {
@@ -427,7 +435,7 @@ impl BottomPaneController {
             runtime_hint,
             meta: parts.join(" · "),
             hint_meta,
-            live_banner,
+            runtime_banner,
         }
     }
 

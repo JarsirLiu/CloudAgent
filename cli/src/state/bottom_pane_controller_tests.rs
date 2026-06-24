@@ -106,7 +106,7 @@ fn active_tool_status_overrides_live_label() {
     assert_eq!(status.text, "Working");
     assert_eq!(status.indicator.as_deref(), Some("⠙"));
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("running command: rg cli")
     );
     assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
@@ -129,13 +129,13 @@ fn command_output_delta_stays_in_runtime_banner() {
     let status = app.bottom_pane.build_status_view_model(&app);
 
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("running command: rg TODO · src/main.rs:12: TODO clean this up")
     );
 
     app.bottom_pane.on_active_runtime_finished(Some("cmd-1"));
     let after = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(after.live_banner, None);
+    assert_eq!(after.runtime_banner, None);
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn web_search_progress_updates_runtime_banner() {
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("executing tool: Web search")
     );
 
@@ -162,13 +162,13 @@ fn web_search_progress_updates_runtime_banner() {
     );
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("executing tool: Web search · weather seattle")
     );
 
     app.bottom_pane.on_active_runtime_finished(Some("ws-1"));
     let after = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(after.live_banner, None);
+    assert_eq!(after.runtime_banner, None);
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn tool_metrics_update_runtime_banner_with_tokens() {
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some(
             "executing tool: Web search · 1.2k input tok · 42 output tok · 1.3k total tok · 480 ms"
         )
@@ -223,7 +223,7 @@ fn command_output_delta_keeps_recent_tail_compact() {
         .on_active_runtime_output_delta(Some("cmd-1"), "omega");
 
     let status = app.bottom_pane.build_status_view_model(&app);
-    let banner = status.live_banner.expect("command banner");
+    let banner = status.runtime_banner.expect("command banner");
     assert!(banner.starts_with("running command: long command · …"));
     assert!(banner.ends_with("omega"));
     assert!(banner.chars().count() <= "running command: long command · ".chars().count() + 121);
@@ -245,7 +245,7 @@ fn stale_command_output_delta_does_not_update_current_banner() {
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("running command: cargo check")
     );
 }
@@ -265,7 +265,7 @@ fn stale_command_finish_does_not_clear_current_banner() {
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("running command: cargo test")
     );
 }
@@ -283,7 +283,7 @@ fn in_progress_completion_keeps_command_runtime_until_final_completion() {
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("running command: slow command")
     );
 
@@ -291,7 +291,7 @@ fn in_progress_completion_keeps_command_runtime_until_final_completion() {
         .on_active_runtime_output_delta(Some("cmd-1"), "still running");
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("running command: slow command · still running")
     );
 }
@@ -310,7 +310,7 @@ fn reconnect_live_label_animates_when_no_active_tool_or_notice() {
     assert_eq!(status.text, "Working");
     assert_eq!(status.indicator.as_deref(), Some("⠹"));
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("reconnecting (stream retry 2, next in 1.0s)")
     );
     assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
@@ -332,7 +332,7 @@ fn generic_live_label_hides_when_active_cell_is_visible() {
     let status = app.bottom_pane.build_status_view_model(&app);
 
     assert_eq!(status.text, "Working");
-    assert_eq!(status.live_banner.as_deref(), Some("Thinking"));
+    assert_eq!(status.runtime_banner.as_deref(), Some("Thinking"));
     assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
 }
 
@@ -347,7 +347,7 @@ fn generic_live_label_does_not_render_external_banner_without_active_cell() {
     let status = app.bottom_pane.build_status_view_model(&app);
 
     assert_eq!(status.text, "Working");
-    assert_eq!(status.live_banner.as_deref(), Some("Thinking"));
+    assert_eq!(status.runtime_banner.as_deref(), Some("Thinking"));
     assert_eq!(status.runtime_hint.as_deref(), Some("0s"));
 }
 
@@ -362,11 +362,11 @@ fn working_without_runtime_does_not_show_elapsed_hint() {
 
     assert_eq!(status.text, "Working");
     assert_eq!(status.runtime_hint, None);
-    assert_eq!(status.live_banner, None);
+    assert_eq!(status.runtime_banner, None);
 }
 
 #[test]
-fn compaction_runtime_status_renders_as_live_banner_and_clears_cleanly() {
+fn compaction_runtime_status_renders_as_runtime_banner_and_clears_cleanly() {
     let mut app = test_app();
     app.run_state.live_animation_frame = 3;
     mark_running(&mut app);
@@ -376,14 +376,14 @@ fn compaction_runtime_status_renders_as_live_banner_and_clears_cleanly() {
     assert_eq!(during.text, "Working");
     assert_eq!(during.indicator.as_deref(), Some("⠸"));
     assert_eq!(
-        during.live_banner.as_deref(),
+        during.runtime_banner.as_deref(),
         Some("Compacting context (~12.3k tokens)")
     );
 
     app.bottom_pane.on_context_compaction_finished();
     let after = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(after.text, "Working");
-    assert_eq!(after.live_banner, None);
+    assert_eq!(after.runtime_banner, None);
 }
 
 #[test]
@@ -400,7 +400,7 @@ fn toast_renders_independently_and_expires() {
 
     let during = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        during.live_banner.as_deref(),
+        during.runtime_banner.as_deref(),
         Some("running command: rg cli")
     );
     assert_eq!(
@@ -415,7 +415,7 @@ fn toast_renders_independently_and_expires() {
 
     let after = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        after.live_banner.as_deref(),
+        after.runtime_banner.as_deref(),
         Some("running command: rg cli")
     );
     assert!(app.bottom_pane.active_toast().is_none());

@@ -72,7 +72,7 @@ mod tests {
         );
 
         let status = app.bottom_pane.build_status_view_model(&app);
-        assert_eq!(status.live_banner.as_deref(), None);
+        assert_eq!(status.runtime_banner.as_deref(), None);
         assert_eq!(
             app.bottom_pane
                 .active_toast()

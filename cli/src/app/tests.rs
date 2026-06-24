@@ -1519,7 +1519,7 @@ fn server_notice_uses_toast_instead_of_transcript_cell() {
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(status.live_banner.as_deref(), None);
+    assert_eq!(status.runtime_banner.as_deref(), None);
     assert_eq!(
         app.bottom_pane
             .active_toast()
@@ -1533,7 +1533,7 @@ fn server_notice_uses_toast_instead_of_transcript_cell() {
     assert!(app.bottom_pane.handle_tick());
 
     let cleared = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(cleared.live_banner, None);
+    assert_eq!(cleared.runtime_banner, None);
     assert!(app.bottom_pane.active_toast().is_none());
 }
 
@@ -1554,7 +1554,7 @@ fn server_error_uses_toast_instead_of_transcript_cell() {
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(status.live_banner.as_deref(), None);
+    assert_eq!(status.runtime_banner.as_deref(), None);
     assert_eq!(
         app.bottom_pane
             .active_toast()
@@ -1587,7 +1587,7 @@ fn transport_closed_error_clears_runtime_and_dispatches_failed_turn() {
     assert!(
         app.bottom_pane
             .build_status_view_model(&app)
-            .live_banner
+            .runtime_banner
             .is_none()
     );
     assert!(app.transcript_owner.active_turn_id().is_none());
@@ -1654,7 +1654,7 @@ fn server_request_prompt_uses_toast_instead_of_transcript_cell() {
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(status.live_banner.as_deref(), None);
+    assert_eq!(status.runtime_banner.as_deref(), None);
     assert_eq!(
         app.bottom_pane
             .active_toast()
@@ -1691,7 +1691,7 @@ fn command_output_delta_updates_status_without_transcript_history() {
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("running command: rg TODO · src/lib.rs: TODO")
     );
     assert!(app.transcript_owner.active_cell().is_none());
@@ -1817,7 +1817,7 @@ fn completed_web_search_matches_standard_tool_result_lifecycle() {
     assert_eq!(active.body(), "searched the web");
 
     let status = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(status.live_banner, None);
+    assert_eq!(status.runtime_banner, None);
     assert!(app.transcript_owner.pending_history_cells().is_empty());
 
     execute_server_action(
@@ -1866,7 +1866,7 @@ fn in_progress_command_completion_keeps_status_until_final_completion() {
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
-        status.live_banner.as_deref(),
+        status.runtime_banner.as_deref(),
         Some("running command: slow command")
     );
 
@@ -1876,7 +1876,7 @@ fn in_progress_command_completion_keeps_status_until_final_completion() {
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);
-    assert_eq!(status.live_banner, None);
+    assert_eq!(status.runtime_banner, None);
     let committed = app
         .transcript_owner
         .pending_history_cells()

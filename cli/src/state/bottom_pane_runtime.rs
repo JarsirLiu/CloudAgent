@@ -2,8 +2,10 @@ use std::time::Instant;
 
 use crate::runtime_metrics_display::format_runtime_metrics;
 use crate::ui::history_cell::humanize_tool_label;
+use agent_core::conversation::TranscriptItem;
 use agent_core::{
-    ModelRetryStage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress, TurnItemKind,
+    CommandExecutionStatus, ModelRetryStage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress,
+    TurnItemKind,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -146,6 +148,16 @@ impl BottomPaneRuntimeState {
         let should_clear = self.active_runtime_matches(item_id) || item_id.is_none();
         if should_clear {
             self.active_runtime = None;
+        }
+    }
+
+    pub(crate) fn on_active_item_completed(
+        &mut self,
+        item: &RuntimeItem,
+        transcript_item: &TranscriptItem,
+    ) {
+        if should_finish_active_runtime(transcript_item) {
+            self.on_active_runtime_finished(Some(&item.id));
         }
     }
 
@@ -382,4 +394,14 @@ fn compact_recent_output(value: &str, max_chars: usize) -> String {
     let mut out = normalized.chars().rev().take(keep).collect::<Vec<_>>();
     out.reverse();
     format!("…{}", out.into_iter().collect::<String>())
+}
+
+fn should_finish_active_runtime(transcript_item: &TranscriptItem) -> bool {
+    !matches!(
+        transcript_item,
+        TranscriptItem::CommandExecution {
+            status: CommandExecutionStatus::InProgress,
+            ..
+        }
+    )
 }
