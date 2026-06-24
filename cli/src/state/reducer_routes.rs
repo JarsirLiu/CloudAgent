@@ -1,7 +1,7 @@
 use crate::state::NoticeLevel;
 use crate::state::reducer::{ServerAction, TurnDispatch};
 use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation;
-use agent_core::{ServerRequest, ServerRequestDecision, TurnItemKind};
+use agent_core::{ServerRequest, ServerRequestDecision};
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
 
 pub(crate) fn route_server_message(message: &AppServerMessage) -> Vec<ServerAction> {
@@ -153,11 +153,6 @@ fn route_notification(notification: &AppServerNotification, actions: &mut Vec<Se
             transcript_item,
             ..
         } => {
-            if matches!(item.kind, TurnItemKind::ToolCall | TurnItemKind::ToolResult) {
-                actions.push(ServerAction::ClearActiveRuntime {
-                    item_id: Some(item.id.clone()),
-                });
-            }
             actions.push(ServerAction::CompleteActiveTurnItem {
                 turn_id: turn_id.clone(),
                 item: item.clone(),
@@ -221,7 +216,6 @@ fn route_notification(notification: &AppServerNotification, actions: &mut Vec<Se
                 NoticeLevel::Warn,
             );
             actions.push(ServerAction::ClearContextCompactionStatus);
-            actions.push(ServerAction::ClearActiveRuntime { item_id: None });
         }
         AppServerNotification::ContextCompactionStarted {
             estimated_tokens, ..

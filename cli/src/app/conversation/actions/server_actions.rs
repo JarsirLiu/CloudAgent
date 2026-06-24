@@ -139,9 +139,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::DismissServerRequestView(request_id) => {
             app.dismiss_server_request_view(&request_id);
         }
-        ServerAction::ClearActiveRuntime { item_id } => {
-            app.on_server_tool_finished(item_id.as_deref());
-        }
         ServerAction::ReplaceHistory(messages) => {
             app.run_state.history_snapshot = Some(messages);
             app.run_state.history_has_more = false;
@@ -267,7 +264,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             item,
             transcript_item,
         } => {
-            if should_clear_active_runtime(&transcript_item) {
+            if should_finish_active_runtime(&transcript_item) {
                 app.bottom_pane.on_active_runtime_finished(Some(&item.id));
             }
             app.transcript_owner.complete_item(
@@ -326,16 +323,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
     }
 }
 
-fn should_clear_active_runtime(transcript_item: &agent_core::conversation::TranscriptItem) -> bool {
-    !matches!(
-        transcript_item,
-        agent_core::conversation::TranscriptItem::CommandExecution {
-            status: agent_core::CommandExecutionStatus::InProgress,
-            ..
-        }
-    )
-}
-
 pub(crate) fn prepend_turn_page(
     older_turns: Vec<agent_core::ConversationTurn>,
     existing_turns: Vec<agent_core::ConversationTurn>,
@@ -348,4 +335,16 @@ pub(crate) fn prepend_turn_page(
         }
     }
     merged
+}
+
+fn should_finish_active_runtime(
+    transcript_item: &agent_core::conversation::TranscriptItem,
+) -> bool {
+    !matches!(
+        transcript_item,
+        agent_core::conversation::TranscriptItem::CommandExecution {
+            status: agent_core::CommandExecutionStatus::InProgress,
+            ..
+        }
+    )
 }

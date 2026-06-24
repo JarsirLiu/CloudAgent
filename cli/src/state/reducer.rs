@@ -98,9 +98,6 @@ pub(crate) enum ServerAction {
     },
     ClearContextCompactionStatus,
     DismissServerRequestView(RequestId),
-    ClearActiveRuntime {
-        item_id: Option<String>,
-    },
     ReplaceHistory(Vec<ConversationTurn>),
     ReplaceHistoryPage {
         turns: Vec<ConversationTurn>,

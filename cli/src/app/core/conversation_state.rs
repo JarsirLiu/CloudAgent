@@ -90,10 +90,6 @@ impl TuiApp {
         self.bottom_pane.on_turn_started();
     }
 
-    pub(crate) fn on_server_tool_finished(&mut self, item_id: Option<&str>) {
-        self.bottom_pane.on_active_runtime_finished(item_id);
-    }
-
     pub(crate) fn on_server_retrying(
         &mut self,
         stage: ModelRetryStage,

@@ -222,7 +222,7 @@ fn json_patch_delta_updates_active_file_change_item() {
 }
 
 #[test]
-fn completed_tool_result_clears_active_tool_and_commits_item() {
+fn completed_tool_result_commits_item_without_extra_clear_action() {
     let transcript_item = TranscriptItem::ToolResult {
         id: "ws-1".to_string(),
         tool_name: "web_search".to_string(),
@@ -244,11 +244,6 @@ fn completed_tool_result_clears_active_tool_and_commits_item() {
 
     let reduced = apply_server_message(&message);
 
-    assert!(reduced.actions.iter().any(|action| matches!(
-        action,
-        ServerAction::ClearActiveRuntime { item_id }
-            if item_id.as_deref() == Some("ws-1")
-    )));
     assert!(reduced.actions.iter().any(|action| {
         matches!(
             action,
@@ -412,9 +407,4 @@ fn context_compaction_notification_clears_runtime_and_posts_notice() {
             .iter()
             .any(|action| matches!(action, ServerAction::ClearContextCompactionStatus))
     );
-    assert!(reduced.actions.iter().any(|action| matches!(
-        action,
-        ServerAction::ClearActiveRuntime { item_id }
-            if item_id.is_none()
-    )));
 }

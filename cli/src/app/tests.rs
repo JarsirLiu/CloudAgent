@@ -1791,12 +1791,6 @@ fn completed_web_search_matches_standard_tool_result_lifecycle() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::ClearActiveRuntime {
-            item_id: Some("ws-1".to_string()),
-        },
-    );
-    execute_server_action(
-        &mut app,
         complete_active_turn_item_action(
             "turn-1",
             TranscriptItem::ToolResult {
