@@ -265,10 +265,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             item,
             transcript_item,
         } => {
-            if let agent_core::conversation::TranscriptItem::CommandExecution { status, .. } =
-                &transcript_item
-                && !matches!(status, agent_core::CommandExecutionStatus::InProgress)
-            {
+            if should_clear_active_runtime(&transcript_item) {
                 app.bottom_pane.on_active_runtime_finished(Some(&item.id));
             }
             app.transcript_owner.complete_item(
@@ -322,9 +319,19 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 },
             );
             app.bottom_pane
-                .push_toast(NoticeLevel::Warn, request.notice_text());
+            .push_toast(NoticeLevel::Warn, request.notice_text());
         }
     }
+}
+
+fn should_clear_active_runtime(transcript_item: &agent_core::conversation::TranscriptItem) -> bool {
+    !matches!(
+        transcript_item,
+        agent_core::conversation::TranscriptItem::CommandExecution {
+            status: agent_core::CommandExecutionStatus::InProgress,
+            ..
+        }
+    )
 }
 
 pub(crate) fn prepend_turn_page(

@@ -89,33 +89,9 @@ impl BottomPaneRuntimeState {
     }
 
     pub(crate) fn on_active_item_started(&mut self, item: &RuntimeItem) {
-        match item.kind {
-            TurnItemKind::AssistantMessage => {
-                self.active_runtime = None;
-                self.live_label = Some("Working".to_string());
-            }
-            TurnItemKind::Reasoning => {
-                self.active_runtime = None;
-                self.live_label = Some("Thinking".to_string());
-            }
-            TurnItemKind::CommandExecution => {
-                self.active_runtime =
-                    Some(ActiveRuntimeState::runtime_started(item, ActiveRuntimeKind::Command));
-                self.live_label = Some("Working".to_string());
-            }
-            TurnItemKind::ToolCall => {
-                self.active_runtime =
-                    Some(ActiveRuntimeState::runtime_started(item, ActiveRuntimeKind::Tool));
-                self.live_label = Some("Working".to_string());
-            }
-            TurnItemKind::ToolResult => {
-                self.active_runtime = Some(ActiveRuntimeState::runtime_started(item, ActiveRuntimeKind::Tool));
-                self.live_label = Some("Working".to_string());
-            }
-            _ => {
-                self.active_runtime = None;
-            }
-        }
+        let started = StartedItemState::from_item(item);
+        self.active_runtime = started.active_runtime;
+        self.live_label = started.live_label;
     }
 
     pub(crate) fn on_active_runtime_output_delta(
@@ -123,10 +99,7 @@ impl BottomPaneRuntimeState {
         item_id: Option<&str>,
         delta: &str,
     ) {
-        self.active_runtime
-            .as_mut()
-            .into_iter()
-            .for_each(|runtime| runtime.append_output(item_id, delta));
+        self.update_active_runtime(item_id, |runtime| runtime.append_output(item_id, delta));
     }
 
     pub(crate) fn on_item_progress(
@@ -134,10 +107,7 @@ impl BottomPaneRuntimeState {
         item_id: Option<&str>,
         progress: &RuntimeItemProgress,
     ) {
-        self.active_runtime
-            .as_mut()
-            .into_iter()
-            .for_each(|runtime| runtime.update_progress(item_id, progress));
+        self.update_active_runtime(item_id, |runtime| runtime.update_progress(item_id, progress));
     }
 
     pub(crate) fn on_item_metrics_updated(
@@ -145,16 +115,23 @@ impl BottomPaneRuntimeState {
         item_id: Option<&str>,
         metrics: &RuntimeItemMetrics,
     ) {
-        self.active_runtime
-            .as_mut()
-            .into_iter()
-            .for_each(|runtime| runtime.update_metrics(item_id, metrics));
+        self.update_active_runtime(item_id, |runtime| runtime.update_metrics(item_id, metrics));
     }
 
-    pub(crate) fn active_banner_text(&self) -> Option<String> {
-        self.active_runtime
+    pub(crate) fn display_banner_text(&self) -> Option<String> {
+        if let Some(text) = self
+            .active_runtime
             .as_ref()
             .map(ActiveRuntimeState::banner_text)
+        {
+            return Some(text);
+        }
+        let live_label = self.live_label.as_deref()?;
+        let live_label = live_label.trim();
+        if live_label.is_empty() || live_label.eq_ignore_ascii_case("working") {
+            return None;
+        }
+        Some(live_label.to_string())
     }
 
     #[cfg(test)]
@@ -168,21 +145,30 @@ impl BottomPaneRuntimeState {
     }
 
     pub(crate) fn on_active_runtime_finished(&mut self, item_id: Option<&str>) {
-        let should_clear = self
-            .active_runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.matches_item(item_id))
-            || item_id.is_none();
+        let should_clear = self.active_runtime_matches(item_id) || item_id.is_none();
         if should_clear {
             self.active_runtime = None;
         }
     }
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ActiveRuntimeKind {
-    Command,
-    Tool,
+    fn active_runtime_matches(&self, item_id: Option<&str>) -> bool {
+        self.active_runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.matches_item(item_id))
+    }
+
+    fn update_active_runtime(
+        &mut self,
+        item_id: Option<&str>,
+        update: impl FnOnce(&mut ActiveRuntimeState),
+    ) {
+        let Some(runtime) = self.active_runtime.as_mut() else {
+            return;
+        };
+        if runtime.matches_item(item_id) {
+            update(runtime);
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -191,9 +177,9 @@ struct ActiveRuntimeState {
 }
 
 impl ActiveRuntimeState {
-    fn runtime_started(item: &RuntimeItem, kind: ActiveRuntimeKind) -> Self {
-        let banner = match kind {
-            ActiveRuntimeKind::Command => match item
+    fn from_started_item(item: &RuntimeItem) -> Option<Self> {
+        let banner = match item.kind {
+            TurnItemKind::CommandExecution => match item
                 .title
                 .as_deref()
                 .map(str::trim)
@@ -202,7 +188,7 @@ impl ActiveRuntimeState {
                 Some(command) => format!("running command: {command}"),
                 None => "running command".to_string(),
             },
-            ActiveRuntimeKind::Tool => match item
+            TurnItemKind::ToolCall | TurnItemKind::ToolResult => match item
                 .title
                 .as_deref()
                 .map(str::trim)
@@ -211,6 +197,7 @@ impl ActiveRuntimeState {
                 Some(tool) => format!("executing tool: {}", humanize_tool_label(tool)),
                 None => "executing tool".to_string(),
             },
+            _ => return None,
         };
         let mut state = Self {
             banner: RuntimeBannerState::new(Some(item.id.clone()), banner),
@@ -225,7 +212,7 @@ impl ActiveRuntimeState {
         if let Some(metrics) = item.metrics.as_ref() {
             state.update_metrics(Some(&item.id), metrics);
         }
-        state
+        Some(state)
     }
 
     #[cfg(test)]
@@ -253,6 +240,37 @@ impl ActiveRuntimeState {
 
     fn update_metrics(&mut self, item_id: Option<&str>, metrics: &RuntimeItemMetrics) {
         self.banner.update_metrics(item_id, metrics);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StartedItemState {
+    active_runtime: Option<ActiveRuntimeState>,
+    live_label: Option<String>,
+}
+
+impl StartedItemState {
+    fn from_item(item: &RuntimeItem) -> Self {
+        match item.kind {
+            TurnItemKind::AssistantMessage => Self {
+                active_runtime: None,
+                live_label: Some("Working".to_string()),
+            },
+            TurnItemKind::Reasoning => Self {
+                active_runtime: None,
+                live_label: Some("Thinking".to_string()),
+            },
+            TurnItemKind::CommandExecution | TurnItemKind::ToolCall | TurnItemKind::ToolResult => {
+                Self {
+                    active_runtime: ActiveRuntimeState::from_started_item(item),
+                    live_label: Some("Working".to_string()),
+                }
+            }
+            _ => Self {
+                active_runtime: None,
+                live_label: None,
+            },
+        }
     }
 }
 

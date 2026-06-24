@@ -436,15 +436,7 @@ impl BottomPaneController {
     }
 
     fn runtime_banner_text(&self) -> Option<String> {
-        if let Some(text) = self.runtime.active_banner_text() {
-            return Some(text);
-        }
-        let live_label = self.runtime.live_label.as_deref()?;
-        let live_label = live_label.trim();
-        if live_label.is_empty() || live_label.eq_ignore_ascii_case("working") {
-            return None;
-        }
-        Some(live_label.to_string())
+        self.runtime.display_banner_text()
     }
 
     #[cfg(test)]

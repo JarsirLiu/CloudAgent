@@ -177,7 +177,7 @@ impl ActiveTurnState {
                 self.ensure_turn(&turn_id);
                 let item_id = item.id.clone();
                 let replay_cells = self.flush_live_tail_if_different(&item_id);
-                if matches!(item.kind, TurnItemKind::CommandExecution) {
+                if !should_start_live_item(&item) {
                     return self.snapshot_effects_with_replay(replay_cells);
                 }
                 self.live_item = Some(ActiveItemView::new(
@@ -557,11 +557,13 @@ fn turn_item_kind(item: &TranscriptItem) -> TurnItemKind {
     }
 }
 
+fn should_start_live_item(item: &RuntimeItem) -> bool {
+    !matches!(item.kind, TurnItemKind::CommandExecution)
+}
+
 fn should_keep_completed_item_live(item: &TranscriptItem) -> bool {
     matches!(
         item,
-        TranscriptItem::CommandExecution { .. }
-            | TranscriptItem::FileChange { .. }
-            | TranscriptItem::ToolResult { .. }
+        TranscriptItem::FileChange { .. } | TranscriptItem::ToolResult { .. }
     )
 }
