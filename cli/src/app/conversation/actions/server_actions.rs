@@ -210,7 +210,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             item_id,
             delta,
         } => {
-            app.bottom_pane.on_active_runtime_output_delta(Some(&item_id), &delta);
+            app.bottom_pane
+                .on_active_runtime_output_delta(Some(&item_id), &delta);
             app.transcript_owner.append_tool_delta(
                 turn_id,
                 item_id,
@@ -258,7 +259,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             );
         }
         ServerAction::AppendActiveRuntimeOutputDelta { item_id, delta } => {
-            app.bottom_pane.on_active_runtime_output_delta(Some(&item_id), &delta);
+            app.bottom_pane
+                .on_active_runtime_output_delta(Some(&item_id), &delta);
         }
         ServerAction::CompleteActiveTurnItem {
             turn_id,
@@ -319,7 +321,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 },
             );
             app.bottom_pane
-            .push_toast(NoticeLevel::Warn, request.notice_text());
+                .push_toast(NoticeLevel::Warn, request.notice_text());
         }
     }
 }

@@ -7,7 +7,9 @@ use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
 pub(crate) fn route_server_message(message: &AppServerMessage) -> Vec<ServerAction> {
     let mut actions = Vec::new();
     match message {
-        AppServerMessage::Notification(notification) => route_notification(notification, &mut actions),
+        AppServerMessage::Notification(notification) => {
+            route_notification(notification, &mut actions)
+        }
         AppServerMessage::Request(request) => route_request(request, &mut actions),
     }
     actions
@@ -21,20 +23,16 @@ fn route_request(request: &AppServerRequest, actions: &mut Vec<ServerAction>) {
     } = request;
 
     let request = match request {
-        ServerRequest::CommandApproval { request } => {
-            ServerRequestPresentation::command(
-                request.tool_name.clone(),
-                request.reason.clone(),
-                preview_excerpt(&request.command_preview),
-            )
-        }
-        ServerRequest::FileChangeApproval { request } => {
-            ServerRequestPresentation::file_change(
-                request.tool_name.clone(),
-                request.reason.clone(),
-                preview_excerpt(&request.change_preview),
-            )
-        }
+        ServerRequest::CommandApproval { request } => ServerRequestPresentation::command(
+            request.tool_name.clone(),
+            request.reason.clone(),
+            preview_excerpt(&request.command_preview),
+        ),
+        ServerRequest::FileChangeApproval { request } => ServerRequestPresentation::file_change(
+            request.tool_name.clone(),
+            request.reason.clone(),
+            preview_excerpt(&request.change_preview),
+        ),
     };
 
     actions.push(ServerAction::ShowServerRequestPrompt {
@@ -225,7 +223,9 @@ fn route_notification(notification: &AppServerNotification, actions: &mut Vec<Se
             actions.push(ServerAction::ClearContextCompactionStatus);
             actions.push(ServerAction::ClearActiveRuntime { item_id: None });
         }
-        AppServerNotification::ContextCompactionStarted { estimated_tokens, .. } => {
+        AppServerNotification::ContextCompactionStarted {
+            estimated_tokens, ..
+        } => {
             actions.push(ServerAction::SetContextCompactionStatus {
                 estimated_tokens: *estimated_tokens,
             });

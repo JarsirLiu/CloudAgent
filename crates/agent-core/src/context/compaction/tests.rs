@@ -1,8 +1,8 @@
 use super::plan::{adjust_tail_start_for_tool_invariants, choose_tail_start};
 use super::*;
 use crate::conversation::{ResponseItem, input_items_to_plain_text};
-use crate::tool::{CommandExecutionStatus, StructuredToolResult, ToolCall, ToolIdentity};
 use crate::text_input_items;
+use crate::tool::{CommandExecutionStatus, StructuredToolResult, ToolCall, ToolIdentity};
 use serde_json::json;
 
 fn summary() -> CompactionSummary {

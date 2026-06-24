@@ -84,7 +84,8 @@ pub(crate) fn build_transcript_lines(
             previous_cell = Some(cell_key);
             continue;
         }
-        if (emitted_any || had_previous_context) && should_insert_gap(previous_cell.as_ref(), &cell_key)
+        if (emitted_any || had_previous_context)
+            && should_insert_gap(previous_cell.as_ref(), &cell_key)
         {
             lines.push(Line::from(""));
             if should_insert_extra_tool_gap(previous_cell.as_ref(), &cell_key, options.mode) {

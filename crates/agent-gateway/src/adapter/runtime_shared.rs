@@ -1,7 +1,7 @@
 use crate::gateway_event::OutboundTarget;
 use crate::message::InboundMessage;
-use agent_core::ServerRequestDecision;
 use agent_app_server_client::AppServerEvent;
+use agent_core::ServerRequestDecision;
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
 
 pub(crate) fn event_conversation_id(event: &AppServerEvent) -> Option<&str> {
@@ -119,39 +119,34 @@ pub(crate) fn build_turn_content(message: &InboundMessage) -> Vec<agent_core::In
 
 pub(crate) fn event_name(event: &AppServerEvent) -> &'static str {
     match event {
-        AppServerEvent::Message(AppServerMessage::Notification(notification)) => {
-            match notification {
-                AppServerNotification::TurnStarted { .. } => "turn_started",
-                AppServerNotification::ItemStarted { .. } => "item_started",
-                AppServerNotification::AgentMessageDelta { .. } => "agent_message_delta",
-                AppServerNotification::PlanDelta { .. } => "plan_delta",
-                AppServerNotification::ReasoningSummaryTextDelta { .. } => {
-                    "reasoning_summary_delta"
+        AppServerEvent::Message(AppServerMessage::Notification(notification)) => match notification
+        {
+            AppServerNotification::TurnStarted { .. } => "turn_started",
+            AppServerNotification::ItemStarted { .. } => "item_started",
+            AppServerNotification::AgentMessageDelta { .. } => "agent_message_delta",
+            AppServerNotification::PlanDelta { .. } => "plan_delta",
+            AppServerNotification::ReasoningSummaryTextDelta { .. } => "reasoning_summary_delta",
+            AppServerNotification::ReasoningTextDelta { .. } => "reasoning_text_delta",
+            AppServerNotification::CommandExecutionOutputDelta { .. } => "command_output_delta",
+            AppServerNotification::ToolOutputDelta { .. } => "tool_output_delta",
+            AppServerNotification::JsonPatchDelta { .. } => "json_patch_delta",
+            AppServerNotification::ItemCompleted { item, .. } => match item.kind {
+                agent_core::TurnItemKind::AssistantMessage => "agent_message_completed",
+                agent_core::TurnItemKind::Reasoning => "reasoning_completed",
+                agent_core::TurnItemKind::CommandExecution => "command_completed",
+                agent_core::TurnItemKind::FileChange => "file_change_completed",
+                agent_core::TurnItemKind::ToolCall | agent_core::TurnItemKind::ToolResult => {
+                    "tool_result_completed"
                 }
-                AppServerNotification::ReasoningTextDelta { .. } => "reasoning_text_delta",
-                AppServerNotification::CommandExecutionOutputDelta { .. } => {
-                    "command_output_delta"
-                }
-                AppServerNotification::ToolOutputDelta { .. } => "tool_output_delta",
-                AppServerNotification::JsonPatchDelta { .. } => "json_patch_delta",
-                AppServerNotification::ItemCompleted { item, .. } => match item.kind {
-                    agent_core::TurnItemKind::AssistantMessage => "agent_message_completed",
-                    agent_core::TurnItemKind::Reasoning => "reasoning_completed",
-                    agent_core::TurnItemKind::CommandExecution => "command_completed",
-                    agent_core::TurnItemKind::FileChange => "file_change_completed",
-                    agent_core::TurnItemKind::ToolCall | agent_core::TurnItemKind::ToolResult => {
-                        "tool_result_completed"
-                    }
-                    _ => "item_completed_other",
-                },
-                AppServerNotification::TurnCompleted { .. } => "turn_completed",
-                AppServerNotification::TurnFailed { .. } => "turn_failed",
-                AppServerNotification::TurnCancelled { .. } => "turn_cancelled",
-                AppServerNotification::Info { .. } => "info",
-                AppServerNotification::Error { .. } => "error",
-                _ => "notification_other",
-            }
-        }
+                _ => "item_completed_other",
+            },
+            AppServerNotification::TurnCompleted { .. } => "turn_completed",
+            AppServerNotification::TurnFailed { .. } => "turn_failed",
+            AppServerNotification::TurnCancelled { .. } => "turn_cancelled",
+            AppServerNotification::Info { .. } => "info",
+            AppServerNotification::Error { .. } => "error",
+            _ => "notification_other",
+        },
         AppServerEvent::Message(AppServerMessage::Request(_)) => "request",
         AppServerEvent::Lagged { .. } => "lagged",
         AppServerEvent::Disconnected { .. } => "disconnected",

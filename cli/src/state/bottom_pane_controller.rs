@@ -81,11 +81,7 @@ impl BottomPaneController {
         self.runtime.on_item_metrics_updated(item_id, metrics);
     }
 
-    pub(crate) fn on_active_runtime_output_delta(
-        &mut self,
-        item_id: Option<&str>,
-        delta: &str,
-    ) {
+    pub(crate) fn on_active_runtime_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
         self.runtime.on_active_runtime_output_delta(item_id, delta);
     }
 

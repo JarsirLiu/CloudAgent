@@ -8,7 +8,9 @@ use agent_core::{
     ModelRetryStage, ModelUsage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress,
     ServerRequestDecisionKind,
 };
-use agent_protocol::{AppClientCommand, AppServerMessage, ConversationViewSnapshot, InterruptDisposition, RequestId};
+use agent_protocol::{
+    AppClientCommand, AppServerMessage, ConversationViewSnapshot, InterruptDisposition, RequestId,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) enum TurnDispatch {

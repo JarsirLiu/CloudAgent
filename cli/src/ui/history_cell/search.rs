@@ -316,7 +316,12 @@ fn build_web_search_cell(
     }
 
     let detail = build_search_detail(presentation.detail, fields);
-    HistoryCell::search("Web search", presentation.summary, Some(detail), HistoryTone::Control)
+    HistoryCell::search(
+        "Web search",
+        presentation.summary,
+        Some(detail),
+        HistoryTone::Control,
+    )
 }
 
 fn format_search_workspace_detail(

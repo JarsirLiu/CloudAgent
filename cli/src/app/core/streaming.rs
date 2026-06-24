@@ -76,9 +76,8 @@ impl AgentStreamController {
         let live_source = self.source[self.stable_source_len..].to_string();
         AgentStreamOutput {
             stable_cells,
-            live_cell: (!live_source.is_empty()).then(|| {
-                self.live_agent_cell(live_source, self.emitted_any)
-            }),
+            live_cell: (!live_source.is_empty())
+                .then(|| self.live_agent_cell(live_source, self.emitted_any)),
         }
     }
 

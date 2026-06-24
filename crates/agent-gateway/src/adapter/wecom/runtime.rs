@@ -257,8 +257,6 @@ fn event_request(event: &AppServerEvent) -> Option<&AppServerRequest> {
 }
 
 #[cfg(test)]
-pub(crate) fn build_turn_content_for_tests(
-    message: &InboundMessage,
-) -> Vec<agent_core::InputItem> {
+pub(crate) fn build_turn_content_for_tests(message: &InboundMessage) -> Vec<agent_core::InputItem> {
     build_turn_content(message)
 }

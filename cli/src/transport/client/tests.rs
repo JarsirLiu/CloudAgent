@@ -368,4 +368,3 @@ async fn create_local_node_client_preserves_workspace_context_and_data_root() {
     let seen = server.await.expect("fake node server task");
     assert_eq!(seen, expected_contexts);
 }
-

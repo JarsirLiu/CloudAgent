@@ -43,7 +43,9 @@ impl ServerRequestPresentation {
 
     pub(crate) fn notice_text(&self) -> String {
         match self.kind {
-            ServerRequestKind::Command => format!("Command approval required for {}", self.tool_name),
+            ServerRequestKind::Command => {
+                format!("Command approval required for {}", self.tool_name)
+            }
             ServerRequestKind::FileChange => {
                 format!("File change approval required for {}", self.tool_name)
             }
@@ -85,7 +87,10 @@ mod tests {
         );
 
         assert_eq!(presentation.kind, ServerRequestKind::Command);
-        assert_eq!(presentation.notice_text(), "Command approval required for exec_command");
+        assert_eq!(
+            presentation.notice_text(),
+            "Command approval required for exec_command"
+        );
         assert_eq!(presentation.title_text(), "exec_command wants to run");
     }
 
@@ -95,7 +100,10 @@ mod tests {
             ServerRequestPresentation::file_change("edit_file", "needs review", "patch");
 
         assert_eq!(presentation.kind, ServerRequestKind::FileChange);
-        assert_eq!(presentation.notice_text(), "File change approval required for edit_file");
+        assert_eq!(
+            presentation.notice_text(),
+            "File change approval required for edit_file"
+        );
         assert_eq!(presentation.title_text(), "edit_file wants to edit files");
     }
 }

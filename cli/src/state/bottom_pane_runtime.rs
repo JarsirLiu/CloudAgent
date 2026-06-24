@@ -94,11 +94,7 @@ impl BottomPaneRuntimeState {
         self.live_label = started.live_label;
     }
 
-    pub(crate) fn on_active_runtime_output_delta(
-        &mut self,
-        item_id: Option<&str>,
-        delta: &str,
-    ) {
+    pub(crate) fn on_active_runtime_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
         self.update_active_runtime(item_id, |runtime| runtime.append_output(item_id, delta));
     }
 
@@ -107,7 +103,9 @@ impl BottomPaneRuntimeState {
         item_id: Option<&str>,
         progress: &RuntimeItemProgress,
     ) {
-        self.update_active_runtime(item_id, |runtime| runtime.update_progress(item_id, progress));
+        self.update_active_runtime(item_id, |runtime| {
+            runtime.update_progress(item_id, progress)
+        });
     }
 
     pub(crate) fn on_item_metrics_updated(
@@ -202,12 +200,16 @@ impl ActiveRuntimeState {
         let mut state = Self {
             banner: RuntimeBannerState::new(Some(item.id.clone()), banner),
         };
-        let progress = item.progress.as_ref().cloned().unwrap_or_else(|| RuntimeItemProgress {
-            message: item.summary.clone(),
-            completed: None,
-            total: None,
-            unit: None,
-        });
+        let progress = item
+            .progress
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| RuntimeItemProgress {
+                message: item.summary.clone(),
+                completed: None,
+                total: None,
+                unit: None,
+            });
         state.update_progress(Some(&item.id), &progress);
         if let Some(metrics) = item.metrics.as_ref() {
             state.update_metrics(Some(&item.id), metrics);

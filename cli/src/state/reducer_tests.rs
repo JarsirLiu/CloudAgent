@@ -406,10 +406,12 @@ fn context_compaction_notification_clears_runtime_and_posts_notice() {
             && message == "Context compacted: ~4000 -> ~1000 tokens"
             && *level == crate::state::NoticeLevel::Warn
     )));
-    assert!(reduced.actions.iter().any(|action| matches!(
-        action,
-        ServerAction::ClearContextCompactionStatus
-    )));
+    assert!(
+        reduced
+            .actions
+            .iter()
+            .any(|action| matches!(action, ServerAction::ClearContextCompactionStatus))
+    );
     assert!(reduced.actions.iter().any(|action| matches!(
         action,
         ServerAction::ClearActiveRuntime { item_id }

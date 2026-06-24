@@ -123,10 +123,8 @@ fn command_output_delta_stays_in_runtime_banner() {
             TurnItemKind::CommandExecution,
             Some("rg TODO"),
         ));
-    app.bottom_pane.on_active_runtime_output_delta(
-        Some("cmd-1"),
-        "src/main.rs:12: TODO clean this up\n",
-    );
+    app.bottom_pane
+        .on_active_runtime_output_delta(Some("cmd-1"), "src/main.rs:12: TODO clean this up\n");
 
     let status = app.bottom_pane.build_status_view_model(&app);
 
@@ -135,8 +133,7 @@ fn command_output_delta_stays_in_runtime_banner() {
         Some("running command: rg TODO · src/main.rs:12: TODO clean this up")
     );
 
-    app.bottom_pane
-        .on_active_runtime_finished(Some("cmd-1"));
+    app.bottom_pane.on_active_runtime_finished(Some("cmd-1"));
     let after = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(after.live_banner, None);
 }
@@ -169,8 +166,7 @@ fn web_search_progress_updates_runtime_banner() {
         Some("executing tool: Web search · weather seattle")
     );
 
-    app.bottom_pane
-        .on_active_runtime_finished(Some("ws-1"));
+    app.bottom_pane.on_active_runtime_finished(Some("ws-1"));
     let after = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(after.live_banner, None);
 }
@@ -204,7 +200,9 @@ fn tool_metrics_update_runtime_banner_with_tokens() {
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
         status.live_banner.as_deref(),
-        Some("executing tool: Web search · 1.2k input tok · 42 output tok · 1.3k total tok · 480 ms")
+        Some(
+            "executing tool: Web search · 1.2k input tok · 42 output tok · 1.3k total tok · 480 ms"
+        )
     );
 }
 
@@ -219,14 +217,10 @@ fn command_output_delta_keeps_recent_tail_compact() {
             Some("long command"),
         ));
 
-    app.bottom_pane.on_active_runtime_output_delta(
-        Some("cmd-1"),
-        &"alpha ".repeat(80),
-    );
-    app.bottom_pane.on_active_runtime_output_delta(
-        Some("cmd-1"),
-        "omega",
-    );
+    app.bottom_pane
+        .on_active_runtime_output_delta(Some("cmd-1"), &"alpha ".repeat(80));
+    app.bottom_pane
+        .on_active_runtime_output_delta(Some("cmd-1"), "omega");
 
     let status = app.bottom_pane.build_status_view_model(&app);
     let banner = status.live_banner.expect("command banner");
@@ -246,10 +240,8 @@ fn stale_command_output_delta_does_not_update_current_banner() {
             Some("cargo check"),
         ));
 
-    app.bottom_pane.on_active_runtime_output_delta(
-        Some("cmd-old"),
-        "old command output",
-    );
+    app.bottom_pane
+        .on_active_runtime_output_delta(Some("cmd-old"), "old command output");
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
@@ -269,8 +261,7 @@ fn stale_command_finish_does_not_clear_current_banner() {
             Some("cargo test"),
         ));
 
-    app.bottom_pane
-        .on_active_runtime_finished(Some("cmd-old"));
+    app.bottom_pane.on_active_runtime_finished(Some("cmd-old"));
 
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
@@ -296,10 +287,8 @@ fn in_progress_completion_keeps_command_runtime_until_final_completion() {
         Some("running command: slow command")
     );
 
-    app.bottom_pane.on_active_runtime_output_delta(
-        Some("cmd-1"),
-        "still running",
-    );
+    app.bottom_pane
+        .on_active_runtime_output_delta(Some("cmd-1"), "still running");
     let status = app.bottom_pane.build_status_view_model(&app);
     assert_eq!(
         status.live_banner.as_deref(),

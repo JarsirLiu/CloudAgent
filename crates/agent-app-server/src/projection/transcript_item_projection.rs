@@ -31,7 +31,10 @@ pub(super) fn projected_item_from_transcript_item(
             projected.reasoning_summary_part_opened = true;
         }
         TranscriptItem::CommandExecution {
-            command, summary, output, ..
+            command,
+            summary,
+            output,
+            ..
         } => {
             projected.kind = TurnItemKind::CommandExecution;
             projected.title = Some(command);
@@ -138,11 +141,7 @@ pub(super) fn projected_transcript_item_is_empty(item: &TranscriptItem) -> bool 
     }
 }
 
-fn base_projected_item(
-    turn_id: String,
-    item_id: String,
-    order_hint: usize,
-) -> ProjectedItemState {
+fn base_projected_item(turn_id: String, item_id: String, order_hint: usize) -> ProjectedItemState {
     ProjectedItemState {
         turn_id,
         item_id,

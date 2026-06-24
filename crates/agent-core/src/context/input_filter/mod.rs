@@ -76,9 +76,7 @@ fn filter_tool_output_for_item(
         return summary;
     }
     if let Some(StructuredToolResult::CommandExecution {
-        command,
-        output,
-        ..
+        command, output, ..
     }) = structured
     {
         return filter_command_execution_output(command, output.as_deref());
@@ -274,10 +272,7 @@ fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult)
     }
 }
 
-fn filter_command_execution_output(
-    command: &str,
-    output: Option<&str>,
-) -> String {
+fn filter_command_execution_output(command: &str, output: Option<&str>) -> String {
     let invocation = CommandInvocation::parse(command.trim());
     let merged = output.unwrap_or_default();
     if invocation.has_passthrough_flag() {
@@ -297,9 +292,7 @@ fn filter_command_execution_output(
         }
         CommandFamily::TestRunner => wrap_summary("test", &filter_test_output(merged), merged),
         CommandFamily::Install => wrap_summary("install", &filter_install_output(merged), merged),
-        CommandFamily::Generic => {
-            wrap_summary("generic", &filter_tool_output(merged), merged)
-        }
+        CommandFamily::Generic => wrap_summary("generic", &filter_tool_output(merged), merged),
     }
 }
 
