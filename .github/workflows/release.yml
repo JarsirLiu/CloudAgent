@@ -40,7 +40,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
+
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
