@@ -90,7 +90,7 @@ impl AgentStreamController {
     }
 
     fn live_agent_cell(&self, source: String, continuation: bool) -> HistoryCell {
-        HistoryCell::agent("", source, HistoryFormat::PlainText)
+        HistoryCell::agent("", source, HistoryFormat::Markdown)
             .with_stream_continuation(continuation)
             .with_provisional_stream(true)
             .with_stream_item_id(self.item_id.clone())
@@ -214,12 +214,12 @@ mod tests {
     }
 
     #[test]
-    fn live_tail_uses_plain_text_rendering() {
+    fn live_tail_uses_markdown_rendering() {
         let mut stream = AgentStreamController::new("a1");
         let output = stream.push_delta("first paragraph\n\nsecond paragraph");
         let live = output.live_cell.expect("live cell");
 
-        assert_eq!(live.format(), HistoryFormat::PlainText);
+        assert_eq!(live.format(), HistoryFormat::Markdown);
         assert_eq!(live.body(), "second paragraph");
     }
 }
