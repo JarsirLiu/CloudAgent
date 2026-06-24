@@ -1,41 +1,46 @@
 use crate::state::NoticeLevel;
 use crate::state::reducer::{ServerAction, TurnDispatch};
 use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation;
-use agent_core::{ServerRequest, TurnItemKind};
+use agent_core::{ServerRequest, ServerRequestDecision, TurnItemKind};
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
 
 pub(crate) fn route_server_message(message: &AppServerMessage) -> Vec<ServerAction> {
     let mut actions = Vec::new();
     match message {
         AppServerMessage::Notification(notification) => route_notification(notification, &mut actions),
-        AppServerMessage::Request(AppServerRequest::ServerRequest {
-            request_id,
-            request,
-            ..
-        }) => match request {
-            ServerRequest::CommandApproval { request } => {
-                actions.push(ServerAction::ShowServerRequestPrompt {
-                    request_id: request_id.clone(),
-                    request: ServerRequestPresentation::command(
-                        request.tool_name.clone(),
-                        request.reason.clone(),
-                        summarize_args_preview(&request.command_preview),
-                    ),
-                });
-            }
-            ServerRequest::FileChangeApproval { request } => {
-                actions.push(ServerAction::ShowServerRequestPrompt {
-                    request_id: request_id.clone(),
-                    request: ServerRequestPresentation::file_change(
-                        request.tool_name.clone(),
-                        request.reason.clone(),
-                        summarize_args_preview(&request.change_preview),
-                    ),
-                });
-            }
-        },
+        AppServerMessage::Request(request) => route_request(request, &mut actions),
     }
     actions
+}
+
+fn route_request(request: &AppServerRequest, actions: &mut Vec<ServerAction>) {
+    let AppServerRequest::ServerRequest {
+        request_id,
+        request,
+        ..
+    } = request;
+
+    let request = match request {
+        ServerRequest::CommandApproval { request } => {
+            ServerRequestPresentation::command(
+                request.tool_name.clone(),
+                request.reason.clone(),
+                preview_excerpt(&request.command_preview),
+            )
+        }
+        ServerRequest::FileChangeApproval { request } => {
+            ServerRequestPresentation::file_change(
+                request.tool_name.clone(),
+                request.reason.clone(),
+                preview_excerpt(&request.change_preview),
+            )
+        }
+    };
+
+    actions.push(ServerAction::ShowServerRequestPrompt {
+        request_id: request_id.clone(),
+        request,
+    });
 }
 
 fn route_notification(notification: &AppServerNotification, actions: &mut Vec<ServerAction>) {
@@ -177,11 +182,9 @@ fn route_notification(notification: &AppServerNotification, actions: &mut Vec<Se
         AppServerNotification::ConversationSwitched { conversation_id } => {
             actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
         }
-        AppServerNotification::Info { message, .. } => actions.push(ServerAction::PushNoticeCell {
-            label: "conversation".to_string(),
-            message: message.clone(),
-            level: NoticeLevel::Info,
-        }),
+        AppServerNotification::Info { message, .. } => {
+            push_notice(actions, "conversation", message, NoticeLevel::Info);
+        }
         AppServerNotification::InterruptResult { disposition, .. } => {
             actions.push(ServerAction::InterruptResult(disposition.clone()));
         }
@@ -210,15 +213,15 @@ fn route_notification(notification: &AppServerNotification, actions: &mut Vec<Se
             post_context_tokens_estimate,
             ..
         } => {
-            let summary = format!(
-                "Context compacted: ~{} -> ~{} tokens",
-                pre_context_tokens_estimate, post_context_tokens_estimate
+            push_notice(
+                actions,
+                "context",
+                &context_compacted_message(
+                    *pre_context_tokens_estimate,
+                    *post_context_tokens_estimate,
+                ),
+                NoticeLevel::Warn,
             );
-            actions.push(ServerAction::PushNoticeCell {
-                label: "context".to_string(),
-                message: summary,
-                level: NoticeLevel::Warn,
-            });
             actions.push(ServerAction::ClearContextCompactionStatus);
             actions.push(ServerAction::ClearActiveRuntime { item_id: None });
         }
@@ -239,19 +242,12 @@ fn route_notification(notification: &AppServerNotification, actions: &mut Vec<Se
             ..
         } => {
             actions.push(ServerAction::DismissServerRequestView(request_id.clone()));
-            actions.push(ServerAction::PushNoticeCell {
-                label: "request".to_string(),
-                message: format!(
-                    "Request {}{}",
-                    decision.label(),
-                    decision
-                        .reason
-                        .as_deref()
-                        .map(|r| format!(": {r}"))
-                        .unwrap_or_default()
-                ),
-                level: NoticeLevel::Info,
-            });
+            push_notice(
+                actions,
+                "request",
+                &server_request_resolved_message(decision),
+                NoticeLevel::Info,
+            );
         }
         AppServerNotification::TurnCompleted { .. } => {
             actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
@@ -270,7 +266,37 @@ fn route_notification(notification: &AppServerNotification, actions: &mut Vec<Se
     }
 }
 
-fn summarize_args_preview(arguments_preview: &str) -> String {
+fn push_notice(actions: &mut Vec<ServerAction>, label: &str, message: &str, level: NoticeLevel) {
+    actions.push(ServerAction::PushNoticeCell {
+        label: label.to_string(),
+        message: message.to_string(),
+        level,
+    });
+}
+
+fn server_request_resolved_message(decision: &ServerRequestDecision) -> String {
+    format!(
+        "Request {}{}",
+        decision.label(),
+        decision
+            .reason
+            .as_deref()
+            .map(|r| format!(": {r}"))
+            .unwrap_or_default()
+    )
+}
+
+fn context_compacted_message(
+    pre_context_tokens_estimate: u64,
+    post_context_tokens_estimate: u64,
+) -> String {
+    format!(
+        "Context compacted: ~{} -> ~{} tokens",
+        pre_context_tokens_estimate, post_context_tokens_estimate
+    )
+}
+
+fn preview_excerpt(arguments_preview: &str) -> String {
     let trimmed = arguments_preview.trim();
     if trimmed.is_empty() {
         return "(none)".to_string();

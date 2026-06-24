@@ -3,7 +3,7 @@ use agent_core::{
     CommandExecutionStatus, CompactionPhase, InputItem, RuntimeItem, StructuredToolResult,
     TranscriptItem, TurnState,
 };
-use agent_protocol::AppServerNotification;
+use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest, RequestId};
 
 #[test]
 fn conversation_history_action_preserves_turns() {
@@ -346,5 +346,73 @@ fn transport_closed_error_pushes_diagnostic_cell() {
         action,
         ServerAction::PushErrorCell(message)
             if message == "worker app server closed unexpectedly"
+    )));
+}
+
+#[test]
+fn server_request_preview_is_truncated_for_long_arguments() {
+    let message = AppServerMessage::Request(AppServerRequest::ServerRequest {
+        request_id: RequestId::Integer(42),
+        conversation_id: "default".to_string(),
+        request: agent_core::ServerRequest::CommandApproval {
+            request: agent_core::CommandApprovalRequest {
+                turn_id: "turn-1".to_string(),
+                tool_call_id: "call-1".to_string(),
+                tool_name: "exec_command".to_string(),
+                reason: "needs approval".to_string(),
+                command_preview: format!("echo {}", "x".repeat(120)),
+            },
+        },
+    });
+
+    let reduced = apply_server_message(&message);
+
+    let prompt = reduced
+        .actions
+        .into_iter()
+        .find_map(|action| match action {
+            ServerAction::ShowServerRequestPrompt { request, .. } => Some(request),
+            _ => None,
+        })
+        .expect("expected request prompt");
+
+    assert!(prompt.preview_text().contains("(truncated)"));
+}
+
+#[test]
+fn context_compaction_notification_clears_runtime_and_posts_notice() {
+    let message = AppServerMessage::Notification(AppServerNotification::ContextCompacted {
+        conversation_id: "default".to_string(),
+        turn_id: Some("turn-1".to_string()),
+        trigger: agent_core::CompactionTrigger::Auto,
+        reason: agent_core::CompactionReason::ContextLimit,
+        phase: CompactionPhase::MidTurn,
+        pre_context_tokens_estimate: 4_000,
+        post_context_tokens_estimate: 1_000,
+        pre_message_count: 20,
+        post_message_count: 5,
+        preserved_user_count: 1,
+    });
+
+    let reduced = apply_server_message(&message);
+
+    assert!(reduced.actions.iter().any(|action| matches!(
+        action,
+        ServerAction::PushNoticeCell {
+            label,
+            message,
+            level
+        } if label == "context"
+            && message == "Context compacted: ~4000 -> ~1000 tokens"
+            && *level == crate::state::NoticeLevel::Warn
+    )));
+    assert!(reduced.actions.iter().any(|action| matches!(
+        action,
+        ServerAction::ClearContextCompactionStatus
+    )));
+    assert!(reduced.actions.iter().any(|action| matches!(
+        action,
+        ServerAction::ClearActiveRuntime { item_id }
+            if item_id.is_none()
     )));
 }
