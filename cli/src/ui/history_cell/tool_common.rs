@@ -1,4 +1,5 @@
 use crate::tool_identity::WEB_SEARCH_TOOL_NAME;
+use agent_core::RuntimeItem;
 
 pub(super) fn humanize_tool_label(tool_name: &str) -> String {
     match tool_name {
@@ -56,4 +57,12 @@ pub(super) fn format_line_range(start_line: Option<usize>, end_line: Option<usiz
         (Some(start), _) => format!(":{start}"),
         _ => String::new(),
     }
+}
+
+pub(super) fn runtime_summary(item: &RuntimeItem) -> Option<String> {
+    item.progress
+        .as_ref()
+        .and_then(|progress| progress.message.clone())
+        .or_else(|| item.summary.clone())
+        .filter(|summary| !summary.trim().is_empty())
 }

@@ -1,4 +1,6 @@
-use super::tool_common::{compact_inline, compact_path, format_line_range, humanize_tool_label};
+use super::tool_common::{
+    compact_inline, compact_path, format_line_range, humanize_tool_label, runtime_summary,
+};
 use super::{ExplorationAggregate, HistoryCell, HistoryTone};
 use crate::runtime_metrics_display::format_runtime_metrics;
 use agent_core::{
@@ -379,15 +381,6 @@ fn search_status_suffix(status: &SearchWorkspaceStatus) -> &'static str {
         SearchWorkspaceStatus::NotFound => " missing",
     }
 }
-
-fn runtime_summary(item: &RuntimeItem) -> Option<String> {
-    item.progress
-        .as_ref()
-        .and_then(|progress| progress.message.clone())
-        .or_else(|| item.summary.clone())
-        .filter(|summary| !summary.trim().is_empty())
-}
-
 fn first_non_empty_line(text: &str) -> &str {
     text.lines()
         .find(|line| !line.trim().is_empty())

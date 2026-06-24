@@ -7,179 +7,60 @@ pub(super) fn projected_item_from_transcript_item(
     item: TranscriptItem,
     order_hint: usize,
 ) -> ProjectedItemState {
-    let kind = turn_item_kind_for_transcript_item(&item);
+    let mut projected = base_projected_item(turn_id, item.id().to_string(), order_hint);
     match item {
-        TranscriptItem::SystemMessage { id, text } => ProjectedItemState {
-            turn_id,
-            item_id: id,
-            call_id: None,
-            kind,
-            title: None,
-            summary: Some(text.clone()),
-            tool_identity: None,
-            structured: None,
-            progress: None,
-            metrics: None,
-            status: ProjectedItemStatus::Completed,
-            last_delta_kind: None,
-            user_content: Vec::new(),
-            text_buffer: text,
-            reasoning_buffer: String::new(),
-            tool_output_buffer: String::new(),
-            patch_buffer: String::new(),
-            reasoning_summary_part_opened: false,
-            order_hint: order_hint as u64,
-        },
-        TranscriptItem::UserMessage { id, content } => ProjectedItemState {
-            turn_id,
-            item_id: id,
-            call_id: None,
-            kind,
-            title: None,
-            summary: None,
-            tool_identity: None,
-            structured: None,
-            progress: None,
-            metrics: None,
-            status: ProjectedItemStatus::Completed,
-            last_delta_kind: None,
-            user_content: content.clone(),
-            text_buffer: String::new(),
-            reasoning_buffer: String::new(),
-            tool_output_buffer: String::new(),
-            patch_buffer: String::new(),
-            reasoning_summary_part_opened: false,
-            order_hint: order_hint as u64,
-        },
-        TranscriptItem::AgentMessage { id, text } => ProjectedItemState {
-            turn_id,
-            item_id: id,
-            call_id: None,
-            kind,
-            title: None,
-            summary: Some(text.clone()),
-            tool_identity: None,
-            structured: None,
-            progress: None,
-            metrics: None,
-            status: ProjectedItemStatus::Completed,
-            last_delta_kind: None,
-            user_content: Vec::new(),
-            text_buffer: text,
-            reasoning_buffer: String::new(),
-            tool_output_buffer: String::new(),
-            patch_buffer: String::new(),
-            reasoning_summary_part_opened: false,
-            order_hint: order_hint as u64,
-        },
-        TranscriptItem::Reasoning { id, title, text } => ProjectedItemState {
-            turn_id,
-            item_id: id,
-            call_id: None,
-            kind,
-            title: Some(title),
-            summary: Some(text.clone()),
-            tool_identity: None,
-            structured: None,
-            progress: None,
-            metrics: None,
-            status: ProjectedItemStatus::Completed,
-            last_delta_kind: None,
-            user_content: Vec::new(),
-            text_buffer: String::new(),
-            reasoning_buffer: text,
-            tool_output_buffer: String::new(),
-            patch_buffer: String::new(),
-            reasoning_summary_part_opened: true,
-            order_hint: order_hint as u64,
-        },
+        TranscriptItem::SystemMessage { text, .. } => {
+            projected.kind = TurnItemKind::SystemNote;
+            projected.summary = Some(text.clone());
+            projected.text_buffer = text;
+        }
+        TranscriptItem::UserMessage { content, .. } => {
+            projected.kind = TurnItemKind::UserMessage;
+            projected.user_content = content;
+        }
+        TranscriptItem::AgentMessage { text, .. } => {
+            projected.kind = TurnItemKind::AssistantMessage;
+            projected.summary = Some(text.clone());
+            projected.text_buffer = text;
+        }
+        TranscriptItem::Reasoning { title, text, .. } => {
+            projected.kind = TurnItemKind::Reasoning;
+            projected.title = Some(title);
+            projected.summary = Some(text.clone());
+            projected.reasoning_buffer = text;
+            projected.reasoning_summary_part_opened = true;
+        }
         TranscriptItem::CommandExecution {
-            id,
-            tool_name: _,
-            command,
-            current_directory: _,
-            status: _,
-            exit_code: _,
-            output: _,
-            duration_ms: _,
-            summary,
-        } => ProjectedItemState {
-            turn_id,
-            item_id: id,
-            call_id: None,
-            kind,
-            title: Some(command),
-            summary: Some(summary.clone()),
-            tool_identity: None,
-            structured: None,
-            progress: None,
-            metrics: None,
-            status: ProjectedItemStatus::Completed,
-            last_delta_kind: None,
-            user_content: Vec::new(),
-            text_buffer: String::new(),
-            reasoning_buffer: String::new(),
-            tool_output_buffer: summary,
-            patch_buffer: String::new(),
-            reasoning_summary_part_opened: false,
-            order_hint: order_hint as u64,
-        },
-        TranscriptItem::FileChange {
-            id,
-            tool_name: _,
-            path,
-            status: _,
-            files_changed: _,
-            summary,
-        } => ProjectedItemState {
-            turn_id,
-            item_id: id,
-            call_id: None,
-            kind,
-            title: Some(path),
-            summary: Some(summary.clone()),
-            tool_identity: None,
-            structured: None,
-            progress: None,
-            metrics: None,
-            status: ProjectedItemStatus::Completed,
-            last_delta_kind: None,
-            user_content: Vec::new(),
-            text_buffer: String::new(),
-            reasoning_buffer: String::new(),
-            tool_output_buffer: summary,
-            patch_buffer: String::new(),
-            reasoning_summary_part_opened: false,
-            order_hint: order_hint as u64,
-        },
+            command, summary, output, ..
+        } => {
+            projected.kind = TurnItemKind::CommandExecution;
+            projected.title = Some(command);
+            projected.summary = Some(summary.clone());
+            projected.tool_output_buffer = output.unwrap_or_default();
+            projected.text_buffer.clear();
+        }
+        TranscriptItem::FileChange { path, summary, .. } => {
+            projected.kind = TurnItemKind::FileChange;
+            projected.title = Some(path);
+            projected.summary = Some(summary.clone());
+            projected.tool_output_buffer = summary;
+        }
         TranscriptItem::ToolResult {
-            id,
             tool_name,
             content,
             summary,
             structured,
-        } => ProjectedItemState {
-            turn_id,
-            item_id: id,
-            call_id: None,
-            kind,
-            title: Some(tool_name),
-            summary: Some(summary.clone()),
-            tool_identity: None,
-            structured: structured.clone(),
-            progress: None,
-            metrics: None,
-            status: ProjectedItemStatus::Completed,
-            last_delta_kind: None,
-            user_content: Vec::new(),
-            text_buffer: String::new(),
-            reasoning_buffer: String::new(),
-            tool_output_buffer: content,
-            patch_buffer: String::new(),
-            reasoning_summary_part_opened: false,
-            order_hint: order_hint as u64,
-        },
+            ..
+        } => {
+            projected.kind = TurnItemKind::ToolResult;
+            projected.title = Some(tool_name);
+            projected.summary = Some(summary.clone());
+            projected.structured = structured;
+            projected.tool_output_buffer = content;
+        }
     }
+
+    projected
 }
 
 pub(super) fn projected_item_to_transcript_item(
@@ -241,18 +122,6 @@ pub(super) fn projected_item_to_transcript_item(
     }
 }
 
-pub(super) fn turn_item_kind_for_transcript_item(item: &TranscriptItem) -> TurnItemKind {
-    match item {
-        TranscriptItem::SystemMessage { .. } => TurnItemKind::SystemNote,
-        TranscriptItem::UserMessage { .. } => TurnItemKind::UserMessage,
-        TranscriptItem::AgentMessage { .. } => TurnItemKind::AssistantMessage,
-        TranscriptItem::CommandExecution { .. } => TurnItemKind::CommandExecution,
-        TranscriptItem::FileChange { .. } => TurnItemKind::FileChange,
-        TranscriptItem::ToolResult { .. } => TurnItemKind::ToolResult,
-        TranscriptItem::Reasoning { .. } => TurnItemKind::Reasoning,
-    }
-}
-
 pub(super) fn projected_transcript_item_is_empty(item: &TranscriptItem) -> bool {
     match item {
         TranscriptItem::SystemMessage { text, .. }
@@ -266,5 +135,33 @@ pub(super) fn projected_transcript_item_is_empty(item: &TranscriptItem) -> bool 
         TranscriptItem::CommandExecution { summary, .. }
         | TranscriptItem::FileChange { summary, .. }
         | TranscriptItem::ToolResult { summary, .. } => summary.trim().is_empty(),
+    }
+}
+
+fn base_projected_item(
+    turn_id: String,
+    item_id: String,
+    order_hint: usize,
+) -> ProjectedItemState {
+    ProjectedItemState {
+        turn_id,
+        item_id,
+        call_id: None,
+        kind: TurnItemKind::SystemNote,
+        title: None,
+        summary: None,
+        tool_identity: None,
+        structured: None,
+        progress: None,
+        metrics: None,
+        status: ProjectedItemStatus::Completed,
+        last_delta_kind: None,
+        user_content: Vec::new(),
+        text_buffer: String::new(),
+        reasoning_buffer: String::new(),
+        tool_output_buffer: String::new(),
+        patch_buffer: String::new(),
+        reasoning_summary_part_opened: false,
+        order_hint: order_hint as u64,
     }
 }

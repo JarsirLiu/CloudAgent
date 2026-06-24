@@ -1,6 +1,6 @@
 use crate::projection::transcript_item_projection::{
     projected_item_from_transcript_item, projected_item_to_transcript_item,
-    projected_transcript_item_is_empty, turn_item_kind_for_transcript_item,
+    projected_transcript_item_is_empty,
 };
 use crate::projection::turn_projection_state::{
     ActiveLifecycle, ProjectedItemState, ProjectedItemStatus, TurnProjectionState,
@@ -628,10 +628,6 @@ impl ConversationNotificationProjector {
         completed_item: &TranscriptItem,
         rollout_index: usize,
     ) {
-        if let Some(item_state) = self.items_by_item_id.get_mut(item_id) {
-            item_state.status = ProjectedItemStatus::Completed;
-            item_state.kind = turn_item_kind_for_transcript_item(completed_item);
-        }
         self.touch_turn(turn_id, rollout_index);
         let mut projected = projected_item_from_transcript_item(
             turn_id.to_string(),

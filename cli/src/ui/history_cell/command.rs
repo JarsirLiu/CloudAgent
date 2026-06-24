@@ -1,4 +1,4 @@
-use super::tool_common::{compact_inline, compact_path, humanize_tool_label};
+use super::tool_common::{compact_inline, compact_path, humanize_tool_label, runtime_summary};
 use super::{ExplorationAggregate, HistoryCell, HistoryTone};
 use crate::app::conversation::exploration::{
     is_exploration_command, summarize_exploration_command,
@@ -95,15 +95,6 @@ fn render_command_placeholder(command: &str) -> HistoryCell {
         HistoryTone::Control,
     )
 }
-
-fn runtime_summary(item: &RuntimeItem) -> Option<String> {
-    item.progress
-        .as_ref()
-        .and_then(|progress| progress.message.clone())
-        .or_else(|| item.summary.clone())
-        .filter(|summary| !summary.trim().is_empty())
-}
-
 fn command_state(
     status: &CommandExecutionStatus,
     exit_code: Option<i32>,
