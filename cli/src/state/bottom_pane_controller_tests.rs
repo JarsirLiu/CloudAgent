@@ -2,7 +2,7 @@ use crate::app::TuiApp;
 use crate::state::NoticeLevel;
 use crate::ui::bottom_pane::dialogs::selection::session_picker::SessionPickerMode;
 use crate::ui::bottom_pane::input_pane::InputPaneAction;
-use agent_core::{ConversationSummary, RuntimeItem, RuntimeItemMetrics, TurnItemKind};
+use agent_core::{ConversationSummary, ModelUsage, RuntimeItem, RuntimeItemMetrics, TurnItemKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 
@@ -203,6 +203,32 @@ fn tool_metrics_update_runtime_banner_with_tokens() {
         Some(
             "executing tool: Web search · 1.2k input tok · 42 output tok · 1.3k total tok · 480 ms"
         )
+    );
+}
+
+#[test]
+fn token_status_uses_last_usage_for_cached_tokens() {
+    let mut app = test_app();
+    app.run_state.last_turn_usage = Some(ModelUsage {
+        input_tokens: 1_000,
+        cached_input_tokens: 100,
+        output_tokens: 40,
+        reasoning_output_tokens: 0,
+        total_tokens: 1_040,
+    });
+    app.run_state.total_turn_usage = Some(ModelUsage {
+        input_tokens: 5_500,
+        cached_input_tokens: 4_200,
+        output_tokens: 140,
+        reasoning_output_tokens: 0,
+        total_tokens: 5_640,
+    });
+
+    let status = app.bottom_pane.build_status_view_model(&app);
+
+    assert_eq!(
+        status.meta,
+        "in 1.0k tokens · out 40 tokens · cached 100 tokens"
     );
 }
 

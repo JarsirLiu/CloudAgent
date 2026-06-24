@@ -7,7 +7,8 @@ use std::collections::HashMap;
 
 use adapters::git::filter_git_output;
 use adapters::install::filter_install_output;
-use adapters::rust::filter_rust_build_test_output;
+use adapters::python::filter_python_output;
+use adapters::rust::{filter_cargo_build_output, filter_cargo_clippy_output, filter_cargo_fmt_output, filter_cargo_install_output, filter_cargo_test_output};
 use adapters::tests::filter_test_output;
 use pipeline::filter_tool_output;
 
@@ -92,8 +93,15 @@ struct CommandInvocation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CommandFamily {
-    Git,
-    Cargo,
+    GitStatus,
+    GitDiff,
+    GitLog,
+    CargoTest,
+    CargoBuild,
+    CargoClippy,
+    CargoFmt,
+    CargoInstall,
+    Python,
     TestRunner,
     Install,
     Generic,
@@ -120,14 +128,48 @@ impl CommandInvocation {
             .any(|arg| matches!(arg.as_str(), "--verbose" | "-vv" | "--nocapture" | "--full"))
     }
 
+    fn is_git_status(&self) -> bool {
+        self.program == "git" && self.first_non_option_arg() == Some("status")
+    }
+
+    fn is_git_diff(&self) -> bool {
+        self.program == "git" && self.first_non_option_arg() == Some("diff")
+    }
+
+    fn is_git_log(&self) -> bool {
+        self.program == "git" && self.first_non_option_arg() == Some("log")
+    }
+
+    fn is_cargo_install(&self) -> bool {
+        self.program == "cargo" && self.first_non_option_arg() == Some("install")
+    }
+
+    fn is_cargo_test(&self) -> bool {
+        self.program == "cargo" && self.first_non_option_arg() == Some("test")
+    }
+
+    fn is_cargo_build(&self) -> bool {
+        self.program == "cargo" && self.first_non_option_arg() == Some("build")
+    }
+
+    fn is_cargo_clippy(&self) -> bool {
+        self.program == "cargo" && self.first_non_option_arg() == Some("clippy")
+    }
+
+    fn is_cargo_fmt(&self) -> bool {
+        self.program == "cargo" && self.first_non_option_arg() == Some("fmt")
+    }
+
     fn family(&self) -> CommandFamily {
         match self.program.as_str() {
-            "git" => CommandFamily::Git,
-            "cargo" => match self.first_non_option_arg() {
-                Some("install") => CommandFamily::Install,
-                Some("test") | Some("build") => CommandFamily::Cargo,
-                _ => CommandFamily::Generic,
-            },
+            "git" if self.is_git_status() => CommandFamily::GitStatus,
+            "git" if self.is_git_diff() => CommandFamily::GitDiff,
+            "git" if self.is_git_log() => CommandFamily::GitLog,
+            "cargo" if self.is_cargo_install() => CommandFamily::CargoInstall,
+            "cargo" if self.is_cargo_test() => CommandFamily::CargoTest,
+            "cargo" if self.is_cargo_build() => CommandFamily::CargoBuild,
+            "cargo" if self.is_cargo_clippy() => CommandFamily::CargoClippy,
+            "cargo" if self.is_cargo_fmt() => CommandFamily::CargoFmt,
             "pytest" | "py.test" => CommandFamily::TestRunner,
             "python" | "python3" => {
                 if self
@@ -136,6 +178,8 @@ impl CommandInvocation {
                     .any(|window| window[0] == "-m" && window[1] == "pytest")
                 {
                     CommandFamily::TestRunner
+                } else if self.args.iter().any(|arg| arg == "-m") {
+                    CommandFamily::Python
                 } else {
                     CommandFamily::Generic
                 }
@@ -145,6 +189,7 @@ impl CommandInvocation {
                 Some("install") => CommandFamily::Install,
                 _ => CommandFamily::Generic,
             },
+            "pip" | "pip3" => CommandFamily::Python,
             _ => CommandFamily::Generic,
         }
     }
@@ -279,7 +324,7 @@ fn filter_command_execution_output(command: &str, output: Option<&str>) -> Strin
         return merged.to_string();
     }
     match invocation.family() {
-        CommandFamily::Git => {
+        CommandFamily::GitStatus => {
             let normalized_command = normalized_command_line(&invocation);
             wrap_summary(
                 "git",
@@ -287,9 +332,40 @@ fn filter_command_execution_output(command: &str, output: Option<&str>) -> Strin
                 merged,
             )
         }
-        CommandFamily::Cargo => {
-            wrap_summary("cargo", &filter_rust_build_test_output(merged), merged)
+        CommandFamily::GitDiff => {
+            let normalized_command = normalized_command_line(&invocation);
+            wrap_summary(
+                "git",
+                &filter_git_output(&normalized_command, merged),
+                merged,
+            )
         }
+        CommandFamily::GitLog => {
+            let normalized_command = normalized_command_line(&invocation);
+            wrap_summary(
+                "git",
+                &filter_git_output(&normalized_command, merged),
+                merged,
+            )
+        }
+        CommandFamily::CargoTest => {
+            wrap_summary("cargo", &filter_cargo_test_output(merged), merged)
+        }
+        CommandFamily::CargoBuild => {
+            wrap_summary("cargo", &filter_cargo_build_output(merged), merged)
+        }
+        CommandFamily::CargoClippy => {
+            wrap_summary("cargo", &filter_cargo_clippy_output(merged), merged)
+        }
+        CommandFamily::CargoFmt => wrap_summary("cargo", &filter_cargo_fmt_output(merged), merged),
+        CommandFamily::CargoInstall => {
+            wrap_summary("install", &filter_cargo_install_output(merged), merged)
+        }
+        CommandFamily::Python => wrap_summary(
+            "python",
+            &filter_python_output(&normalized_command_line(&invocation), merged),
+            merged,
+        ),
         CommandFamily::TestRunner => wrap_summary("test", &filter_test_output(merged), merged),
         CommandFamily::Install => wrap_summary("install", &filter_install_output(merged), merged),
         CommandFamily::Generic => wrap_summary("generic", &filter_tool_output(merged), merged),

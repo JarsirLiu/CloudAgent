@@ -9,6 +9,7 @@ pub(crate) fn filter_install_output(raw: &str) -> String {
                 || l.contains("warning")
                 || l.contains("added")
                 || l.contains("installed")
+                || l.contains("success")
                 || l.contains("audited")
                 || l.contains("finished")
                 || l.contains("compiling")

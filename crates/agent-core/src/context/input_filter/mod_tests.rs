@@ -45,9 +45,105 @@ fn git_diff_is_summarized() {
         FilterPolicy { enabled: true },
     );
     match &out[0] {
-        ResponseItem::Tool { content, .. } => assert!(content.contains("Git diff summary")),
+        ResponseItem::Tool { content, .. } => {
+            assert!(content.contains("Git diff summary"));
+            assert!(content.contains("files changed"));
+        }
         _ => panic!("expected tool message"),
     }
+}
+
+#[test]
+fn git_diff_truncates_to_key_hunks() {
+    let raw = "diff --git a/src/a.rs b/src/a.rs\nindex 111..222 100644\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,3 +1,3 @@\n-old1\n-old2\n+new1\n+new2\n@@ -10,3 +10,3 @@\n-old3\n+new3\n@@ -20,3 +20,3 @@\n-old4\n+new4\ndiff --git a/src/b.rs b/src/b.rs\nindex 333..444 100644\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -1,3 +1,3 @@\n-old5\n+new5";
+    let out = run_filter("git diff", Some(raw));
+    assert!(out.contains("Git diff summary"));
+    assert!(out.contains("changed files:"));
+    assert!(out.contains("src/a.rs"));
+    assert!(out.contains("src/b.rs"));
+}
+
+#[test]
+fn git_log_is_summarized() {
+    let out = run_filter("git log --oneline", Some("commit abc123\ncommit def456"));
+    assert!(out.contains("Git log summary"));
+    assert!(out.contains("2 commits"));
+}
+
+#[test]
+fn git_log_keeps_commit_subject_and_body_line() {
+    let raw = "commit abc123\nAuthor: A <a@example.com>\nDate:   Tue Jun 24 21:00:00 2026 +0800\n\n    feat: add cache\n    preserve commit body first line\n\ncommit def456\nAuthor: B <b@example.com>\nDate:   Tue Jun 24 21:10:00 2026 +0800\n\n    fix: adjust diff summary";
+    let out = run_filter("git log --format=full", Some(raw));
+    assert!(out.contains("Git log summary"));
+    assert!(out.contains("abc123"));
+    assert!(out.contains("feat: add cache"));
+    assert!(out.contains("preserve commit body first line"));
+}
+
+#[test]
+fn cargo_test_is_summarized() {
+    let out = run_filter("cargo test", Some("error: failed\nwarning: unused\nFAILED test_x"));
+    assert!(out.contains("Cargo test summary"));
+    assert!(out.contains("failures"));
+}
+
+#[test]
+fn cargo_test_prefers_failure_block_details() {
+    let raw = "running 3 tests\n---- tests::it_works stdout ----\nthread 'tests::it_works' panicked at 'boom'\nnote: run with `RUST_BACKTRACE=1`\nfailures:\n    tests::it_works\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored";
+    let out = run_filter("cargo test", Some(raw));
+    assert!(out.contains("Cargo test summary"));
+    assert!(out.contains("panicked"));
+    assert!(out.contains("failures:"));
+}
+
+#[test]
+fn cargo_build_is_summarized() {
+    let out = run_filter("cargo build", Some("error: failed\nwarning: unused"));
+    assert!(out.contains("Cargo build summary"));
+    assert!(out.contains("warnings"));
+}
+
+#[test]
+fn cargo_build_keeps_error_and_warning_lines() {
+    let out = run_filter("cargo build", Some("error: failed\nwarning: unused\nnote: help"));
+    assert!(out.contains("Cargo build summary"));
+    assert!(out.contains("error: failed"));
+    assert!(out.contains("warning: unused"));
+}
+
+#[test]
+fn cargo_test_uses_test_summary_header() {
+    let out = run_filter("cargo test", Some("FAILED test_x"));
+    assert!(out.starts_with("[rtk:cargo]"));
+    assert!(out.contains("Cargo test summary"));
+}
+
+#[test]
+fn cargo_build_uses_build_summary_header() {
+    let out = run_filter("cargo build", Some("warning: unused"));
+    assert!(out.starts_with("[rtk:cargo]"));
+    assert!(out.contains("Cargo build summary"));
+}
+
+#[test]
+fn cargo_clippy_uses_clippy_summary() {
+    let out = run_filter("cargo clippy", Some("warning: clippy::"));
+    assert!(out.contains("Cargo clippy summary"));
+}
+
+#[test]
+fn cargo_fmt_uses_fmt_summary() {
+    let out = run_filter("cargo fmt", Some("Formatted src/lib.rs"));
+    assert!(out.contains("Cargo fmt summary"));
+}
+
+#[test]
+fn cargo_fmt_keeps_useful_lines() {
+    let raw = "Running rustfmt\nFormatted src/lib.rs\nwarning: foo\nerror: bar";
+    let out = run_filter("cargo fmt", Some(raw));
+    assert!(out.contains("Cargo fmt summary"));
+    assert!(out.contains("Formatted src/lib.rs"));
+    assert!(out.contains("warning: foo"));
 }
 
 #[test]
@@ -85,6 +181,12 @@ fn cargo_install_uses_install_header() {
 }
 
 #[test]
+fn cargo_install_summarizes_install_output() {
+    let out = run_filter("cargo install ripgrep", Some("finished\ninstalled ripgrep\nsuccess"));
+    assert!(out.contains("Install summary"));
+}
+
+#[test]
 fn git_status_uses_git_header() {
     let raw = "modified: a.rs\nnew file: b.rs";
     let out = run_filter("git status", Some(raw));
@@ -98,6 +200,25 @@ fn test_runner_uses_test_header() {
     let out = run_filter("pytest -q", Some(raw));
     assert!(out.starts_with("[rtk:test]"));
     assert!(out.contains("Test summary"));
+}
+
+#[test]
+fn python_pytest_is_compressed() {
+    let raw = "=========================== test session starts ===========================\nPASSED t1\nFAILED t2\nSKIPPED t3\nERROR t4";
+    let out = run_filter("python -m pytest -q", Some(raw));
+    assert!(out.starts_with("[rtk:test]"));
+    assert!(out.contains("Test summary"));
+    assert!(out.contains("passed"));
+    assert!(out.contains("failed"));
+}
+
+#[test]
+fn python_pip_install_is_compressed() {
+    let raw = "Collecting foo\nDownloading foo\nSuccessfully installed foo-1.0.0\nWARNING: running pip as root";
+    let out = run_filter("pip install foo", Some(raw));
+    assert!(out.starts_with("[rtk:python]"));
+    assert!(out.contains("Python pip install summary"));
+    assert!(out.contains("Successfully installed"));
 }
 
 #[test]
