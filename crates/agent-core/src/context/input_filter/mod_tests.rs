@@ -2,8 +2,8 @@ use super::*;
 use crate::text_input_items;
 use crate::tool::StructuredToolResult;
 
-fn run_filter(command: &str, output: Option<&str>, success: Option<bool>) -> String {
-    filter_command_execution_output(command, output, success)
+fn run_filter(command: &str, output: Option<&str>) -> String {
+    filter_command_execution_output(command, output)
 }
 
 #[test]
@@ -60,41 +60,34 @@ fn install_output_is_compacted() {
 
 #[test]
 fn passthrough_verbose_command() {
-    let out = run_filter("cargo test -- --nocapture", Some("full output"), None);
+    let out = run_filter("cargo test -- --nocapture", Some("full output"));
     assert_eq!(out, "full output");
 }
 
 #[test]
 fn generic_output_has_stable_header() {
-    let out = run_filter("echo hi", Some("line1\nline2"), None);
+    let out = run_filter("echo hi", Some("line1\nline2"));
     assert!(out.starts_with("[rtk:generic]"));
 }
 
 #[test]
 fn python_module_pytest_uses_test_header() {
     let raw = "PASSED t1\nFAILED t2";
-    let out = run_filter("python -m pytest -q", Some(raw), None);
+    let out = run_filter("python -m pytest -q", Some(raw));
     assert!(out.starts_with("[rtk:test]"));
     assert!(out.contains("Test summary"));
 }
 
 #[test]
 fn cargo_install_uses_install_header() {
-    let out = run_filter("cargo install ripgrep", Some("installed ripgrep"), None);
+    let out = run_filter("cargo install ripgrep", Some("installed ripgrep"));
     assert!(out.starts_with("[rtk:install]"));
-}
-
-#[test]
-fn failed_command_keeps_tail_with_header() {
-    let out = run_filter("unknown", Some("a\nb\nc"), Some(false));
-    assert!(out.starts_with("[rtk:fallback]"));
-    assert!(out.contains("c"));
 }
 
 #[test]
 fn git_status_uses_git_header() {
     let raw = "modified: a.rs\nnew file: b.rs";
-    let out = run_filter("git status", Some(raw), None);
+    let out = run_filter("git status", Some(raw));
     assert!(out.starts_with("[rtk:git]"));
     assert!(out.contains("changed files"));
 }
@@ -102,7 +95,7 @@ fn git_status_uses_git_header() {
 #[test]
 fn test_runner_uses_test_header() {
     let raw = "PASSED t1\nFAILED t2";
-    let out = run_filter("pytest -q", Some(raw), None);
+    let out = run_filter("pytest -q", Some(raw));
     assert!(out.starts_with("[rtk:test]"));
     assert!(out.contains("Test summary"));
 }

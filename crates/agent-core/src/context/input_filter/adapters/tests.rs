@@ -1,4 +1,4 @@
-use super::super::pipeline::filter_failure_tail;
+use super::super::pipeline::filter_tool_output;
 
 pub(crate) fn filter_test_output(raw: &str) -> String {
     let failed = raw
@@ -10,8 +10,8 @@ pub(crate) fn filter_test_output(raw: &str) -> String {
         .filter(|l| l.contains("PASSED") || l.contains("passed"))
         .count();
     let mut out = format!("Test summary: {passed} passed, {failed} failed");
-    let tail = filter_failure_tail(raw);
-    if !tail.is_empty() {
+    let tail = filter_tool_output(raw);
+    if tail != "(no significant output)" {
         out.push('\n');
         out.push_str(&tail);
     }

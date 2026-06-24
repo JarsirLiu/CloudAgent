@@ -7,7 +7,14 @@ use crate::{AttachmentRef, ImageDetail, InputItem, input_items_to_plain_text, te
 use serde_json::json;
 
 fn summary() -> crate::context::CompactionSummary {
-    crate::context::CompactionSummary::from_model_output("Current Task:\n- old").ensure_defaults()
+    crate::context::CompactionSummary {
+        current_task: vec!["old".to_string()],
+        progress: Vec::new(),
+        key_decisions: Vec::new(),
+        important_context: Vec::new(),
+        tool_code_facts: Vec::new(),
+        next_steps: Vec::new(),
+    }
 }
 
 #[test]
@@ -413,8 +420,7 @@ fn marks_cancelled_compacted_tool_turn_as_aborted() {
             RolloutItem::Compacted {
                 summary: crate::context::CompactionSummary::from_model_output(
                     "Current Task:\n- older",
-                )
-                .ensure_defaults(),
+                ),
                 rendered_summary: "[Context Summary]\nolder".to_string(),
                 trigger: CompactionTrigger::Auto,
                 reason: CompactionReason::ContextLimit,

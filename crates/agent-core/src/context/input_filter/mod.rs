@@ -9,7 +9,7 @@ use adapters::git::filter_git_output;
 use adapters::install::filter_install_output;
 use adapters::rust::filter_rust_build_test_output;
 use adapters::tests::filter_test_output;
-use pipeline::{filter_failure_tail, filter_tool_output};
+use pipeline::filter_tool_output;
 
 #[derive(Clone, Debug, Default)]
 pub struct ContextInputFilterService;
@@ -78,11 +78,10 @@ fn filter_tool_output_for_item(
     if let Some(StructuredToolResult::CommandExecution {
         command,
         output,
-        success,
         ..
     }) = structured
     {
-        return filter_command_execution_output(command, output.as_deref(), *success);
+        return filter_command_execution_output(command, output.as_deref());
     }
     filter_tool_output(content)
 }
@@ -278,7 +277,6 @@ fn render_superseded_summary(tool_name: &str, structured: &StructuredToolResult)
 fn filter_command_execution_output(
     command: &str,
     output: Option<&str>,
-    success: Option<bool>,
 ) -> String {
     let invocation = CommandInvocation::parse(command.trim());
     let merged = output.unwrap_or_default();
@@ -300,9 +298,6 @@ fn filter_command_execution_output(
         CommandFamily::TestRunner => wrap_summary("test", &filter_test_output(merged), merged),
         CommandFamily::Install => wrap_summary("install", &filter_install_output(merged), merged),
         CommandFamily::Generic => {
-            if success == Some(false) {
-                return wrap_summary("fallback", &filter_failure_tail(merged), merged);
-            }
             wrap_summary("generic", &filter_tool_output(merged), merged)
         }
     }

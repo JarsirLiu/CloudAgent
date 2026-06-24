@@ -19,9 +19,18 @@ pub(crate) async fn summarize_compaction_plan<H: TurnHost>(
         .complete_model_request(cancellation_token, summary_request)
         .await?;
 
-    Ok(summary_response
-        .content
-        .map(|text| CompactionSummary::from_model_output(&text).ensure_defaults())
-        .filter(|summary| !summary.current_task.is_empty())
-        .unwrap_or_else(|| CompactionSummary::fallback_from_plan(&plan.filtered_plan)))
+    let Some(text) = summary_response.content else {
+        anyhow::bail!("compaction summary model returned no content");
+    };
+    let summary = CompactionSummary::from_model_output(&text);
+    if summary.current_task.is_empty()
+        && summary.progress.is_empty()
+        && summary.key_decisions.is_empty()
+        && summary.important_context.is_empty()
+        && summary.tool_code_facts.is_empty()
+        && summary.next_steps.is_empty()
+    {
+        anyhow::bail!("compaction summary model returned an empty structured summary");
+    }
+    Ok(summary)
 }

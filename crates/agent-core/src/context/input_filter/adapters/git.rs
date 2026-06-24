@@ -1,4 +1,4 @@
-use super::super::pipeline::{filter_failure_tail, filter_tool_output};
+use super::super::pipeline::filter_tool_output;
 
 pub(crate) fn filter_git_output(cmd: &str, raw: &str) -> String {
     if cmd.starts_with("git status") {
@@ -11,7 +11,7 @@ pub(crate) fn filter_git_output(cmd: &str, raw: &str) -> String {
         if files > 0 {
             return format!(
                 "Git status: {files} changed files\n{}",
-                filter_failure_tail(raw)
+                filter_tool_output(raw)
             );
         }
     }
@@ -26,7 +26,7 @@ pub(crate) fn filter_git_output(cmd: &str, raw: &str) -> String {
             .count();
         return format!(
             "Git diff summary: +{adds} / -{dels}\n{}",
-            filter_failure_tail(raw)
+            filter_tool_output(raw)
         );
     }
     filter_tool_output(raw)

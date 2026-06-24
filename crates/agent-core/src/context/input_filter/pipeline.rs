@@ -1,11 +1,3 @@
-pub(crate) fn filter_failure_tail(raw: &str) -> String {
-    let lines = raw.lines().map(strip_ansi).collect::<Vec<_>>();
-    if lines.len() <= 40 {
-        return lines.join("\n");
-    }
-    lines[lines.len() - 40..].join("\n")
-}
-
 pub(crate) fn filter_tool_output(content: &str) -> String {
     let mut lines = content
         .lines()

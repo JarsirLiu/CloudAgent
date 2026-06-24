@@ -2,14 +2,18 @@ use super::plan::{adjust_tail_start_for_tool_invariants, choose_tail_start};
 use super::*;
 use crate::conversation::{ResponseItem, input_items_to_plain_text};
 use crate::tool::{CommandExecutionStatus, StructuredToolResult, ToolCall, ToolIdentity};
-use crate::{AttachmentRef, ImageDetail, InputItem, text_input_items};
+use crate::text_input_items;
 use serde_json::json;
 
 fn summary() -> CompactionSummary {
-    CompactionSummary::from_model_output(
-        "Current Task:\n- Continue\n\nProgress:\n- Tool output was summarized\n\nKey Decisions:\n- Keep replacement history clean\n\nImportant Context:\n- Use recent user intent\n\nTool / Code Facts:\n- exec_command returned ok\n\nNext Steps:\n- Continue",
-    )
-    .ensure_defaults()
+    CompactionSummary {
+        current_task: vec!["Continue".to_string()],
+        progress: vec!["Tool output was summarized".to_string()],
+        key_decisions: vec!["Keep replacement history clean".to_string()],
+        important_context: vec!["Use recent user intent".to_string()],
+        tool_code_facts: vec!["exec_command returned ok".to_string()],
+        next_steps: vec!["Continue".to_string()],
+    }
 }
 
 #[test]
@@ -160,10 +164,14 @@ fn applies_compaction_as_clean_checkpoint_history() {
     let result = apply_history_compaction(
         &mut messages,
         &plan,
-        CompactionSummary::from_model_output(
-            "Current Task:\n- Test\n\nProgress:\n- Done\n\nKey Decisions:\n- Keep core-owned compaction\n\nImportant Context:\n- Preserve system prompt\n\nTool / Code Facts:\n- exec_command used\n\nNext Steps:\n- Continue",
-        )
-        .ensure_defaults(),
+        CompactionSummary {
+            current_task: vec!["Test".to_string()],
+            progress: vec!["Done".to_string()],
+            key_decisions: vec!["Keep core-owned compaction".to_string()],
+            important_context: vec!["Preserve system prompt".to_string()],
+            tool_code_facts: vec!["exec_command used".to_string()],
+            next_steps: vec!["Continue".to_string()],
+        },
     );
 
     assert!(messages.iter().all(|item| {
@@ -181,80 +189,6 @@ fn applies_compaction_as_clean_checkpoint_history() {
         messages.last(),
         Some(ResponseItem::User { content }) if input_items_to_plain_text(content).starts_with("[Context Summary]")
     ));
-}
-
-#[test]
-fn compaction_source_keeps_multimodal_user_item_details() {
-    let source = super::summary::CompactionSummary::fallback_from_plan(&ContextCompactionPlan {
-        prefix: vec![ResponseItem::User {
-            content: vec![
-                InputItem::Text {
-                    text: "please inspect".to_string(),
-                },
-                InputItem::Image {
-                    source: AttachmentRef::RemoteUrl {
-                        url: "https://example.com/diagram.png".to_string(),
-                    },
-                    detail: Some(ImageDetail::High),
-                    alt: Some("system diagram".to_string()),
-                },
-                InputItem::File {
-                    source: AttachmentRef::HubAsset {
-                        asset_id: "asset-1".to_string(),
-                        download_url: None,
-                    },
-                    mime_type: Some("application/pdf".to_string()),
-                    name: Some("spec.pdf".to_string()),
-                },
-                InputItem::Mention {
-                    name: "browser-use".to_string(),
-                    path: "plugin://browser-use".to_string(),
-                },
-            ],
-        }],
-        preserved_tail: Vec::new(),
-    });
-
-    assert!(source.current_task[0].contains("please inspect"));
-    assert!(
-        source.current_task[0].contains(
-            "[image alt=system diagram detail=high source=https://example.com/diagram.png]"
-        )
-    );
-    assert!(
-        source.current_task[0]
-            .contains("[file name=spec.pdf mime=application/pdf source=hub:asset-1]")
-    );
-    assert!(source.current_task[0].contains("[mention @browser-use path=plugin://browser-use]"));
-}
-
-#[test]
-fn fallback_summary_uses_multimodal_user_rendering() {
-    let plan = ContextCompactionPlan {
-        prefix: vec![ResponseItem::User {
-            content: vec![
-                InputItem::Text {
-                    text: "compare this".to_string(),
-                },
-                InputItem::Image {
-                    source: AttachmentRef::LocalPath {
-                        path: "D:\\images\\shot.png".to_string(),
-                    },
-                    detail: Some(ImageDetail::Low),
-                    alt: Some("ui screenshot".to_string()),
-                },
-            ],
-        }],
-        preserved_tail: Vec::new(),
-    };
-
-    let summary = CompactionSummary::fallback_from_plan(&plan);
-
-    assert!(summary.current_task[0].contains("compare this"));
-    assert!(
-        summary.current_task[0]
-            .contains("[image alt=ui screenshot detail=low source=D:\\images\\shot.png]")
-    );
 }
 
 #[test]

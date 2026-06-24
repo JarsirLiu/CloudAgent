@@ -1,4 +1,4 @@
-use crate::conversation::{ResponseItem, input_items_are_blank, text_input_items};
+use crate::conversation::{ResponseItem, text_input_items};
 use crate::model::ModelRequest;
 
 use super::support::{estimate_text_tokens, render_input_items_for_compaction, single_line};
@@ -60,26 +60,6 @@ pub fn build_compaction_summary_request(
 }
 
 impl CompactionSummary {
-    pub fn fallback_from_plan(plan: &ContextCompactionPlan) -> Self {
-        let current_task = latest_user_message(&plan.prefix)
-            .map(|text| vec![single_line(&text)])
-            .unwrap_or_else(|| vec!["Continue the active coding task.".to_string()]);
-        let progress = collect_prefix_lines(&plan.prefix, "Progress", 4);
-        let key_decisions = collect_decision_lines(&plan.prefix);
-        let important_context = collect_context_lines(&plan.prefix);
-        let tool_code_facts = collect_tool_lines(&plan.prefix);
-        let next_steps = vec!["Continue from the preserved recent conversation tail.".to_string()];
-
-        Self {
-            current_task,
-            progress,
-            key_decisions,
-            important_context,
-            tool_code_facts,
-            next_steps,
-        }
-    }
-
     pub fn from_model_output(output: &str) -> Self {
         let mut summary = Self {
             current_task: Vec::new(),
@@ -128,39 +108,6 @@ impl CompactionSummary {
         }
 
         summary
-    }
-
-    pub fn ensure_defaults(mut self) -> Self {
-        if self.current_task.is_empty() {
-            self.current_task
-                .push("Continue the active coding task.".to_string());
-        }
-        if self.progress.is_empty() {
-            self.progress
-                .push("Earlier conversation context was compacted.".to_string());
-        }
-        if self.key_decisions.is_empty() {
-            self.key_decisions.push(
-                "Preserve the system prompt and the recent raw conversation tail.".to_string(),
-            );
-        }
-        if self.important_context.is_empty() {
-            self.important_context
-                .push("Treat the preserved tail as the authoritative recent context.".to_string());
-        }
-        if self.tool_code_facts.is_empty() {
-            self.tool_code_facts.push(
-                "No additional tool or code facts were retained from the compacted prefix."
-                    .to_string(),
-            );
-        }
-        if self.next_steps.is_empty() {
-            self.next_steps.push(
-                "Continue from the preserved tail without re-expanding compacted context."
-                    .to_string(),
-            );
-        }
-        self
     }
 
     pub fn rendered(&self) -> String {
@@ -267,115 +214,4 @@ fn truncate_text_tokens(text: &str, token_budget: usize) -> String {
     } else {
         snippet
     }
-}
-
-fn latest_user_message(prefix: &[ResponseItem]) -> Option<String> {
-    prefix.iter().rev().find_map(|item| match item {
-        ResponseItem::User { content } if !input_items_are_blank(content) => {
-            Some(render_input_items_for_compaction(content))
-        }
-        _ => None,
-    })
-}
-
-fn collect_prefix_lines(prefix: &[ResponseItem], label: &str, limit: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for item in prefix {
-        match item {
-            ResponseItem::User { content } => {
-                lines.push(format!(
-                    "{label}: {}",
-                    single_line(&render_input_items_for_compaction(content))
-                ));
-            }
-            ResponseItem::Assistant {
-                content: Some(content),
-                ..
-            } if !content.trim().is_empty() => {
-                lines.push(format!("{label}: {}", single_line(content)));
-            }
-            _ => {}
-        }
-    }
-    dedupe_limit(lines, limit)
-}
-
-fn collect_decision_lines(prefix: &[ResponseItem]) -> Vec<String> {
-    let mut lines = Vec::new();
-    for text in prefix.iter().filter_map(|item| match item {
-        ResponseItem::System { content } => Some(content.clone()),
-        ResponseItem::User { content } => Some(render_input_items_for_compaction(content)),
-        ResponseItem::Assistant {
-            content: Some(content),
-            ..
-        } => Some(content.clone()),
-        _ => None,
-    }) {
-        let lower = text.to_ascii_lowercase();
-        if lower.contains("should")
-            || lower.contains("must")
-            || lower.contains("keep")
-            || lower.contains("move")
-            || lower.contains("use")
-            || lower.contains("belongs")
-        {
-            lines.push(single_line(&text));
-        }
-    }
-    dedupe_limit(lines, 4)
-}
-
-fn collect_context_lines(prefix: &[ResponseItem]) -> Vec<String> {
-    let mut lines = Vec::new();
-    for text in prefix.iter().filter_map(|item| match item {
-        ResponseItem::System { content } => Some(content.clone()),
-        ResponseItem::User { content } => Some(render_input_items_for_compaction(content)),
-        ResponseItem::Assistant {
-            content: Some(content),
-            ..
-        } => Some(content.clone()),
-        _ => None,
-    }) {
-        if text.contains("crates/")
-            || text.contains("src/")
-            || text.contains('\\')
-            || text.contains("context")
-            || text.contains("history")
-            || text.contains("turn")
-        {
-            lines.push(single_line(&text));
-        }
-    }
-    dedupe_limit(lines, 5)
-}
-
-fn collect_tool_lines(prefix: &[ResponseItem]) -> Vec<String> {
-    let mut lines = Vec::new();
-    for item in prefix {
-        match item {
-            ResponseItem::Assistant { tool_calls, .. } => {
-                for call in tool_calls {
-                    lines.push(format!("Tool invoked: {}", call.name));
-                }
-            }
-            ResponseItem::Tool { name, content, .. } => {
-                lines.push(format!("{name}: {}", single_line(content)));
-            }
-            _ => {}
-        }
-    }
-    dedupe_limit(lines, 6)
-}
-
-fn dedupe_limit(lines: Vec<String>, limit: usize) -> Vec<String> {
-    let mut deduped = Vec::new();
-    for line in lines {
-        if !deduped.contains(&line) {
-            deduped.push(line);
-        }
-        if deduped.len() >= limit {
-            break;
-        }
-    }
-    deduped
 }

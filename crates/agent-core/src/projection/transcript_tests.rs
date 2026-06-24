@@ -211,8 +211,7 @@ fn transcript_items_ignore_compaction_rollout_items() {
         RolloutItem::Compacted {
             summary: crate::context::CompactionSummary::from_model_output(
                 "Current Task:\n- hidden",
-            )
-            .ensure_defaults(),
+            ),
             rendered_summary: "[Context Summary]\nhidden".to_string(),
             trigger: crate::turn::CompactionTrigger::Auto,
             reason: crate::turn::CompactionReason::ContextLimit,
