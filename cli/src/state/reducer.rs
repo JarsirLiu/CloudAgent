@@ -1,18 +1,14 @@
 use crate::input::intent::GatewayConfigUpdate;
 use crate::state::NoticeLevel;
+use crate::state::reducer_routes::route_server_message;
 use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation;
 use agent_core::conversation::{ConversationSummary, ConversationTurn, TranscriptItem};
 use agent_core::turn::TurnId;
 use agent_core::{
     ModelRetryStage, ModelUsage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress,
-    ServerRequest, ServerRequestDecisionKind, TurnItemKind,
+    ServerRequestDecisionKind,
 };
-use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest,
-    ConversationViewSnapshot, InterruptDisposition, RequestId,
-};
-
-const ERR_TRANSPORT_CLOSED_PREFIX: &str = "ERR_TRANSPORT_CLOSED:";
+use agent_protocol::{AppClientCommand, AppServerMessage, ConversationViewSnapshot, InterruptDisposition, RequestId};
 
 #[derive(Debug, Clone)]
 pub(crate) enum TurnDispatch {
@@ -100,7 +96,7 @@ pub(crate) enum ServerAction {
     },
     ClearContextCompactionStatus,
     DismissServerRequestView(RequestId),
-    ClearActiveTool {
+    ClearActiveRuntime {
         item_id: Option<String>,
     },
     ReplaceHistory(Vec<ConversationTurn>),
@@ -130,7 +126,7 @@ pub(crate) enum ServerAction {
         item_id: String,
         delta: String,
     },
-    AppendActiveToolDelta {
+    AppendActiveRuntimeDelta {
         turn_id: TurnId,
         item_id: String,
         delta: String,
@@ -150,7 +146,7 @@ pub(crate) enum ServerAction {
         item_id: String,
         metrics: RuntimeItemMetrics,
     },
-    AppendCommandOutputDelta {
+    AppendActiveRuntimeOutputDelta {
         item_id: String,
         delta: String,
     },
@@ -166,7 +162,6 @@ pub(crate) enum ServerAction {
     },
     InterruptResult(InterruptDisposition),
     PushErrorCell(String),
-    TransportClosedError(String),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
         request_id: RequestId,
@@ -175,323 +170,11 @@ pub(crate) enum ServerAction {
 }
 
 pub(crate) fn apply_server_message(message: &AppServerMessage) -> ServerMessageReduce {
-    let mut actions = Vec::new();
-    match message {
-        AppServerMessage::Notification(notification) => match notification {
-            AppServerNotification::ConversationViewChanged { snapshot, .. } => {
-                actions.push(ServerAction::SetConversationView(snapshot.clone()));
-            }
-            AppServerNotification::TurnStarted { turn_id, .. } => {
-                actions.push(ServerAction::ClearCurrentTurnUsage);
-                actions.push(ServerAction::BindActiveTurn(turn_id.clone()));
-            }
-            AppServerNotification::ConversationHistory { turns, .. } => {
-                actions.push(ServerAction::ReplaceHistory(turns.clone()));
-            }
-            AppServerNotification::ConversationHistoryPage {
-                turns,
-                has_more,
-                next_before_turn_id,
-                ..
-            } => {
-                actions.push(ServerAction::ReplaceHistoryPage {
-                    turns: turns.clone(),
-                    has_more: *has_more,
-                    next_before_turn_id: next_before_turn_id.clone(),
-                });
-            }
-            AppServerNotification::TurnSnapshot { turn, .. } => {
-                actions.push(ServerAction::UpsertTurnSnapshot(turn.clone()));
-            }
-            AppServerNotification::ItemStarted { turn_id, item, .. } => {
-                actions.push(ServerAction::StartActiveTurnItem {
-                    turn_id: turn_id.clone(),
-                    item: item.clone(),
-                });
-            }
-            AppServerNotification::AgentMessageDelta {
-                turn_id,
-                item_id,
-                delta,
-                ..
-            } => {
-                actions.push(ServerAction::AppendActiveAgentDelta {
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                });
-            }
-            AppServerNotification::ReasoningSummaryTextDelta {
-                turn_id,
-                item_id,
-                delta,
-                ..
-            } => {
-                actions.push(ServerAction::AppendActiveReasoningDelta {
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                });
-            }
-            AppServerNotification::ReasoningTextDelta {
-                turn_id,
-                item_id,
-                delta,
-                ..
-            } => {
-                actions.push(ServerAction::AppendActiveReasoningDelta {
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                });
-            }
-            AppServerNotification::ReasoningSummaryPartAdded { .. } => {}
-            AppServerNotification::CommandExecutionOutputDelta { item_id, delta, .. } => {
-                actions.push(ServerAction::AppendCommandOutputDelta {
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                });
-            }
-            AppServerNotification::ToolOutputDelta {
-                turn_id,
-                item_id,
-                delta,
-                ..
-            } => {
-                actions.push(ServerAction::AppendActiveToolDelta {
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                });
-            }
-            AppServerNotification::JsonPatchDelta {
-                turn_id,
-                item_id,
-                delta,
-                ..
-            } => {
-                actions.push(ServerAction::AppendActivePatchDelta {
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    delta: delta.clone(),
-                });
-            }
-            AppServerNotification::ItemProgress {
-                turn_id,
-                item_id,
-                progress,
-                ..
-            } => {
-                actions.push(ServerAction::UpdateActiveItemProgress {
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    progress: progress.clone(),
-                });
-            }
-            AppServerNotification::ItemMetricsUpdated {
-                turn_id,
-                item_id,
-                metrics,
-                ..
-            } => {
-                actions.push(ServerAction::UpdateActiveItemMetrics {
-                    turn_id: turn_id.clone(),
-                    item_id: item_id.clone(),
-                    metrics: metrics.clone(),
-                });
-            }
-            AppServerNotification::ItemCompleted {
-                turn_id,
-                item,
-                transcript_item,
-                ..
-            } => {
-                if matches!(item.kind, TurnItemKind::ToolCall | TurnItemKind::ToolResult) {
-                    actions.push(ServerAction::ClearActiveTool {
-                        item_id: Some(item.id.clone()),
-                    });
-                }
-                actions.push(ServerAction::CompleteActiveTurnItem {
-                    turn_id: turn_id.clone(),
-                    item: item.clone(),
-                    transcript_item: transcript_item.clone(),
-                });
-            }
-            AppServerNotification::ConversationListPage {
-                conversations,
-                has_more,
-                next_cursor,
-                ..
-            } => {
-                actions.push(ServerAction::SetConversationListPage {
-                    conversations: conversations.clone(),
-                    has_more: *has_more,
-                    next_cursor: next_cursor.clone(),
-                });
-            }
-            AppServerNotification::SkillsChanged { .. } => {
-                actions.push(ServerAction::InvalidateSkillsCatalog);
-            }
-            AppServerNotification::ConversationSwitched { conversation_id } => {
-                actions.push(ServerAction::SwitchConversation(conversation_id.clone()));
-            }
-            AppServerNotification::Info { message, .. } => {
-                actions.push(ServerAction::PushNoticeCell {
-                    label: "conversation".to_string(),
-                    message: message.clone(),
-                    level: NoticeLevel::Info,
-                });
-            }
-            AppServerNotification::InterruptResult { disposition, .. } => {
-                actions.push(ServerAction::InterruptResult(disposition.clone()));
-            }
-            AppServerNotification::TokenUsageUpdated {
-                last_usage,
-                total_usage,
-                model_context_window,
-                ..
-            } => {
-                actions.push(ServerAction::SetTokenUsage {
-                    last_usage: last_usage.clone(),
-                    total_usage: total_usage.clone(),
-                    model_context_window: *model_context_window,
-                });
-            }
-            AppServerNotification::ModelRetrying {
-                stage,
-                attempt,
-                next_delay_ms,
-                ..
-            } => {
-                actions.push(ServerAction::SetRetryStatus {
-                    stage: stage.clone(),
-                    attempt: *attempt,
-                    next_delay_ms: *next_delay_ms,
-                });
-            }
-            AppServerNotification::ContextCompacted {
-                pre_context_tokens_estimate,
-                post_context_tokens_estimate,
-                ..
-            } => {
-                let summary = format!(
-                    "Context compacted: ~{} -> ~{} tokens",
-                    pre_context_tokens_estimate, post_context_tokens_estimate
-                );
-                actions.push(ServerAction::PushNoticeCell {
-                    label: "context".to_string(),
-                    message: summary.clone(),
-                    level: NoticeLevel::Warn,
-                });
-                actions.push(ServerAction::ClearContextCompactionStatus);
-                actions.push(ServerAction::ClearActiveTool { item_id: None });
-            }
-            AppServerNotification::ContextCompactionStarted {
-                estimated_tokens, ..
-            } => {
-                actions.push(ServerAction::SetContextCompactionStatus {
-                    estimated_tokens: *estimated_tokens,
-                });
-            }
-            AppServerNotification::Error { message, .. } => {
-                if let Some(message) = transport_closed_message(message) {
-                    actions.push(ServerAction::TransportClosedError(message));
-                } else {
-                    actions.push(ServerAction::PushErrorCell(message.clone()));
-                }
-            }
-            AppServerNotification::ServerRequestRequested { request, .. } => {
-                let _ = request;
-            }
-            AppServerNotification::ServerRequestResolved {
-                request_id,
-                decision,
-                ..
-            } => {
-                actions.push(ServerAction::DismissServerRequestView(request_id.clone()));
-                actions.push(ServerAction::PushNoticeCell {
-                    label: "request".to_string(),
-                    message: format!(
-                        "Request {}{}",
-                        decision.label(),
-                        decision
-                            .reason
-                            .as_deref()
-                            .map(|r| format!(": {r}"))
-                            .unwrap_or_default()
-                    ),
-                    level: NoticeLevel::Info,
-                });
-            }
-            AppServerNotification::TurnCompleted { .. } => {
-                actions.push(ServerAction::TurnDispatch(TurnDispatch::Completed));
-            }
-            AppServerNotification::TurnFailed { error, .. } => {
-                actions.push(ServerAction::TurnDispatch(TurnDispatch::Failed {
-                    error: error.clone(),
-                }));
-            }
-            AppServerNotification::TurnCancelled { reason, .. } => {
-                actions.push(ServerAction::TurnDispatch(TurnDispatch::Cancelled {
-                    reason: reason.clone(),
-                }));
-            }
-            _ => {}
-        },
-        AppServerMessage::Request(AppServerRequest::ServerRequest {
-            request_id,
-            request,
-            ..
-        }) => match request {
-            ServerRequest::CommandApproval { request } => {
-                actions.push(ServerAction::ShowServerRequestPrompt {
-                    request_id: request_id.clone(),
-                    request: ServerRequestPresentation::command(
-                        request.tool_name.clone(),
-                        request.reason.clone(),
-                        summarize_args_preview(&request.command_preview),
-                    ),
-                });
-            }
-            ServerRequest::FileChangeApproval { request } => {
-                actions.push(ServerAction::ShowServerRequestPrompt {
-                    request_id: request_id.clone(),
-                    request: ServerRequestPresentation::file_change(
-                        request.tool_name.clone(),
-                        request.reason.clone(),
-                        summarize_args_preview(&request.change_preview),
-                    ),
-                });
-            }
-        },
+    ServerMessageReduce {
+        actions: route_server_message(message),
     }
-
-    ServerMessageReduce { actions }
 }
 
-fn summarize_args_preview(arguments_preview: &str) -> String {
-    let trimmed = arguments_preview.trim();
-    if trimmed.is_empty() {
-        return "(none)".to_string();
-    }
-    if trimmed.chars().count() <= 80 {
-        return trimmed.to_string();
-    }
-    let mut out = String::new();
-    for ch in trimmed.chars().take(80) {
-        out.push(ch);
-    }
-    out.push_str("… (truncated)");
-    out
-}
-
-fn transport_closed_message(message: &str) -> Option<String> {
-    message
-        .strip_prefix(ERR_TRANSPORT_CLOSED_PREFIX)
-        .map(str::trim)
-        .filter(|message| !message.is_empty())
-        .map(ToOwned::to_owned)
-}
 #[cfg(test)]
 #[path = "reducer_tests.rs"]
 mod tests;

@@ -502,8 +502,14 @@ fn map_stream_web_search_action(value: &Value) -> Option<WebSearchAction> {
                 .and_then(|entry| entry.as_str())
                 .map(ToString::to_string),
         }),
-        "other" => Some(WebSearchAction::Other),
-        _ => None,
+        "other" => Some(WebSearchAction::Unknown {
+            raw_type: Some(kind.to_string()),
+            raw: Some(value.clone()),
+        }),
+        _ => Some(WebSearchAction::Unknown {
+            raw_type: Some(kind.to_string()),
+            raw: Some(value.clone()),
+        }),
     }
 }
 
@@ -531,7 +537,7 @@ fn web_search_action_detail(action: &WebSearchAction) -> String {
             (None, Some(url)) => url.clone(),
             (None, None) => String::new(),
         },
-        WebSearchAction::Other => String::new(),
+        WebSearchAction::Unknown { .. } => String::new(),
     }
 }
 

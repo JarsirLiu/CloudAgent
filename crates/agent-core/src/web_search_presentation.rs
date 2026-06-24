@@ -24,38 +24,37 @@ pub fn web_search_presentation(
 }
 
 pub fn web_search_detail(query: &str, action: Option<&WebSearchAction>) -> String {
-    let detail = action
-        .map(|action| match action {
-            WebSearchAction::Search { query, queries } => query
-                .clone()
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| {
-                    let first = queries
-                        .as_ref()
-                        .and_then(|values| values.first())
-                        .cloned()
-                        .unwrap_or_default();
-                    if queries.as_ref().is_some_and(|values| values.len() > 1) && !first.is_empty()
-                    {
-                        format!("{first} ...")
-                    } else {
-                        first
-                    }
-                }),
-            WebSearchAction::OpenPage { url } => url.clone().unwrap_or_default(),
-            WebSearchAction::FindInPage { url, pattern } => match (pattern, url) {
-                (Some(pattern), Some(url)) => format!("'{pattern}' in {url}"),
-                (Some(pattern), None) => format!("'{pattern}'"),
-                (None, Some(url)) => url.clone(),
-                (None, None) => String::new(),
-            },
-            WebSearchAction::Other => String::new(),
-        })
-        .unwrap_or_default();
-    if detail.is_empty() {
-        query.to_string()
-    } else {
-        detail
+    let _ = query;
+    match action {
+        Some(WebSearchAction::Search { query, queries }) => query
+            .clone()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| {
+                let first = queries
+                    .as_ref()
+                    .and_then(|values| values.first())
+                    .cloned()
+                    .unwrap_or_default();
+                if queries.as_ref().is_some_and(|values| values.len() > 1) && !first.is_empty() {
+                    format!("{first} ...")
+                } else {
+                    first
+                }
+            }),
+        Some(WebSearchAction::OpenPage { url }) => url.clone().unwrap_or_default(),
+        Some(WebSearchAction::FindInPage { url, pattern }) => match (pattern, url) {
+            (Some(pattern), Some(url)) => format!("'{pattern}' in {url}"),
+            (Some(pattern), None) => format!("'{pattern}'"),
+            (None, Some(url)) => url.clone(),
+            (None, None) => String::new(),
+        },
+        Some(WebSearchAction::Unknown { raw_type, raw }) => raw_type
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| raw.as_ref().map(ToString::to_string))
+            .unwrap_or_default(),
+        None => String::new(),
     }
 }
 

@@ -3,6 +3,7 @@ use agent_core::{
     CommandExecutionStatus, CompactionPhase, InputItem, RuntimeItem, StructuredToolResult,
     TranscriptItem, TurnState,
 };
+use agent_protocol::AppServerNotification;
 
 #[test]
 fn conversation_history_action_preserves_turns() {
@@ -162,7 +163,7 @@ fn command_output_delta_updates_runtime_status() {
     assert!(reduced.actions.iter().any(|action| {
         matches!(
             action,
-            ServerAction::AppendCommandOutputDelta { item_id, delta }
+            ServerAction::AppendActiveRuntimeOutputDelta { item_id, delta }
                 if item_id == "cmd-1" && delta == "stdout"
         )
     }));
@@ -183,7 +184,7 @@ fn tool_output_delta_updates_active_tool_item() {
     assert!(tool_reduced.actions.iter().any(|action| {
         matches!(
             action,
-            ServerAction::AppendActiveToolDelta {
+            ServerAction::AppendActiveRuntimeDelta {
                 turn_id,
                 item_id,
                 delta,
@@ -245,7 +246,7 @@ fn completed_tool_result_clears_active_tool_and_commits_item() {
 
     assert!(reduced.actions.iter().any(|action| matches!(
         action,
-        ServerAction::ClearActiveTool { item_id }
+        ServerAction::ClearActiveRuntime { item_id }
             if item_id.as_deref() == Some("ws-1")
     )));
     assert!(reduced.actions.iter().any(|action| {
@@ -333,29 +334,17 @@ fn skills_changed_invalidates_local_skill_catalog() {
 }
 
 #[test]
-fn transport_closed_error_finishes_active_turn() {
+fn transport_closed_error_pushes_diagnostic_cell() {
     let message = AppServerMessage::Notification(AppServerNotification::Error {
         conversation_id: "default".to_string(),
-        message: "ERR_TRANSPORT_CLOSED: worker app server closed unexpectedly".to_string(),
+        message: "worker app server closed unexpectedly".to_string(),
     });
 
     let reduced = apply_server_message(&message);
 
     assert!(reduced.actions.iter().any(|action| matches!(
         action,
-        ServerAction::TransportClosedError(message)
+        ServerAction::PushErrorCell(message)
             if message == "worker app server closed unexpectedly"
     )));
-    assert!(
-        !reduced
-            .actions
-            .iter()
-            .any(|action| matches!(action, ServerAction::PushErrorCell(_)))
-    );
-    assert!(
-        !reduced
-            .actions
-            .iter()
-            .any(|action| matches!(action, ServerAction::TurnDispatch(_)))
-    );
 }

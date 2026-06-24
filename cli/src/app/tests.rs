@@ -1683,7 +1683,7 @@ fn command_output_delta_updates_status_without_transcript_history() {
     );
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::AppendCommandOutputDelta {
+        crate::state::reducer::ServerAction::AppendActiveRuntimeOutputDelta {
             item_id: "cmd-1".to_string(),
             delta: "src/lib.rs: TODO".to_string(),
         },
@@ -1791,7 +1791,7 @@ fn completed_web_search_matches_standard_tool_result_lifecycle() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::ClearActiveTool {
+        crate::state::reducer::ServerAction::ClearActiveRuntime {
             item_id: Some("ws-1".to_string()),
         },
     );

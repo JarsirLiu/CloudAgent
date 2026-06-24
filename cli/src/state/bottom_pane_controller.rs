@@ -65,18 +65,6 @@ impl BottomPaneController {
         self.runtime.on_turn_started();
     }
 
-    pub(crate) fn on_tool_finished_for_item(&mut self, item_id: Option<&str>) {
-        self.runtime.on_tool_finished_for_item(item_id);
-    }
-
-    pub(crate) fn on_command_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
-        self.runtime.on_command_output_delta(item_id, delta);
-    }
-
-    pub(crate) fn on_tool_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
-        self.runtime.on_tool_output_delta(item_id, delta);
-    }
-
     pub(crate) fn on_item_progress(
         &mut self,
         item_id: Option<&str>,
@@ -93,8 +81,16 @@ impl BottomPaneController {
         self.runtime.on_item_metrics_updated(item_id, metrics);
     }
 
-    pub(crate) fn on_command_finished(&mut self, item_id: &str) {
-        self.runtime.on_command_finished(item_id);
+    pub(crate) fn on_active_runtime_output_delta(
+        &mut self,
+        item_id: Option<&str>,
+        delta: &str,
+    ) {
+        self.runtime.on_active_runtime_output_delta(item_id, delta);
+    }
+
+    pub(crate) fn on_active_runtime_finished(&mut self, item_id: Option<&str>) {
+        self.runtime.on_active_runtime_finished(item_id);
     }
 
     pub(crate) fn on_context_compaction_started(&mut self, estimated_tokens: u64) {
@@ -457,8 +453,8 @@ impl BottomPaneController {
     }
 
     #[cfg(test)]
-    pub(crate) fn active_tool_title_override_for_test(&mut self, title: Option<String>) {
-        self.runtime.set_active_tool_title_for_test(title);
+    pub(crate) fn active_runtime_banner_override_for_test(&mut self, title: Option<String>) {
+        self.runtime.set_active_runtime_banner_for_test(title);
     }
 
     #[cfg(test)]

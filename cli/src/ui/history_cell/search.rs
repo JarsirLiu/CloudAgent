@@ -33,12 +33,7 @@ pub(super) fn render_active_runtime_item(item: &RuntimeItem) -> HistoryCell {
             result_count,
             source_count,
         }) => {
-            let (summary, detail) =
-                build_web_search_card(query, action.as_ref(), *source_count, *result_count);
-            if let Some(detail) = detail {
-                cell.append_detail(&detail);
-            }
-            Some(summary)
+            return build_web_search_cell(query, action.as_ref(), *source_count, *result_count);
         }
         _ => runtime_summary(item),
     };
@@ -285,13 +280,7 @@ fn render_web_search_result(structured: Option<&StructuredToolResult>) -> Option
         return None;
     };
 
-    let (summary, detail) = build_web_search_card(query, action.as_ref(), None, None);
-    Some(HistoryCell::search(
-        "Web search",
-        summary,
-        detail,
-        HistoryTone::Control,
-    ))
+    Some(build_web_search_cell(query, action.as_ref(), None, None))
 }
 
 fn render_tool_error_result(
@@ -309,12 +298,12 @@ fn render_tool_error_result(
     ))
 }
 
-fn build_web_search_card(
+fn build_web_search_cell(
     query: &str,
     action: Option<&WebSearchAction>,
     source_count: Option<usize>,
     result_count: Option<usize>,
-) -> (String, Option<String>) {
+) -> HistoryCell {
     let presentation = web_search_card_presentation(query, action, source_count, result_count);
     let mut fields = Vec::new();
     if let Some(count) = source_count {
@@ -325,7 +314,7 @@ fn build_web_search_card(
     }
 
     let detail = build_search_detail(presentation.detail, fields);
-    (presentation.summary, Some(detail))
+    HistoryCell::search("Web search", presentation.summary, Some(detail), HistoryTone::Control)
 }
 
 fn format_search_workspace_detail(

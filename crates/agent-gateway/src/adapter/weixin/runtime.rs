@@ -1,12 +1,14 @@
 use super::client::WeixinAdapter;
 use super::config::WeixinAdapterConfig;
+use crate::adapter::runtime_shared::{
+    build_outbound_target, build_turn_content, event_conversation_id, event_name, event_turn_id,
+};
 use crate::app_server_mapping::{EventFlow, map_app_server_event};
-use crate::gateway_event::{GatewayEvent, OutboundTarget};
+use crate::gateway_event::GatewayEvent;
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
 use agent_app_server_client::{AppServerClient, AppServerEvent};
-use agent_core::{TurnItemKind, text_input_items};
 use agent_protocol::{
     AppClientCommand, AppServerMessage, AppServerNotification, TurnPolicy, UserTurnInput,
 };
@@ -58,13 +60,13 @@ impl MessageHandler for NodeBackedHandler {
 
     async fn handle_message(&self, message: InboundMessage) -> Result<()> {
         let session_key = build_session_key(&message);
-        let target = OutboundTarget {
-            conversation_id: session_key.clone(),
-            chat_id: message.chat_id.clone(),
-            chat_type: message.chat_type.clone(),
-            is_reply_chain: false,
-            reply_context: None,
-        };
+        let target = build_outbound_target(
+            session_key.clone(),
+            message.chat_id.clone(),
+            message.chat_type.clone(),
+            None,
+            false,
+        );
         info!(
             session_key = %session_key,
             chat_id = %target.chat_id,
@@ -78,7 +80,7 @@ impl MessageHandler for NodeBackedHandler {
         })?;
         stream_client.submit_turn(UserTurnInput {
             conversation_id: session_key.clone(),
-            content: text_input_items(message.text.clone()),
+            content: build_turn_content(&message),
             turn_policy: self.turn_policy.clone(),
         })?;
 
@@ -164,80 +166,6 @@ impl MessageHandler for NodeBackedHandler {
 
         debug!(session_key = %session_key, "weixin.runtime.turn.completed");
         Ok(())
-    }
-}
-
-fn event_conversation_id(event: &AppServerEvent) -> Option<&str> {
-    match event {
-        AppServerEvent::Message(message) => message.conversation_id(),
-        AppServerEvent::Lagged { .. } | AppServerEvent::Disconnected { .. } => None,
-    }
-}
-
-fn event_turn_id(event: &AppServerEvent) -> Option<&str> {
-    match event {
-        AppServerEvent::Message(AppServerMessage::Notification(notification)) => {
-            notification_turn_id(notification)
-        }
-        AppServerEvent::Message(AppServerMessage::Request(_)) => None,
-        AppServerEvent::Lagged { .. } | AppServerEvent::Disconnected { .. } => None,
-    }
-}
-
-fn notification_turn_id(notification: &AppServerNotification) -> Option<&str> {
-    match notification {
-        AppServerNotification::TurnStarted { turn_id, .. }
-        | AppServerNotification::ItemStarted { turn_id, .. }
-        | AppServerNotification::AgentMessageDelta { turn_id, .. }
-        | AppServerNotification::PlanDelta { turn_id, .. }
-        | AppServerNotification::ReasoningSummaryTextDelta { turn_id, .. }
-        | AppServerNotification::ReasoningTextDelta { turn_id, .. }
-        | AppServerNotification::CommandExecutionOutputDelta { turn_id, .. }
-        | AppServerNotification::ToolOutputDelta { turn_id, .. }
-        | AppServerNotification::JsonPatchDelta { turn_id, .. }
-        | AppServerNotification::ItemProgress { turn_id, .. }
-        | AppServerNotification::ItemMetricsUpdated { turn_id, .. }
-        | AppServerNotification::TokenUsageUpdated { turn_id, .. }
-        | AppServerNotification::ModelRetrying { turn_id, .. }
-        | AppServerNotification::ItemCompleted { turn_id, .. }
-        | AppServerNotification::TurnCompleted { turn_id, .. }
-        | AppServerNotification::TurnFailed { turn_id, .. }
-        | AppServerNotification::TurnCancelled { turn_id, .. } => Some(turn_id.as_str()),
-        _ => None,
-    }
-}
-
-fn event_name(event: &AppServerEvent) -> &'static str {
-    match event {
-        AppServerEvent::Message(AppServerMessage::Notification(notification)) => match notification
-        {
-            AppServerNotification::TurnStarted { .. } => "turn_started",
-            AppServerNotification::ItemStarted { .. } => "item_started",
-            AppServerNotification::AgentMessageDelta { .. } => "agent_message_delta",
-            AppServerNotification::PlanDelta { .. } => "plan_delta",
-            AppServerNotification::ReasoningSummaryTextDelta { .. } => "reasoning_summary_delta",
-            AppServerNotification::ReasoningTextDelta { .. } => "reasoning_text_delta",
-            AppServerNotification::CommandExecutionOutputDelta { .. } => "command_output_delta",
-            AppServerNotification::ToolOutputDelta { .. } => "tool_output_delta",
-            AppServerNotification::JsonPatchDelta { .. } => "json_patch_delta",
-            AppServerNotification::ItemCompleted { item, .. } => match item.kind {
-                TurnItemKind::AssistantMessage => "agent_message_completed",
-                TurnItemKind::Reasoning => "reasoning_completed",
-                TurnItemKind::CommandExecution => "command_completed",
-                TurnItemKind::FileChange => "file_change_completed",
-                TurnItemKind::ToolCall | TurnItemKind::ToolResult => "tool_result_completed",
-                _ => "item_completed_other",
-            },
-            AppServerNotification::TurnCompleted { .. } => "turn_completed",
-            AppServerNotification::TurnFailed { .. } => "turn_failed",
-            AppServerNotification::TurnCancelled { .. } => "turn_cancelled",
-            AppServerNotification::Info { .. } => "info",
-            AppServerNotification::Error { .. } => "error",
-            _ => "notification_other",
-        },
-        AppServerEvent::Message(AppServerMessage::Request(_)) => "server_request",
-        AppServerEvent::Lagged { .. } => "lagged",
-        AppServerEvent::Disconnected { .. } => "disconnected",
     }
 }
 

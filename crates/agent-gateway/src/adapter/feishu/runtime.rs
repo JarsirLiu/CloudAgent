@@ -5,7 +5,7 @@ use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
 use agent_app_server_client::AppServerClient;
-use agent_core::{ServerRequestDecision, text_input_items};
+use agent_core::ServerRequestDecision;
 use agent_protocol::{
     AppServerMessage, AppServerNotification, AppServerRequest, TurnPolicy, UserTurnInput,
 };
@@ -20,6 +20,10 @@ use tokio::time::{Duration, timeout};
 use tracing::{debug, info};
 
 use super::{FeishuAdapter, FeishuAdapterConfig, FeishuAdapterOptions};
+use crate::adapter::runtime_shared::{
+    build_outbound_target, build_turn_content, event_conversation_id, event_turn_id,
+    parse_approval_command, render_request_prompt, render_request_resolution_label,
+};
 
 pub struct PlatformRuntime {
     task: JoinHandle<Result<()>>,
@@ -271,13 +275,13 @@ impl MessageHandler for NodeBackedHandler {
 
     async fn handle_message(&self, message: InboundMessage) -> Result<()> {
         let session_key = build_session_key(&message);
-        let target = OutboundTarget {
-            conversation_id: session_key.clone(),
-            chat_id: message.chat_id.clone(),
-            chat_type: message.chat_type.clone(),
-            is_reply_chain: message.thread_id.is_some(),
-            reply_context: message.reply_context.clone(),
-        };
+        let target = build_outbound_target(
+            session_key.clone(),
+            message.chat_id.clone(),
+            message.chat_type.clone(),
+            message.reply_context.clone(),
+            message.thread_id.is_some(),
+        );
         debug!(
             platform = %message.platform,
             session_key = %session_key,
@@ -291,7 +295,7 @@ impl MessageHandler for NodeBackedHandler {
         })?;
         stream_client.submit_turn(UserTurnInput {
             conversation_id: session_key.clone(),
-            content: text_input_items(message.text.clone()),
+            content: build_turn_content(&message),
             turn_policy: self.turn_policy.clone(),
         })?;
         debug!(
@@ -402,7 +406,7 @@ impl MessageHandler for NodeBackedHandler {
                                 info!(
                                     session_key = %session_key,
                                     approval_id = %approval_id,
-                                    request_kind = %approval_title(&pending.request),
+                                    request_kind = %render_request_resolution_label(&pending.request),
                                     "gateway.platform_runtime.server_request.card_sent"
                                 );
                             }
@@ -452,122 +456,11 @@ impl MessageHandler for NodeBackedHandler {
     }
 }
 
-fn event_conversation_id(event: &agent_app_server_client::AppServerEvent) -> Option<&str> {
-    match event {
-        agent_app_server_client::AppServerEvent::Message(message) => message.conversation_id(),
-        agent_app_server_client::AppServerEvent::Lagged { .. }
-        | agent_app_server_client::AppServerEvent::Disconnected { .. } => None,
-    }
-}
-
 fn event_request(event: &agent_app_server_client::AppServerEvent) -> Option<&AppServerRequest> {
     match event {
         agent_app_server_client::AppServerEvent::Message(AppServerMessage::Request(request)) => {
             Some(request)
         }
-        _ => None,
-    }
-}
-
-fn event_turn_id(event: &agent_app_server_client::AppServerEvent) -> Option<&str> {
-    match event {
-        agent_app_server_client::AppServerEvent::Message(AppServerMessage::Notification(
-            notification,
-        )) => notification_turn_id(notification),
-        agent_app_server_client::AppServerEvent::Message(AppServerMessage::Request(request)) => {
-            request_turn_id(request)
-        }
-        agent_app_server_client::AppServerEvent::Lagged { .. }
-        | agent_app_server_client::AppServerEvent::Disconnected { .. } => None,
-    }
-}
-
-fn notification_turn_id(notification: &AppServerNotification) -> Option<&str> {
-    match notification {
-        AppServerNotification::TurnStarted { turn_id, .. }
-        | AppServerNotification::ItemStarted { turn_id, .. }
-        | AppServerNotification::AgentMessageDelta { turn_id, .. }
-        | AppServerNotification::PlanDelta { turn_id, .. }
-        | AppServerNotification::ReasoningSummaryTextDelta { turn_id, .. }
-        | AppServerNotification::ReasoningTextDelta { turn_id, .. }
-        | AppServerNotification::CommandExecutionOutputDelta { turn_id, .. }
-        | AppServerNotification::ToolOutputDelta { turn_id, .. }
-        | AppServerNotification::JsonPatchDelta { turn_id, .. }
-        | AppServerNotification::ItemProgress { turn_id, .. }
-        | AppServerNotification::ItemMetricsUpdated { turn_id, .. }
-        | AppServerNotification::TokenUsageUpdated { turn_id, .. }
-        | AppServerNotification::ModelRetrying { turn_id, .. }
-        | AppServerNotification::ItemCompleted { turn_id, .. }
-        | AppServerNotification::TurnCompleted { turn_id, .. }
-        | AppServerNotification::TurnFailed { turn_id, .. }
-        | AppServerNotification::TurnCancelled { turn_id, .. } => Some(turn_id.as_str()),
-        _ => None,
-    }
-}
-
-fn request_turn_id(request: &AppServerRequest) -> Option<&str> {
-    match request {
-        AppServerRequest::ServerRequest { request, .. } => match request {
-            agent_core::ServerRequest::CommandApproval { request } => {
-                Some(request.turn_id.as_str())
-            }
-            agent_core::ServerRequest::FileChangeApproval { request } => {
-                Some(request.turn_id.as_str())
-            }
-        },
-    }
-}
-
-fn approval_title(request: &agent_core::ServerRequest) -> &'static str {
-    match request {
-        agent_core::ServerRequest::CommandApproval { .. } => "command approval",
-        agent_core::ServerRequest::FileChangeApproval { .. } => "file change approval",
-    }
-}
-
-fn render_request_prompt(request: &AppServerRequest) -> String {
-    let AppServerRequest::ServerRequest { request, .. } = request;
-    match request {
-        agent_core::ServerRequest::CommandApproval { request } => format!(
-            "工具调用需要审批: {}\n原因: {}\n命令: {}",
-            approval_title(&agent_core::ServerRequest::CommandApproval {
-                request: request.clone()
-            }),
-            request.reason,
-            request.command_preview
-        ),
-        agent_core::ServerRequest::FileChangeApproval { request } => format!(
-            "工具调用需要审批: {}\n原因: {}\n变更: {}",
-            approval_title(&agent_core::ServerRequest::FileChangeApproval {
-                request: request.clone()
-            }),
-            request.reason,
-            request.change_preview
-        ),
-    }
-}
-
-fn render_request_resolution_label(request: &agent_core::ServerRequest) -> &'static str {
-    approval_title(request)
-}
-
-fn parse_approval_command(text: &str) -> Option<ServerRequestDecision> {
-    let normalized = text.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "/approve" | "/allow" | "/yes" => Some(ServerRequestDecision::accept(Some(
-            "approved from feishu im".to_string(),
-        ))),
-        "/approve-session" | "/approve session" | "/always" | "/session" => {
-            Some(ServerRequestDecision::accept_for_session(Some(
-                "approved for session from feishu im".to_string(),
-            )))
-        }
-        "/deny" | "/reject" | "/no" => Some(ServerRequestDecision::decline(Some(
-            "denied from feishu im".to_string(),
-        ))),
-        "/cancel" => Some(ServerRequestDecision::cancel(Some(
-            "cancelled from feishu im".to_string(),
-        ))),
         _ => None,
     }
 }

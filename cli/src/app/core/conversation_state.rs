@@ -91,7 +91,7 @@ impl TuiApp {
     }
 
     pub(crate) fn on_server_tool_finished(&mut self, item_id: Option<&str>) {
-        self.bottom_pane.on_tool_finished_for_item(item_id);
+        self.bottom_pane.on_active_runtime_finished(item_id);
     }
 
     pub(crate) fn on_server_retrying(
@@ -126,7 +126,7 @@ impl TuiApp {
     pub(crate) fn handle_transport_closed_error(&mut self, error: String) {
         self.bottom_pane.on_context_compaction_finished();
         self.bottom_pane.clear_server_request();
-        self.bottom_pane.on_tool_finished_for_item(None);
+        self.bottom_pane.on_active_runtime_finished(None);
         self.apply_turn_dispatch(TurnDispatch::Failed { error });
     }
 

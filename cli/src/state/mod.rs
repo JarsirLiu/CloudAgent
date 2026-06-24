@@ -12,6 +12,7 @@ pub mod bottom_pane_runtime;
 pub mod notification;
 pub mod notification_store;
 pub mod reducer;
+mod reducer_routes;
 pub mod selectors;
 pub mod turn_lifecycle;
 

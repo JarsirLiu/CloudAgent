@@ -139,7 +139,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::DismissServerRequestView(request_id) => {
             app.dismiss_server_request_view(&request_id);
         }
-        ServerAction::ClearActiveTool { item_id } => {
+        ServerAction::ClearActiveRuntime { item_id } => {
             app.on_server_tool_finished(item_id.as_deref());
         }
         ServerAction::ReplaceHistory(messages) => {
@@ -205,12 +205,12 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 app.run_state.expand_tool_details,
             );
         }
-        ServerAction::AppendActiveToolDelta {
+        ServerAction::AppendActiveRuntimeDelta {
             turn_id,
             item_id,
             delta,
         } => {
-            app.bottom_pane.on_tool_output_delta(Some(&item_id), &delta);
+            app.bottom_pane.on_active_runtime_output_delta(Some(&item_id), &delta);
             app.transcript_owner.append_tool_delta(
                 turn_id,
                 item_id,
@@ -257,9 +257,8 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 app.run_state.expand_tool_details,
             );
         }
-        ServerAction::AppendCommandOutputDelta { item_id, delta } => {
-            app.bottom_pane
-                .on_command_output_delta(Some(&item_id), &delta);
+        ServerAction::AppendActiveRuntimeOutputDelta { item_id, delta } => {
+            app.bottom_pane.on_active_runtime_output_delta(Some(&item_id), &delta);
         }
         ServerAction::CompleteActiveTurnItem {
             turn_id,
@@ -270,7 +269,7 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                 &transcript_item
                 && !matches!(status, agent_core::CommandExecutionStatus::InProgress)
             {
-                app.bottom_pane.on_command_finished(&item.id);
+                app.bottom_pane.on_active_runtime_finished(Some(&item.id));
             }
             app.transcript_owner.complete_item(
                 turn_id,
@@ -308,9 +307,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
         ServerAction::PushErrorCell(message) => {
             app.bottom_pane.clear_views();
             app.bottom_pane.push_toast(NoticeLevel::Error, message);
-        }
-        ServerAction::TransportClosedError(message) => {
-            app.handle_transport_closed_error(message);
         }
         ServerAction::TurnDispatch(dispatch) => {
             conversation_facade::apply_turn_dispatch(app, dispatch);

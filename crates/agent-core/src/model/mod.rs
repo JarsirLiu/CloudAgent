@@ -59,7 +59,12 @@ pub enum WebSearchAction {
         #[serde(default)]
         pattern: Option<String>,
     },
-    Other,
+    Unknown {
+        #[serde(default)]
+        raw_type: Option<String>,
+        #[serde(default)]
+        raw: Option<serde_json::Value>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

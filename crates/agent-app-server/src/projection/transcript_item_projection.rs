@@ -1,9 +1,6 @@
 use crate::projection::turn_projection_state::{ProjectedItemState, ProjectedItemStatus};
 use agent_core::conversation::TranscriptItem;
-use agent_core::{
-    CommandExecutionStatus, StructuredToolResult, TurnItemKind, WriteFileStatus,
-    web_search_presentation::web_search_presentation as web_search_card_presentation,
-};
+use agent_core::{CommandExecutionStatus, TurnItemKind, WriteFileStatus};
 
 pub(super) fn projected_item_from_transcript_item(
     turn_id: String,
@@ -177,13 +174,7 @@ pub(super) fn projected_item_from_transcript_item(
             user_content: Vec::new(),
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
-            tool_output_buffer: match structured.as_ref() {
-                Some(StructuredToolResult::WebSearch { query, action, .. }) => {
-                    web_search_card_presentation(query, action.as_ref(), None, None).detail
-                }
-                _ if summary.trim().is_empty() => content,
-                _ => summary,
-            },
+            tool_output_buffer: content,
             patch_buffer: String::new(),
             reasoning_summary_part_opened: false,
             order_hint: order_hint as u64,
@@ -240,10 +231,7 @@ pub(super) fn projected_item_to_transcript_item(
             id: item.item_id.clone(),
             tool_name: item.title.clone().unwrap_or_else(|| "tool".to_string()),
             content: item.tool_output_buffer.clone(),
-            summary: item
-                .summary
-                .clone()
-                .unwrap_or_else(|| item.tool_output_buffer.clone()),
+            summary: item.summary.clone().unwrap_or_default(),
             structured: item.structured.clone(),
         }),
         TurnItemKind::SystemNote => Some(TranscriptItem::SystemMessage {
