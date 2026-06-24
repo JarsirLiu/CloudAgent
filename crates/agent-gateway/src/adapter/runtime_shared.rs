@@ -4,6 +4,76 @@ use agent_app_server_client::AppServerEvent;
 use agent_core::ServerRequestDecision;
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
 
+#[derive(Debug, Default, Clone)]
+pub(crate) struct RuntimeSessionState {
+    active_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RuntimeSessionGate {
+    Accepted,
+    ForeignConversation,
+    ForeignTurn {
+        bound_turn_id: String,
+        event_turn_id: String,
+    },
+    BeforeTurnStarted {
+        event_turn_id: String,
+    },
+    BoundTurn {
+        turn_id: String,
+    },
+}
+
+impl RuntimeSessionState {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn gate_event(
+        &mut self,
+        session_key: &str,
+        event: &AppServerEvent,
+    ) -> RuntimeSessionGate {
+        if event_conversation_id(event) != Some(session_key) {
+            return RuntimeSessionGate::ForeignConversation;
+        }
+
+        let event_turn_id = event_turn_id(event);
+        if let Some(bound_turn_id) = self.active_turn_id.as_deref() {
+            if let Some(event_turn_id) = event_turn_id
+                && event_turn_id != bound_turn_id
+            {
+                return RuntimeSessionGate::ForeignTurn {
+                    bound_turn_id: bound_turn_id.to_string(),
+                    event_turn_id: event_turn_id.to_string(),
+                };
+            }
+            return RuntimeSessionGate::Accepted;
+        }
+
+        let Some(event_turn_id) = event_turn_id else {
+            return RuntimeSessionGate::Accepted;
+        };
+
+        if matches!(
+            event,
+            AppServerEvent::Message(AppServerMessage::Notification(
+                AppServerNotification::TurnStarted { .. }
+            ))
+        ) {
+            self.active_turn_id = Some(event_turn_id.to_string());
+            RuntimeSessionGate::BoundTurn {
+                turn_id: event_turn_id.to_string(),
+            }
+        } else {
+            RuntimeSessionGate::BeforeTurnStarted {
+                event_turn_id: event_turn_id.to_string(),
+            }
+        }
+    }
+}
+
 pub(crate) fn event_conversation_id(event: &AppServerEvent) -> Option<&str> {
     match event {
         AppServerEvent::Message(message) => message.conversation_id(),

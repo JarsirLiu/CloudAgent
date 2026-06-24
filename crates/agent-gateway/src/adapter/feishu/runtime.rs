@@ -6,9 +6,7 @@ use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
 use agent_app_server_client::AppServerClient;
 use agent_core::ServerRequestDecision;
-use agent_protocol::{
-    AppServerMessage, AppServerNotification, AppServerRequest, TurnPolicy, UserTurnInput,
-};
+use agent_protocol::{AppServerMessage, AppServerRequest, TurnPolicy, UserTurnInput};
 use anyhow::Result;
 use async_trait::async_trait;
 use feishu_sdk::card::CardAction;
@@ -21,8 +19,9 @@ use tracing::{debug, info};
 
 use super::{FeishuAdapter, FeishuAdapterConfig, FeishuAdapterOptions};
 use crate::adapter::runtime_shared::{
-    build_outbound_target, build_turn_content, event_conversation_id, event_turn_id,
-    parse_approval_command, render_request_prompt, render_request_resolution_label,
+    RuntimeSessionGate, RuntimeSessionState, build_outbound_target, build_turn_content,
+    event_conversation_id, parse_approval_command, render_request_prompt,
+    render_request_resolution_label,
 };
 
 pub struct PlatformRuntime {
@@ -303,7 +302,7 @@ impl MessageHandler for NodeBackedHandler {
             "gateway.platform_runtime.turn.submit.ok"
         );
 
-        let mut active_turn_id: Option<String> = None;
+        let mut session_state = RuntimeSessionState::new();
         loop {
             let wait_duration = if self.approvals.has_pending(&session_key).await {
                 Duration::from_secs(600)
@@ -351,11 +350,20 @@ impl MessageHandler for NodeBackedHandler {
                 );
                 continue;
             }
-            let event_turn_id = event_turn_id(&event);
-            if let Some(bound_turn_id) = active_turn_id.as_deref() {
-                if let Some(event_turn_id) = event_turn_id
-                    && event_turn_id != bound_turn_id
-                {
+            match session_state.gate_event(&session_key, &event) {
+                RuntimeSessionGate::Accepted => {}
+                RuntimeSessionGate::ForeignConversation => {
+                    debug!(
+                        session_key = %session_key,
+                        event_conversation_id = ?event_conversation_id(&event),
+                        "gateway.platform_runtime.event.skipped_foreign_conversation"
+                    );
+                    continue;
+                }
+                RuntimeSessionGate::ForeignTurn {
+                    bound_turn_id,
+                    event_turn_id,
+                } => {
                     debug!(
                         session_key = %session_key,
                         active_turn_id = %bound_turn_id,
@@ -364,26 +372,20 @@ impl MessageHandler for NodeBackedHandler {
                     );
                     continue;
                 }
-            } else if let Some(event_turn_id) = event_turn_id {
-                if matches!(
-                    &event,
-                    agent_app_server_client::AppServerEvent::Message(
-                        AppServerMessage::Notification(AppServerNotification::TurnStarted { .. })
-                    )
-                ) {
-                    active_turn_id = Some(event_turn_id.to_string());
-                    debug!(
-                        session_key = %session_key,
-                        turn_id = %event_turn_id,
-                        "gateway.platform_runtime.turn.bound"
-                    );
-                } else {
+                RuntimeSessionGate::BeforeTurnStarted { event_turn_id } => {
                     debug!(
                         session_key = %session_key,
                         event_turn_id = %event_turn_id,
                         "gateway.platform_runtime.event.skipped_until_turn_start"
                     );
                     continue;
+                }
+                RuntimeSessionGate::BoundTurn { turn_id } => {
+                    debug!(
+                        session_key = %session_key,
+                        turn_id = %turn_id,
+                        "gateway.platform_runtime.turn.bound"
+                    );
                 }
             }
             if let Some(request) = event_request(&event) {

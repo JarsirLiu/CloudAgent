@@ -1,8 +1,9 @@
 use super::client::WecomAdapter;
 use super::config::WecomAdapterConfig;
 use crate::adapter::runtime_shared::{
-    build_outbound_target, build_turn_content, event_conversation_id, event_turn_id,
-    parse_approval_command, render_request_prompt, render_request_resolution_label,
+    RuntimeSessionGate, RuntimeSessionState, build_outbound_target, build_turn_content,
+    event_conversation_id, parse_approval_command, render_request_prompt,
+    render_request_resolution_label,
 };
 use crate::app_server_mapping::{EventFlow, map_app_server_event};
 use crate::gateway_event::{GatewayEvent, OutboundTarget};
@@ -12,8 +13,7 @@ use crate::session::build_session_key;
 use agent_app_server_client::{AppServerClient, AppServerEvent, AppServerRequestHandle};
 use agent_core::ServerRequestDecision;
 use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, AppServerRequest, TurnPolicy,
-    UserTurnInput,
+    AppClientCommand, AppServerMessage, AppServerRequest, TurnPolicy, UserTurnInput,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -168,7 +168,7 @@ impl MessageHandler for NodeBackedHandler {
             turn_policy: self.turn_policy.clone(),
         })?;
 
-        let mut active_turn_id: Option<String> = None;
+        let mut session_state = RuntimeSessionState::new();
         loop {
             let wait_duration = if self.approvals.has_pending(&session_key).await {
                 Duration::from_secs(600)
@@ -197,24 +197,14 @@ impl MessageHandler for NodeBackedHandler {
             if event_conversation_id(&event) != Some(session_key.as_str()) {
                 continue;
             }
-            let event_turn_id = event_turn_id(&event);
-            if let Some(bound_turn_id) = active_turn_id.as_deref() {
-                if let Some(event_turn_id) = event_turn_id
-                    && event_turn_id != bound_turn_id
-                {
+            match session_state.gate_event(&session_key, &event) {
+                RuntimeSessionGate::Accepted => {}
+                RuntimeSessionGate::ForeignConversation
+                | RuntimeSessionGate::ForeignTurn { .. }
+                | RuntimeSessionGate::BeforeTurnStarted { .. } => {
                     continue;
                 }
-            } else if let Some(event_turn_id) = event_turn_id {
-                if matches!(
-                    &event,
-                    AppServerEvent::Message(AppServerMessage::Notification(
-                        AppServerNotification::TurnStarted { .. }
-                    ))
-                ) {
-                    active_turn_id = Some(event_turn_id.to_string());
-                } else {
-                    continue;
-                }
+                RuntimeSessionGate::BoundTurn { .. } => {}
             }
             if let Some(request) = event_request(&event) {
                 self.approvals.register_pending(&session_key, request).await;

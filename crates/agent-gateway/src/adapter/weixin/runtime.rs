@@ -2,17 +2,16 @@ use super::client::WeixinAdapter;
 use super::config::WeixinAdapterConfig;
 use crate::adapter::runtime_event_log::{log_outbound_events, preview};
 use crate::adapter::runtime_shared::{
-    build_outbound_target, build_turn_content, event_conversation_id, event_name, event_turn_id,
+    RuntimeSessionGate, RuntimeSessionState, build_outbound_target, build_turn_content,
+    event_conversation_id, event_name,
 };
 use crate::app_server_mapping::{EventFlow, map_app_server_event};
 use crate::gateway_event::GatewayEvent;
 use crate::message::InboundMessage;
 use crate::platform::{MessageHandler, PlatformAdapter};
 use crate::session::build_session_key;
-use agent_app_server_client::{AppServerClient, AppServerEvent};
-use agent_protocol::{
-    AppClientCommand, AppServerMessage, AppServerNotification, TurnPolicy, UserTurnInput,
-};
+use agent_app_server_client::AppServerClient;
+use agent_protocol::{AppClientCommand, TurnPolicy, UserTurnInput};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -85,7 +84,7 @@ impl MessageHandler for NodeBackedHandler {
             turn_policy: self.turn_policy.clone(),
         })?;
 
-        let mut active_turn_id: Option<String> = None;
+        let mut session_state = RuntimeSessionState::new();
         loop {
             let maybe_event = timeout(Duration::from_secs(60), stream_client.next_event()).await;
             let event = match maybe_event {
@@ -110,11 +109,21 @@ impl MessageHandler for NodeBackedHandler {
                 );
                 continue;
             }
-            let event_turn_id = event_turn_id(&event);
-            if let Some(bound_turn_id) = active_turn_id.as_deref() {
-                if let Some(event_turn_id) = event_turn_id
-                    && event_turn_id != bound_turn_id
-                {
+            match session_state.gate_event(&session_key, &event) {
+                RuntimeSessionGate::Accepted => {}
+                RuntimeSessionGate::ForeignConversation => {
+                    debug!(
+                        session_key = %session_key,
+                        event = %event_name(&event),
+                        event_conversation_id = ?event_conversation_id(&event),
+                        "weixin.runtime.event.ignored_different_conversation"
+                    );
+                    continue;
+                }
+                RuntimeSessionGate::ForeignTurn {
+                    bound_turn_id,
+                    event_turn_id,
+                } => {
                     debug!(
                         session_key = %session_key,
                         bound_turn_id,
@@ -124,20 +133,7 @@ impl MessageHandler for NodeBackedHandler {
                     );
                     continue;
                 }
-            } else if let Some(event_turn_id) = event_turn_id {
-                if matches!(
-                    &event,
-                    AppServerEvent::Message(AppServerMessage::Notification(
-                        AppServerNotification::TurnStarted { .. }
-                    ))
-                ) {
-                    active_turn_id = Some(event_turn_id.to_string());
-                    info!(
-                        session_key = %session_key,
-                        turn_id = %event_turn_id,
-                        "weixin.runtime.turn.bound"
-                    );
-                } else {
+                RuntimeSessionGate::BeforeTurnStarted { event_turn_id } => {
                     debug!(
                         session_key = %session_key,
                         event = %event_name(&event),
@@ -145,6 +141,13 @@ impl MessageHandler for NodeBackedHandler {
                         "weixin.runtime.event.ignored_before_turn_started"
                     );
                     continue;
+                }
+                RuntimeSessionGate::BoundTurn { turn_id } => {
+                    info!(
+                        session_key = %session_key,
+                        turn_id,
+                        "weixin.runtime.turn.bound"
+                    );
                 }
             }
             let event_name = event_name(&event);
