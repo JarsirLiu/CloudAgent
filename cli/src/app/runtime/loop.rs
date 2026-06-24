@@ -18,12 +18,13 @@ pub(crate) async fn run_tui_event_loop(
 
     loop {
         let control = tokio::select! {
-            Some(event) = client.next_event() => {
-                controller.handle_client_event(app, client, event, &frame_requester);
-                RuntimeControl::Continue
-            }
+            biased;
             Some(event) = events.recv() => {
                 controller.handle_ui_event(app, client, event, &frame_requester).await?
+            }
+            Some(event) = client.next_event() => {
+                controller.handle_client_event(app, event, &frame_requester);
+                RuntimeControl::Continue
             }
             else => break,
         };

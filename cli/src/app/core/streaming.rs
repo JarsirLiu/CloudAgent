@@ -33,7 +33,7 @@ impl AgentStreamController {
 
     pub(crate) fn current_live_cell(&self) -> Option<HistoryCell> {
         let live_source = self.source[self.stable_source_len..].to_string();
-        (!live_source.is_empty()).then(|| self.agent_cell(live_source, self.emitted_any))
+        (!live_source.is_empty()).then(|| self.live_agent_cell(live_source, self.emitted_any))
     }
 
     pub(crate) fn finish_with_final_source(
@@ -47,7 +47,7 @@ impl AgentStreamController {
         };
 
         if self.stable_source_len < source.len() {
-            stable_cells.push(self.agent_cell(
+            stable_cells.push(self.committed_agent_cell(
                 source[self.stable_source_len..].to_string(),
                 self.emitted_any,
             ));
@@ -65,7 +65,7 @@ impl AgentStreamController {
         let target_stable_len = stable_boundary.max(self.stable_source_len);
         let mut stable_cells = Vec::new();
         if target_stable_len > self.stable_source_len {
-            stable_cells.push(self.agent_cell(
+            stable_cells.push(self.committed_agent_cell(
                 self.source[self.stable_source_len..target_stable_len].to_string(),
                 self.emitted_any,
             ));
@@ -77,16 +77,20 @@ impl AgentStreamController {
         AgentStreamOutput {
             stable_cells,
             live_cell: (!live_source.is_empty()).then(|| {
-                HistoryCell::agent("", live_source, HistoryFormat::Markdown)
-                    .with_stream_continuation(self.emitted_any)
-                    .with_provisional_stream(true)
-                    .with_stream_item_id(self.item_id.clone())
+                self.live_agent_cell(live_source, self.emitted_any)
             }),
         }
     }
 
-    fn agent_cell(&self, source: String, continuation: bool) -> HistoryCell {
+    fn committed_agent_cell(&self, source: String, continuation: bool) -> HistoryCell {
         HistoryCell::agent("", source, HistoryFormat::Markdown)
+            .with_stream_continuation(continuation)
+            .with_provisional_stream(true)
+            .with_stream_item_id(self.item_id.clone())
+    }
+
+    fn live_agent_cell(&self, source: String, continuation: bool) -> HistoryCell {
+        HistoryCell::agent("", source, HistoryFormat::PlainText)
             .with_stream_continuation(continuation)
             .with_provisional_stream(true)
             .with_stream_item_id(self.item_id.clone())
@@ -207,5 +211,15 @@ mod tests {
             bodies(finish.stable_cells),
             vec!["```rust\nfn main() {\nprintln!(\"hi\");\n}\n```\n"]
         );
+    }
+
+    #[test]
+    fn live_tail_uses_plain_text_rendering() {
+        let mut stream = AgentStreamController::new("a1");
+        let output = stream.push_delta("first paragraph\n\nsecond paragraph");
+        let live = output.live_cell.expect("live cell");
+
+        assert_eq!(live.format(), HistoryFormat::PlainText);
+        assert_eq!(live.body(), "second paragraph");
     }
 }

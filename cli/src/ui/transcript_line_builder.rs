@@ -7,11 +7,12 @@ pub(crate) enum TranscriptLineMode {
     Scrollback,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HistoryCellGapKey {
     pub(crate) is_empty: bool,
     pub(crate) is_stream_continuation: bool,
     pub(crate) kind: HistoryKind,
+    pub(crate) stream_item_id: Option<String>,
 }
 
 impl HistoryCellGapKey {
@@ -20,17 +21,21 @@ impl HistoryCellGapKey {
             is_empty: cell.body().trim().is_empty(),
             is_stream_continuation: cell.is_stream_continuation(),
             kind: cell.kind(),
+            stream_item_id: cell.stream_item_id().map(ToOwned::to_owned),
         }
     }
 
-    fn should_gap_before(&self, previous: Option<HistoryCellGapKey>) -> bool {
+    fn should_gap_before(&self, previous: Option<&HistoryCellGapKey>) -> bool {
         !self.is_empty
-            && !self.is_stream_continuation
-            && previous.is_some_and(|previous| !previous.is_empty)
+            && previous.is_some_and(|previous| {
+                !previous.is_empty
+                    && (!self.is_stream_continuation
+                        || previous.stream_item_id != self.stream_item_id)
+            })
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TranscriptLineOptions {
     pub(crate) width: usize,
     pub(crate) mode: TranscriptLineMode,
@@ -72,16 +77,17 @@ pub(crate) fn build_transcript_lines(
     let mut previous_cell = options.previous_cell;
     let mut emitted_any = false;
 
-    let had_previous_context = options.previous_cell.is_some();
+    let had_previous_context = previous_cell.is_some();
     for cell in cells {
         let cell_key = HistoryCellGapKey::from_cell(cell);
         if cell_key.is_empty {
             previous_cell = Some(cell_key);
             continue;
         }
-        if (emitted_any || had_previous_context) && should_insert_gap(previous_cell, cell_key) {
+        if (emitted_any || had_previous_context) && should_insert_gap(previous_cell.as_ref(), &cell_key)
+        {
             lines.push(Line::from(""));
-            if should_insert_extra_tool_gap(previous_cell, cell_key, options.mode) {
+            if should_insert_extra_tool_gap(previous_cell.as_ref(), &cell_key, options.mode) {
                 lines.push(Line::from(""));
             }
         }
@@ -112,15 +118,15 @@ pub(crate) fn build_cell_lines(
 }
 
 fn should_insert_gap(
-    previous_cell: Option<HistoryCellGapKey>,
-    current_cell: HistoryCellGapKey,
+    previous_cell: Option<&HistoryCellGapKey>,
+    current_cell: &HistoryCellGapKey,
 ) -> bool {
     current_cell.should_gap_before(previous_cell)
 }
 
 fn should_insert_extra_tool_gap(
-    previous_cell: Option<HistoryCellGapKey>,
-    current_cell: HistoryCellGapKey,
+    previous_cell: Option<&HistoryCellGapKey>,
+    current_cell: &HistoryCellGapKey,
     mode: TranscriptLineMode,
 ) -> bool {
     match mode {

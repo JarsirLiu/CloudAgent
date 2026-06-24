@@ -20,10 +20,6 @@ impl FrameRequester {
         }
     }
 
-    pub(crate) fn is_draw_pending(&self) -> bool {
-        self.draw_pending.load(Ordering::Acquire)
-    }
-
     pub(crate) fn schedule_tick_in(&self, delay: Duration) {
         let (deadline, wakeup) = &*self.tick_deadline;
         let mut deadline = deadline.lock().expect("tick deadline poisoned");

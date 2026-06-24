@@ -83,6 +83,28 @@ fn continuation_cells_do_not_insert_gap() {
 }
 
 #[test]
+fn streamed_agent_cells_with_same_item_id_do_not_add_extra_gaps() {
+    let first = HistoryCell::agent("assistant", "hello", HistoryFormat::Markdown)
+        .with_provisional_stream(true)
+        .with_stream_item_id("a1");
+    let second = HistoryCell::agent("assistant", " world", HistoryFormat::PlainText)
+        .with_stream_continuation(true)
+        .with_provisional_stream(true)
+        .with_stream_item_id("a1");
+    let cells = vec![first, second];
+
+    let build = build_transcript_lines(&cells, TranscriptLineOptions::live(80));
+    let rendered = build
+        .lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+
+    assert!(!rendered.iter().any(|line| line.is_empty()));
+    assert_eq!(rendered, vec!["  hello".to_string(), "  world".to_string()]);
+}
+
+#[test]
 fn live_mode_keeps_extra_gap_before_tool_like_cells() {
     let cells = vec![
         HistoryCell::agent("assistant", "answer", HistoryFormat::Markdown),

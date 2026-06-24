@@ -6,8 +6,6 @@ use crate::app::runtime::lifecycle::{handle_animation_tick, pause_welcome_animat
 use crate::app::runtime::paste_coordinator::PasteCoordinator;
 use crate::terminal::{FrameRequester, UiEvent};
 use agent_app_server_client::{AppServerClient, AppServerEvent};
-use agent_core::{RuntimeItem, TurnItemKind};
-use agent_protocol::{AppServerMessage, AppServerNotification};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -25,14 +23,10 @@ impl RuntimeController {
     pub(crate) fn handle_client_event(
         &mut self,
         app: &mut TuiApp,
-        client: &mut AppServerClient,
         event: AppServerEvent,
         frame_requester: &FrameRequester,
     ) {
-        let events = collect_client_events(client, event, frame_requester);
-        for event in events {
-            event_router::handle_client_event(app, event);
-        }
+        event_router::handle_client_event(app, event);
         frame_requester.schedule_frame();
     }
 
@@ -130,172 +124,4 @@ pub(crate) enum RuntimeControl {
     Continue,
     Draw,
     Break,
-}
-
-fn collect_client_events(
-    client: &mut AppServerClient,
-    first: AppServerEvent,
-    frame_requester: &FrameRequester,
-) -> Vec<AppServerEvent> {
-    let mut events = vec![first];
-    let mut stop_after_boundary = should_stop_after_event_boundary(events.last());
-    while !frame_requester.is_draw_pending() {
-        if stop_after_boundary {
-            break;
-        }
-        let Some(event) = client.try_next_event() else {
-            break;
-        };
-        stop_after_boundary = should_stop_after_event_boundary(Some(&event));
-        events.push(event);
-    }
-    coalesce_client_events(events)
-}
-
-pub(super) fn should_stop_after_event_boundary(event: Option<&AppServerEvent>) -> bool {
-    let Some(AppServerEvent::Message(AppServerMessage::Notification(notification))) = event else {
-        return false;
-    };
-    match notification {
-        AppServerNotification::ItemStarted { item, .. } => is_runtime_render_boundary_item(item),
-        AppServerNotification::CommandExecutionOutputDelta { .. }
-        | AppServerNotification::ToolOutputDelta { .. }
-        | AppServerNotification::JsonPatchDelta { .. }
-        | AppServerNotification::ItemProgress { .. }
-        | AppServerNotification::ItemMetricsUpdated { .. } => true,
-        AppServerNotification::ItemCompleted { item, .. } => is_runtime_render_boundary_item(item),
-        _ => false,
-    }
-}
-
-fn is_runtime_render_boundary_item(item: &RuntimeItem) -> bool {
-    matches!(
-        item.kind,
-        TurnItemKind::CommandExecution | TurnItemKind::FileChange | TurnItemKind::ToolResult
-    )
-}
-
-pub(super) fn coalesce_client_events(events: Vec<AppServerEvent>) -> Vec<AppServerEvent> {
-    let mut coalesced = Vec::with_capacity(events.len());
-    let mut skipped = 0usize;
-    for event in events {
-        match event {
-            AppServerEvent::Lagged { skipped: more } => {
-                skipped = skipped.saturating_add(more);
-            }
-            AppServerEvent::Disconnected { .. } => {
-                if skipped > 0 {
-                    tracing::warn!(
-                        skipped,
-                        "app-server event consumer lagged; dropping ignored events"
-                    );
-                    skipped = 0;
-                }
-                coalesced.push(event);
-            }
-            AppServerEvent::Message(message) => {
-                if skipped > 0 {
-                    tracing::warn!(
-                        skipped,
-                        "app-server event consumer lagged; dropping ignored events"
-                    );
-                    skipped = 0;
-                }
-                if let Some(last) = coalesced.last_mut()
-                    && try_merge_messages(last, &message)
-                {
-                    continue;
-                }
-                coalesced.push(AppServerEvent::Message(message));
-            }
-        }
-    }
-    if skipped > 0 {
-        tracing::warn!(
-            skipped,
-            "app-server event consumer lagged; dropping ignored events"
-        );
-    }
-    coalesced
-}
-
-fn try_merge_messages(existing: &mut AppServerEvent, next: &AppServerMessage) -> bool {
-    let AppServerEvent::Message(existing_message) = existing else {
-        return false;
-    };
-    match (existing_message, next) {
-        (
-            AppServerMessage::Notification(AppServerNotification::CommandExecutionOutputDelta {
-                conversation_id: left_conversation_id,
-                turn_id: left_turn_id,
-                item_id: left_item_id,
-                call_id: left_call_id,
-                delta: left_delta,
-            }),
-            AppServerMessage::Notification(AppServerNotification::CommandExecutionOutputDelta {
-                conversation_id: right_conversation_id,
-                turn_id: right_turn_id,
-                item_id: right_item_id,
-                call_id: right_call_id,
-                delta: right_delta,
-            }),
-        ) if left_conversation_id == right_conversation_id
-            && left_turn_id == right_turn_id
-            && left_item_id == right_item_id
-            && left_call_id == right_call_id =>
-        {
-            left_delta.push_str(right_delta);
-            true
-        }
-        (
-            AppServerMessage::Notification(AppServerNotification::ToolOutputDelta {
-                conversation_id: left_conversation_id,
-                turn_id: left_turn_id,
-                item_id: left_item_id,
-                call_id: left_call_id,
-                delta: left_delta,
-            }),
-            AppServerMessage::Notification(AppServerNotification::ToolOutputDelta {
-                conversation_id: right_conversation_id,
-                turn_id: right_turn_id,
-                item_id: right_item_id,
-                call_id: right_call_id,
-                delta: right_delta,
-            }),
-        ) if left_conversation_id == right_conversation_id
-            && left_turn_id == right_turn_id
-            && left_item_id == right_item_id
-            && left_call_id == right_call_id =>
-        {
-            left_delta.push_str(right_delta);
-            true
-        }
-        (
-            AppServerMessage::Notification(AppServerNotification::JsonPatchDelta {
-                conversation_id: left_conversation_id,
-                turn_id: left_turn_id,
-                item_id: left_item_id,
-                call_id: left_call_id,
-                delta: left_delta,
-            }),
-            AppServerMessage::Notification(AppServerNotification::JsonPatchDelta {
-                conversation_id: right_conversation_id,
-                turn_id: right_turn_id,
-                item_id: right_item_id,
-                call_id: right_call_id,
-                delta: right_delta,
-            }),
-        ) if left_conversation_id == right_conversation_id
-            && left_turn_id == right_turn_id
-            && left_item_id == right_item_id
-            && left_call_id == right_call_id =>
-        {
-            if !left_delta.is_empty() && !right_delta.is_empty() && !left_delta.ends_with('\n') {
-                left_delta.push('\n');
-            }
-            left_delta.push_str(right_delta);
-            true
-        }
-        _ => false,
-    }
 }
