@@ -1,7 +1,5 @@
 use super::card_layout::{render_card_header, render_wrapped_body_limited};
-use super::display_common::{
-    compact_inline_preview, is_generic_tool_group_summary, pretty_tool_title, tint_tail_style,
-};
+use super::display_common::{compact_inline_preview, tint_tail_style};
 use super::wrapping::{WrapOptions, word_wrap_text};
 use super::{HistoryCell, HistoryContent, ToolGroupCell};
 use crate::ui::theme::{
@@ -31,32 +29,29 @@ pub(super) fn render_tool_group(
     group: &ToolGroupCell,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let title = pretty_tool_title(&group.label);
     let mut lines = vec![render_card_header(
         "▸",
         history_tool_style(),
-        title,
+        group.label.clone(),
         history_title_accent_style(),
     )];
 
-    if !is_generic_tool_group_summary(&group.summary) {
-        lines.extend(
-            word_wrap_text(
-                &group.summary,
-                WrapOptions::new(width)
-                    .initial_indent(Line::from(vec![
-                        Span::raw("    "),
-                        Span::styled("└", history_rail_style()),
-                    ]))
-                    .subsequent_indent(Line::from(vec![
-                        Span::raw("    "),
-                        Span::styled("└", history_rail_style()),
-                    ])),
-            )
-            .into_iter()
-            .map(tint_tail_style(history_body_style())),
-        );
-    }
+    lines.extend(
+        word_wrap_text(
+            &group.summary,
+            WrapOptions::new(width)
+                .initial_indent(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled("└", history_rail_style()),
+                ]))
+                .subsequent_indent(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled("└", history_rail_style()),
+                ])),
+        )
+        .into_iter()
+        .map(tint_tail_style(history_body_style())),
+    );
 
     if !cell.is_expanded() {
         let preview_count = group.children.len().min(2);
@@ -201,11 +196,10 @@ fn render_tool_like(
     accent: Style,
     dot: &str,
 ) -> Vec<Line<'static>> {
-    let title = pretty_tool_title(cell.label());
     let title = if cell.repeat_count() > 1 {
-        format!("{title} x{}", cell.repeat_count())
+        format!("{} x{}", cell.label(), cell.repeat_count())
     } else {
-        title
+        cell.label().to_string()
     };
     let mut lines = vec![render_card_header(
         dot,
@@ -290,11 +284,10 @@ fn render_tool_like(
 }
 
 fn render_patch_like(cell: &HistoryCell, width: usize) -> Vec<Line<'static>> {
-    let title = pretty_tool_title(cell.label());
     let title = if cell.repeat_count() > 1 {
-        format!("{title} x{}", cell.repeat_count())
+        format!("{} x{}", cell.label(), cell.repeat_count())
     } else {
-        title
+        cell.label().to_string()
     };
     let mut lines = vec![render_card_header(
         "◼",

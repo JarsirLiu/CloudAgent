@@ -118,12 +118,7 @@ impl BottomPaneView for ServerRequestOverlay {
                 if let Some(intent) = slash_intent(&reason) {
                     return BottomPaneViewAction::Composer(intent);
                 }
-                let decision = if reason.is_empty() {
-                    selected_decision(self.selected)
-                } else {
-                    typed_decision(&reason)
-                };
-                self.submit_current(decision, reason)
+                self.submit_current(selected_decision(self.selected), reason)
             }
             _ => {
                 self.reply.handle_key(key);
@@ -356,19 +351,6 @@ fn selected_decision(selected: usize) -> ServerRequestDecisionKind {
     }
 }
 
-fn typed_decision(reason: &str) -> ServerRequestDecisionKind {
-    if reason.eq_ignore_ascii_case("n") || reason.eq_ignore_ascii_case("no") {
-        ServerRequestDecisionKind::Decline
-    } else if reason.eq_ignore_ascii_case("a")
-        || reason.eq_ignore_ascii_case("all")
-        || reason.eq_ignore_ascii_case("session")
-    {
-        ServerRequestDecisionKind::AcceptForSession
-    } else {
-        ServerRequestDecisionKind::Accept
-    }
-}
-
 fn slash_intent(line: &str) -> Option<ComposerIntent> {
     let command_text = line.strip_prefix('/')?;
     let mut parts = command_text.splitn(2, char::is_whitespace);
@@ -437,6 +419,24 @@ mod tests {
                 decision: ServerRequestDecisionKind::Decline,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn enter_uses_the_selected_decision_even_with_reason_text() {
+        let mut overlay = ServerRequestOverlay::new(request_state("req-1"));
+        overlay.selected = 2;
+        type_text(&mut overlay, "because");
+
+        let action = overlay.handle_key_event(key(KeyCode::Enter));
+
+        assert!(matches!(
+            action,
+            BottomPaneViewAction::ServerRequestSubmit {
+                decision: ServerRequestDecisionKind::Decline,
+                reason,
+                ..
+            } if reason == "because"
         ));
     }
 

@@ -14,7 +14,7 @@ pub(super) fn humanize_tool_label(tool_name: &str) -> String {
         "write_file" => "Write file".to_string(),
         "copy_path" => "Copy path".to_string(),
         "remove_path" => "Remove path".to_string(),
-        other => other.replace('_', " "),
+        other => other.to_string(),
     }
 }
 

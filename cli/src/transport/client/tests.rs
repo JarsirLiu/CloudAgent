@@ -3,8 +3,7 @@ use super::{
     wait_for_service,
 };
 use agent_protocol::{
-    ConversationHistoryResponse, ConversationViewResponse, JsonRpcMessage, JsonRpcRequest,
-    JsonRpcResponse, NodeStatusResponse, RequestId, SessionBootstrapContext,
+    JsonRpcMessage, JsonRpcResponse, NodeStatusResponse, SessionBootstrapContext,
     TransportInitializeParams, TransportInitializeResult, TransportServerInfo,
 };
 use anyhow::{Result, anyhow};
@@ -370,98 +369,3 @@ async fn create_local_node_client_preserves_workspace_context_and_data_root() {
     assert_eq!(seen, expected_contexts);
 }
 
-#[tokio::test]
-#[ignore = "manual smoke test: requires fresh prebuilt node/agentd binaries"]
-async fn local_node_remote_smoke_supports_startup_typed_reads() {
-    // This is intentionally kept as an opt-in smoke test because it depends
-    // on prebuilt binaries and a real local process environment.
-    let exe_dir = current_binary_dir();
-    let node = exe_dir.join(exe_name("node"));
-    let agentd = exe_dir.join(exe_name("agentd"));
-    assert!(node.exists(), "missing node binary at {}", node.display());
-    assert!(
-        agentd.exists(),
-        "missing agentd binary at {}",
-        agentd.display()
-    );
-
-    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe listener");
-    let addr = probe.local_addr().expect("probe local addr");
-    drop(probe);
-    let address = addr.to_string();
-    let mut child = std::process::Command::new(&node)
-        .args([
-            OsString::from("serve"),
-            OsString::from("--listen"),
-            OsString::from(&address),
-            OsString::from("--worker-bin"),
-            agentd.into_os_string(),
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn node");
-
-    let mut client = wait_for_service(
-        || connect_local_node_once(&address, None),
-        Some(&mut child),
-        Duration::from_secs(5),
-        Duration::from_millis(100),
-    )
-    .await
-    .expect("connect local node");
-
-    let conversation_id = "smoke-startup";
-    let history: ConversationHistoryResponse = tokio::time::timeout(
-        Duration::from_secs(5),
-        client.request_typed(JsonRpcRequest {
-            id: RequestId::String("smoke-history".to_string()),
-            method: "conversation/history".to_string(),
-            params: Some(serde_json::json!({ "conversation_id": conversation_id })),
-        }),
-    )
-    .await
-    .expect("history request timed out")
-    .expect("history response");
-    assert!(history.turns.is_empty());
-
-    let view: ConversationViewResponse = tokio::time::timeout(
-        Duration::from_secs(5),
-        client.request_typed(JsonRpcRequest {
-            id: RequestId::String("smoke-view".to_string()),
-            method: "conversation/view".to_string(),
-            params: Some(serde_json::json!({ "conversation_id": conversation_id })),
-        }),
-    )
-    .await
-    .expect("view request timed out")
-    .expect("view response");
-    assert_eq!(view.snapshot.conversation_id, conversation_id);
-    assert!(
-        client.try_next_event().is_none(),
-        "startup typed reads should not enqueue duplicate history/view notifications"
-    );
-
-    client.shutdown().await.expect("shutdown client");
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn current_binary_dir() -> PathBuf {
-    let exe = std::env::current_exe().expect("current exe");
-    let exe_dir = exe.parent().expect("exe parent");
-    if exe_dir.file_name().is_some_and(|name| name == "deps") {
-        exe_dir.parent().expect("debug dir parent").to_path_buf()
-    } else {
-        exe_dir.to_path_buf()
-    }
-}
-
-fn exe_name(base: &str) -> String {
-    if cfg!(windows) {
-        format!("{base}.exe")
-    } else {
-        base.to_string()
-    }
-}

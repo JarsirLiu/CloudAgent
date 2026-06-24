@@ -1,15 +1,5 @@
-use super::humanize_tool_label;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-
-pub(super) fn pretty_tool_title(label: &str) -> String {
-    match label {
-        "context" => "Context".to_string(),
-        "conversation" => "conversation".to_string(),
-        "reasoning" => "reasoning".to_string(),
-        other => humanize_tool_label(other),
-    }
-}
 
 pub(super) fn compact_inline_preview(input: &str, max_chars: usize) -> String {
     let trimmed = input.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -22,13 +12,6 @@ pub(super) fn compact_inline_preview(input: &str, max_chars: usize) -> String {
         out.push(ch);
     }
     out
-}
-
-pub(super) fn is_generic_tool_group_summary(summary: &str) -> bool {
-    matches!(
-        summary.trim().to_ascii_lowercase().as_str(),
-        "exploring workspace" | "running tool"
-    )
 }
 
 pub(super) fn tint_all_style(style: Style) -> impl Fn(Line<'static>) -> Line<'static> {
