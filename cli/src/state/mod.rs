@@ -12,6 +12,7 @@ pub mod bottom_pane_runtime;
 pub mod notification;
 pub mod notification_store;
 pub mod reducer;
+mod reducer_messages;
 mod reducer_routes;
 pub mod selectors;
 pub mod turn_lifecycle;
@@ -57,6 +58,11 @@ pub struct WeixinBindingState {
     pub status: String,
     pub next_poll_at: Instant,
 }
+
+#[cfg(test)]
+mod bottom_pane_runtime_tests;
+#[cfg(test)]
+mod reducer_messages_tests;
 
 impl RunState {
     pub fn new(_connection_label: &str) -> Self {

@@ -160,7 +160,6 @@ pub(crate) enum ServerAction {
         level: NoticeLevel,
     },
     InterruptResult(InterruptDisposition),
-    PushErrorCell(String),
     TurnDispatch(TurnDispatch),
     ShowServerRequestPrompt {
         request_id: RequestId,

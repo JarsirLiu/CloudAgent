@@ -1,12 +1,12 @@
 use std::time::Instant;
 
+use crate::active_runtime::{
+    active_runtime_banner_text, should_finish_active_runtime_item, started_live_label,
+};
 use crate::runtime_metrics_display::format_runtime_metrics;
 use crate::ui::history_cell::humanize_tool_label;
 use agent_core::conversation::TranscriptItem;
-use agent_core::{
-    CommandExecutionStatus, ModelRetryStage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress,
-    TurnItemKind,
-};
+use agent_core::{ModelRetryStage, RuntimeItem, RuntimeItemMetrics, RuntimeItemProgress};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BottomPaneRuntimeState {
@@ -91,9 +91,8 @@ impl BottomPaneRuntimeState {
     }
 
     pub(crate) fn on_active_item_started(&mut self, item: &RuntimeItem) {
-        let started = StartedItemState::from_item(item);
-        self.active_runtime = started.active_runtime;
-        self.live_label = started.live_label;
+        self.active_runtime = ActiveRuntimeState::from_started_item(item);
+        self.live_label = started_live_label(&item.kind).map(str::to_string);
     }
 
     pub(crate) fn on_active_runtime_output_delta(&mut self, item_id: Option<&str>, delta: &str) {
@@ -156,7 +155,7 @@ impl BottomPaneRuntimeState {
         item: &RuntimeItem,
         transcript_item: &TranscriptItem,
     ) {
-        if should_finish_active_runtime(transcript_item) {
+        if should_finish_active_runtime_item(transcript_item) {
             self.on_active_runtime_finished(Some(&item.id));
         }
     }
@@ -188,27 +187,7 @@ struct ActiveRuntimeState {
 
 impl ActiveRuntimeState {
     fn from_started_item(item: &RuntimeItem) -> Option<Self> {
-        let banner = match item.kind {
-            TurnItemKind::CommandExecution => match item
-                .title
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                Some(command) => format!("running command: {command}"),
-                None => "running command".to_string(),
-            },
-            TurnItemKind::ToolCall | TurnItemKind::ToolResult => match item
-                .title
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                Some(tool) => format!("executing tool: {}", humanize_tool_label(tool)),
-                None => "executing tool".to_string(),
-            },
-            _ => return None,
-        };
+        let banner = active_runtime_banner_text(item, humanize_tool_label)?;
         let mut state = Self {
             banner: RuntimeBannerState::new(Some(item.id.clone()), banner),
         };
@@ -254,37 +233,6 @@ impl ActiveRuntimeState {
 
     fn update_metrics(&mut self, item_id: Option<&str>, metrics: &RuntimeItemMetrics) {
         self.banner.update_metrics(item_id, metrics);
-    }
-}
-
-#[derive(Clone, Debug)]
-struct StartedItemState {
-    active_runtime: Option<ActiveRuntimeState>,
-    live_label: Option<String>,
-}
-
-impl StartedItemState {
-    fn from_item(item: &RuntimeItem) -> Self {
-        match item.kind {
-            TurnItemKind::AssistantMessage => Self {
-                active_runtime: None,
-                live_label: Some("Working".to_string()),
-            },
-            TurnItemKind::Reasoning => Self {
-                active_runtime: None,
-                live_label: Some("Thinking".to_string()),
-            },
-            TurnItemKind::CommandExecution | TurnItemKind::ToolCall | TurnItemKind::ToolResult => {
-                Self {
-                    active_runtime: ActiveRuntimeState::from_started_item(item),
-                    live_label: Some("Working".to_string()),
-                }
-            }
-            _ => Self {
-                active_runtime: None,
-                live_label: None,
-            },
-        }
     }
 }
 
@@ -394,14 +342,4 @@ fn compact_recent_output(value: &str, max_chars: usize) -> String {
     let mut out = normalized.chars().rev().take(keep).collect::<Vec<_>>();
     out.reverse();
     format!("…{}", out.into_iter().collect::<String>())
-}
-
-fn should_finish_active_runtime(transcript_item: &TranscriptItem) -> bool {
-    !matches!(
-        transcript_item,
-        TranscriptItem::CommandExecution {
-            status: CommandExecutionStatus::InProgress,
-            ..
-        }
-    )
 }

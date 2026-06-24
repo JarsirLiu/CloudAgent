@@ -339,8 +339,13 @@ fn transport_closed_error_pushes_diagnostic_cell() {
 
     assert!(reduced.actions.iter().any(|action| matches!(
         action,
-        ServerAction::PushErrorCell(message)
-            if message == "worker app server closed unexpectedly"
+        ServerAction::PushNoticeCell {
+            label,
+            message,
+            level
+        } if label == "error"
+            && message == "worker app server closed unexpectedly"
+            && *level == crate::state::NoticeLevel::Error
     )));
 }
 

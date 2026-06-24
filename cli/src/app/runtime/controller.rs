@@ -125,3 +125,7 @@ pub(crate) enum RuntimeControl {
     Draw,
     Break,
 }
+
+#[cfg(test)]
+#[path = "controller_tests.rs"]
+mod tests;

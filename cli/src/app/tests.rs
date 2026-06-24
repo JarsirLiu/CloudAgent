@@ -1550,7 +1550,11 @@ fn server_error_uses_toast_instead_of_transcript_cell() {
 
     execute_server_action(
         &mut app,
-        crate::state::reducer::ServerAction::PushErrorCell("interrupt requested".to_string()),
+        crate::state::reducer::ServerAction::PushNoticeCell {
+            label: "error".to_string(),
+            message: "interrupt requested".to_string(),
+            level: crate::state::NoticeLevel::Error,
+        },
     );
 
     let status = app.bottom_pane.build_status_view_model(&app);

@@ -278,6 +278,9 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
             message,
             level,
         } => {
+            if matches!(level, NoticeLevel::Error) {
+                app.bottom_pane.clear_views();
+            }
             if app.should_suppress_notice(&label, &message) {
                 return;
             }
@@ -299,10 +302,6 @@ pub(crate) fn execute_server_action(app: &mut TuiApp, action: ServerAction) {
                     .push_toast(NoticeLevel::Warn, "no active turn".to_string());
             }
         },
-        ServerAction::PushErrorCell(message) => {
-            app.bottom_pane.clear_views();
-            app.bottom_pane.push_toast(NoticeLevel::Error, message);
-        }
         ServerAction::TurnDispatch(dispatch) => {
             conversation_facade::apply_turn_dispatch(app, dispatch);
         }

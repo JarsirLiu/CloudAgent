@@ -1,7 +1,10 @@
 use crate::state::NoticeLevel;
 use crate::state::reducer::{ServerAction, TurnDispatch};
+use crate::state::reducer_messages::{
+    context_compacted_message, preview_excerpt, server_request_resolved_message,
+};
 use crate::ui::bottom_pane::dialogs::server_request::server_request_model::ServerRequestPresentation;
-use agent_core::{ServerRequest, ServerRequestDecision};
+use agent_core::ServerRequest;
 use agent_protocol::{AppServerMessage, AppServerNotification, AppServerRequest};
 
 pub(crate) fn route_server_message(message: &AppServerMessage) -> Vec<ServerAction> {
@@ -225,7 +228,7 @@ fn route_notification(notification: &AppServerNotification, actions: &mut Vec<Se
             });
         }
         AppServerNotification::Error { message, .. } => {
-            actions.push(ServerAction::PushErrorCell(message.clone()));
+            push_notice(actions, "error", message, NoticeLevel::Error);
         }
         AppServerNotification::ServerRequestRequested { request, .. } => {
             let _ = request;
@@ -266,42 +269,4 @@ fn push_notice(actions: &mut Vec<ServerAction>, label: &str, message: &str, leve
         message: message.to_string(),
         level,
     });
-}
-
-fn server_request_resolved_message(decision: &ServerRequestDecision) -> String {
-    format!(
-        "Request {}{}",
-        decision.label(),
-        decision
-            .reason
-            .as_deref()
-            .map(|r| format!(": {r}"))
-            .unwrap_or_default()
-    )
-}
-
-fn context_compacted_message(
-    pre_context_tokens_estimate: u64,
-    post_context_tokens_estimate: u64,
-) -> String {
-    format!(
-        "Context compacted: ~{} -> ~{} tokens",
-        pre_context_tokens_estimate, post_context_tokens_estimate
-    )
-}
-
-fn preview_excerpt(arguments_preview: &str) -> String {
-    let trimmed = arguments_preview.trim();
-    if trimmed.is_empty() {
-        return "(none)".to_string();
-    }
-    if trimmed.chars().count() <= 80 {
-        return trimmed.to_string();
-    }
-    let mut out = String::new();
-    for ch in trimmed.chars().take(80) {
-        out.push(ch);
-    }
-    out.push_str("… (truncated)");
-    out
 }

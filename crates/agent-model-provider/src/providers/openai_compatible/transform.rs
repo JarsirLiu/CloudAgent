@@ -5,6 +5,7 @@ use super::wire::{
 use crate::request::{ProviderMessage, ProviderRequest};
 use agent_core::model::{ModelResponse, ModelUsage};
 use agent_core::tool::{ToolCall, ToolIdentity, ToolSpec};
+use agent_core::web_search_presentation::web_search_detail as core_web_search_detail;
 use agent_core::{WebSearchAction, WebSearchRecord};
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
@@ -384,16 +385,12 @@ fn map_responses_web_search_item(item: &Value) -> Option<WebSearchRecord> {
         .and_then(|value| value.as_str())
         .or_else(|| item.get("call_id").and_then(|value| value.as_str()))?;
     let action = item.get("action").and_then(map_responses_web_search_action);
-    let query = action
-        .as_ref()
-        .map(web_search_action_detail)
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            item.get("query")
-                .and_then(|value| value.as_str())
-                .map(ToString::to_string)
-        })
-        .unwrap_or_default();
+    let query = core_web_search_detail(
+        item.get("query")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default(),
+        action.as_ref(),
+    );
 
     Some(WebSearchRecord {
         id: id.to_string(),
@@ -443,34 +440,6 @@ fn map_responses_web_search_action(value: &Value) -> Option<WebSearchAction> {
             raw_type: Some(kind.to_string()),
             raw: Some(value.clone()),
         }),
-    }
-}
-
-fn web_search_action_detail(action: &WebSearchAction) -> String {
-    match action {
-        WebSearchAction::Search { query, queries } => query
-            .clone()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| {
-                let first = queries
-                    .as_ref()
-                    .and_then(|values| values.first())
-                    .cloned()
-                    .unwrap_or_default();
-                if queries.as_ref().is_some_and(|values| values.len() > 1) && !first.is_empty() {
-                    format!("{first} ...")
-                } else {
-                    first
-                }
-            }),
-        WebSearchAction::OpenPage { url } => url.clone().unwrap_or_default(),
-        WebSearchAction::FindInPage { url, pattern } => match (pattern, url) {
-            (Some(pattern), Some(url)) => format!("'{pattern}' in {url}"),
-            (Some(pattern), None) => format!("'{pattern}'"),
-            (None, Some(url)) => url.clone(),
-            (None, None) => String::new(),
-        },
-        WebSearchAction::Unknown { .. } => String::new(),
     }
 }
 

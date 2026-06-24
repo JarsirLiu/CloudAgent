@@ -1,3 +1,4 @@
+pub(crate) mod active_runtime;
 pub mod agent_host;
 pub mod app;
 pub mod console_entry;
@@ -10,5 +11,8 @@ mod text_width;
 mod tool_identity;
 pub mod transport;
 pub mod ui;
+
+#[cfg(test)]
+mod active_runtime_tests;
 
 pub use app::{AppServerTarget, ConsoleBootstrap, ConsoleConfig, run_console};

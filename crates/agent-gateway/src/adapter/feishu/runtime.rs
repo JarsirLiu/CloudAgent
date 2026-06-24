@@ -591,3 +591,12 @@ fn approval_button(
         }
     })
 }
+
+#[cfg(test)]
+pub(crate) fn build_turn_content_for_tests(message: &InboundMessage) -> Vec<agent_core::InputItem> {
+    build_turn_content(message)
+}
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

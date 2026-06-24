@@ -1,4 +1,5 @@
 use super::streaming::{AgentStreamController, AgentStreamFinish, AgentStreamOutput};
+use crate::active_runtime::{should_keep_completed_item_live, should_start_live_item};
 use crate::runtime_metrics_display::format_runtime_metrics;
 use crate::ui::history_cell::{
     HistoryCell, humanize_tool_label, render_active_runtime_item, render_history_entry,
@@ -555,15 +556,4 @@ fn turn_item_kind(item: &TranscriptItem) -> TurnItemKind {
         TranscriptItem::FileChange { .. } => TurnItemKind::FileChange,
         TranscriptItem::ToolResult { .. } => TurnItemKind::ToolResult,
     }
-}
-
-fn should_start_live_item(item: &RuntimeItem) -> bool {
-    !matches!(item.kind, TurnItemKind::CommandExecution)
-}
-
-fn should_keep_completed_item_live(item: &TranscriptItem) -> bool {
-    matches!(
-        item,
-        TranscriptItem::FileChange { .. } | TranscriptItem::ToolResult { .. }
-    )
 }
