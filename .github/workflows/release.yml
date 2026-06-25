@@ -37,6 +37,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate release tag
+        shell: pwsh
+        run: ./scripts/validate-release-tag.ps1 -Tag $env:GITHUB_REF_NAME
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -99,6 +103,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate release tag
+        shell: pwsh
+        run: ./scripts/validate-release-tag.ps1 -Tag $env:GITHUB_REF_NAME
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -160,9 +168,12 @@ jobs:
           cp "$GITHUB_WORKSPACE/scripts/install.sh" bootstrap/install.sh
           cp "$GITHUB_WORKSPACE/scripts/upgrade.sh" bootstrap/upgrade.sh
           cp "$GITHUB_WORKSPACE/scripts/uninstall.sh" bootstrap/uninstall.sh
+          cp "$GITHUB_WORKSPACE/scripts/release_tag_rules.sh" bootstrap/release_tag_rules.sh
           cp "$GITHUB_WORKSPACE/scripts/install.ps1" bootstrap/install.ps1
           cp "$GITHUB_WORKSPACE/scripts/upgrade.ps1" bootstrap/upgrade.ps1
           cp "$GITHUB_WORKSPACE/scripts/uninstall.ps1" bootstrap/uninstall.ps1
+          cp "$GITHUB_WORKSPACE/scripts/release-tag-rules.ps1" bootstrap/release-tag-rules.ps1
+          cp "$GITHUB_WORKSPACE/scripts/validate-release-tag.ps1" bootstrap/validate-release-tag.ps1
           printf '%s\n' "$RELEASE_TAG" > bootstrap/VERSION
 
           cat > bootstrap/latest.json <<JSON

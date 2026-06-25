@@ -516,6 +516,7 @@ dependencies = [
  "cli",
  "config",
  "infra-store",
+ "semver",
  "tokio",
  "tracing-subscriber",
 ]

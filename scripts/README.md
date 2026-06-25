@@ -84,6 +84,14 @@ Upgrade:
 cloudagent upgrade
 ```
 
+Release version handling is shared across install, upgrade, CI, and release publishing:
+
+- Shell scripts use [`release_tag_rules.sh`](./release_tag_rules.sh)
+- PowerShell scripts use [`release-tag-rules.ps1`](./release-tag-rules.ps1)
+- The validation wrapper is [`validate-release-tag.ps1`](./validate-release-tag.ps1)
+
+The helper self-tests are wired into CI, so tag rule changes should be made in the shared rule files rather than copied into each script.
+
 Install and upgrade downloads now show terminal-friendly progress:
 
 - PowerShell, Windows Terminal, and `cmd` launched through the PowerShell installer show `MB / total MB` progress
