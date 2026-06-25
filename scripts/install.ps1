@@ -1,6 +1,7 @@
 param(
     [string]$Version = "latest",
-    [switch]$Force
+    [switch]$Force,
+    [switch]$SelfTest
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +20,80 @@ $script:LastDownloadStatusLength = 0
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
 $script:StageTotal = 7
 
-. "$PSScriptRoot/release-tag-rules.ps1"
+$releaseTagRulesPath = if ($PSScriptRoot) { Join-Path $PSScriptRoot "release-tag-rules.ps1" } else { $null }
+if ($releaseTagRulesPath -and (Test-Path $releaseTagRulesPath)) {
+    . $releaseTagRulesPath
+}
+else {
+    function Test-SemVerTag {
+        param([Parameter(Mandatory = $true)][string]$Value)
+
+        return $Value -match '^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
+    }
+
+    function Normalize-ReleaseTag {
+        param([Parameter(Mandatory = $true)][string]$Version)
+
+        $normalizedVersion = $Version.Trim()
+        if (-not $normalizedVersion) {
+            throw "invalid release version: $Version"
+        }
+
+        $releaseTag = if ($normalizedVersion.StartsWith("v")) { $normalizedVersion } else { "v$normalizedVersion" }
+        if (-not (Test-SemVerTag $releaseTag)) {
+            throw "invalid release version: $Version"
+        }
+
+        return $releaseTag
+    }
+}
+
+function Assert-True {
+    param(
+        [Parameter(Mandatory = $true)][bool]$Condition,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    if (-not $Condition) {
+        throw $Message
+    }
+}
+
+if ($SelfTest) {
+    $validTags = @(
+        "v0.1.0"
+        "v1.2.3"
+        "v1.2.3-beta.1"
+        "v1.2.3+build.7"
+        "v1.2.3-beta.1+build.7"
+    )
+
+    foreach ($validTag in $validTags) {
+        Assert-True (Test-SemVerTag $validTag) "expected valid tag to pass: $validTag"
+    }
+
+    $invalidTags = @(
+        "v"
+        "v1"
+        "v1.2"
+        "1.2.3"
+        "v01.2.3"
+        "v1.02.3"
+        "v1.2.03"
+        "v1.2.3-"
+        "v1.2.3+"
+    )
+
+    foreach ($invalidTag in $invalidTags) {
+        Assert-True (-not (Test-SemVerTag $invalidTag)) "expected invalid tag to fail: $invalidTag"
+    }
+
+    Assert-True ((Normalize-ReleaseTag -Version "1.2.3") -eq "v1.2.3") "normalize-release-tag failed for 1.2.3"
+    Assert-True ((Normalize-ReleaseTag -Version "v1.2.3-beta.1") -eq "v1.2.3-beta.1") "normalize-release-tag failed for v1.2.3-beta.1"
+
+    Write-Host "install.ps1 self-test passed"
+    exit 0
+}
 
 function Write-StageStart {
     param(

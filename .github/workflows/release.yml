@@ -107,6 +107,20 @@ jobs:
         shell: pwsh
         run: ./scripts/validate-release-tag.ps1 -Tag $env:GITHUB_REF_NAME
 
+      - name: Generate release notes from tag commit message
+        id: release_notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          notes_path="${RUNNER_TEMP}/release-notes.md"
+
+          git log -1 --format=%B "${commit}" > "${notes_path}"
+          echo >> "${notes_path}"
+
+          echo "path=${notes_path}" >> "${GITHUB_OUTPUT}"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -129,6 +143,10 @@ jobs:
         with:
           files: |
             release/*
+          body_path: ${{ steps.release_notes.outputs.path }}
+          overwrite_files: true
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
       - name: Publish bootstrap scripts
         env:
@@ -164,41 +182,13 @@ jobs:
             git checkout release-bootstrap
           fi
 
-          mkdir -p bootstrap
-          cp "$GITHUB_WORKSPACE/scripts/install.sh" bootstrap/install.sh
-          cp "$GITHUB_WORKSPACE/scripts/upgrade.sh" bootstrap/upgrade.sh
-          cp "$GITHUB_WORKSPACE/scripts/uninstall.sh" bootstrap/uninstall.sh
-          cp "$GITHUB_WORKSPACE/scripts/release_tag_rules.sh" bootstrap/release_tag_rules.sh
-          cp "$GITHUB_WORKSPACE/scripts/install.ps1" bootstrap/install.ps1
-          cp "$GITHUB_WORKSPACE/scripts/upgrade.ps1" bootstrap/upgrade.ps1
-          cp "$GITHUB_WORKSPACE/scripts/uninstall.ps1" bootstrap/uninstall.ps1
-          cp "$GITHUB_WORKSPACE/scripts/release-tag-rules.ps1" bootstrap/release-tag-rules.ps1
-          cp "$GITHUB_WORKSPACE/scripts/validate-release-tag.ps1" bootstrap/validate-release-tag.ps1
-          printf '%s\n' "$RELEASE_TAG" > bootstrap/VERSION
-
-          cat > bootstrap/latest.json <<JSON
-          {
-            "stable": "${RELEASE_TAG}",
-            "assets": {
-              "linux-x64": {
-                "url": "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/cloudagent-${RELEASE_TAG}-linux-x64.tar.gz",
-                "sha256": "${LINUX_X64_SHA}"
-              },
-              "macos-x64": {
-                "url": "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/cloudagent-${RELEASE_TAG}-macos-x64.tar.gz",
-                "sha256": "${MACOS_X64_SHA}"
-              },
-              "macos-arm64": {
-                "url": "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/cloudagent-${RELEASE_TAG}-macos-arm64.tar.gz",
-                "sha256": "${MACOS_ARM64_SHA}"
-              },
-              "windows-x64": {
-                "url": "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/cloudagent-${RELEASE_TAG}-windows-x64.zip",
-                "sha256": "${WINDOWS_X64_SHA}"
-              }
-            }
-          }
-          JSON
+          OUTPUT_DIR="$BOOTSTRAP_DIR/bootstrap" \
+            RELEASE_TAG="$RELEASE_TAG" \
+            LINUX_X64_SHA="$LINUX_X64_SHA" \
+            MACOS_X64_SHA="$MACOS_X64_SHA" \
+            MACOS_ARM64_SHA="$MACOS_ARM64_SHA" \
+            WINDOWS_X64_SHA="$WINDOWS_X64_SHA" \
+            bash "$GITHUB_WORKSPACE/scripts/stage-bootstrap.sh"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

@@ -42,3 +42,28 @@ jobs:
       - name: Validate release tag helper (PowerShell)
         shell: pwsh
         run: ./scripts/validate-release-tag.ps1 -SelfTest
+
+      - name: Validate bootstrap staging helper
+        shell: bash
+        run: bash ./scripts/stage-bootstrap.sh --self-test
+
+      - name: Smoke test installer fallback (shell)
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT INT TERM
+          cp ./scripts/install.sh "$temp_dir/install.sh"
+          bash "$temp_dir/install.sh" --self-test
+
+      - name: Smoke test installer fallback (PowerShell)
+        shell: pwsh
+        run: |
+          $tempDir = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cloudagent-install-smoke-$PID")) -Force
+          try {
+              Copy-Item ./scripts/install.ps1 -Destination (Join-Path $tempDir.FullName "install.ps1")
+              & (Join-Path $tempDir.FullName "install.ps1") -SelfTest
+          }
+          finally {
+              Remove-Item -LiteralPath $tempDir.FullName -Recurse -Force
+          }

@@ -92,6 +92,19 @@ Release version handling is shared across install, upgrade, CI, and release publ
 
 The helper self-tests are wired into CI, so tag rule changes should be made in the shared rule files rather than copied into each script.
 
+The bootstrap release tree is staged by [`stage-bootstrap.sh`](./stage-bootstrap.sh) and validated before it is pushed to the `release-bootstrap` branch.
+
+Installer scripts also expose `--self-test` / `-SelfTest` smoke checks, and CI runs them from temporary directories that do not contain the shared helper files.
+
+Release publishing follows a staged flow:
+
+- Build jobs produce versioned release archives
+- The publish job collects artifacts into a staging directory and writes `SHA256SUMS`
+- GitHub Release notes come from the tag commit message
+- The `release-bootstrap` branch is updated from a staged bootstrap tree that carries the installer entrypoints and shared helpers
+
+That split keeps release artifacts reproducible and makes installer updates easier to validate before they reach users.
+
 Install and upgrade downloads now show terminal-friendly progress:
 
 - PowerShell, Windows Terminal, and `cmd` launched through the PowerShell installer show `MB / total MB` progress
