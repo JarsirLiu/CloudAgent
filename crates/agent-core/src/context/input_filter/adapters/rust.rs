@@ -2,7 +2,8 @@ use super::super::pipeline::filter_tool_output;
 
 pub(crate) fn filter_cargo_test_output(raw: &str) -> String {
     let (errors, warnings, failures) = summarize_cargo_lines(raw);
-    let mut out = format!("Cargo test summary: {errors} errors, {warnings} warnings, {failures} failures");
+    let mut out =
+        format!("Cargo test summary: {errors} errors, {warnings} warnings, {failures} failures");
     let block = cargo_test_failure_block(raw);
     if !block.is_empty() {
         out.push('\n');
@@ -24,7 +25,8 @@ pub(crate) fn filter_cargo_build_output(raw: &str) -> String {
 
 pub(crate) fn filter_cargo_clippy_output(raw: &str) -> String {
     let (errors, warnings, failures) = summarize_cargo_lines(raw);
-    let mut out = format!("Cargo clippy summary: {errors} errors, {warnings} warnings, {failures} failures");
+    let mut out =
+        format!("Cargo clippy summary: {errors} errors, {warnings} warnings, {failures} failures");
     let tail = cargo_failure_block(raw);
     if !tail.is_empty() {
         out.push('\n');
@@ -108,18 +110,17 @@ fn cargo_test_failure_block(raw: &str) -> String {
         if lower.contains("test result:") || lower.contains("failures:") || lower.contains("----") {
             capture = true;
         }
-        if capture {
-            if lower.contains("failures:")
+        if capture
+            && (lower.contains("failures:")
                 || lower.contains("error:")
                 || lower.contains("failed")
                 || lower.contains("panic")
                 || lower.contains("note:")
                 || lower.contains("stdout")
                 || lower.contains("stderr")
-                || line.starts_with("---- ")
-            {
-                selected.push(line.to_string());
-            }
+                || line.starts_with("---- "))
+        {
+            selected.push(line.to_string());
         }
     }
 

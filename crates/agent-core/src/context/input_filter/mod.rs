@@ -8,7 +8,10 @@ use std::collections::HashMap;
 use adapters::git::filter_git_output;
 use adapters::install::filter_install_output;
 use adapters::python::filter_python_output;
-use adapters::rust::{filter_cargo_build_output, filter_cargo_clippy_output, filter_cargo_fmt_output, filter_cargo_install_output, filter_cargo_test_output};
+use adapters::rust::{
+    filter_cargo_build_output, filter_cargo_clippy_output, filter_cargo_fmt_output,
+    filter_cargo_install_output, filter_cargo_test_output,
+};
 use adapters::tests::filter_test_output;
 use pipeline::filter_tool_output;
 

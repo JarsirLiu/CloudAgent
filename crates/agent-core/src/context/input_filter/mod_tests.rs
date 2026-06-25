@@ -82,7 +82,10 @@ fn git_log_keeps_commit_subject_and_body_line() {
 
 #[test]
 fn cargo_test_is_summarized() {
-    let out = run_filter("cargo test", Some("error: failed\nwarning: unused\nFAILED test_x"));
+    let out = run_filter(
+        "cargo test",
+        Some("error: failed\nwarning: unused\nFAILED test_x"),
+    );
     assert!(out.contains("Cargo test summary"));
     assert!(out.contains("failures"));
 }
@@ -105,7 +108,10 @@ fn cargo_build_is_summarized() {
 
 #[test]
 fn cargo_build_keeps_error_and_warning_lines() {
-    let out = run_filter("cargo build", Some("error: failed\nwarning: unused\nnote: help"));
+    let out = run_filter(
+        "cargo build",
+        Some("error: failed\nwarning: unused\nnote: help"),
+    );
     assert!(out.contains("Cargo build summary"));
     assert!(out.contains("error: failed"));
     assert!(out.contains("warning: unused"));
@@ -182,7 +188,10 @@ fn cargo_install_uses_install_header() {
 
 #[test]
 fn cargo_install_summarizes_install_output() {
-    let out = run_filter("cargo install ripgrep", Some("finished\ninstalled ripgrep\nsuccess"));
+    let out = run_filter(
+        "cargo install ripgrep",
+        Some("finished\ninstalled ripgrep\nsuccess"),
+    );
     assert!(out.contains("Install summary"));
 }
 

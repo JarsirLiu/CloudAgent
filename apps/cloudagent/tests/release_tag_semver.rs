@@ -16,11 +16,7 @@ fn normalize_release_tag(version: &str) -> Option<String> {
         format!("v{version}")
     };
 
-    if is_semver_tag(&tag) {
-        Some(tag)
-    } else {
-        None
-    }
+    if is_semver_tag(&tag) { Some(tag) } else { None }
 }
 
 #[test]
@@ -38,7 +34,9 @@ fn semver_tag_accepts_expected_values() {
 
 #[test]
 fn semver_tag_rejects_invalid_values() {
-    for tag in ["v", "v1", "v1.2", "1.2.3", "v01.2.3", "v1.02.3", "v1.2.03", "v1.2.3-", "v1.2.3+"] {
+    for tag in [
+        "v", "v1", "v1.2", "1.2.3", "v01.2.3", "v1.02.3", "v1.2.03", "v1.2.3-", "v1.2.3+",
+    ] {
         assert!(!is_semver_tag(tag), "expected invalid tag to fail: {tag}");
     }
 }
