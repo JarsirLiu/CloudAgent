@@ -37,7 +37,7 @@ jobs:
 
       - name: Validate release tag helper
         shell: bash
-        run: ./scripts/release_tag_rules.sh --self-test
+        run: bash ./scripts/release_tag_rules.sh --self-test
 
       - name: Validate release tag helper (PowerShell)
         shell: pwsh
