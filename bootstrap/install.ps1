@@ -17,7 +17,9 @@ $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-P
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
 $script:LastDownloadStatusLength = 0
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
-$script:StageTotal = 8
+$script:StageTotal = 7
+
+. "$PSScriptRoot/release-tag-rules.ps1"
 
 function Write-StageStart {
     param(
@@ -176,7 +178,7 @@ function Resolve-LatestReleaseTag {
     $bootstrapVersionUrl = "$BootstrapRawBase/VERSION"
     try {
         $bootstrapVersion = (Invoke-RestMethod -Uri $bootstrapVersionUrl -Headers @{ "User-Agent" = "cloudagent-installer" }).ToString().Trim()
-        if ($bootstrapVersion.StartsWith("v")) {
+        if (Test-SemVerTag $bootstrapVersion) {
             return $bootstrapVersion
         }
     }
@@ -287,21 +289,6 @@ function Get-Sha256Hash {
     finally {
         $stream.Dispose()
     }
-}
-
-function Ensure-UserPath {
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $parts = @()
-    if ($userPath) {
-        $parts = $userPath.Split(';') | Where-Object { $_ }
-    }
-    if ($parts -contains $BinDir) {
-        return
-    }
-    $newPath = if ($userPath) { "$userPath;$BinDir" } else { $BinDir }
-    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    $env:Path = "$BinDir;$env:Path"
-    Write-Host "Updated user PATH with $BinDir"
 }
 
 function Write-Launcher {
@@ -435,7 +422,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cloudagent-launch.ps1"
 
 $headers = @{ "User-Agent" = "cloudagent-installer" }
 Write-StageStart -Step 1 -Title "Resolving release metadata"
-$script:ReleaseTag = if ($Version -eq "latest") { Resolve-LatestReleaseTag } else { "v$Version" }
+$script:ReleaseTag = if ($Version -eq "latest") { Resolve-LatestReleaseTag } else { Normalize-ReleaseTag $Version }
 $releaseVersion = $script:ReleaseTag.TrimStart('v')
 $assetName = Get-TargetAssetName
 $assetUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/$assetName"
@@ -507,14 +494,11 @@ try {
     Set-Content -Encoding ASCII -NoNewline -Path $markerPath -Value ""
     Write-StageDone
 
-    Write-StageStart -Step 8 -Title "Updating PATH"
-    Ensure-UserPath
-    Write-StageDone
-
     Write-Host "CloudAgent $releaseVersion installed"
     Write-Host "Install root: $InstallRoot"
     Write-Host "Data dir: $DataDir"
-    Write-Host "Run: cloudagent start"
+    Write-Host "Launcher dir: $BinDir"
+    Write-Host "Run: $BinDir\\cloudagent.cmd start"
 }
 finally {
     if (Test-Path $tempRoot) {

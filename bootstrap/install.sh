@@ -17,6 +17,8 @@ VERSION="latest"
 FORCE=0
 STAGE_TOTAL=8
 
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/release_tag_rules.sh"
+
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
 stage_start() {
@@ -138,12 +140,20 @@ detect_arch() {
 resolve_latest_release_tag() {
   bootstrap_version_url="$BOOTSTRAP_RAW_BASE/VERSION"
   if bootstrap_version=$(curl -fsSL "$bootstrap_version_url" 2>/dev/null | tr -d '[:space:]'); then
-    case "$bootstrap_version" in
-      v*) printf '%s\n' "$bootstrap_version"; return 0 ;;
-    esac
+    if is_semver_tag "$bootstrap_version"; then
+      printf '%s\n' "$bootstrap_version"
+      return 0
+    fi
   fi
 
-  curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" | awk -F/ '{print $NF}'
+  latest_tag=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" | awk -F/ '{print $NF}')
+  if is_semver_tag "$latest_tag"; then
+    printf '%s\n' "$latest_tag"
+    return 0
+  fi
+
+  echo "failed to resolve release version" >&2
+  exit 1
 }
 
 resolve_bootstrap_url() {
@@ -161,7 +171,7 @@ fetch_release_metadata() {
   if [ "$VERSION" = "latest" ]; then
     RELEASE_TAG=$(resolve_latest_release_tag)
   else
-    RELEASE_TAG="v$VERSION"
+    RELEASE_TAG=$(normalize_release_tag "$VERSION")
   fi
   [ -n "$RELEASE_TAG" ] || {
     echo "failed to resolve release version" >&2
@@ -299,39 +309,6 @@ EOF
   stage_done
 }
 
-ensure_path() {
-  stage_start 8 "Updating PATH"
-  case ":$PATH:" in
-    *":$BIN_DIR:"*)
-      stage_done "(already configured)"
-      return 0
-      ;;
-  esac
-
-  path_line='export PATH="$HOME/.local/bin:$PATH"'
-  touched=0
-  for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.zprofile"; do
-    [ -f "$rc" ] || continue
-    if ! grep -Fq "$path_line" "$rc"; then
-      printf '\n# CloudAgent\n%s\n' "$path_line" >> "$rc"
-      echo "updated PATH in $rc"
-      touched=1
-    fi
-  done
-
-  fish_config="$HOME/.config/fish/config.fish"
-  if [ -f "$fish_config" ] && ! grep -Fq 'fish_add_path "$HOME/.local/bin"' "$fish_config"; then
-    printf '\n# CloudAgent\nfish_add_path "$HOME/.local/bin"\n' >> "$fish_config"
-    echo "updated PATH in $fish_config"
-    touched=1
-  fi
-
-  if [ "$touched" -eq 0 ]; then
-    echo "add $BIN_DIR to PATH to use cloudagent from new terminals" >&2
-  fi
-  stage_done
-}
-
 need_cmd curl
 need_cmd tar
 detect_os
@@ -340,10 +317,9 @@ fetch_release_metadata
 download_and_unpack
 install_files
 write_launchers
-ensure_path
 
 printf 'CloudAgent %s installed\n' "$RELEASE_VERSION"
 printf 'install root: %s\n' "$INSTALL_ROOT"
 printf 'data dir: %s\n' "$DATA_DIR"
 printf 'bin dir: %s\n' "$BIN_DIR"
-printf 'run: cloudagent start\n'
+printf 'run: %s/cloudagent start\n' "$BIN_DIR"
