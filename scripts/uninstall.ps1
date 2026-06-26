@@ -139,7 +139,6 @@ fish_add_path "$HOME/.local/bin"
         Set-Content -Encoding ASCII -Path (Join-Path $bin "cli") -Value "stub"
         Set-Content -Encoding ASCII -Path (Join-Path $bin "node") -Value "stub"
         Set-Content -Encoding ASCII -Path (Join-Path $bin "agentd") -Value "stub"
-        [Environment]::SetEnvironmentVariable("Path", "$bin;$oldUserPath", "User")
 
         $script:BinDir = $bin
         $script:InstallRoot = $installRoot
@@ -147,9 +146,6 @@ fish_add_path "$HOME/.local/bin"
 
         if (-not (Disable-LauncherStub -LauncherPath (Join-Path $bin "cloudagent.cmd"))) {
             throw "expected cloudagent.cmd to be rewritten"
-        }
-        if (-not (Remove-UserPathEntry)) {
-            throw "expected user PATH cleanup to run"
         }
 
         $stubContent = Get-Content -Raw -Path (Join-Path $bin "cloudagent.cmd")
@@ -162,13 +158,25 @@ fish_add_path "$HOME/.local/bin"
             throw "expected helper stub content"
         }
 
+        if ($IsWindows) {
+            [Environment]::SetEnvironmentVariable("Path", "$bin;$oldUserPath", "User")
+            if (-not (Remove-UserPathEntry)) {
+                throw "expected user PATH cleanup to run"
+            }
+        }
+        else {
+            Remove-UserPathEntry | Out-Null
+        }
+
         Write-Host "uninstall.ps1 self-test passed"
     }
     finally {
         $script:BinDir = $oldBinDir
         $script:InstallRoot = $oldInstallRoot
         $script:DataDir = $oldDataDir
-        [Environment]::SetEnvironmentVariable("Path", $oldUserPath, "User")
+        if ($IsWindows) {
+            [Environment]::SetEnvironmentVariable("Path", $oldUserPath, "User")
+        }
         if (Test-Path $tmpRoot) {
             Remove-Item -LiteralPath $tmpRoot -Recurse -Force
         }
