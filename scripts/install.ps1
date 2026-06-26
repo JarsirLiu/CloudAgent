@@ -10,7 +10,15 @@ $Repo = "JarsirLiu/CloudAgent"
 $BootstrapBranch = "release-bootstrap"
 $BootstrapRawBase = "https://raw.githubusercontent.com/$Repo/$BootstrapBranch/bootstrap"
 $MainRawBase = "https://raw.githubusercontent.com/$Repo/main/scripts"
-$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
+$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
+    $env:CLOUDAGENT_INSTALL_ROOT
+}
+elseif ($IsWindows -and $env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA "CloudAgent"
+}
+else {
+    Join-Path $HOME ".local/share/CloudAgent"
+}
 $InstallsDir = Join-Path $InstallRoot "installs"
 $CurrentDir = Join-Path $InstallRoot "current"
 $InstallMarker = ".cloudagent-install-complete"
