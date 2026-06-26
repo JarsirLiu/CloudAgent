@@ -3,19 +3,19 @@
   "assets": {
     "linux-x64": {
       "url": "https://github.com/JarsirLiu/CloudAgent/releases/download/v0.1.44/cloudagent-v0.1.44-linux-x64.tar.gz",
-      "sha256": "477181925d0617ba6b02903f0e5ad5f21997aef5c0e5d8dbe563a6dbf3bc8d8a"
+      "sha256": "95b91eb3df6289c5bf6160a800d1482a6ff5da78e1fbc700fc7025ddef4c67a6"
     },
     "macos-x64": {
       "url": "https://github.com/JarsirLiu/CloudAgent/releases/download/v0.1.44/cloudagent-v0.1.44-macos-x64.tar.gz",
-      "sha256": "a16f86a9ec3f20e6d64efda4fece82894381402df9bea0f9cd5c2d3399c739f9"
+      "sha256": "3a2bc8c24cd1f6a4a6d372b68126c27e26c48984f6c8e4d82e2ff68753ca225f"
     },
     "macos-arm64": {
       "url": "https://github.com/JarsirLiu/CloudAgent/releases/download/v0.1.44/cloudagent-v0.1.44-macos-arm64.tar.gz",
-      "sha256": "45f0bac0a5858f6df08c1b0cf42f2de6b7394869b8e5a83d06e711f6a2331b66"
+      "sha256": "cfacf899b7cced9317490dbee8b79a70aa747177f806b8ca1ed2ae1eadb1e91e"
     },
     "windows-x64": {
       "url": "https://github.com/JarsirLiu/CloudAgent/releases/download/v0.1.44/cloudagent-v0.1.44-windows-x64.zip",
-      "sha256": "f4844033f9a41315c6c89dff8bd48ad6bc94e849e6781739bfcac97003427484"
+      "sha256": "15171746916ef3e5cf4472da36a6de0077d9dbcb162b61f333a69e970f89d5bb"
     }
   }
 }
