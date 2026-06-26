@@ -266,6 +266,9 @@ function Invoke-InstallScript {
         $localScript = Join-Path $PSScriptRoot "install.ps1"
         if (Test-Path $localScript) {
             & $localScript -Version $Version -Force:$Force
+            if ($LASTEXITCODE -ne 0) {
+                exit $LASTEXITCODE
+            }
             return
         }
     }
@@ -281,6 +284,9 @@ function Invoke-InstallScript {
         -Label "Downloading installer script"
     Write-StageDone
     & $installScript -Version $Version -Force:$Force
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
 }
 
 try {

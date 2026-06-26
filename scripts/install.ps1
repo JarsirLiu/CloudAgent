@@ -26,7 +26,7 @@ $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-P
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
 $script:LastDownloadStatusLength = 0
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
-$script:StageTotal = 7
+$script:StageTotal = 6
 
 $releaseTagRulesPath = if ($PSScriptRoot) { Join-Path $PSScriptRoot "release-tag-rules.ps1" } else { $null }
 if ($releaseTagRulesPath -and (Test-Path $releaseTagRulesPath)) {
@@ -257,65 +257,54 @@ function Get-TargetAssetName {
 }
 
 function Resolve-LatestReleaseTag {
-    $bootstrapVersionUrl = "$BootstrapRawBase/VERSION"
-    try {
-        $bootstrapVersion = (Invoke-RestMethod -Uri $bootstrapVersionUrl -Headers @{ "User-Agent" = "cloudagent-installer" }).ToString().Trim()
-        if (Test-SemVerTag $bootstrapVersion) {
-            return $bootstrapVersion
-        }
-    }
-    catch {
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "cloudagent-installer" }
+    if (-not $release.tag_name) {
+        throw "Failed to resolve the latest release version."
     }
 
-    $latestUrl = "https://github.com/$Repo/releases/latest"
-
-    if ($script:CurlCommand) {
-        $effectiveUrl = & $script:CurlCommand.Source `
-            --silent `
-            --show-error `
-            --location `
-            --output NUL `
-            --write-out "%{url_effective}" `
-            $latestUrl
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to resolve latest release tag from $latestUrl"
-        }
-        return Split-Path -Leaf $effectiveUrl.Trim()
+    $releaseTag = Normalize-ReleaseTag -Version $release.tag_name
+    if (-not (Test-SemVerTag $releaseTag)) {
+        throw "Failed to resolve the latest release version."
     }
 
-    $currentUrl = $latestUrl
-    for ($i = 0; $i -lt 5; $i++) {
-        $request = [System.Net.HttpWebRequest]::Create($currentUrl)
-        $request.Method = "HEAD"
-        $request.AllowAutoRedirect = $false
-        $request.UserAgent = "cloudagent-installer"
-        try {
-            $response = [System.Net.HttpWebResponse]$request.GetResponse()
-            if ($response.StatusCode -ge 300 -and $response.StatusCode -lt 400 -and $response.Headers["Location"]) {
-                $location = $response.Headers["Location"]
-                if ($location.StartsWith("/")) {
-                    $location = "https://github.com$location"
-                }
-                $currentUrl = $location
-                continue
-            }
-            return Split-Path -Leaf $response.ResponseUri.AbsoluteUri
-        }
-        catch [System.Net.WebException] {
-            $response = $_.Exception.Response
-            if ($response -and $response.StatusCode -ge 300 -and $response.StatusCode -lt 400 -and $response.Headers["Location"]) {
-                $location = $response.Headers["Location"]
-                if ($location.StartsWith("/")) {
-                    $location = "https://github.com$location"
-                }
-                $currentUrl = $location
-                continue
-            }
-            throw
-        }
+    return $releaseTag
+}
+
+function Find-ReleaseAssetMetadata {
+    param(
+        [string]$AssetName,
+        [string]$ResolvedVersion
+    )
+
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$ResolvedVersion" -Headers @{ "User-Agent" = "cloudagent-installer" }
+    $asset = $release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
+    if ($null -eq $asset) {
+        return $null
     }
 
-    throw "Failed to resolve latest release tag from $latestUrl"
+    $digestMatch = [regex]::Match([string]$asset.digest, "^sha256:([0-9a-fA-F]{64})$")
+    if (-not $digestMatch.Success) {
+        throw "Could not find SHA-256 digest for release asset $AssetName."
+    }
+
+    return [PSCustomObject]@{
+        Url = [string]$asset.browser_download_url
+        Sha256 = $digestMatch.Groups[1].Value.ToLowerInvariant()
+    }
+}
+
+function Get-ReleaseAssetMetadata {
+    param(
+        [string]$AssetName,
+        [string]$ResolvedVersion
+    )
+
+    $metadata = Find-ReleaseAssetMetadata -AssetName $AssetName -ResolvedVersion $ResolvedVersion
+    if ($null -eq $metadata) {
+        throw "Could not find release asset $AssetName for CloudAgent $ResolvedVersion."
+    }
+
+    return $metadata
 }
 
 function Resolve-BootstrapUrl {
@@ -371,6 +360,21 @@ function Get-Sha256Hash {
     finally {
         $stream.Dispose()
     }
+}
+
+function Normalize-PathEntry {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    return $Path.Trim().TrimEnd('\')
+}
+
+function Test-PathEntryEquals {
+    param(
+        [Parameter(Mandatory = $true)][string]$Left,
+        [Parameter(Mandatory = $true)][string]$Right
+    )
+
+    return (Normalize-PathEntry $Left).Equals((Normalize-PathEntry $Right), [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Write-Launcher {
@@ -524,13 +528,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cloudagent-launch.ps1"
     Write-Host "Installed launcher: $launcherPath"
 }
 
+function Add-UserPathEntry {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $userPath) {
+        $userPath = ""
+    }
+    $parts = $userPath.Split(';') | Where-Object { $_ }
+    if ($parts | Where-Object { Test-PathEntryEquals $_ $BinDir } | Select-Object -First 1) {
+        return $false
+    }
+    $newPath = ($parts + $BinDir) -join ';'
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    # Sync to current session for immediate availability
+    $env:Path = "$BinDir;$env:Path"
+    return $true
+}
+
 $headers = @{ "User-Agent" = "cloudagent-installer" }
 Write-StageStart -Step 1 -Title "Resolving release metadata"
 $script:ReleaseTag = if ($Version -eq "latest") { Resolve-LatestReleaseTag } else { Normalize-ReleaseTag $Version }
 $releaseVersion = $script:ReleaseTag.TrimStart('v')
 $assetName = Get-TargetAssetName
-$assetUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/$assetName"
-$checksumsUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/SHA256SUMS"
+$assetMetadata = Get-ReleaseAssetMetadata -AssetName $assetName -ResolvedVersion $script:ReleaseTag
 Write-StageDone -Detail "($script:ReleaseTag)"
 
 $targetDir = Join-Path $InstallsDir $releaseVersion
@@ -547,31 +566,21 @@ try {
     $zipPath = Join-Path $tempRoot $assetName
     Write-StageStart -Step 2 -Title "Downloading release asset"
     Invoke-DownloadFile `
-        -Uri $assetUrl `
+        -Uri $assetMetadata.Url `
         -Headers $headers `
         -OutFile $zipPath `
         -Label "Downloading CloudAgent $releaseVersion"
     Write-StageDone -Detail ("({0})" -f (Format-ByteSize ((Get-Item $zipPath).Length)))
 
-    $checksumPath = Join-Path $tempRoot "SHA256SUMS"
-    Write-StageStart -Step 3 -Title "Downloading checksum manifest"
-    Invoke-DownloadFile `
-        -Uri $checksumsUrl `
-        -Headers $headers `
-        -OutFile $checksumPath `
-        -Label "Downloading checksum manifest"
-    Write-StageDone -Detail ("({0})" -f (Format-ByteSize ((Get-Item $checksumPath).Length)))
-
-    Write-StageStart -Step 4 -Title "Verifying package checksum"
-    $expected = (Select-String -Path $checksumPath -Pattern ([regex]::Escape($assetName)) | Select-Object -First 1).Line.Split(' ')[0]
+    Write-StageStart -Step 3 -Title "Verifying release asset"
     $actual = Get-Sha256Hash -Path $zipPath
-    if ($expected.ToLowerInvariant() -ne $actual) {
+    if ($assetMetadata.Sha256 -ne $actual) {
         throw "Checksum verification failed for $assetName"
     }
     Write-StageDone
 
     $unpackRoot = Join-Path $tempRoot "unpack"
-    Write-StageStart -Step 5 -Title "Extracting package"
+    Write-StageStart -Step 4 -Title "Extracting package"
     Expand-Archive -LiteralPath $zipPath -DestinationPath $unpackRoot -Force
     $packageDir = Get-ChildItem -Path $unpackRoot -Directory | Select-Object -First 1
     if (-not $packageDir) {
@@ -583,7 +592,7 @@ try {
         Write-Host "Replacing existing installation at $targetDir"
         Remove-Item -LiteralPath $targetDir -Recurse -Force
     }
-    Write-StageStart -Step 6 -Title "Installing files"
+    Write-StageStart -Step 5 -Title "Installing files"
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     Copy-Item -Path (Join-Path $packageDir.FullName "*") -Destination $targetDir -Recurse -Force
     Write-StageDone
@@ -592,7 +601,7 @@ try {
         Write-Host "Updating current launcher target"
         Remove-Item -LiteralPath $CurrentDir -Recurse -Force
     }
-    Write-StageStart -Step 7 -Title "Refreshing command launchers"
+    Write-StageStart -Step 6 -Title "Refreshing command launchers"
    New-Item -ItemType Junction -Path $CurrentDir -Target $targetDir | Out-Null
    Write-Launcher
     if (Add-UserPathEntry) {
@@ -611,19 +620,4 @@ finally {
     if (Test-Path $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
     }
-}
-function Add-UserPathEntry {
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if (-not $userPath) {
-        $userPath = ""
-    }
-    $parts = $userPath.Split(';') | Where-Object { $_ }
-    if ($parts -contains $BinDir) {
-        return $false
-    }
-    $newPath = ($parts + $BinDir) -join ';'
-    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    # Sync to current session for immediate availability
-    $env:Path = "$BinDir;$env:Path"
-    return $true
 }

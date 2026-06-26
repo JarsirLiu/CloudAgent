@@ -54,7 +54,7 @@ function Remove-UserPathEntry {
     }
 
     $parts = $userPath.Split(';') | Where-Object { $_ }
-    $filtered = $parts | Where-Object { $_ -ne $BinDir }
+    $filtered = $parts | Where-Object { $_ -ine $BinDir }
     if ($filtered.Count -eq $parts.Count) {
         return $false
     }
