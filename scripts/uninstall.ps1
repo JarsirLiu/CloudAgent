@@ -64,7 +64,7 @@ function Remove-UserPathEntry {
     return $true
 }
 
-Write-Host "🧹 Uninstalling CloudAgent"
+Write-Host "Uninstalling CloudAgent"
 $version = Get-CurrentVersion
 if ($version) {
     Write-Host "CloudAgent $version"
