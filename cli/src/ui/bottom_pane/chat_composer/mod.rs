@@ -1,6 +1,7 @@
 use crate::input::command_dispatch::intent_for_slash_command;
 use crate::input::completion::{CompletionSelection, CompletionState, SkillCompletion};
 use crate::input::intent::ComposerIntent;
+use crate::input::keymap::matches_insert_newline_shortcut;
 use crate::input::slash_command::find_slash_command;
 use crate::ui::bottom_pane::support::paste_burst::{CharDecision, FlushResult, PasteBurst};
 use agent_core::conversation::{AttachmentRef, InputItem};
@@ -19,6 +20,7 @@ mod attachments;
 mod history;
 mod render;
 #[cfg(test)]
+#[path = "tests.rs"]
 mod tests;
 
 use attachments::{
@@ -74,7 +76,7 @@ impl ChatComposer {
             return Some(ComposerIntent::CopyText(selected));
         }
 
-        if key.code == KeyCode::Enter && is_newline_shortcut(key.modifiers) {
+        if matches_insert_newline_shortcut(key) {
             if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
                 let _ = self.handle_paste(&pasted);
             }
@@ -719,12 +721,6 @@ impl Default for ChatComposer {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn is_newline_shortcut(modifiers: KeyModifiers) -> bool {
-    let shift_only = modifiers.contains(KeyModifiers::SHIFT)
-        && !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
-    shift_only || modifiers == KeyModifiers::ALT || modifiers == KeyModifiers::CONTROL
 }
 
 fn key_mutates_text(key: KeyEvent) -> bool {

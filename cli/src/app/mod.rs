@@ -6,6 +6,7 @@ pub mod effects;
 mod facade;
 pub(crate) mod input;
 pub(crate) mod model_catalog;
+mod session;
 pub(crate) mod runtime;
 
 pub use crate::app::config::cli_settings::{

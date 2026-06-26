@@ -1,7 +1,7 @@
 use crate::node::command_router::handle_command_message;
 use crate::node::data_root::resolve_data_root_dir;
 use crate::node::device_settings::conversation_store_dir;
-use crate::node::message_sync::write_node_event;
+use crate::node::message_sync::{write_jsonrpc_error, write_node_event};
 use crate::node::platform::PlatformManager;
 use crate::node::runtime::NodeRuntime;
 use crate::node::session_state::NodeSessionState;
@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
+use tracing::warn;
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -210,26 +211,50 @@ where
 {
     let rpc: JsonRpcMessage = serde_json::from_str(line)
         .context("failed to parse remote app-server transport jsonrpc")?;
+    let request_id = match &rpc {
+        JsonRpcMessage::Request(request) => Some(request.id.clone()),
+        JsonRpcMessage::Notification(_)
+        | JsonRpcMessage::Response(_)
+        | JsonRpcMessage::Error(_) => None,
+    };
 
-    if !session.is_ready() {
-        return handle_handshake_message(rpc, session, writer).await;
-    }
+    let result = if !session.is_ready() {
+        handle_handshake_message(rpc, session, writer).await
+    } else {
+        match rpc {
+            JsonRpcMessage::Request(request) => {
+                handle_command_message(JsonRpcMessage::Request(request), runtime, session, writer)
+                    .await
+            }
+            JsonRpcMessage::Notification(notification) => {
+                handle_command_message(
+                    JsonRpcMessage::Notification(notification),
+                    runtime,
+                    session,
+                    writer,
+                )
+                .await
+            }
+            JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
+                anyhow::bail!("unexpected remote app-server transport response from client")
+            }
+        }
+    };
 
-    match rpc {
-        JsonRpcMessage::Request(request) => {
-            handle_command_message(JsonRpcMessage::Request(request), runtime, session, writer).await
-        }
-        JsonRpcMessage::Notification(notification) => {
-            handle_command_message(
-                JsonRpcMessage::Notification(notification),
-                runtime,
-                session,
-                writer,
-            )
-            .await
-        }
-        JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => {
-            anyhow::bail!("unexpected remote app-server transport response from client")
+    match result {
+        Ok(should_continue) => Ok(should_continue),
+        Err(error) => {
+            if let Some(request_id) = request_id {
+                write_jsonrpc_error(
+                    writer,
+                    request_id,
+                    classify_transport_error(error.to_string()),
+                )
+                .await?;
+            } else {
+                warn!("remote app-server transport handler failed: {error:#}");
+            }
+            Ok(true)
         }
     }
 }
@@ -329,6 +354,19 @@ where
     writer.write_all(b"\n").await?;
     writer.flush().await?;
     Ok(())
+}
+
+fn classify_transport_error(message: String) -> JsonRpcErrorPayload {
+    let code = if message.contains("unsupported request method") {
+        -32601
+    } else {
+        -32602
+    };
+    JsonRpcErrorPayload {
+        code,
+        message,
+        data: None,
+    }
 }
 
 fn default_listen_address() -> String {
@@ -651,6 +689,80 @@ mod tests {
         assert_eq!(id, RequestId::Integer(99));
         assert_eq!(error.code, -32601);
         assert!(error.message.contains("unsupported request method"));
+    }
+
+    #[tokio::test]
+    async fn history_page_request_missing_params_returns_jsonrpc_error_without_closing_connection()
+    {
+        let runtime = test_runtime().await;
+        let mut session = NodeSessionState::new("default", "session-test-3b");
+        let (mut writer, reader) = duplex(4096);
+
+        let initialize = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::String("initialize".to_string()),
+            method: "initialize".to_string(),
+            params: Some(
+                serde_json::to_value(TransportInitializeParams {
+                    client_info: agent_protocol::TransportClientInfo {
+                        name: "test-client".to_string(),
+                        version: "0.0.0-test".to_string(),
+                    },
+                    capabilities: None,
+                    session_context: None,
+                })
+                .expect("serialize initialize params"),
+            ),
+        }))
+        .expect("serialize initialize request");
+        handle_transport_line(&initialize, &runtime, &mut session, &mut writer)
+            .await
+            .expect("initialize should succeed");
+
+        let initialized = serde_json::to_string(&JsonRpcMessage::Notification(
+            agent_protocol::JsonRpcNotification {
+                method: "initialized".to_string(),
+                params: None,
+            },
+        ))
+        .expect("serialize initialized notification");
+        handle_transport_line(&initialized, &runtime, &mut session, &mut writer)
+            .await
+            .expect("initialized should succeed");
+
+        let request = serde_json::to_string(&JsonRpcMessage::Request(JsonRpcRequest {
+            id: RequestId::Integer(100),
+            method: "conversation/historyPage".to_string(),
+            params: Some(serde_json::json!({
+                "limit": 30
+            })),
+        }))
+        .expect("serialize history page request");
+        let should_continue = handle_transport_line(&request, &runtime, &mut session, &mut writer)
+            .await
+            .expect("history page request should return a jsonrpc error");
+
+        assert!(should_continue);
+        assert!(session.is_ready());
+
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .await
+            .expect("read initialize response");
+        line.clear();
+        reader
+            .read_line(&mut line)
+            .await
+            .expect("read history page error response");
+        let JsonRpcMessage::Error(JsonRpcError { id, error }) =
+            serde_json::from_str(line.trim_end()).expect("parse error response")
+        else {
+            panic!("expected jsonrpc error");
+        };
+        assert_eq!(id, RequestId::Integer(100));
+        assert_eq!(error.code, -32602);
+        assert!(!error.message.is_empty());
     }
 
     #[tokio::test]

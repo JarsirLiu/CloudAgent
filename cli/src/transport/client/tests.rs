@@ -46,6 +46,7 @@ async fn waits_for_service_until_it_becomes_reachable() {
             }
         },
         None,
+        None,
         Duration::from_secs(2),
         Duration::from_millis(50),
     )
@@ -65,6 +66,7 @@ async fn waits_for_service_until_it_becomes_reachable() {
 async fn times_out_when_service_never_starts() {
     let result: Result<()> = wait_for_service(
         || async { Err(anyhow!("connection refused")) },
+        None,
         None,
         Duration::from_millis(150),
         Duration::from_millis(25),

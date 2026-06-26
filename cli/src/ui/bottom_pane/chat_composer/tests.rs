@@ -219,6 +219,23 @@ fn shift_enter_inserts_newline_without_submitting() {
 }
 
 #[test]
+fn shift_enter_is_treated_as_newline_shortcut_even_with_extra_state() {
+    let mut composer = ChatComposer::new();
+    type_text(&mut composer, "first");
+
+    let action = composer.handle_key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::SHIFT,
+        kind: crossterm::event::KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::CAPS_LOCK,
+    });
+    type_text(&mut composer, "second");
+
+    assert_eq!(action, None);
+    assert_eq!(composer.textarea.text(), "first\nsecond");
+}
+
+#[test]
 fn alt_enter_inserts_newline_without_submitting() {
     let mut composer = ChatComposer::new();
     type_text(&mut composer, "first");

@@ -7,6 +7,7 @@ use anyhow::{Result, anyhow};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -84,9 +85,11 @@ pub async fn create_local_node_client(
                 ));
             }
             let mut child = spawn_local_node_process(program, args)?;
+            let stderr_log_path = child.stderr_log_path.clone();
             let client = wait_for_service(
                 || connect_local_node_once(address, session_context.clone()),
                 Some(&mut child),
+                stderr_log_path.as_deref(),
                 local_node_launch_timeout(program, args),
                 Duration::from_millis(100),
             )
@@ -199,25 +202,38 @@ fn launches_node_via_cargo(program: &std::ffi::OsString, args: &[std::ffi::OsStr
         .any(|arg| arg == "node")
 }
 
-fn spawn_local_node_process(program: &OsString, args: &[OsString]) -> Result<std::process::Child> {
+struct LocalNodeProcess {
+    child: std::process::Child,
+    stderr_log_path: Option<PathBuf>,
+}
+
+fn spawn_local_node_process(program: &OsString, args: &[OsString]) -> Result<LocalNodeProcess> {
     if launches_node_via_cargo(program, args) {
         return spawn_workspace_built_local_node(program, args);
     }
 
     let mut command = Command::new(program);
+    let stderr_log_path = create_stderr_log_path("cloudagent-local-node");
+    let stderr_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&stderr_log_path)?;
     command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::from(stderr_file));
     configure_detached_node_process(&mut command);
-    Ok(command.spawn()?)
+    Ok(LocalNodeProcess {
+        child: command.spawn()?,
+        stderr_log_path: Some(stderr_log_path),
+    })
 }
 
 fn spawn_workspace_built_local_node(
     program: &OsString,
     args: &[OsString],
-) -> Result<std::process::Child> {
+) -> Result<LocalNodeProcess> {
     let target_dir = parse_cargo_target_dir(args)
         .ok_or_else(|| anyhow!("missing --target-dir in cargo-based local node launcher"))?;
     let service_args = args
@@ -259,14 +275,23 @@ fn spawn_workspace_built_local_node(
         agentd_bin.clone().into_os_string(),
     ]);
 
+    let stderr_log_path = create_stderr_log_path("cloudagent-local-node-dev");
+    let stderr_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&stderr_log_path)?;
+
     let mut command = Command::new(node_bin);
     command
         .args(final_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::from(stderr_file));
     configure_detached_node_process(&mut command);
-    Ok(command.spawn()?)
+    Ok(LocalNodeProcess {
+        child: command.spawn()?,
+        stderr_log_path: Some(stderr_log_path),
+    })
 }
 
 fn configure_detached_node_process(_command: &mut Command) {
@@ -295,6 +320,41 @@ fn debug_exe_name(base: &str) -> PathBuf {
     Path::new("debug").join(exe)
 }
 
+fn create_stderr_log_path(prefix: &str) -> PathBuf {
+    static COUNTER: OnceLock<std::sync::atomic::AtomicU64> = OnceLock::new();
+    let counter = COUNTER.get_or_init(|| std::sync::atomic::AtomicU64::new(0));
+    let unique = format!(
+        "{prefix}-{}-{}",
+        std::process::id(),
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    std::env::temp_dir().join(format!("{unique}.log"))
+}
+
+fn append_stderr_detail(detail: String, stderr_log_path: Option<&Path>) -> String {
+    let Some(stderr_log_path) = stderr_log_path else {
+        return detail;
+    };
+    let Ok(stderr) = std::fs::read_to_string(stderr_log_path) else {
+        return detail;
+    };
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        return detail;
+    }
+    format!("{detail}; stderr: {}", summarize_stderr(stderr))
+}
+
+fn summarize_stderr(stderr: &str) -> String {
+    const MAX_CHARS: usize = 400;
+    let mut summary = stderr.replace('\r', "");
+    if summary.chars().count() <= MAX_CHARS {
+        return summary;
+    }
+    summary = summary.chars().take(MAX_CHARS).collect::<String>();
+    format!("{summary}...")
+}
+
 async fn connect_local_node_once(
     address: &str,
     session_context: Option<SessionBootstrapContext>,
@@ -319,7 +379,8 @@ async fn connect_local_node_once(
 
 async fn wait_for_service<T, F, Fut>(
     mut connect_once: F,
-    mut child: Option<&mut std::process::Child>,
+    mut child: Option<&mut LocalNodeProcess>,
+    stderr_log_path: Option<&Path>,
     timeout: Duration,
     retry_interval: Duration,
 ) -> Result<T>
@@ -332,9 +393,10 @@ where
 
     loop {
         if let Some(process) = child.as_deref_mut()
-            && let Some(status) = process.try_wait()?
+            && let Some(status) = process.child.try_wait()?
         {
             let detail = last_error.unwrap_or_else(|| "service did not accept connections".into());
+            let detail = append_stderr_detail(detail, stderr_log_path);
             return Err(anyhow!(
                 "launched process exited before the service became reachable (status: {status}); last connection error: {detail}"
             ));
@@ -347,6 +409,7 @@ where
 
         if Instant::now() >= deadline {
             let detail = last_error.unwrap_or_else(|| "service did not accept connections".into());
+            let detail = append_stderr_detail(detail, stderr_log_path);
             return Err(anyhow!(
                 "service did not become reachable within {} ms; last connection error: {detail}",
                 timeout.as_millis()

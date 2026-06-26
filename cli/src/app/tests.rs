@@ -75,6 +75,17 @@ fn test_app() -> TuiApp {
     )
 }
 
+#[test]
+fn new_tui_app_starts_with_empty_conversation_state() {
+    let app = test_app();
+
+    assert_eq!(app.conversation_id, "default");
+    assert!(app.run_state.history_snapshot.is_none());
+    assert!(app.run_state.conversation_view_snapshot.is_none());
+    assert!(!app.run_state.history_has_more);
+    assert!(app.run_state.history_next_before_turn_id.is_none());
+}
+
 fn mark_running(app: &mut TuiApp) {
     app.apply_conversation_view_snapshot(conversation_view_snapshot_for_test(
         &app.conversation_id,
