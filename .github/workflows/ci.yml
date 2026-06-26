@@ -67,3 +67,24 @@ jobs:
           finally {
               Remove-Item -LiteralPath $tempDir.FullName -Recurse -Force
           }
+
+      - name: Smoke test uninstaller fallback (shell)
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT INT TERM
+          cp ./scripts/uninstall.sh "$temp_dir/uninstall.sh"
+          bash "$temp_dir/uninstall.sh" --self-test
+
+      - name: Smoke test uninstaller fallback (PowerShell)
+        shell: pwsh
+        run: |
+          $tempDir = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cloudagent-uninstall-smoke-$PID")) -Force
+          try {
+              Copy-Item ./scripts/uninstall.ps1 -Destination (Join-Path $tempDir.FullName "uninstall.ps1")
+              & (Join-Path $tempDir.FullName "uninstall.ps1") -SelfTest
+          }
+          finally {
+              Remove-Item -LiteralPath $tempDir.FullName -Recurse -Force
+          }

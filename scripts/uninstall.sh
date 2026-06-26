@@ -5,6 +5,7 @@ INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 BIN_DIR="${CLOUDAGENT_BIN_DIR:-$HOME/.local/bin}"
 DATA_DIR="${CLOUDAGENT_DATA_DIR:-$HOME/.cloudagent}"
 PURGE=0
+SELF_TEST=0
 STAGE_TOTAL=3
 
 usage() {
@@ -13,9 +14,11 @@ CloudAgent uninstaller
 
 Usage:
   uninstall.sh [--purge]
+  uninstall.sh [--self-test]
 
 Options:
   --purge    Also delete the user data directory (~/.cloudagent by default).
+  --self-test Run cleanup self-tests and exit.
   -h, --help Show this help text.
 EOF
 }
@@ -24,6 +27,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --purge)
       PURGE=1
+      shift
+      ;;
+    --self-test)
+      SELF_TEST=1
       shift
       ;;
     -h|--help)
@@ -105,6 +112,94 @@ cleanup_path() {
     rm -f "$tmp"
   fi
 }
+
+run_self_test() {
+  tmp_root="${TMPDIR:-/tmp}/cloudagent-uninstall-test-$$"
+  rm -rf "$tmp_root"
+  mkdir -p "$tmp_root/bin" "$tmp_root/home/.config/fish" "$tmp_root/install" "$tmp_root/data"
+
+  old_home="${HOME-}"
+  old_bin_dir="${CLOUDAGENT_BIN_DIR-}"
+  old_install_root="${INSTALL_ROOT-}"
+  old_data_dir="${DATA_DIR-}"
+
+  HOME="$tmp_root/home"
+  CLOUDAGENT_BIN_DIR="$tmp_root/bin"
+  INSTALL_ROOT="$tmp_root/install"
+  DATA_DIR="$tmp_root/data"
+
+  cat > "$HOME/.profile" <<'EOF'
+# CloudAgent
+export PATH="$HOME/.local/bin:$PATH"
+EOF
+  cp "$HOME/.profile" "$HOME/.bashrc"
+  cp "$HOME/.profile" "$HOME/.bash_profile"
+  cp "$HOME/.profile" "$HOME/.zshrc"
+  cp "$HOME/.profile" "$HOME/.zprofile"
+  cat > "$HOME/.config/fish/config.fish" <<'EOF'
+# CloudAgent
+fish_add_path "$HOME/.local/bin"
+EOF
+
+  cat > "$CLOUDAGENT_BIN_DIR/cloudagent" <<'EOF'
+#!/usr/bin/env sh
+echo stub
+EOF
+  cat > "$CLOUDAGENT_BIN_DIR/cli" <<'EOF'
+#!/usr/bin/env sh
+echo stub
+EOF
+  cat > "$CLOUDAGENT_BIN_DIR/node" <<'EOF'
+#!/usr/bin/env sh
+echo stub
+EOF
+  cat > "$CLOUDAGENT_BIN_DIR/agentd" <<'EOF'
+#!/usr/bin/env sh
+echo stub
+EOF
+  chmod +x "$CLOUDAGENT_BIN_DIR/"*
+
+  old_path="$PATH"
+  cleanup_path
+  [ -f "$HOME/.profile" ] || {
+    echo "expected profile file to remain" >&2
+    exit 1
+  }
+  [ -f "$CLOUDAGENT_BIN_DIR/cloudagent" ] || {
+    echo "expected cloudagent launcher stub to remain" >&2
+    exit 1
+  }
+  [ -f "$CLOUDAGENT_BIN_DIR/cli" ] || {
+    echo "expected cli launcher stub to remain" >&2
+    exit 1
+  }
+  [ -f "$CLOUDAGENT_BIN_DIR/node" ] || {
+    echo "expected node launcher stub to remain" >&2
+    exit 1
+  }
+  [ -f "$CLOUDAGENT_BIN_DIR/agentd" ] || {
+    echo "expected agentd launcher stub to remain" >&2
+    exit 1
+  }
+  if grep -q 'CloudAgent has been removed' "$CLOUDAGENT_BIN_DIR/cloudagent"; then
+    echo "did not expect stub content in shell launcher" >&2
+    exit 1
+  fi
+
+  PATH="$old_path"
+
+  HOME="$old_home"
+  CLOUDAGENT_BIN_DIR="$old_bin_dir"
+  INSTALL_ROOT="$old_install_root"
+  DATA_DIR="$old_data_dir"
+  rm -rf "$tmp_root"
+  echo "uninstall.sh self-test passed"
+}
+
+if [ "$SELF_TEST" -eq 1 ]; then
+  run_self_test
+  exit 0
+fi
 
 current_version() {
   current_link="$INSTALL_ROOT/current"

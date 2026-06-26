@@ -1,5 +1,6 @@
 param(
-    [switch]$Purge
+    [switch]$Purge,
+    [switch]$SelfTest
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +65,113 @@ function Remove-UserPathEntry {
     return $true
 }
 
+function Disable-LauncherStub {
+    param(
+        [Parameter(Mandatory = $true)][string]$LauncherPath
+    )
+
+    if (-not (Test-Path $LauncherPath)) {
+        return $false
+    }
+
+    @'
+@echo off
+rem CloudAgent has been removed. Reinstall to use this command again.
+exit /b 0
+'@ | Set-Content -Encoding ASCII -Path $LauncherPath
+    return $true
+}
+
+function Invoke-SelfTest {
+    $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-uninstall-test-" + $PID)
+    if (Test-Path $tmpRoot) {
+        Remove-Item -LiteralPath $tmpRoot -Recurse -Force
+    }
+
+    $oldBinDir = $BinDir
+    $oldInstallRoot = $InstallRoot
+    $oldDataDir = $DataDir
+    $oldUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+    try {
+        $tempHome = Join-Path $tmpRoot "home"
+        $bin = Join-Path $tmpRoot "bin"
+        $installRoot = Join-Path $tmpRoot "install"
+        $dataDir = Join-Path $tmpRoot "data"
+
+        New-Item -ItemType Directory -Path $tempHome, $bin, $installRoot, $dataDir, (Join-Path $tempHome ".config\fish") -Force | Out-Null
+
+        Set-Content -Encoding ASCII -Path (Join-Path $tempHome ".profile") -Value @"
+# CloudAgent
+export PATH="$HOME/.local/bin:$PATH"
+"@
+        Set-Content -Encoding ASCII -Path (Join-Path $tempHome ".bashrc") -Value @"
+# CloudAgent
+export PATH="$HOME/.local/bin:$PATH"
+"@
+        Set-Content -Encoding ASCII -Path (Join-Path $tempHome ".zshrc") -Value @"
+# CloudAgent
+export PATH="$HOME/.local/bin:$PATH"
+"@
+        Set-Content -Encoding ASCII -Path (Join-Path $tempHome ".zprofile") -Value @"
+# CloudAgent
+export PATH="$HOME/.local/bin:$PATH"
+"@
+        Set-Content -Encoding ASCII -Path (Join-Path $tempHome ".bash_profile") -Value @"
+# CloudAgent
+export PATH="$HOME/.local/bin:$PATH"
+"@
+        Set-Content -Encoding ASCII -Path (Join-Path $tempHome ".config\fish\config.fish") -Value @"
+# CloudAgent
+fish_add_path "$HOME/.local/bin"
+"@
+
+        Set-Content -Encoding ASCII -Path (Join-Path $bin "cloudagent.cmd") -Value "@echo off`r`nexit /b 0`r`n"
+        Set-Content -Encoding ASCII -Path (Join-Path $bin "cloudagent-launch.ps1") -Value "Write-Host stub"
+        Set-Content -Encoding ASCII -Path (Join-Path $bin "cli") -Value "stub"
+        Set-Content -Encoding ASCII -Path (Join-Path $bin "node") -Value "stub"
+        Set-Content -Encoding ASCII -Path (Join-Path $bin "agentd") -Value "stub"
+        [Environment]::SetEnvironmentVariable("Path", "$bin;$oldUserPath", "User")
+
+        $script:BinDir = $bin
+        $script:InstallRoot = $installRoot
+        $script:DataDir = $dataDir
+
+        if (-not (Disable-LauncherStub -LauncherPath (Join-Path $bin "cloudagent.cmd"))) {
+            throw "expected cloudagent.cmd to be rewritten"
+        }
+        if (-not (Remove-UserPathEntry)) {
+            throw "expected user PATH cleanup to run"
+        }
+
+        $stubContent = Get-Content -Raw -Path (Join-Path $bin "cloudagent.cmd")
+        if ($stubContent -notmatch "CloudAgent has been removed") {
+            throw "expected launcher stub content"
+        }
+
+        $binContent = Get-Content -Raw -Path (Join-Path $bin "cloudagent-launch.ps1")
+        if ($binContent -notmatch "stub") {
+            throw "expected helper stub content"
+        }
+
+        Write-Host "uninstall.ps1 self-test passed"
+    }
+    finally {
+        $script:BinDir = $oldBinDir
+        $script:InstallRoot = $oldInstallRoot
+        $script:DataDir = $oldDataDir
+        [Environment]::SetEnvironmentVariable("Path", $oldUserPath, "User")
+        if (Test-Path $tmpRoot) {
+            Remove-Item -LiteralPath $tmpRoot -Recurse -Force
+        }
+    }
+}
+
+if ($SelfTest) {
+    Invoke-SelfTest
+    exit 0
+}
+
 Write-Host "Uninstalling CloudAgent"
 $version = Get-CurrentVersion
 if ($version) {
@@ -73,12 +181,13 @@ Write-Host ""
 
 Write-StageStart -Step 1 -Title "Removing launchers"
 $launcherRemoved = $false
-foreach ($name in @("cloudagent.cmd", "cloudagent-launch.ps1")) {
-    $path = Join-Path $BinDir $name
-    if (Test-Path $path) {
-        Remove-Item -LiteralPath $path -Force
-        $launcherRemoved = $true
-    }
+if (Disable-LauncherStub -LauncherPath (Join-Path $BinDir "cloudagent.cmd")) {
+    $launcherRemoved = $true
+}
+$helperPath = Join-Path $BinDir "cloudagent-launch.ps1"
+if (Test-Path $helperPath) {
+    Remove-Item -LiteralPath $helperPath -Force
+    $launcherRemoved = $true
 }
 if (Remove-UserPathEntry) {
     $launcherRemoved = $true

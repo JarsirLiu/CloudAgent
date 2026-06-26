@@ -144,6 +144,8 @@ irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstal
 
 These two uninstall paths should stay documented and supported.
 
+On Windows, the uninstaller rewrites the launcher into a harmless stub before removing the installed files, so `cloudagent uninstall` should complete cleanly without a trailing "The batch file cannot be found." message.
+
 ## 9. Documentation Sources
 
 The main references are:
