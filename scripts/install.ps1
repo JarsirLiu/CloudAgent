@@ -623,5 +623,7 @@ function Add-UserPathEntry {
     }
     $newPath = ($parts + $BinDir) -join ';'
     [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    # Sync to current session for immediate availability
+    $env:Path = "$BinDir;$env:Path"
     return $true
 }
