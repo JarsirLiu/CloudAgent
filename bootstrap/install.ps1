@@ -1,7 +1,6 @@
 param(
     [string]$Version = "latest",
-    [switch]$Force,
-    [switch]$SelfTest
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,15 +9,7 @@ $Repo = "JarsirLiu/CloudAgent"
 $BootstrapBranch = "release-bootstrap"
 $BootstrapRawBase = "https://raw.githubusercontent.com/$Repo/$BootstrapBranch/bootstrap"
 $MainRawBase = "https://raw.githubusercontent.com/$Repo/main/scripts"
-$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
-    $env:CLOUDAGENT_INSTALL_ROOT
-}
-elseif ($IsWindows -and $env:LOCALAPPDATA) {
-    Join-Path $env:LOCALAPPDATA "CloudAgent"
-}
-else {
-    Join-Path $HOME ".local/share/CloudAgent"
-}
+$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
 $InstallsDir = Join-Path $InstallRoot "installs"
 $CurrentDir = Join-Path $InstallRoot "current"
 $InstallMarker = ".cloudagent-install-complete"
@@ -26,82 +17,7 @@ $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-P
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
 $script:LastDownloadStatusLength = 0
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
-$script:StageTotal = 7
-
-$releaseTagRulesPath = if ($PSScriptRoot) { Join-Path $PSScriptRoot "release-tag-rules.ps1" } else { $null }
-if ($releaseTagRulesPath -and (Test-Path $releaseTagRulesPath)) {
-    . $releaseTagRulesPath
-}
-else {
-    function Test-SemVerTag {
-        param([Parameter(Mandatory = $true)][string]$Value)
-
-        return $Value -match '^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
-    }
-
-    function Normalize-ReleaseTag {
-        param([Parameter(Mandatory = $true)][string]$Version)
-
-        $normalizedVersion = $Version.Trim()
-        if (-not $normalizedVersion) {
-            throw "invalid release version: $Version"
-        }
-
-        $releaseTag = if ($normalizedVersion.StartsWith("v")) { $normalizedVersion } else { "v$normalizedVersion" }
-        if (-not (Test-SemVerTag $releaseTag)) {
-            throw "invalid release version: $Version"
-        }
-
-        return $releaseTag
-    }
-}
-
-function Assert-True {
-    param(
-        [Parameter(Mandatory = $true)][bool]$Condition,
-        [Parameter(Mandatory = $true)][string]$Message
-    )
-
-    if (-not $Condition) {
-        throw $Message
-    }
-}
-
-if ($SelfTest) {
-    $validTags = @(
-        "v0.1.0"
-        "v1.2.3"
-        "v1.2.3-beta.1"
-        "v1.2.3+build.7"
-        "v1.2.3-beta.1+build.7"
-    )
-
-    foreach ($validTag in $validTags) {
-        Assert-True (Test-SemVerTag $validTag) "expected valid tag to pass: $validTag"
-    }
-
-    $invalidTags = @(
-        "v"
-        "v1"
-        "v1.2"
-        "1.2.3"
-        "v01.2.3"
-        "v1.02.3"
-        "v1.2.03"
-        "v1.2.3-"
-        "v1.2.3+"
-    )
-
-    foreach ($invalidTag in $invalidTags) {
-        Assert-True (-not (Test-SemVerTag $invalidTag)) "expected invalid tag to fail: $invalidTag"
-    }
-
-    Assert-True ((Normalize-ReleaseTag -Version "1.2.3") -eq "v1.2.3") "normalize-release-tag failed for 1.2.3"
-    Assert-True ((Normalize-ReleaseTag -Version "v1.2.3-beta.1") -eq "v1.2.3-beta.1") "normalize-release-tag failed for v1.2.3-beta.1"
-
-    Write-Host "install.ps1 self-test passed"
-    exit 0
-}
+$script:StageTotal = 8
 
 function Write-StageStart {
     param(
@@ -260,7 +176,7 @@ function Resolve-LatestReleaseTag {
     $bootstrapVersionUrl = "$BootstrapRawBase/VERSION"
     try {
         $bootstrapVersion = (Invoke-RestMethod -Uri $bootstrapVersionUrl -Headers @{ "User-Agent" = "cloudagent-installer" }).ToString().Trim()
-        if (Test-SemVerTag $bootstrapVersion) {
+        if ($bootstrapVersion.StartsWith("v")) {
             return $bootstrapVersion
         }
     }
@@ -373,6 +289,21 @@ function Get-Sha256Hash {
     }
 }
 
+function Ensure-UserPath {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $parts = @()
+    if ($userPath) {
+        $parts = $userPath.Split(';') | Where-Object { $_ }
+    }
+    if ($parts -contains $BinDir) {
+        return
+    }
+    $newPath = if ($userPath) { "$userPath;$BinDir" } else { $BinDir }
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    $env:Path = "$BinDir;$env:Path"
+    Write-Host "Updated user PATH with $BinDir"
+}
+
 function Write-Launcher {
     $launcherPath = Join-Path $BinDir "cloudagent.cmd"
     $helperPath = Join-Path $BinDir "cloudagent-launch.ps1"
@@ -431,62 +362,40 @@ function Resolve-BootstrapUrl {
     return $MainRawBase + '/' + $FileName
 }
 
-function Get-RemoteScriptBundle {
-    param([Parameter(Mandatory = $true)][string]$FileName)
-
-    switch ($FileName) {
-        "upgrade.ps1" {
-            return @(
-                "upgrade.ps1"
-                "install.ps1"
-                "release-tag-rules.ps1"
-            )
-        }
-        default {
-            return @($FileName)
-        }
-    }
-}
-
 function Invoke-RemoteScript {
     param(
         [Parameter(Mandatory = $true)][string]$FileName,
         [string[]]$RemainingArgs = @()
     )
 
-    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-" + [guid]::NewGuid().ToString("N"))
+    $scriptUrl = Resolve-BootstrapUrl -FileName $FileName
+    $tempScript = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-" + [guid]::NewGuid().ToString("N") + ".ps1")
 
     try {
-        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-
-        foreach ($bundleFile in (Get-RemoteScriptBundle -FileName $FileName)) {
-            $scriptUrl = Resolve-BootstrapUrl -FileName $bundleFile
-            $tempScript = Join-Path $tempRoot $bundleFile
-            if ($script:CurlCommand) {
-                & $script:CurlCommand.Source `
-                    --fail `
-                    --location `
-                    --silent `
-                    --show-error `
-                    --output $tempScript `
-                    $scriptUrl
-                if ($LASTEXITCODE -ne 0) {
-                    throw "curl.exe download failed for $scriptUrl"
-                }
-            }
-            else {
-                Invoke-WebRequest -Uri $scriptUrl -Headers @{ "User-Agent" = "cloudagent-installer" } -OutFile $tempScript
+        if ($script:CurlCommand) {
+            & $script:CurlCommand.Source `
+                --fail `
+                --location `
+                --silent `
+                --show-error `
+                --output $tempScript `
+                $scriptUrl
+            if ($LASTEXITCODE -ne 0) {
+                throw "curl.exe download failed for $scriptUrl"
             }
         }
+        else {
+            Invoke-WebRequest -Uri $scriptUrl -Headers @{ "User-Agent" = "cloudagent-installer" } -OutFile $tempScript
+        }
 
-        & (Join-Path $tempRoot $FileName) @RemainingArgs
+        & $tempScript @RemainingArgs
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }
     }
     finally {
-        if (Test-Path $tempRoot) {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        if (Test-Path $tempScript) {
+            Remove-Item -LiteralPath $tempScript -Force
         }
     }
 }
@@ -526,7 +435,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0cloudagent-launch.ps1"
 
 $headers = @{ "User-Agent" = "cloudagent-installer" }
 Write-StageStart -Step 1 -Title "Resolving release metadata"
-$script:ReleaseTag = if ($Version -eq "latest") { Resolve-LatestReleaseTag } else { Normalize-ReleaseTag $Version }
+$script:ReleaseTag = if ($Version -eq "latest") { Resolve-LatestReleaseTag } else { "v$Version" }
 $releaseVersion = $script:ReleaseTag.TrimStart('v')
 $assetName = Get-TargetAssetName
 $assetUrl = "https://github.com/$Repo/releases/download/$script:ReleaseTag/$assetName"
@@ -598,11 +507,14 @@ try {
     Set-Content -Encoding ASCII -NoNewline -Path $markerPath -Value ""
     Write-StageDone
 
+    Write-StageStart -Step 8 -Title "Updating PATH"
+    Ensure-UserPath
+    Write-StageDone
+
     Write-Host "CloudAgent $releaseVersion installed"
     Write-Host "Install root: $InstallRoot"
     Write-Host "Data dir: $DataDir"
-    Write-Host "Launcher dir: $BinDir"
-    Write-Host "Run: $BinDir\\cloudagent.cmd start"
+    Write-Host "Run: cloudagent start"
 }
 finally {
     if (Test-Path $tempRoot) {
