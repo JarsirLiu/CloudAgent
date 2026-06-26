@@ -5,8 +5,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
-$BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-Path $HOME ".local\bin" }
+$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
+    $env:CLOUDAGENT_INSTALL_ROOT
+}
+elseif ($IsWindows -and $env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA "CloudAgent"
+}
+else {
+    Join-Path $HOME ".local/share/CloudAgent"
+}
+$BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-Path $HOME ".local/bin" }
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
 $script:StageTotal = 3
 
