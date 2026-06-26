@@ -593,10 +593,13 @@ try {
         Remove-Item -LiteralPath $CurrentDir -Recurse -Force
     }
     Write-StageStart -Step 7 -Title "Refreshing command launchers"
-    New-Item -ItemType Junction -Path $CurrentDir -Target $targetDir | Out-Null
-    Write-Launcher
-    Set-Content -Encoding ASCII -NoNewline -Path $markerPath -Value ""
-    Write-StageDone
+   New-Item -ItemType Junction -Path $CurrentDir -Target $targetDir | Out-Null
+   Write-Launcher
+    if (Add-UserPathEntry) {
+        Write-Host "Added launcher directory to PATH: $BinDir"
+    }
+   Set-Content -Encoding ASCII -NoNewline -Path $markerPath -Value ""
+   Write-StageDone
 
     Write-Host "CloudAgent $releaseVersion installed"
     Write-Host "Install root: $InstallRoot"
@@ -608,4 +611,17 @@ finally {
     if (Test-Path $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
     }
+}
+function Add-UserPathEntry {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $userPath) {
+        $userPath = ""
+    }
+    $parts = $userPath.Split(';') | Where-Object { $_ }
+    if ($parts -contains $BinDir) {
+        return $false
+    }
+    $newPath = ($parts + $BinDir) -join ';'
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    return $true
 }
