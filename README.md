@@ -45,6 +45,8 @@ Planned:
 ### Install
 GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://github.com/JarsirLiu/CloudAgent/releases)
 
+Release process: [docs/release-process.md](docs/release-process.md)
+
 Linux / macOS:
 
 ```bash
@@ -88,7 +90,7 @@ cloudagent uninstall --purge
 
 `cloudagent` with no arguments shows the top-level help. `cloudagent cli` opens the interactive CLI surface. Unknown commands such as `cloudagent xxx` now fail fast with an "unknown command" error instead of falling back to the CLI.
 
-`cloudagent uninstall` keeps the user data directory by default and removes the CloudAgent PATH entry created by the installer. Use `cloudagent uninstall --purge` to delete user data too.
+For the full release, install, upgrade, rollback, beta, and uninstall standard, see [docs/release-process.md](docs/release-process.md).
 
 ### Permissions
 CloudAgent currently supports three session permission modes:
@@ -328,42 +330,6 @@ Windows：
 - 数据目录：`%USERPROFILE%\\.cloudagent`
 - 已安装二进制：`%LOCALAPPDATA%\\CloudAgent\\current`
 - 启动器：`%USERPROFILE%\\.local\\bin\\cloudagent.cmd`
-
-### 升级与卸载
-升级：
-
-```bash
-cloudagent upgrade
-```
-
-安装和升级时的下载进度会尽量用更适合终端的方式显示：
-
-- PowerShell、Windows Terminal，以及通过 PowerShell 安装器启动的 `cmd` 会显示 `MB / total MB` 进度
-- Linux 和 macOS 的交互式终端会显示 `curl` 进度条
-- 非交互环境会使用更简洁的输出
-
-卸载：
-
-```bash
-cloudagent uninstall
-```
-
-默认情况下，卸载会保留 CloudAgent 数据目录中的用户数据。
-
-如果要同时删除用户数据：
-
-Linux / macOS：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh -s -- --purge
-```
-
-Windows：
-
-```bash
-irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.ps1 | iex
-& "$env:USERPROFILE\.local\bin\cloudagent.cmd" uninstall --purge
-```
 
 ### 本地开发启动
 ```bash

@@ -2,8 +2,6 @@
 set -eu
 
 REPO="JarsirLiu/CloudAgent"
-BOOTSTRAP_BRANCH="release-bootstrap"
-BOOTSTRAP_RAW_BASE="https://raw.githubusercontent.com/$REPO/$BOOTSTRAP_BRANCH/bootstrap"
 MAIN_RAW_BASE="https://raw.githubusercontent.com/$REPO/main/scripts"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 CURRENT_LINK="$INSTALL_ROOT/current"
@@ -43,16 +41,6 @@ curl_download() {
     curl --fail --location --progress-bar "$url" -o "$output"
   else
     curl -fsSL "$url" -o "$output"
-  fi
-}
-
-resolve_bootstrap_url() {
-  file_name="$1"
-  bootstrap_url="$BOOTSTRAP_RAW_BASE/$file_name"
-  if curl -fsSL -o /dev/null "$bootstrap_url" 2>/dev/null; then
-    printf '%s\n' "$bootstrap_url"
-  else
-    printf '%s/%s\n' "$MAIN_RAW_BASE" "$file_name"
   fi
 }
 
@@ -106,9 +94,8 @@ invoke_install_script() {
 
   mkdir -p "$WORK"
   install_script="$WORK/install.sh"
-  install_url="$(resolve_bootstrap_url install.sh)"
   stage_start 2 "Downloading installer script"
-  curl_download "$install_url" "$install_script"
+  curl_download "$MAIN_RAW_BASE/install.sh" "$install_script"
   chmod +x "$install_script"
   stage_done
   "$install_script" "$@"

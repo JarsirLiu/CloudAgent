@@ -24,25 +24,25 @@ require_env() {
   fi
 }
 
-copy_bootstrap_file() {
+copy_release_script() {
   src_name="$1"
   dest_dir="$2"
   cp "$SOURCE_DIR/$src_name" "$dest_dir/$src_name"
 }
 
-stage_bootstrap_tree() {
+stage_release_scripts() {
   dest_dir="$1"
 
   mkdir -p "$dest_dir"
-  copy_bootstrap_file install.sh "$dest_dir"
-  copy_bootstrap_file upgrade.sh "$dest_dir"
-  copy_bootstrap_file uninstall.sh "$dest_dir"
-  copy_bootstrap_file release_tag_rules.sh "$dest_dir"
-  copy_bootstrap_file install.ps1 "$dest_dir"
-  copy_bootstrap_file upgrade.ps1 "$dest_dir"
-  copy_bootstrap_file uninstall.ps1 "$dest_dir"
-  copy_bootstrap_file release-tag-rules.ps1 "$dest_dir"
-  copy_bootstrap_file validate-release-tag.ps1 "$dest_dir"
+  copy_release_script install.sh "$dest_dir"
+  copy_release_script upgrade.sh "$dest_dir"
+  copy_release_script uninstall.sh "$dest_dir"
+  copy_release_script release_tag_rules.sh "$dest_dir"
+  copy_release_script install.ps1 "$dest_dir"
+  copy_release_script upgrade.ps1 "$dest_dir"
+  copy_release_script uninstall.ps1 "$dest_dir"
+  copy_release_script release-tag-rules.ps1 "$dest_dir"
+  copy_release_script validate-release-tag.ps1 "$dest_dir"
 
   printf '%s\n' "$RELEASE_TAG" > "$dest_dir/VERSION"
   cat > "$dest_dir/latest.json" <<JSON
@@ -70,7 +70,7 @@ stage_bootstrap_tree() {
 JSON
 }
 
-validate_bootstrap_tree() {
+validate_release_scripts() {
   dest_dir="$1"
 
   for name in \
@@ -87,23 +87,23 @@ validate_bootstrap_tree() {
     latest.json
   do
     if [ ! -f "$dest_dir/$name" ]; then
-      echo "missing bootstrap file: $name" >&2
+      echo "missing release script file: $name" >&2
       exit 1
     fi
   done
 
   if [ "$(cat "$dest_dir/VERSION")" != "$RELEASE_TAG" ]; then
-    echo "bootstrap VERSION does not match release tag" >&2
+    echo "release VERSION does not match release tag" >&2
     exit 1
   fi
 
   if ! grep -F "\"stable\": \"${RELEASE_TAG}\"" "$dest_dir/latest.json" >/dev/null 2>&1; then
-    echo "bootstrap latest.json does not include the release tag" >&2
+    echo "release latest.json does not include the release tag" >&2
     exit 1
   fi
 
   if ! grep -F "cloudagent-${RELEASE_TAG}-windows-x64.zip" "$dest_dir/latest.json" >/dev/null 2>&1; then
-    echo "bootstrap latest.json does not include release asset urls" >&2
+    echo "release latest.json does not include release asset urls" >&2
     exit 1
   fi
 }
@@ -118,9 +118,9 @@ if [ "$SELF_TEST" -eq 1 ]; then
   MACOS_ARM64_SHA="2222222222222222222222222222222222222222222222222222222222222222"
   WINDOWS_X64_SHA="3333333333333333333333333333333333333333333333333333333333333333"
 
-  stage_bootstrap_tree "$tmp_dir/bootstrap"
-  validate_bootstrap_tree "$tmp_dir/bootstrap"
-  echo "stage-bootstrap.sh self-test passed"
+  stage_release_scripts "$tmp_dir/release"
+  validate_release_scripts "$tmp_dir/release"
+  echo "stage-release-scripts.sh self-test passed"
   exit 0
 fi
 
@@ -131,5 +131,5 @@ require_env MACOS_ARM64_SHA
 require_env WINDOWS_X64_SHA
 require_env OUTPUT_DIR
 
-stage_bootstrap_tree "$OUTPUT_DIR"
-validate_bootstrap_tree "$OUTPUT_DIR"
+stage_release_scripts "$OUTPUT_DIR"
+validate_release_scripts "$OUTPUT_DIR"

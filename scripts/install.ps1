@@ -7,8 +7,6 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Repo = "JarsirLiu/CloudAgent"
-$BootstrapBranch = "release-bootstrap"
-$BootstrapRawBase = "https://raw.githubusercontent.com/$Repo/$BootstrapBranch/bootstrap"
 $MainRawBase = "https://raw.githubusercontent.com/$Repo/main/scripts"
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
     $env:CLOUDAGENT_INSTALL_ROOT
@@ -307,38 +305,6 @@ function Get-ReleaseAssetMetadata {
     return $metadata
 }
 
-function Resolve-BootstrapUrl {
-    param([Parameter(Mandatory = $true)][string]$FileName)
-
-    $bootstrapUrl = "$BootstrapRawBase/$FileName"
-    try {
-        if ($script:CurlCommand) {
-            & $script:CurlCommand.Source `
-                --silent `
-                --show-error `
-                --location `
-                --output NUL `
-                $bootstrapUrl | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                return $bootstrapUrl
-            }
-        }
-        else {
-            $request = [System.Net.HttpWebRequest]::Create($bootstrapUrl)
-            $request.Method = "HEAD"
-            $request.AllowAutoRedirect = $true
-            $request.UserAgent = "cloudagent-installer"
-            $response = [System.Net.HttpWebResponse]$request.GetResponse()
-            $response.Dispose()
-            return $bootstrapUrl
-        }
-    }
-    catch {
-    }
-
-    return "$MainRawBase/$FileName"
-}
-
 function Get-Sha256Hash {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -388,7 +354,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$BootstrapRawBase = '__BOOTSTRAP_RAW_BASE__'
 $MainRawBase = '__MAIN_RAW_BASE__'
 $CurrentDir = '__CURRENT_DIR__'
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
@@ -401,38 +366,6 @@ function Get-RemainingArgs {
     }
 
     return @($Arguments[1..($Arguments.Count - 1)])
-}
-
-function Resolve-BootstrapUrl {
-    param([Parameter(Mandatory = $true)][string]$FileName)
-
-    $bootstrapUrl = $BootstrapRawBase + '/' + $FileName
-    try {
-        if ($script:CurlCommand) {
-            & $script:CurlCommand.Source `
-                --silent `
-                --show-error `
-                --location `
-                --output NUL `
-                $bootstrapUrl | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                return $bootstrapUrl
-            }
-        }
-        else {
-            $request = [System.Net.HttpWebRequest]::Create($bootstrapUrl)
-            $request.Method = "HEAD"
-            $request.AllowAutoRedirect = $true
-            $request.UserAgent = "cloudagent-installer"
-            $response = [System.Net.HttpWebResponse]$request.GetResponse()
-            $response.Dispose()
-            return $bootstrapUrl
-        }
-    }
-    catch {
-    }
-
-    return $MainRawBase + '/' + $FileName
 }
 
 function Get-RemoteScriptBundle {
@@ -464,7 +397,7 @@ function Invoke-RemoteScript {
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
         foreach ($bundleFile in (Get-RemoteScriptBundle -FileName $FileName)) {
-            $scriptUrl = Resolve-BootstrapUrl -FileName $bundleFile
+            $scriptUrl = $MainRawBase + '/' + $bundleFile
             $tempScript = Join-Path $tempRoot $bundleFile
             if ($script:CurlCommand) {
                 & $script:CurlCommand.Source `
@@ -516,8 +449,7 @@ switch ($Args[0]) {
 }
 '@ |
         ForEach-Object {
-            $_.Replace('__BOOTSTRAP_RAW_BASE__', $BootstrapRawBase).
-               Replace('__MAIN_RAW_BASE__', $MainRawBase).
+            $_.Replace('__MAIN_RAW_BASE__', $MainRawBase).
                Replace('__CURRENT_DIR__', $CurrentDir)
         } | Set-Content -Encoding ASCII -Path $helperPath
 

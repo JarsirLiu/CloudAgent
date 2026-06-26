@@ -2,6 +2,8 @@
 
 CloudAgent release installation is managed by the scripts in this directory.
 
+Release process standard: [docs/release-process.md](../docs/release-process.md)
+
 Release entry:
 
 - [CloudAgent Releases](https://github.com/JarsirLiu/CloudAgent/releases)
@@ -78,12 +80,6 @@ Windows:
 
 ## Upgrade And Uninstall
 
-Upgrade:
-
-```bash
-cloudagent upgrade
-```
-
 Release version handling is shared across install, upgrade, CI, and release publishing:
 
 - Shell scripts use [`release_tag_rules.sh`](./release_tag_rules.sh)
@@ -92,8 +88,6 @@ Release version handling is shared across install, upgrade, CI, and release publ
 
 The helper self-tests are wired into CI, so tag rule changes should be made in the shared rule files rather than copied into each script.
 
-The bootstrap release tree is staged by [`stage-bootstrap.sh`](./stage-bootstrap.sh) and validated before it is pushed to the `release-bootstrap` branch.
-
 Installer scripts also expose `--self-test` / `-SelfTest` smoke checks, and CI runs them from temporary directories that do not contain the shared helper files.
 
 Release publishing follows a staged flow:
@@ -101,9 +95,10 @@ Release publishing follows a staged flow:
 - Build jobs produce versioned release archives
 - The publish job collects artifacts into a staging directory and writes `SHA256SUMS`
 - GitHub Release notes come from the tag commit message
-- The `release-bootstrap` branch is updated from a staged bootstrap tree that carries the installer entrypoints and shared helpers
 
 That split keeps release artifacts reproducible and makes installer updates easier to validate before they reach users.
+
+For the canonical release policy, install/upgrade/rollback behavior, beta handling, and both uninstall mechanisms, see [docs/release-process.md](../docs/release-process.md).
 
 Install and upgrade downloads now show terminal-friendly progress:
 
@@ -111,25 +106,4 @@ Install and upgrade downloads now show terminal-friendly progress:
 - Linux and macOS interactive terminals show a `curl` progress bar
 - Non-interactive environments fall back to quieter output
 
-Uninstall:
-
-```bash
-cloudagent uninstall
-```
-
-By default, uninstall keeps user data in the CloudAgent data directory.
-
-To delete user data too:
-
-Linux / macOS:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh -s -- --purge
-```
-
-Windows:
-
-```bash
-irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.ps1 | iex
-& "$env:USERPROFILE\.local\bin\cloudagent.cmd" uninstall --purge
-```
+Uninstall keeps user data by default. Use `cloudagent uninstall --purge` to delete user data too.

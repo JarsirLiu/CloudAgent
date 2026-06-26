@@ -2,8 +2,6 @@
 set -eu
 
 REPO="JarsirLiu/CloudAgent"
-BOOTSTRAP_BRANCH="release-bootstrap"
-BOOTSTRAP_RAW_BASE="https://raw.githubusercontent.com/$REPO/$BOOTSTRAP_BRANCH/bootstrap"
 MAIN_RAW_BASE="https://raw.githubusercontent.com/$REPO/main/scripts"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 INSTALLS_DIR="$INSTALL_ROOT/installs"
@@ -220,14 +218,6 @@ detect_arch() {
 }
 
 resolve_latest_release_tag() {
-  bootstrap_version_url="$BOOTSTRAP_RAW_BASE/VERSION"
-  if bootstrap_version=$(curl -fsSL "$bootstrap_version_url" 2>/dev/null | tr -d '[:space:]'); then
-    if is_semver_tag "$bootstrap_version"; then
-      printf '%s\n' "$bootstrap_version"
-      return 0
-    fi
-  fi
-
   latest_tag=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" | awk -F/ '{print $NF}')
   if is_semver_tag "$latest_tag"; then
     printf '%s\n' "$latest_tag"
@@ -236,16 +226,6 @@ resolve_latest_release_tag() {
 
   echo "failed to resolve release version" >&2
   exit 1
-}
-
-resolve_bootstrap_url() {
-  file_name="$1"
-  bootstrap_url="$BOOTSTRAP_RAW_BASE/$file_name"
-  if curl -fsSL -o /dev/null "$bootstrap_url" 2>/dev/null; then
-    printf '%s\n' "$bootstrap_url"
-  else
-    printf '%s/%s\n' "$MAIN_RAW_BASE" "$file_name"
-  fi
 }
 
 fetch_release_metadata() {
@@ -340,23 +320,12 @@ write_launchers() {
 #!/usr/bin/env sh
 set -eu
 
-BOOTSTRAP_RAW_BASE="$BOOTSTRAP_RAW_BASE"
 MAIN_RAW_BASE="$MAIN_RAW_BASE"
 
-resolve_bootstrap_url() {
-  file_name="\$1"
-  bootstrap_url="$BOOTSTRAP_RAW_BASE/\$file_name"
-  if curl -fsSL -o /dev/null "\$bootstrap_url" 2>/dev/null; then
-    printf '%s\n' "\$bootstrap_url"
-  else
-    printf '%s/%s\n' "\$MAIN_RAW_BASE" "\$file_name"
-  fi
-}
-
-run_bootstrap_script() {
+run_remote_script() {
   script_url="\$1"
   shift
-  tmp_script="\$(mktemp "\${TMPDIR:-/tmp}/cloudagent-bootstrap-XXXXXX")"
+  tmp_script="\$(mktemp "\${TMPDIR:-/tmp}/cloudagent-remote-XXXXXX")"
   trap 'rm -f "\$tmp_script"' EXIT INT TERM
   curl -fsSL "\$script_url" -o "\$tmp_script"
   sh "\$tmp_script" "\$@"
@@ -365,13 +334,11 @@ run_bootstrap_script() {
 case "\${1:-}" in
   upgrade)
     shift
-    BOOTSTRAP_UPGRADE_URL="\$(resolve_bootstrap_url upgrade.sh)"
-    run_bootstrap_script "\$BOOTSTRAP_UPGRADE_URL" "\$@"
+    run_remote_script "\$MAIN_RAW_BASE/upgrade.sh" "\$@"
     ;;
   uninstall)
     shift
-    BOOTSTRAP_UNINSTALL_URL="\$(resolve_bootstrap_url uninstall.sh)"
-    run_bootstrap_script "\$BOOTSTRAP_UNINSTALL_URL" "\$@"
+    run_remote_script "\$MAIN_RAW_BASE/uninstall.sh" "\$@"
     ;;
   *)
     exec "$CURRENT_LINK/cloudagent" "\$@"

@@ -43,9 +43,9 @@ jobs:
         shell: pwsh
         run: ./scripts/validate-release-tag.ps1 -SelfTest
 
-      - name: Validate bootstrap staging helper
+      - name: Validate release script helper
         shell: bash
-        run: bash ./scripts/stage-bootstrap.sh --self-test
+        run: bash ./scripts/stage-release-scripts.sh --self-test
 
       - name: Smoke test installer fallback (shell)
         shell: bash
