@@ -431,40 +431,62 @@ function Resolve-BootstrapUrl {
     return $MainRawBase + '/' + $FileName
 }
 
+function Get-RemoteScriptBundle {
+    param([Parameter(Mandatory = $true)][string]$FileName)
+
+    switch ($FileName) {
+        "upgrade.ps1" {
+            return @(
+                "upgrade.ps1"
+                "install.ps1"
+                "release-tag-rules.ps1"
+            )
+        }
+        default {
+            return @($FileName)
+        }
+    }
+}
+
 function Invoke-RemoteScript {
     param(
         [Parameter(Mandatory = $true)][string]$FileName,
         [string[]]$RemainingArgs = @()
     )
 
-    $scriptUrl = Resolve-BootstrapUrl -FileName $FileName
-    $tempScript = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-" + [guid]::NewGuid().ToString("N") + ".ps1")
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-" + [guid]::NewGuid().ToString("N"))
 
     try {
-        if ($script:CurlCommand) {
-            & $script:CurlCommand.Source `
-                --fail `
-                --location `
-                --silent `
-                --show-error `
-                --output $tempScript `
-                $scriptUrl
-            if ($LASTEXITCODE -ne 0) {
-                throw "curl.exe download failed for $scriptUrl"
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+
+        foreach ($bundleFile in (Get-RemoteScriptBundle -FileName $FileName)) {
+            $scriptUrl = Resolve-BootstrapUrl -FileName $bundleFile
+            $tempScript = Join-Path $tempRoot $bundleFile
+            if ($script:CurlCommand) {
+                & $script:CurlCommand.Source `
+                    --fail `
+                    --location `
+                    --silent `
+                    --show-error `
+                    --output $tempScript `
+                    $scriptUrl
+                if ($LASTEXITCODE -ne 0) {
+                    throw "curl.exe download failed for $scriptUrl"
+                }
+            }
+            else {
+                Invoke-WebRequest -Uri $scriptUrl -Headers @{ "User-Agent" = "cloudagent-installer" } -OutFile $tempScript
             }
         }
-        else {
-            Invoke-WebRequest -Uri $scriptUrl -Headers @{ "User-Agent" = "cloudagent-installer" } -OutFile $tempScript
-        }
 
-        & $tempScript @RemainingArgs
+        & (Join-Path $tempRoot $FileName) @RemainingArgs
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }
     }
     finally {
-        if (Test-Path $tempScript) {
-            Remove-Item -LiteralPath $tempScript -Force
+        if (Test-Path $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
 }
