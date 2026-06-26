@@ -6,8 +6,8 @@ pub mod effects;
 mod facade;
 pub(crate) mod input;
 pub(crate) mod model_catalog;
-mod session;
 pub(crate) mod runtime;
+mod session;
 
 pub use crate::app::config::cli_settings::{
     PersistedCliSettings, load_cli_settings, save_cli_settings,
