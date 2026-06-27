@@ -109,7 +109,7 @@ if ($SelfTest) {
     Assert-True ((Normalize-ReleaseTag -Version "v1.2.3-beta.1") -eq "v1.2.3-beta.1") "normalize-release-tag failed for v1.2.3-beta.1"
 
     Write-Host "install.ps1 self-test passed"
-    exit 0
+    return
 }
 
 function Write-StageStart {
@@ -191,37 +191,6 @@ function Invoke-DownloadFile {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
 
-    if ($script:CurlCommand) {
-        $curlArgs = @("--fail", "--location", "-o", $OutFile)
-        foreach ($entry in $Headers.GetEnumerator()) {
-            $curlArgs += @("-H", ("{0}: {1}" -f [string]$entry.Key, [string]$entry.Value))
-        }
-        if (-not [Console]::IsErrorRedirected) {
-            $curlArgs += "--progress-bar"
-        } else {
-            $curlArgs += @("--silent", "--show-error")
-        }
-        $curlArgs += $Uri
-        try {
-            & $script:CurlCommand.Source @curlArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "curl.exe download failed for $Uri"
-            }
-            if (Test-Path $OutFile) {
-                $length = (Get-Item $OutFile).Length
-                Write-DownloadStatus -Label $Label -DownloadedBytes $length -TotalBytes $length
-                Complete-DownloadStatus
-            }
-            return
-        }
-        catch {
-            if (Test-Path $OutFile) {
-                Remove-Item -LiteralPath $OutFile -Force
-            }
-            Write-Warning "curl.exe failed for $Uri; falling back to Invoke-WebRequest."
-        }
-    }
-
     try {
         $invokeWebRequestParams = @{
             Uri = $Uri
@@ -239,12 +208,48 @@ function Invoke-DownloadFile {
             Write-DownloadStatus -Label $Label -DownloadedBytes $length -TotalBytes $length
             Complete-DownloadStatus
         }
+        return
     }
     catch {
+        if ($script:CurlCommand) {
+            if (Test-Path $OutFile) {
+                Remove-Item -LiteralPath $OutFile -Force
+            }
+
+            $curlArgs = @("--fail", "--location", "-o", $OutFile)
+            foreach ($entry in $Headers.GetEnumerator()) {
+                $curlArgs += @("-H", ("{0}: {1}" -f [string]$entry.Key, [string]$entry.Value))
+            }
+            if (-not [Console]::IsErrorRedirected) {
+                $curlArgs += "--progress-bar"
+            } else {
+                $curlArgs += @("--silent", "--show-error")
+            }
+            $curlArgs += $Uri
+            try {
+                & $script:CurlCommand.Source @curlArgs
+                if ($LASTEXITCODE -ne 0) {
+                    throw "curl.exe download failed for $Uri"
+                }
+                if (Test-Path $OutFile) {
+                    $length = (Get-Item $OutFile).Length
+                    Write-DownloadStatus -Label $Label -DownloadedBytes $length -TotalBytes $length
+                    Complete-DownloadStatus
+                }
+                return
+            }
+            catch {
+                if (Test-Path $OutFile) {
+                    Remove-Item -LiteralPath $OutFile -Force
+                }
+                throw "Failed to download $Uri with Invoke-WebRequest and curl.exe. $($_.Exception.Message)"
+            }
+        }
+
         if (Test-Path $OutFile) {
             Remove-Item -LiteralPath $OutFile -Force
         }
-        throw "Failed to download $Uri with curl.exe and Invoke-WebRequest. $($_.Exception.Message)"
+        throw "Failed to download $Uri with Invoke-WebRequest. $($_.Exception.Message)"
     }
 }
 
@@ -534,7 +539,7 @@ $targetDir = Join-Path $InstallsDir $releaseVersion
 $markerPath = Join-Path $targetDir $InstallMarker
 if ((-not $Force) -and (Test-Path $markerPath) -and (Test-Path $CurrentDir) -and ((Get-Item $CurrentDir).Target -eq $targetDir)) {
     Write-Host "CloudAgent $releaseVersion is already installed"
-    exit 0
+    return
 }
 
 New-Item -ItemType Directory -Path $InstallsDir, $BinDir, $DataDir -Force | Out-Null
