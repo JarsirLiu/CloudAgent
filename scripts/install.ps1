@@ -369,7 +369,8 @@ function Get-RemainingArgs {
         return @()
     }
 
-    return @($Arguments[1..($Arguments.Count - 1)])
+    $remaining = @($Arguments[1..($Arguments.Count - 1)])
+    return @($remaining | Where-Object { $null -ne $_ -and $_.Length -gt 0 })
 }
 
 function Get-RemoteScriptBundle {
