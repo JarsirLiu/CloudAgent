@@ -259,34 +259,12 @@ function Get-TargetAssetName {
 }
 
 function Resolve-LatestReleaseTag {
-    $latestUrl = "https://github.com/$Repo/releases/latest"
-    $resolvedUrl = $null
-
-    if ($script:CurlCommand) {
-        $resolvedUrl = & $script:CurlCommand.Source `
-            --silent `
-            --show-error `
-            --location `
-            --output NUL `
-            --write-out "%{url_effective}" `
-            $latestUrl
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to resolve the latest release version."
-        }
-    }
-    else {
-        $response = Invoke-WebRequest -Uri $latestUrl -Headers @{ "User-Agent" = "cloudagent-installer" }
-        $responseUri = $response.BaseResponse.ResponseUri
-        if ($null -ne $responseUri) {
-            $resolvedUrl = [string]$responseUri.AbsoluteUri
-        }
-    }
-
-    if (-not $resolvedUrl) {
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "cloudagent-installer" }
+    if (-not $release.tag_name) {
         throw "Failed to resolve the latest release version."
     }
 
-    $releaseTag = Normalize-ReleaseTag -Version (($resolvedUrl.TrimEnd('/') -split '/')[-1])
+    $releaseTag = Normalize-ReleaseTag -Version ([string]$release.tag_name)
     if (-not (Test-SemVerTag $releaseTag)) {
         throw "Failed to resolve the latest release version."
     }

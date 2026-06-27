@@ -252,8 +252,9 @@ detect_arch() {
 }
 
 resolve_latest_release_tag() {
-  latest_tag=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" | awk -F/ '{print $NF}')
-  if is_semver_tag "$latest_tag"; then
+  release_json="$(download_text "https://api.github.com/repos/$REPO/releases/latest")"
+  latest_tag="$(printf '%s\n' "$release_json" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [ -n "$latest_tag" ] && is_semver_tag "$latest_tag"; then
     printf '%s\n' "$latest_tag"
     return 0
   fi
