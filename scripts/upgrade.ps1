@@ -117,61 +117,49 @@ function Invoke-DownloadFile {
             $curlArgs += @("--silent", "--show-error")
         }
         $curlArgs += $Uri
-        & $script:CurlCommand.Source @curlArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "curl.exe download failed for $Uri"
+        try {
+            & $script:CurlCommand.Source @curlArgs
+            if ($LASTEXITCODE -ne 0) {
+                throw "curl.exe download failed for $Uri"
+            }
+            if (Test-Path $OutFile) {
+                $length = (Get-Item $OutFile).Length
+                Write-DownloadStatus -Label $Label -DownloadedBytes $length -TotalBytes $length
+                Complete-DownloadStatus
+            }
+            return
         }
+        catch {
+            if (Test-Path $OutFile) {
+                Remove-Item -LiteralPath $OutFile -Force
+            }
+            Write-Warning "curl.exe failed for $Uri; falling back to Invoke-WebRequest."
+        }
+    }
+
+    try {
+        $invokeWebRequestParams = @{
+            Uri = $Uri
+            Headers = $Headers
+            OutFile = $OutFile
+            ErrorAction = "Stop"
+        }
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            $invokeWebRequestParams["UseBasicParsing"] = $true
+        }
+
+        Invoke-WebRequest @invokeWebRequestParams
         if (Test-Path $OutFile) {
             $length = (Get-Item $OutFile).Length
             Write-DownloadStatus -Label $Label -DownloadedBytes $length -TotalBytes $length
             Complete-DownloadStatus
         }
-        return
     }
-
-    $request = [System.Net.WebRequest]::Create($Uri)
-    $request.Method = "GET"
-    foreach ($entry in $Headers.GetEnumerator()) {
-        if ([string]$entry.Key -ieq "User-Agent") {
-            $request.UserAgent = [string]$entry.Value
+    catch {
+        if (Test-Path $OutFile) {
+            Remove-Item -LiteralPath $OutFile -Force
         }
-        else {
-            $request.Headers[[string]$entry.Key] = [string]$entry.Value
-        }
-    }
-
-    $response = $null
-    $responseStream = $null
-    $fileStream = $null
-    try {
-        $response = $request.GetResponse()
-        $totalBytes = $response.ContentLength
-        if ($totalBytes -lt 0) {
-            $totalBytes = $null
-        }
-
-        $responseStream = $response.GetResponseStream()
-        $fileStream = [System.IO.File]::Open($OutFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        $buffer = New-Object byte[] (128KB)
-        $downloadedBytes = 0L
-        while (($read = $responseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-            $fileStream.Write($buffer, 0, $read)
-            $downloadedBytes += $read
-            Write-DownloadStatus -Label $Label -DownloadedBytes $downloadedBytes -TotalBytes $totalBytes
-        }
-        Complete-DownloadStatus
-    }
-    finally {
-        if ($fileStream) {
-            $fileStream.Dispose()
-        }
-        if ($responseStream) {
-            $responseStream.Dispose()
-        }
-        if ($response) {
-            $response.Dispose()
-        }
-        Complete-DownloadStatus
+        throw "Failed to download $Uri with curl.exe and Invoke-WebRequest. $($_.Exception.Message)"
     }
 }
 

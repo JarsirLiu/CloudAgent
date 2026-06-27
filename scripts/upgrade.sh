@@ -39,10 +39,28 @@ curl_download() {
   output="$2"
   mkdir -p "$(dirname "$output")"
   if [ -t 2 ]; then
-    curl --fail --location --progress-bar "$url" -o "$output"
+    if curl --fail --location --progress-bar "$url" -o "$output"; then
+      return 0
+    fi
   else
-    curl -fsSL "$url" -o "$output"
+    if curl -fsSL "$url" -o "$output"; then
+      return 0
+    fi
   fi
+
+  if command -v wget >/dev/null 2>&1; then
+    if [ -t 2 ]; then
+      if wget --show-progress -O "$output" "$url"; then
+        return 0
+      fi
+    else
+      if wget -q -O "$output" "$url"; then
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
 }
 
 download_remote_script() {

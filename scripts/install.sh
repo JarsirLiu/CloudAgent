@@ -104,10 +104,28 @@ curl_download() {
   output="$2"
   mkdir -p "$(dirname "$output")"
   if [ -t 2 ]; then
-    curl --fail --location --progress-bar -H "User-Agent: cloudagent-installer" "$url" -o "$output"
+    if curl --fail --location --progress-bar -H "User-Agent: cloudagent-installer" "$url" -o "$output"; then
+      return 0
+    fi
   else
-    curl -fsSL -H "User-Agent: cloudagent-installer" "$url" -o "$output"
+    if curl -fsSL -H "User-Agent: cloudagent-installer" "$url" -o "$output"; then
+      return 0
+    fi
   fi
+
+  if command -v wget >/dev/null 2>&1; then
+    if [ -t 2 ]; then
+      if wget --show-progress --header="User-Agent: cloudagent-installer" -O "$output" "$url"; then
+        return 0
+      fi
+    else
+      if wget -q -O "$output" --header="User-Agent: cloudagent-installer" "$url"; then
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
 }
 
 download_remote_script() {
