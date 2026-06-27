@@ -36,7 +36,7 @@ The normal release flow is:
 6. The workflow builds binaries for all supported platforms.
 7. The workflow generates `SHA256SUMS`.
 8. The workflow publishes the GitHub Release and uploads assets.
-9. The workflow publishes the release assets and leaves the installers to resolve scripts directly from GitHub Releases and the repository `main` branch.
+9. The workflow publishes the release assets and includes the installer and upgrade helper scripts in the release bundle.
 
 For prerelease builds, use a tag such as `v0.1.44-beta.1`.
 The release workflow treats tags containing `-beta` or `-alpha` as prereleases.
@@ -48,9 +48,9 @@ Each published release should include:
 - platform archives for Linux, macOS, and Windows
 - a checksum manifest
 - release notes based on the tag commit message
-- installer scripts served from the repository `main` branch
+- installer and upgrade helper scripts bundled in the release assets
 
-The installers and upgraders resolve the latest release metadata and helper scripts directly from GitHub Releases and the `main` branch.
+The installers and upgraders resolve the latest release metadata, release assets, and helper scripts directly from GitHub Releases.
 
 ## 4. Install Flow
 
@@ -132,13 +132,13 @@ Users can also run the standalone uninstall scripts directly.
 Linux / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.sh | sh -s -- --purge
+curl -fsSL https://github.com/JarsirLiu/CloudAgent/releases/latest/download/uninstall.sh | sh -s -- --purge
 ```
 
 Windows:
 
 ```powershell
-irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.ps1 | iex
+irm https://github.com/JarsirLiu/CloudAgent/releases/latest/download/uninstall.ps1 | iex
 & "$env:USERPROFILE\.local\bin\cloudagent.cmd" uninstall --purge
 ```
 

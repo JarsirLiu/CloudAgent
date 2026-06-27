@@ -121,6 +121,22 @@ jobs:
 
           echo "path=${notes_path}" >> "${GITHUB_OUTPUT}"
 
+      - name: Stage release scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./scripts/stage-release-scripts.sh --self-test
+          mkdir -p release-scripts
+          cp scripts/install.sh release-scripts/
+          cp scripts/upgrade.sh release-scripts/
+          cp scripts/uninstall.sh release-scripts/
+          cp scripts/release_tag_rules.sh release-scripts/
+          cp scripts/install.ps1 release-scripts/
+          cp scripts/upgrade.ps1 release-scripts/
+          cp scripts/uninstall.ps1 release-scripts/
+          cp scripts/release-tag-rules.ps1 release-scripts/
+          cp scripts/validate-release-tag.ps1 release-scripts/
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -131,6 +147,7 @@ jobs:
           set -euo pipefail
           mkdir -p release
           find dist -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+          cp release-scripts/* release/
 
       - name: Generate checksums
         run: |

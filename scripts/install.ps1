@@ -7,7 +7,18 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Repo = "JarsirLiu/CloudAgent"
-$MainRawBase = "https://raw.githubusercontent.com/$Repo/main/scripts"
+$ScriptBaseUrl = if ($env:CLOUDAGENT_SCRIPT_BASE_URL) {
+    $env:CLOUDAGENT_SCRIPT_BASE_URL
+}
+else {
+    "https://github.com/$Repo/releases/latest/download"
+}
+$ScriptFallbackUrl = if ($env:CLOUDAGENT_SCRIPT_FALLBACK_URL) {
+    $env:CLOUDAGENT_SCRIPT_FALLBACK_URL
+}
+else {
+    "https://raw.githubusercontent.com/$Repo/main/scripts"
+}
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
     $env:CLOUDAGENT_INSTALL_ROOT
 }
@@ -255,40 +266,39 @@ function Get-TargetAssetName {
 }
 
 function Resolve-LatestReleaseTag {
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "cloudagent-installer" }
-    if (-not $release.tag_name) {
+    $latestUrl = "https://github.com/$Repo/releases/latest"
+    $resolvedUrl = $null
+
+    if ($script:CurlCommand) {
+        $resolvedUrl = & $script:CurlCommand.Source `
+            --silent `
+            --show-error `
+            --location `
+            --output NUL `
+            --write-out "%{url_effective}" `
+            $latestUrl
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to resolve the latest release version."
+        }
+    }
+    else {
+        $response = Invoke-WebRequest -Uri $latestUrl -Headers @{ "User-Agent" = "cloudagent-installer" }
+        $responseUri = $response.BaseResponse.ResponseUri
+        if ($null -ne $responseUri) {
+            $resolvedUrl = [string]$responseUri.AbsoluteUri
+        }
+    }
+
+    if (-not $resolvedUrl) {
         throw "Failed to resolve the latest release version."
     }
 
-    $releaseTag = Normalize-ReleaseTag -Version $release.tag_name
+    $releaseTag = Normalize-ReleaseTag -Version (($resolvedUrl.TrimEnd('/') -split '/')[-1])
     if (-not (Test-SemVerTag $releaseTag)) {
         throw "Failed to resolve the latest release version."
     }
 
     return $releaseTag
-}
-
-function Find-ReleaseAssetMetadata {
-    param(
-        [string]$AssetName,
-        [string]$ResolvedVersion
-    )
-
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$ResolvedVersion" -Headers @{ "User-Agent" = "cloudagent-installer" }
-    $asset = $release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
-    if ($null -eq $asset) {
-        return $null
-    }
-
-    $digestMatch = [regex]::Match([string]$asset.digest, "^sha256:([0-9a-fA-F]{64})$")
-    if (-not $digestMatch.Success) {
-        throw "Could not find SHA-256 digest for release asset $AssetName."
-    }
-
-    return [PSCustomObject]@{
-        Url = [string]$asset.browser_download_url
-        Sha256 = $digestMatch.Groups[1].Value.ToLowerInvariant()
-    }
 }
 
 function Get-ReleaseAssetMetadata {
@@ -297,12 +307,36 @@ function Get-ReleaseAssetMetadata {
         [string]$ResolvedVersion
     )
 
-    $metadata = Find-ReleaseAssetMetadata -AssetName $AssetName -ResolvedVersion $ResolvedVersion
-    if ($null -eq $metadata) {
-        throw "Could not find release asset $AssetName for CloudAgent $ResolvedVersion."
-    }
+    $manifestUrl = "https://github.com/$Repo/releases/download/$ResolvedVersion/SHA256SUMS"
+    $manifestPath = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-sha256sums-" + [guid]::NewGuid().ToString("N"))
 
-    return $metadata
+    try {
+        Invoke-DownloadFile `
+            -Uri $manifestUrl `
+            -Headers @{ "User-Agent" = "cloudagent-installer" } `
+            -OutFile $manifestPath `
+            -Label "Downloading checksum manifest"
+
+        $checksumLine = Get-Content -LiteralPath $manifestPath | Where-Object { $_ -match ("  " + [regex]::Escape($AssetName) + "$") } | Select-Object -First 1
+        if (-not $checksumLine) {
+            throw "Could not find release asset $AssetName for CloudAgent $ResolvedVersion."
+        }
+
+        $sha256 = (($checksumLine -split '\s+')[0]).ToLowerInvariant()
+        if ($sha256.Length -ne 64) {
+            throw "Could not find SHA-256 digest for release asset $AssetName."
+        }
+
+        return [PSCustomObject]@{
+            Url = "https://github.com/$Repo/releases/download/$ResolvedVersion/$AssetName"
+            Sha256 = $sha256
+        }
+    }
+    finally {
+        if (Test-Path $manifestPath) {
+            Remove-Item -LiteralPath $manifestPath -Force
+        }
+    }
 }
 
 function Get-Sha256Hash {
@@ -354,7 +388,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$MainRawBase = '__MAIN_RAW_BASE__'
+$ScriptBaseUrl = '__SCRIPT_BASE_URL__'
+$ScriptFallbackUrl = '__SCRIPT_FALLBACK_URL__'
 $CurrentDir = '__CURRENT_DIR__'
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
 
@@ -397,22 +432,44 @@ function Invoke-RemoteScript {
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
         foreach ($bundleFile in (Get-RemoteScriptBundle -FileName $FileName)) {
-            $scriptUrl = $MainRawBase + '/' + $bundleFile
             $tempScript = Join-Path $tempRoot $bundleFile
-            if ($script:CurlCommand) {
-                & $script:CurlCommand.Source `
-                    --fail `
-                    --location `
-                    --silent `
-                    --show-error `
-                    --output $tempScript `
-                    $scriptUrl
-                if ($LASTEXITCODE -ne 0) {
-                    throw "curl.exe download failed for $scriptUrl"
+            $downloaded = $false
+
+            foreach ($baseUrl in @($ScriptBaseUrl, $ScriptFallbackUrl)) {
+                if (-not $baseUrl) {
+                    continue
+                }
+
+                $scriptUrl = ($baseUrl.TrimEnd('/') + '/' + $bundleFile)
+                try {
+                    if ($script:CurlCommand) {
+                        & $script:CurlCommand.Source `
+                            --fail `
+                            --location `
+                            --silent `
+                            --show-error `
+                            --output $tempScript `
+                            $scriptUrl
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "curl.exe download failed for $scriptUrl"
+                        }
+                    }
+                    else {
+                        Invoke-WebRequest -Uri $scriptUrl -Headers @{ "User-Agent" = "cloudagent-installer" } -OutFile $tempScript
+                    }
+
+                    $downloaded = $true
+                    break
+                }
+                catch {
+                    if (Test-Path $tempScript) {
+                        Remove-Item -LiteralPath $tempScript -Force
+                    }
                 }
             }
-            else {
-                Invoke-WebRequest -Uri $scriptUrl -Headers @{ "User-Agent" = "cloudagent-installer" } -OutFile $tempScript
+
+            if (-not $downloaded) {
+                throw "failed to download $bundleFile from configured script sources"
             }
         }
 
@@ -449,7 +506,8 @@ switch ($Args[0]) {
 }
 '@ |
         ForEach-Object {
-            $_.Replace('__MAIN_RAW_BASE__', $MainRawBase).
+            $_.Replace('__SCRIPT_BASE_URL__', $ScriptBaseUrl).
+               Replace('__SCRIPT_FALLBACK_URL__', $ScriptFallbackUrl).
                Replace('__CURRENT_DIR__', $CurrentDir)
         } | Set-Content -Encoding ASCII -Path $helperPath
 

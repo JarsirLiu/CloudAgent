@@ -6,7 +6,18 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Repo = "JarsirLiu/CloudAgent"
-$MainRawBase = "https://raw.githubusercontent.com/$Repo/main/scripts"
+$ScriptBaseUrl = if ($env:CLOUDAGENT_SCRIPT_BASE_URL) {
+    $env:CLOUDAGENT_SCRIPT_BASE_URL
+}
+else {
+    "https://github.com/$Repo/releases/latest/download"
+}
+$ScriptFallbackUrl = if ($env:CLOUDAGENT_SCRIPT_FALLBACK_URL) {
+    $env:CLOUDAGENT_SCRIPT_FALLBACK_URL
+}
+else {
+    "https://raw.githubusercontent.com/$Repo/main/scripts"
+}
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
 $CurrentDir = Join-Path $InstallRoot "current"
 $CurrentExe = Join-Path $CurrentDir "cloudagent.exe"
@@ -242,11 +253,32 @@ function Invoke-InstallScript {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $installScript = Join-Path $tempRoot "install.ps1"
     Write-StageStart -Step 2 -Title "Downloading installer script"
-    Invoke-DownloadFile `
-        -Uri "$MainRawBase/install.ps1" `
-        -Headers @{ "User-Agent" = "cloudagent-upgrade" } `
-        -OutFile $installScript `
-        -Label "Downloading installer script"
+    $downloaded = $false
+    foreach ($baseUrl in @($ScriptBaseUrl, $ScriptFallbackUrl)) {
+        if (-not $baseUrl) {
+            continue
+        }
+
+        $scriptUrl = ($baseUrl.TrimEnd('/') + '/install.ps1')
+        try {
+            Invoke-DownloadFile `
+                -Uri $scriptUrl `
+                -Headers @{ "User-Agent" = "cloudagent-upgrade" } `
+                -OutFile $installScript `
+                -Label "Downloading installer script"
+            $downloaded = $true
+            break
+        }
+        catch {
+            if (Test-Path $installScript) {
+                Remove-Item -LiteralPath $installScript -Force
+            }
+        }
+    }
+
+    if (-not $downloaded) {
+        throw "failed to download install.ps1 from configured script sources"
+    }
     Write-StageDone
     & $installScript -Version $Version -Force:$Force
     if ($LASTEXITCODE -ne 0) {

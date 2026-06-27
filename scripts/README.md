@@ -13,13 +13,13 @@ Release entry:
 Linux / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh
+curl -fsSL https://github.com/JarsirLiu/CloudAgent/releases/latest/download/install.sh | sh
 ```
 
 Windows:
 
 ```bash
-irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 | iex
+irm https://github.com/JarsirLiu/CloudAgent/releases/latest/download/install.ps1 | iex
 ```
 
 You can also download the installer scripts first and run them locally:
@@ -27,14 +27,14 @@ You can also download the installer scripts first and run them locally:
 Linux / macOS:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh
+curl -fsSLO https://github.com/JarsirLiu/CloudAgent/releases/latest/download/install.sh
 sh install.sh
 ```
 
 Windows:
 
 ```bash
-Invoke-WebRequest https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 -OutFile install.ps1
+Invoke-WebRequest https://github.com/JarsirLiu/CloudAgent/releases/latest/download/install.ps1 -OutFile install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 

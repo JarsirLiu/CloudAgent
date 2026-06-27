@@ -2,7 +2,8 @@
 set -eu
 
 REPO="JarsirLiu/CloudAgent"
-MAIN_RAW_BASE="https://raw.githubusercontent.com/$REPO/main/scripts"
+SCRIPT_BASE_URL="${CLOUDAGENT_SCRIPT_BASE_URL:-https://github.com/$REPO/releases/latest/download}"
+SCRIPT_FALLBACK_URL="${CLOUDAGENT_SCRIPT_FALLBACK_URL:-https://raw.githubusercontent.com/$REPO/main/scripts}"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 CURRENT_LINK="$INSTALL_ROOT/current"
 CURRENT_EXE="$CURRENT_LINK/cloudagent"
@@ -42,6 +43,21 @@ curl_download() {
   else
     curl -fsSL "$url" -o "$output"
   fi
+}
+
+download_remote_script() {
+  script_name="$1"
+  output="$2"
+  for base_url in "$SCRIPT_BASE_URL" "$SCRIPT_FALLBACK_URL"; do
+    [ -n "$base_url" ] || continue
+    if curl_download "${base_url%/}/$script_name" "$output"; then
+      return 0
+    fi
+    rm -f "$output"
+  done
+
+  echo "failed to download $script_name from configured script sources" >&2
+  exit 1
 }
 
 node_running() {
@@ -95,7 +111,7 @@ invoke_install_script() {
   mkdir -p "$WORK"
   install_script="$WORK/install.sh"
   stage_start 2 "Downloading installer script"
-  curl_download "$MAIN_RAW_BASE/install.sh" "$install_script"
+  download_remote_script "install.sh" "$install_script"
   chmod +x "$install_script"
   stage_done
   "$install_script" "$@"

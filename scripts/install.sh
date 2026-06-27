@@ -2,7 +2,8 @@
 set -eu
 
 REPO="JarsirLiu/CloudAgent"
-MAIN_RAW_BASE="https://raw.githubusercontent.com/$REPO/main/scripts"
+SCRIPT_BASE_URL="${CLOUDAGENT_SCRIPT_BASE_URL:-https://github.com/$REPO/releases/latest/download}"
+SCRIPT_FALLBACK_URL="${CLOUDAGENT_SCRIPT_FALLBACK_URL:-https://raw.githubusercontent.com/$REPO/main/scripts}"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 INSTALLS_DIR="$INSTALL_ROOT/installs"
 CURRENT_LINK="$INSTALL_ROOT/current"
@@ -107,6 +108,21 @@ curl_download() {
   else
     curl -fsSL -H "User-Agent: cloudagent-installer" "$url" -o "$output"
   fi
+}
+
+download_remote_script() {
+  script_name="$1"
+  output="$2"
+  for base_url in "$SCRIPT_BASE_URL" "$SCRIPT_FALLBACK_URL"; do
+    [ -n "$base_url" ] || continue
+    if curl_download "${base_url%/}/$script_name" "$output"; then
+      return 0
+    fi
+    rm -f "$output"
+  done
+
+  echo "failed to download $script_name from configured script sources" >&2
+  exit 1
 }
 
 usage() {
@@ -320,25 +336,35 @@ write_launchers() {
 #!/usr/bin/env sh
 set -eu
 
-MAIN_RAW_BASE="$MAIN_RAW_BASE"
+SCRIPT_BASE_URL="$SCRIPT_BASE_URL"
+SCRIPT_FALLBACK_URL="$SCRIPT_FALLBACK_URL"
 
 run_remote_script() {
   script_url="\$1"
   shift
   tmp_script="\$(mktemp "\${TMPDIR:-/tmp}/cloudagent-remote-XXXXXX")"
   trap 'rm -f "\$tmp_script"' EXIT INT TERM
-  curl -fsSL "\$script_url" -o "\$tmp_script"
-  sh "\$tmp_script" "\$@"
+  for base_url in "\$SCRIPT_BASE_URL" "\$SCRIPT_FALLBACK_URL"; do
+    [ -n "\$base_url" ] || continue
+    if curl -fsSL "\${base_url%/}/\$script_url" -o "\$tmp_script"; then
+      sh "\$tmp_script" "\$@"
+      return 0
+    fi
+    rm -f "\$tmp_script"
+  done
+
+  echo "failed to download \$script_url from configured script sources" >&2
+  return 1
 }
 
 case "\${1:-}" in
   upgrade)
     shift
-    run_remote_script "\$MAIN_RAW_BASE/upgrade.sh" "\$@"
+    run_remote_script "upgrade.sh" "\$@"
     ;;
   uninstall)
     shift
-    run_remote_script "\$MAIN_RAW_BASE/uninstall.sh" "\$@"
+    run_remote_script "uninstall.sh" "\$@"
     ;;
   *)
     exec "$CURRENT_LINK/cloudagent" "\$@"
