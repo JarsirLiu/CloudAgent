@@ -2,8 +2,8 @@
 set -eu
 
 REPO="JarsirLiu/CloudAgent"
-SCRIPT_BASE_URL="${CLOUDAGENT_SCRIPT_BASE_URL:-https://github.com/$REPO/releases/latest/download}"
-SCRIPT_FALLBACK_URL="${CLOUDAGENT_SCRIPT_FALLBACK_URL:-https://raw.githubusercontent.com/$REPO/main/scripts}"
+SCRIPT_BASE_URL="${CLOUDAGENT_SCRIPT_BASE_URL:-https://raw.githubusercontent.com/$REPO/main/scripts}"
+SCRIPT_FALLBACK_URL="${CLOUDAGENT_SCRIPT_FALLBACK_URL:-https://github.com/$REPO/releases/latest/download}"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 INSTALLS_DIR="$INSTALL_ROOT/installs"
 CURRENT_LINK="$INSTALL_ROOT/current"

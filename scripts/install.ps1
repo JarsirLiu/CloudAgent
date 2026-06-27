@@ -11,13 +11,13 @@ $ScriptBaseUrl = if ($env:CLOUDAGENT_SCRIPT_BASE_URL) {
     $env:CLOUDAGENT_SCRIPT_BASE_URL
 }
 else {
-    "https://github.com/$Repo/releases/latest/download"
+    "https://raw.githubusercontent.com/$Repo/main/scripts"
 }
 $ScriptFallbackUrl = if ($env:CLOUDAGENT_SCRIPT_FALLBACK_URL) {
     $env:CLOUDAGENT_SCRIPT_FALLBACK_URL
 }
 else {
-    "https://raw.githubusercontent.com/$Repo/main/scripts"
+    "https://github.com/$Repo/releases/latest/download"
 }
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
     $env:CLOUDAGENT_INSTALL_ROOT

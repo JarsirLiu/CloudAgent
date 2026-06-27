@@ -138,7 +138,7 @@ curl -fsSL https://github.com/JarsirLiu/CloudAgent/releases/latest/download/unin
 Windows:
 
 ```powershell
-irm https://github.com/JarsirLiu/CloudAgent/releases/latest/download/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/uninstall.ps1 | iex
 & "$env:USERPROFILE\.local\bin\cloudagent.cmd" uninstall --purge
 ```
 

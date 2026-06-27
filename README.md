@@ -50,13 +50,13 @@ Release process: [docs/release-process.md](docs/release-process.md)
 Linux / macOS:
 
 ```bash
-curl -fsSL https://github.com/JarsirLiu/CloudAgent/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh
 ```
 
 Windows:
 
 ```bash
-irm https://github.com/JarsirLiu/CloudAgent/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 | iex
 ```
 
 Common runtime commands:
@@ -216,13 +216,13 @@ GitHub Releases: [https://github.com/JarsirLiu/CloudAgent/releases](https://gith
 Linux / macOS:
 
 ```bash
-curl -fsSL https://github.com/JarsirLiu/CloudAgent/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.sh | sh
 ```
 
 Windows:
 
 ```bash
-irm https://github.com/JarsirLiu/CloudAgent/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/JarsirLiu/CloudAgent/main/scripts/install.ps1 | iex
 ```
 
 常用运行命令：
