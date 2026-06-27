@@ -300,35 +300,20 @@ function Get-ReleaseAssetMetadata {
         [string]$ResolvedVersion
     )
 
-    $manifestUrl = "https://github.com/$Repo/releases/download/$ResolvedVersion/SHA256SUMS"
-    $manifestPath = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-sha256sums-" + [guid]::NewGuid().ToString("N"))
-
-    try {
-        Invoke-DownloadFile `
-            -Uri $manifestUrl `
-            -Headers @{ "User-Agent" = "cloudagent-installer" } `
-            -OutFile $manifestPath `
-            -Label "Downloading checksum manifest"
-
-        $checksumLine = Get-Content -LiteralPath $manifestPath | Where-Object { $_ -match ("  " + [regex]::Escape($AssetName) + "$") } | Select-Object -First 1
-        if (-not $checksumLine) {
-            throw "Could not find release asset $AssetName for CloudAgent $ResolvedVersion."
-        }
-
-        $sha256 = (($checksumLine -split '\s+')[0]).ToLowerInvariant()
-        if ($sha256.Length -ne 64) {
-            throw "Could not find SHA-256 digest for release asset $AssetName."
-        }
-
-        return [PSCustomObject]@{
-            Url = "https://github.com/$Repo/releases/download/$ResolvedVersion/$AssetName"
-            Sha256 = $sha256
-        }
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$ResolvedVersion" -Headers @{ "User-Agent" = "cloudagent-installer" }
+    $asset = $release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
+    if ($null -eq $asset) {
+        throw "Could not find release asset $AssetName for CloudAgent $ResolvedVersion."
     }
-    finally {
-        if (Test-Path $manifestPath) {
-            Remove-Item -LiteralPath $manifestPath -Force
-        }
+
+    $digestMatch = [regex]::Match([string]$asset.digest, "^sha256:([0-9a-fA-F]{64})$")
+    if (-not $digestMatch.Success) {
+        throw "Could not find SHA-256 digest for release asset $AssetName."
+    }
+
+    return [PSCustomObject]@{
+        Url = [string]$asset.browser_download_url
+        Sha256 = $digestMatch.Groups[1].Value.ToLowerInvariant()
     }
 }
 

@@ -262,6 +262,68 @@ resolve_latest_release_tag() {
   exit 1
 }
 
+release_asset_digest() {
+  asset="$1"
+  resolved_version="$2"
+  release_json="$(download_text "https://api.github.com/repos/$REPO/releases/tags/$resolved_version")"
+
+  digest="$(printf '%s\n' "$release_json" | awk -v asset="$asset" '
+    /"name":[[:space:]]*"[^"]+"/ {
+      name = $0
+      sub(/^.*"name":[[:space:]]*"/, "", name)
+      sub(/".*$/, "", name)
+      if (name == asset) {
+        in_asset = 1
+        asset_depth = depth
+      }
+    }
+
+    in_asset && /"digest":[[:space:]]*"[^"]+"/ {
+      digest = $0
+      sub(/^.*"digest":[[:space:]]*"/, "", digest)
+      sub(/".*$/, "", digest)
+    }
+
+    {
+      line = $0
+      opens = gsub(/\{/, "{", line)
+      closes = gsub(/\}/, "}", line)
+      depth += opens - closes
+
+      if (in_asset && depth < asset_depth) {
+        in_asset = 0
+      }
+    }
+
+    END {
+      if (digest != "") {
+        print digest
+      }
+    }
+  ')"
+
+  case "$digest" in
+    sha256:????????????????????????????????????????????????????????????????)
+      printf '%s\n' "${digest#sha256:}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+release_asset_exists() {
+  asset="$1"
+  resolved_version="$2"
+  release_asset_digest "$asset" "$resolved_version" >/dev/null 2>&1
+}
+
+release_url_for_asset() {
+  asset="$1"
+  resolved_version="$2"
+  printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$resolved_version" "$asset"
+}
+
 fetch_release_metadata() {
   stage_start 1 "Resolving release metadata"
   if [ "$VERSION" = "latest" ]; then
@@ -276,7 +338,6 @@ fetch_release_metadata() {
   RELEASE_VERSION=${RELEASE_TAG#v}
   ASSET_BASENAME="cloudagent-${RELEASE_TAG}-${OS}-${ARCH}.tar.gz"
   ASSET_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/$ASSET_BASENAME"
-  CHECKSUM_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/SHA256SUMS"
   stage_done "($RELEASE_TAG)"
 }
 
@@ -288,24 +349,19 @@ current_version() {
 
 verify_checksum() {
   asset="$1"
-  checksum_file="$WORK/SHA256SUMS"
-  stage_start 3 "Downloading checksum manifest"
-  curl_download "$CHECKSUM_URL" "$checksum_file"
-  checksum_size=$(file_size "$checksum_file")
-  stage_done "($(human_size "$checksum_size"))"
-
+  expected="$(release_asset_digest "$ASSET_BASENAME" "$RELEASE_TAG")"
   stage_start 4 "Verifying package checksum"
   if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$WORK" && grep "  $ASSET_BASENAME\$" "$checksum_file" | sha256sum -c -)
+    actual=$(sha256sum "$asset" | awk '{print $1}')
   elif command -v shasum >/dev/null 2>&1; then
-    expected=$(grep "  $ASSET_BASENAME\$" "$checksum_file" | awk '{print $1}')
     actual=$(shasum -a 256 "$asset" | awk '{print $1}')
-    [ "$expected" = "$actual" ]
   else
     echo "warning: no sha256 tool found; skipping checksum verification" >&2
     stage_done "(skipped)"
     return 0
   fi
+
+  [ "$expected" = "$actual" ]
   stage_done
 }
 
