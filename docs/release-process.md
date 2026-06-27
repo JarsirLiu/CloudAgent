@@ -11,8 +11,8 @@ It follows the same core ideas used by Codex:
 
 ## 1. Version Rules
 
-- All release tags use a leading `v`, for example `v0.1.43`
-- Stable releases use plain semantic version tags, for example `v0.1.43`
+- All release tags use a leading `v`, for example `v0.1.44`
+- Stable releases use plain semantic version tags, for example `v0.1.44`
 - Pre-release builds use semantic version suffixes, for example:
   - `v0.1.44-beta.1`
   - `v0.1.44-alpha.1`
@@ -30,7 +30,7 @@ The normal release flow is:
 
 1. Bump the workspace version to the next release tag.
 2. Commit the version bump with a clear release-oriented message.
-3. Create a tag that matches the version, for example `v0.1.43`.
+3. Create a tag that matches the version, for example `v0.1.44`.
 4. Push the tag to GitHub.
 5. GitHub Actions triggers the release workflow from the tag push.
 6. The workflow builds binaries for all supported platforms.

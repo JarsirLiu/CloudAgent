@@ -24,7 +24,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-version = "0.1.43"
+version = "0.1.44"
 license = "MIT"
 authors = ["Liu Felix"]
 repository = ""
