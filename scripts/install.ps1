@@ -19,6 +19,24 @@ $ScriptFallbackUrl = if ($env:CLOUDAGENT_SCRIPT_FALLBACK_URL) {
 else {
     "https://github.com/$Repo/releases/latest/download"
 }
+$MetadataBaseUrl = if ($env:CLOUDAGENT_METADATA_BASE_URL) {
+    $env:CLOUDAGENT_METADATA_BASE_URL
+}
+else {
+    "https://github.com/$Repo/releases/latest/download"
+}
+$MetadataFallbackUrl = if ($env:CLOUDAGENT_METADATA_FALLBACK_URL) {
+    $env:CLOUDAGENT_METADATA_FALLBACK_URL
+}
+else {
+    "https://raw.githubusercontent.com/$Repo/main/scripts"
+}
+$ReleaseChannel = if ($env:CLOUDAGENT_RELEASE_CHANNEL) {
+    $env:CLOUDAGENT_RELEASE_CHANNEL
+}
+else {
+    "stable"
+}
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
     $env:CLOUDAGENT_INSTALL_ROOT
 }
@@ -31,6 +49,7 @@ else {
 $InstallsDir = Join-Path $InstallRoot "installs"
 $CurrentDir = Join-Path $InstallRoot "current"
 $InstallMarker = ".cloudagent-install-complete"
+$SupportDirName = "support"
 $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
 $script:LastDownloadStatusLength = 0
@@ -85,6 +104,14 @@ function Resolve-RequestedVersion {
     }
 
     return $normalized
+}
+
+function Get-LocalScriptDirectory {
+    if ($PSScriptRoot) {
+        return $PSScriptRoot
+    }
+
+    return (Split-Path -Parent $MyInvocation.MyCommand.Path)
 }
 
 if ($SelfTest) {
@@ -271,7 +298,65 @@ function Get-TargetAssetName {
     return "cloudagent-$script:ReleaseTag-windows-$arch.zip"
 }
 
+function Get-TargetAssetKey {
+    $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { throw "Unsupported Windows architecture" }
+    return "windows-$arch"
+}
+
+function Get-LatestMetadata {
+    if ($script:LatestMetadataLoaded) {
+        return $script:LatestMetadata
+    }
+
+    foreach ($baseUrl in @($MetadataBaseUrl, $MetadataFallbackUrl)) {
+        if (-not $baseUrl) {
+            continue
+        }
+
+        foreach ($metadataName in @("$ReleaseChannel.json", "latest.json")) {
+            try {
+                $metadata = Invoke-RestMethod -Uri ($baseUrl.TrimEnd('/') + "/$metadataName") -Headers @{ "User-Agent" = "cloudagent-installer" }
+                $script:LatestMetadataLoaded = $true
+                $script:LatestMetadata = $metadata
+                return $metadata
+            }
+            catch {
+            }
+        }
+    }
+
+    $script:LatestMetadataLoaded = $true
+    $script:LatestMetadata = $null
+    return $null
+}
+
+function Get-MetadataReleaseTag {
+    param([Parameter(Mandatory = $true)]$Metadata)
+
+    if ($Metadata.tag) {
+        return Normalize-ReleaseTag -Version ([string]$Metadata.tag)
+    }
+
+    if ($Metadata.version) {
+        return Normalize-ReleaseTag -Version ([string]$Metadata.version)
+    }
+
+    if ($Metadata.stable) {
+        return Normalize-ReleaseTag -Version ([string]$Metadata.stable)
+    }
+
+    return $null
+}
+
 function Resolve-LatestReleaseTag {
+    $metadata = Get-LatestMetadata
+    if ($metadata) {
+        $releaseTag = Get-MetadataReleaseTag -Metadata $metadata
+        if ($releaseTag -and (Test-SemVerTag $releaseTag)) {
+            return $releaseTag
+        }
+    }
+
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "cloudagent-installer" }
     if (-not $release.tag_name) {
         throw "Failed to resolve the latest release version."
@@ -290,6 +375,23 @@ function Get-ReleaseAssetMetadata {
         [string]$AssetName,
         [string]$ResolvedVersion
     )
+
+    $assetKey = Get-TargetAssetKey
+    if ($assetKey) {
+        $metadata = Get-LatestMetadata
+        if ($metadata) {
+            $metadataReleaseTag = Get-MetadataReleaseTag -Metadata $metadata
+            if ($metadataReleaseTag -and ($metadataReleaseTag -eq $ResolvedVersion)) {
+                $asset = $metadata.assets.$assetKey
+                if ($asset.url -and $asset.sha256) {
+                    return [PSCustomObject]@{
+                        Url = [string]$asset.url
+                        Sha256 = ([string]$asset.sha256).ToLowerInvariant()
+                    }
+                }
+            }
+        }
+    }
 
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$ResolvedVersion" -Headers @{ "User-Agent" = "cloudagent-installer" }
     $asset = $release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
@@ -360,6 +462,7 @@ $ErrorActionPreference = "Stop"
 $ScriptBaseUrl = '__SCRIPT_BASE_URL__'
 $ScriptFallbackUrl = '__SCRIPT_FALLBACK_URL__'
 $CurrentDir = '__CURRENT_DIR__'
+$SupportDirName = '__SUPPORT_DIR_NAME__'
 $script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
 
 function Get-RemainingArgs {
@@ -455,6 +558,24 @@ function Invoke-RemoteScript {
     }
 }
 
+function Invoke-SupportScript {
+    param(
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [string[]]$RemainingArgs = @()
+    )
+
+    $localScript = Join-Path (Join-Path $CurrentDir $SupportDirName) $FileName
+    if (Test-Path $localScript) {
+        & $localScript @RemainingArgs
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+        return
+    }
+
+    Invoke-RemoteScript -FileName $FileName -RemainingArgs $RemainingArgs
+}
+
 if (-not $Args -or $Args.Count -eq 0) {
     & (Join-Path $CurrentDir "cloudagent.exe")
     exit $LASTEXITCODE
@@ -462,11 +583,11 @@ if (-not $Args -or $Args.Count -eq 0) {
 
 switch ($Args[0]) {
     "upgrade" {
-        Invoke-RemoteScript -FileName "upgrade.ps1" -RemainingArgs (Get-RemainingArgs -Arguments $Args)
+        Invoke-SupportScript -FileName "upgrade.ps1" -RemainingArgs (Get-RemainingArgs -Arguments $Args)
         exit $LASTEXITCODE
     }
     "uninstall" {
-        Invoke-RemoteScript -FileName "uninstall.ps1" -RemainingArgs (Get-RemainingArgs -Arguments $Args)
+        Invoke-SupportScript -FileName "uninstall.ps1" -RemainingArgs (Get-RemainingArgs -Arguments $Args)
         exit $LASTEXITCODE
     }
     default {
@@ -478,7 +599,8 @@ switch ($Args[0]) {
         ForEach-Object {
             $_.Replace('__SCRIPT_BASE_URL__', $ScriptBaseUrl).
                Replace('__SCRIPT_FALLBACK_URL__', $ScriptFallbackUrl).
-               Replace('__CURRENT_DIR__', $CurrentDir)
+               Replace('__CURRENT_DIR__', $CurrentDir).
+               Replace('__SUPPORT_DIR_NAME__', $SupportDirName)
         } | Set-Content -Encoding ASCII -Path $helperPath
 
     @"
@@ -524,6 +646,20 @@ if ((-not $Force) -and (Test-Path $markerPath) -and (Test-Path $CurrentDir) -and
     return
 }
 
+function Copy-SupportScripts {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetDir
+    )
+
+    $supportDir = Join-Path $TargetDir $SupportDirName
+    New-Item -ItemType Directory -Path $supportDir -Force | Out-Null
+
+    $sourceDir = Get-LocalScriptDirectory
+    foreach ($fileName in @("install.ps1", "upgrade.ps1", "uninstall.ps1", "release-tag-rules.ps1")) {
+        Copy-Item -LiteralPath (Join-Path $sourceDir $fileName) -Destination (Join-Path $supportDir $fileName) -Force
+    }
+}
+
 New-Item -ItemType Directory -Path $InstallsDir, $BinDir, $DataDir -Force | Out-Null
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cloudagent-install-$PID"
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -560,6 +696,7 @@ try {
     Write-StageStart -Step 5 -Title "Installing files"
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     Copy-Item -Path (Join-Path $packageDir.FullName "*") -Destination $targetDir -Recurse -Force
+    Copy-SupportScripts -TargetDir $targetDir
     Write-StageDone
 
     if (Test-Path $CurrentDir) {

@@ -32,6 +32,17 @@ copy_release_script() {
 
 stage_release_scripts() {
   dest_dir="$1"
+  channel="stable"
+  published_at="${RELEASE_PUBLISHED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+
+  case "$RELEASE_TAG" in
+    *-beta.*|*-beta)
+      channel="beta"
+      ;;
+    *-alpha.*|*-alpha)
+      channel="alpha"
+      ;;
+  esac
 
   mkdir -p "$dest_dir"
   copy_release_script install.sh "$dest_dir"
@@ -45,8 +56,15 @@ stage_release_scripts() {
   copy_release_script validate-release-tag.ps1 "$dest_dir"
 
   printf '%s\n' "$RELEASE_TAG" > "$dest_dir/VERSION"
-  cat > "$dest_dir/latest.json" <<JSON
+  for metadata_name in "latest.json" "${channel}.json"; do
+    cat > "$dest_dir/$metadata_name" <<JSON
 {
+  "schema_version": 1,
+  "channel": "${channel}",
+  "version": "${RELEASE_TAG#v}",
+  "tag": "${RELEASE_TAG}",
+  "published_at": "${published_at}",
+  "notes_url": "https://github.com/${REPO}/releases/tag/${RELEASE_TAG}",
   "stable": "${RELEASE_TAG}",
   "assets": {
     "linux-x64": {
@@ -68,6 +86,7 @@ stage_release_scripts() {
   }
 }
 JSON
+  done
 }
 
 validate_release_scripts() {
@@ -92,6 +111,21 @@ validate_release_scripts() {
     fi
   done
 
+  channel_name="stable"
+  case "$RELEASE_TAG" in
+    *-beta.*|*-beta)
+      channel_name="beta"
+      ;;
+    *-alpha.*|*-alpha)
+      channel_name="alpha"
+      ;;
+  esac
+
+  if [ ! -f "$dest_dir/${channel_name}.json" ]; then
+    echo "missing channel metadata file: ${channel_name}.json" >&2
+    exit 1
+  fi
+
   if [ "$(cat "$dest_dir/VERSION")" != "$RELEASE_TAG" ]; then
     echo "release VERSION does not match release tag" >&2
     exit 1
@@ -102,8 +136,23 @@ validate_release_scripts() {
     exit 1
   fi
 
+  if ! grep -F "\"schema_version\": 1" "$dest_dir/latest.json" >/dev/null 2>&1; then
+    echo "release latest.json does not include schema_version" >&2
+    exit 1
+  fi
+
+  if ! grep -F "\"version\": \"${RELEASE_TAG#v}\"" "$dest_dir/latest.json" >/dev/null 2>&1; then
+    echo "release latest.json does not include the release version" >&2
+    exit 1
+  fi
+
   if ! grep -F "cloudagent-${RELEASE_TAG}-windows-x64.zip" "$dest_dir/latest.json" >/dev/null 2>&1; then
     echo "release latest.json does not include release asset urls" >&2
+    exit 1
+  fi
+
+  if ! grep -F "\"channel\": \"${channel_name}\"" "$dest_dir/${channel_name}.json" >/dev/null 2>&1; then
+    echo "channel metadata file does not include the correct channel" >&2
     exit 1
   fi
 }

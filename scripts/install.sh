@@ -4,10 +4,14 @@ set -eu
 REPO="JarsirLiu/CloudAgent"
 SCRIPT_BASE_URL="${CLOUDAGENT_SCRIPT_BASE_URL:-https://raw.githubusercontent.com/$REPO/main/scripts}"
 SCRIPT_FALLBACK_URL="${CLOUDAGENT_SCRIPT_FALLBACK_URL:-https://github.com/$REPO/releases/latest/download}"
+METADATA_BASE_URL="${CLOUDAGENT_METADATA_BASE_URL:-https://github.com/$REPO/releases/latest/download}"
+METADATA_FALLBACK_URL="${CLOUDAGENT_METADATA_FALLBACK_URL:-https://raw.githubusercontent.com/$REPO/main/scripts}"
+CLOUDAGENT_RELEASE_CHANNEL="${CLOUDAGENT_RELEASE_CHANNEL:-stable}"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 INSTALLS_DIR="$INSTALL_ROOT/installs"
 CURRENT_LINK="$INSTALL_ROOT/current"
 INSTALL_MARKER=".cloudagent-install-complete"
+SUPPORT_DIR_NAME="support"
 BIN_DIR="${CLOUDAGENT_BIN_DIR:-$HOME/.local/bin}"
 DATA_DIR="${CLOUDAGENT_DATA_DIR:-$HOME/.cloudagent}"
 TMPDIR="${TMPDIR:-/tmp}"
@@ -60,6 +64,10 @@ fi
 
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
+script_dir() {
+  CDPATH= cd -- "$(dirname -- "$0")" && pwd
+}
+
 stage_start() {
   step="$1"
   title="$2"
@@ -88,6 +96,23 @@ human_size() {
       printf "%d B", b
     }
   }'
+}
+
+download_text() {
+  url="$1"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -H "User-Agent: cloudagent-installer" "$url"
+    return
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    wget -q -O - --header="User-Agent: cloudagent-installer" "$url"
+    return
+  fi
+
+  echo "curl or wget is required to fetch metadata." >&2
+  exit 1
 }
 
 file_size() {
@@ -263,6 +288,122 @@ resolve_latest_release_tag() {
   exit 1
 }
 
+metadata_url() {
+  base_url="$1"
+  metadata_name="$2"
+  printf '%s/%s\n' "${base_url%/}" "$metadata_name"
+}
+
+fetch_latest_metadata() {
+  channel_name="${CLOUDAGENT_RELEASE_CHANNEL:-stable}"
+  for base_url in "$METADATA_BASE_URL" "$METADATA_FALLBACK_URL"; do
+    [ -n "$base_url" ] || continue
+    for metadata_name in "${channel_name}.json" "latest.json"; do
+      if metadata_json="$(download_text "$(metadata_url "$base_url" "$metadata_name")" 2>/dev/null)"; then
+        printf '%s\n' "$metadata_json"
+        return 0
+      fi
+    done
+  done
+
+  return 1
+}
+
+metadata_release_tag() {
+  metadata_json="$1"
+  release_tag="$(printf '%s\n' "$metadata_json" | sed -n 's/.*"tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [ -n "$release_tag" ]; then
+    printf '%s\n' "$release_tag"
+    return 0
+  fi
+
+  release_version="$(printf '%s\n' "$metadata_json" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [ -n "$release_version" ]; then
+    normalize_release_tag "$release_version"
+    return 0
+  fi
+
+  printf '%s\n' "$metadata_json" | sed -n 's/.*"stable"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+metadata_asset_url() {
+  metadata_json="$1"
+  asset_key="$2"
+
+  printf '%s\n' "$metadata_json" | awk -v asset_key="$asset_key" '
+    BEGIN {
+      in_asset = 0
+      depth = 0
+      asset_depth = 0
+    }
+    /"[^"]+"[[:space:]]*:[[:space:]]*\{/ {
+      line = $0
+      key = line
+      sub(/^[[:space:]]*"/, "", key)
+      sub(/".*$/, "", key)
+      if (key == asset_key) {
+        in_asset = 1
+        asset_depth = depth + 1
+      }
+    }
+    in_asset && /"url"[[:space:]]*:[[:space:]]*"[^"]+"/ {
+      url = $0
+      sub(/^.*"url"[[:space:]]*:[[:space:]]*"/, "", url)
+      sub(/".*$/, "", url)
+      print url
+      exit
+    }
+    {
+      line = $0
+      opens = gsub(/\{/, "{", line)
+      closes = gsub(/\}/, "}", line)
+      depth += opens - closes
+      if (in_asset && depth < asset_depth) {
+        in_asset = 0
+      }
+    }
+  '
+}
+
+metadata_asset_sha256() {
+  metadata_json="$1"
+  asset_key="$2"
+
+  printf '%s\n' "$metadata_json" | awk -v asset_key="$asset_key" '
+    BEGIN {
+      in_asset = 0
+      depth = 0
+      asset_depth = 0
+    }
+    /"[^"]+"[[:space:]]*:[[:space:]]*\{/ {
+      line = $0
+      key = line
+      sub(/^[[:space:]]*"/, "", key)
+      sub(/".*$/, "", key)
+      if (key == asset_key) {
+        in_asset = 1
+        asset_depth = depth + 1
+      }
+    }
+    in_asset && /"sha256"[[:space:]]*:[[:space:]]*"[^"]+"/ {
+      sha = $0
+      sub(/^.*"sha256"[[:space:]]*:[[:space:]]*"/, "", sha)
+      sub(/".*$/, "", sha)
+      print sha
+      exit
+    }
+    {
+      line = $0
+      opens = gsub(/\{/, "{", line)
+      closes = gsub(/\}/, "}", line)
+      depth += opens - closes
+      if (in_asset && depth < asset_depth) {
+        in_asset = 0
+      }
+    }
+  '
+}
+
 release_asset_digest() {
   asset="$1"
   resolved_version="$2"
@@ -327,8 +468,15 @@ release_url_for_asset() {
 
 fetch_release_metadata() {
   stage_start 1 "Resolving release metadata"
+  metadata_json=""
   if [ "$VERSION" = "latest" ]; then
-    RELEASE_TAG=$(resolve_latest_release_tag)
+    metadata_json="$(fetch_latest_metadata || true)"
+    if [ -n "$metadata_json" ]; then
+      RELEASE_TAG="$(metadata_release_tag "$metadata_json")"
+    fi
+    if [ -z "${RELEASE_TAG:-}" ]; then
+      RELEASE_TAG=$(resolve_latest_release_tag)
+    fi
   else
     RELEASE_TAG=$(normalize_release_tag "$VERSION")
   fi
@@ -337,8 +485,18 @@ fetch_release_metadata() {
     exit 1
   }
   RELEASE_VERSION=${RELEASE_TAG#v}
+  ASSET_KEY="${OS}-${ARCH}"
   ASSET_BASENAME="cloudagent-${RELEASE_TAG}-${OS}-${ARCH}.tar.gz"
-  ASSET_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/$ASSET_BASENAME"
+  if [ -n "$metadata_json" ]; then
+    ASSET_URL="$(metadata_asset_url "$metadata_json" "$ASSET_KEY")"
+    ASSET_SHA256="$(metadata_asset_sha256 "$metadata_json" "$ASSET_KEY")"
+  else
+    ASSET_URL=""
+    ASSET_SHA256=""
+  fi
+  if [ -z "$ASSET_URL" ]; then
+    ASSET_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/$ASSET_BASENAME"
+  fi
   stage_done "($RELEASE_TAG)"
 }
 
@@ -350,7 +508,10 @@ current_version() {
 
 verify_checksum() {
   asset="$1"
-  expected="$(release_asset_digest "$ASSET_BASENAME" "$RELEASE_TAG")"
+  expected="${ASSET_SHA256:-}"
+  if [ -z "$expected" ]; then
+    expected="$(release_asset_digest "$ASSET_BASENAME" "$RELEASE_TAG")"
+  fi
   stage_start 4 "Verifying package checksum"
   if command -v sha256sum >/dev/null 2>&1; then
     actual=$(sha256sum "$asset" | awk '{print $1}')
@@ -387,21 +548,28 @@ download_and_unpack() {
 }
 
 install_files() {
-  target="$INSTALLS_DIR/$RELEASE_VERSION"
-  if [ "$FORCE" -ne 1 ] && [ "$(current_version || true)" = "$RELEASE_VERSION" ] && [ -f "$target/$INSTALL_MARKER" ]; then
+  TARGET_DIR="$INSTALLS_DIR/$RELEASE_VERSION"
+  if [ "$FORCE" -ne 1 ] && [ "$(current_version || true)" = "$RELEASE_VERSION" ] && [ -f "$TARGET_DIR/$INSTALL_MARKER" ]; then
     printf 'CloudAgent %s is already installed\n' "$RELEASE_VERSION" >&2
     return 0
   fi
   mkdir -p "$INSTALLS_DIR" "$BIN_DIR" "$DATA_DIR"
-  if [ -e "$target" ]; then
-    printf 'Replacing existing installation at %s\n' "$target" >&2
-    rm -rf "$target"
+  if [ -e "$TARGET_DIR" ]; then
+    printf 'Replacing existing installation at %s\n' "$TARGET_DIR" >&2
+    rm -rf "$TARGET_DIR"
   fi
   stage_start 6 "Installing files"
-  mkdir -p "$target"
-  cp -R "$STAGED_DIR"/. "$target"/
+  mkdir -p "$TARGET_DIR"
+  cp -R "$STAGED_DIR"/. "$TARGET_DIR"/
+  support_dir="$TARGET_DIR/$SUPPORT_DIR_NAME"
+  mkdir -p "$support_dir"
+  cp "$(script_dir)/install.sh" "$support_dir/install.sh"
+  cp "$(script_dir)/upgrade.sh" "$support_dir/upgrade.sh"
+  cp "$(script_dir)/uninstall.sh" "$support_dir/uninstall.sh"
+  cp "$(script_dir)/release_tag_rules.sh" "$support_dir/release_tag_rules.sh"
+  chmod 755 "$support_dir/install.sh" "$support_dir/upgrade.sh" "$support_dir/uninstall.sh"
   printf 'Updating current launcher target\n' >&2
-  ln -sfn "$target" "$CURRENT_LINK"
+  ln -sfn "$TARGET_DIR" "$CURRENT_LINK"
   stage_done
 }
 
@@ -413,6 +581,8 @@ set -eu
 
 SCRIPT_BASE_URL="$SCRIPT_BASE_URL"
 SCRIPT_FALLBACK_URL="$SCRIPT_FALLBACK_URL"
+CURRENT_LINK="$CURRENT_LINK"
+SUPPORT_DIR_NAME="$SUPPORT_DIR_NAME"
 
 run_remote_script() {
   script_url="\$1"
@@ -432,14 +602,25 @@ run_remote_script() {
   return 1
 }
 
+run_support_script() {
+  script_name="\$1"
+  shift
+  local_script="\$CURRENT_LINK/\$SUPPORT_DIR_NAME/\$script_name"
+  if [ -f "\$local_script" ]; then
+    exec sh "\$local_script" "\$@"
+  fi
+
+  run_remote_script "\$script_name" "\$@"
+}
+
 case "\${1:-}" in
   upgrade)
     shift
-    run_remote_script "upgrade.sh" "\$@"
+    run_support_script "upgrade.sh" "\$@"
     ;;
   uninstall)
     shift
-    run_remote_script "uninstall.sh" "\$@"
+    run_support_script "uninstall.sh" "\$@"
     ;;
   *)
     exec "$CURRENT_LINK/cloudagent" "\$@"
@@ -455,7 +636,7 @@ exec "$CURRENT_LINK/$name" "\$@"
 EOF
     chmod 755 "$BIN_DIR/$name"
   done
-  : > "$target/$INSTALL_MARKER"
+  : > "$TARGET_DIR/$INSTALL_MARKER"
   stage_done
 }
 

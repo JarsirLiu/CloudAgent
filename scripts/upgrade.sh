@@ -6,6 +6,7 @@ SCRIPT_BASE_URL="${CLOUDAGENT_SCRIPT_BASE_URL:-https://github.com/$REPO/releases
 SCRIPT_FALLBACK_URL="${CLOUDAGENT_SCRIPT_FALLBACK_URL:-https://raw.githubusercontent.com/$REPO/main/scripts}"
 INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
 CURRENT_LINK="$INSTALL_ROOT/current"
+SUPPORT_DIR="$CURRENT_LINK/support"
 CURRENT_EXE="$CURRENT_LINK/cloudagent"
 CURRENT_NODE="$CURRENT_LINK/node"
 CURRENT_AGENTD="$CURRENT_LINK/agentd"
@@ -118,6 +119,11 @@ start_node_after_upgrade() {
 }
 
 invoke_install_script() {
+  if [ -f "$SUPPORT_DIR/install.sh" ]; then
+    "$SUPPORT_DIR/install.sh" "$@"
+    return
+  fi
+
   if [ -n "${0:-}" ] && [ -f "$0" ]; then
     script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
     if [ -f "$script_dir/install.sh" ]; then

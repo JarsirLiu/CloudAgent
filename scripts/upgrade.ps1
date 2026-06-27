@@ -20,6 +20,7 @@ else {
 }
 $InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
 $CurrentDir = Join-Path $InstallRoot "current"
+$SupportDir = Join-Path $CurrentDir "support"
 $CurrentExe = Join-Path $CurrentDir "cloudagent.exe"
 $CurrentNode = Join-Path $CurrentDir "node.exe"
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cloudagent-upgrade-$PID"
@@ -244,6 +245,15 @@ function Start-NodeAfterUpgrade {
 
 function Invoke-InstallScript {
     $requestedVersion = Resolve-RequestedVersion $Version
+
+    $localSupportScript = Join-Path $SupportDir "install.ps1"
+    if (Test-Path $localSupportScript) {
+        & $localSupportScript -Version $requestedVersion -Force:$Force
+        if ($LASTEXITCODE -ne 0) {
+            throw "support install.ps1 failed with exit code $LASTEXITCODE"
+        }
+        return
+    }
 
     if ($PSScriptRoot) {
         $localScript = Join-Path $PSScriptRoot "install.ps1"
