@@ -76,6 +76,17 @@ function Assert-True {
     }
 }
 
+function Resolve-RequestedVersion {
+    param([string]$Value)
+
+    $normalized = if ($null -eq $Value) { "" } else { $Value.Trim() }
+    if (-not $normalized) {
+        return "latest"
+    }
+
+    return $normalized
+}
+
 if ($SelfTest) {
     $validTags = @(
         "v0.1.0"
@@ -107,6 +118,8 @@ if ($SelfTest) {
 
     Assert-True ((Normalize-ReleaseTag -Version "1.2.3") -eq "v1.2.3") "normalize-release-tag failed for 1.2.3"
     Assert-True ((Normalize-ReleaseTag -Version "v1.2.3-beta.1") -eq "v1.2.3-beta.1") "normalize-release-tag failed for v1.2.3-beta.1"
+    Assert-True ((Resolve-RequestedVersion "") -eq "latest") "empty requested version should fall back to latest"
+    Assert-True ((Resolve-RequestedVersion "  v1.2.3  ") -eq "v1.2.3") "requested version should be trimmed"
 
     Write-Host "install.ps1 self-test passed"
     return
@@ -491,8 +504,9 @@ function Add-UserPathEntry {
 }
 
 $headers = @{ "User-Agent" = "cloudagent-installer" }
+$requestedVersion = Resolve-RequestedVersion $Version
 Write-StageStart -Step 1 -Title "Resolving release metadata"
-$script:ReleaseTag = if ($Version -eq "latest") { Resolve-LatestReleaseTag } else { Normalize-ReleaseTag $Version }
+$script:ReleaseTag = if ($requestedVersion -eq "latest") { Resolve-LatestReleaseTag } else { Normalize-ReleaseTag $requestedVersion }
 $releaseVersion = $script:ReleaseTag.TrimStart('v')
 $assetName = Get-TargetAssetName
 $assetMetadata = Get-ReleaseAssetMetadata -AssetName $assetName -ResolvedVersion $script:ReleaseTag

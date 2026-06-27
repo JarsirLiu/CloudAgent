@@ -93,6 +93,17 @@ function Complete-DownloadStatus {
     }
 }
 
+function Resolve-RequestedVersion {
+    param([string]$Value)
+
+    $normalized = if ($null -eq $Value) { "" } else { $Value.Trim() }
+    if (-not $normalized) {
+        return "latest"
+    }
+
+    return $normalized
+}
+
 function Invoke-DownloadFile {
     param(
         [Parameter(Mandatory = $true)][string]$Uri,
@@ -232,10 +243,12 @@ function Start-NodeAfterUpgrade {
 }
 
 function Invoke-InstallScript {
+    $requestedVersion = Resolve-RequestedVersion $Version
+
     if ($PSScriptRoot) {
         $localScript = Join-Path $PSScriptRoot "install.ps1"
         if (Test-Path $localScript) {
-            & $localScript -Version $Version -Force:$Force
+            & $localScript -Version $requestedVersion -Force:$Force
             if ($LASTEXITCODE -ne 0) {
                 throw "local install.ps1 failed with exit code $LASTEXITCODE"
             }
@@ -273,7 +286,7 @@ function Invoke-InstallScript {
         throw "failed to download install.ps1 from configured script sources"
     }
     Write-StageDone
-    & $installScript -Version $Version -Force:$Force
+    & $installScript -Version $requestedVersion -Force:$Force
     if ($LASTEXITCODE -ne 0) {
         throw "install.ps1 failed with exit code $LASTEXITCODE"
     }
