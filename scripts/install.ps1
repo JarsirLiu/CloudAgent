@@ -539,6 +539,9 @@ $targetDir = Join-Path $InstallsDir $releaseVersion
 $markerPath = Join-Path $targetDir $InstallMarker
 if ((-not $Force) -and (Test-Path $markerPath) -and (Test-Path $CurrentDir) -and ((Get-Item $CurrentDir).Target -eq $targetDir)) {
     Write-Host "CloudAgent $releaseVersion is already installed"
+    if (Add-UserPathEntry) {
+        Write-Host "Added launcher directory to PATH: $BinDir"
+    }
     return
 }
 
