@@ -384,11 +384,6 @@ run_self_test() {
   echo "install.sh self-test passed"
 }
 
-if [ "$SELF_TEST" -eq 1 ]; then
-  run_self_test
-  exit 0
-fi
-
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "missing required command: $1" >&2
@@ -621,6 +616,11 @@ process.stdout.write(String(value));
   echo "missing required command: python3, python, perl, or node" >&2
   exit 1
 }
+
+if [ "$SELF_TEST" -eq 1 ]; then
+  run_self_test
+  exit 0
+fi
 
 resolve_latest_release_tag() {
   release_json="$(download_text "https://api.github.com/repos/$REPO/releases/latest")"
