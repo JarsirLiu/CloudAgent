@@ -68,6 +68,32 @@ script_dir() {
   CDPATH= cd -- "$(dirname -- "$0")" && pwd
 }
 
+local_script_dir() {
+  if [ -n "${0:-}" ] && [ -f "$0" ]; then
+    script_dir
+    return 0
+  fi
+
+  return 1
+}
+
+support_script_names() {
+  cat <<'EOF'
+install.sh
+upgrade.sh
+uninstall.sh
+release_tag_rules.sh
+EOF
+}
+
+script_download_base_urls() {
+  if [ -n "${RELEASE_TAG:-}" ]; then
+    printf 'https://github.com/%s/releases/download/%s\n' "$REPO" "$RELEASE_TAG"
+  fi
+  printf '%s\n' "$SCRIPT_BASE_URL"
+  printf '%s\n' "$SCRIPT_FALLBACK_URL"
+}
+
 stage_start() {
   step="$1"
   title="$2"
@@ -165,6 +191,21 @@ download_remote_script() {
   done
 
   echo "failed to download $script_name from configured script sources" >&2
+  exit 1
+}
+
+download_support_script() {
+  script_name="$1"
+  output="$2"
+  for base_url in $(script_download_base_urls); do
+    [ -n "$base_url" ] || continue
+    if curl_download "${base_url%/}/$script_name" "$output"; then
+      return 0
+    fi
+    rm -f "$output"
+  done
+
+  echo "failed to download $script_name from configured support sources" >&2
   exit 1
 }
 
@@ -563,10 +604,26 @@ install_files() {
   cp -R "$STAGED_DIR"/. "$TARGET_DIR"/
   support_dir="$TARGET_DIR/$SUPPORT_DIR_NAME"
   mkdir -p "$support_dir"
-  cp "$(script_dir)/install.sh" "$support_dir/install.sh"
-  cp "$(script_dir)/upgrade.sh" "$support_dir/upgrade.sh"
-  cp "$(script_dir)/uninstall.sh" "$support_dir/uninstall.sh"
-  cp "$(script_dir)/release_tag_rules.sh" "$support_dir/release_tag_rules.sh"
+  local_dir=""
+  if local_dir="$(local_script_dir 2>/dev/null)"; then
+    have_all_local_support=1
+    for file_name in $(support_script_names); do
+      if [ ! -f "$local_dir/$file_name" ]; then
+        have_all_local_support=0
+        break
+      fi
+    done
+  else
+    have_all_local_support=0
+  fi
+
+  for file_name in $(support_script_names); do
+    if [ "$have_all_local_support" -eq 1 ]; then
+      cp "$local_dir/$file_name" "$support_dir/$file_name"
+    else
+      download_support_script "$file_name" "$support_dir/$file_name"
+    fi
+  done
   chmod 755 "$support_dir/install.sh" "$support_dir/upgrade.sh" "$support_dir/uninstall.sh"
   printf 'Updating current launcher target\n' >&2
   ln -sfn "$TARGET_DIR" "$CURRENT_LINK"

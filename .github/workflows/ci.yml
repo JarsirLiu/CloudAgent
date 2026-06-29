@@ -68,6 +68,12 @@ jobs:
               Remove-Item -LiteralPath $tempDir.FullName -Recurse -Force
           }
 
+      - name: Smoke test installer in-memory execution (PowerShell)
+        shell: pwsh
+        run: |
+          $script = [scriptblock]::Create((Get-Content ./scripts/install.ps1 -Raw))
+          & $script -SelfTest
+
       - name: Smoke test uninstaller fallback (shell)
         shell: bash
         run: |

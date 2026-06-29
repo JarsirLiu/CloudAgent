@@ -111,7 +111,28 @@ function Get-LocalScriptDirectory {
         return $PSScriptRoot
     }
 
-    return (Split-Path -Parent $MyInvocation.MyCommand.Path)
+    $invocationPath = $MyInvocation.MyCommand.Path
+    if (-not $invocationPath) {
+        return $null
+    }
+
+    return (Split-Path -Parent $invocationPath)
+}
+
+function Get-SupportScriptNames {
+    return @("install.ps1", "upgrade.ps1", "uninstall.ps1", "release-tag-rules.ps1")
+}
+
+function Get-ScriptDownloadBaseUrls {
+    param([string]$ResolvedVersion)
+
+    $baseUrls = @()
+    if ($ResolvedVersion) {
+        $baseUrls += "https://github.com/$Repo/releases/download/$ResolvedVersion"
+    }
+    $baseUrls += @($ScriptBaseUrl, $ScriptFallbackUrl)
+
+    @($baseUrls | Where-Object { $_ } | Select-Object -Unique)
 }
 
 if ($SelfTest) {
@@ -648,15 +669,57 @@ if ((-not $Force) -and (Test-Path $markerPath) -and (Test-Path $CurrentDir) -and
 
 function Copy-SupportScripts {
     param(
-        [Parameter(Mandatory = $true)][string]$TargetDir
+        [Parameter(Mandatory = $true)][string]$TargetDir,
+        [Parameter(Mandatory = $true)][string]$ResolvedVersion,
+        [Parameter(Mandatory = $true)][hashtable]$Headers
     )
 
     $supportDir = Join-Path $TargetDir $SupportDirName
     New-Item -ItemType Directory -Path $supportDir -Force | Out-Null
 
+    $supportScriptNames = Get-SupportScriptNames
     $sourceDir = Get-LocalScriptDirectory
-    foreach ($fileName in @("install.ps1", "upgrade.ps1", "uninstall.ps1", "release-tag-rules.ps1")) {
-        Copy-Item -LiteralPath (Join-Path $sourceDir $fileName) -Destination (Join-Path $supportDir $fileName) -Force
+    if ($sourceDir) {
+        $allLocalScriptsPresent = $true
+        foreach ($fileName in $supportScriptNames) {
+            if (-not (Test-Path (Join-Path $sourceDir $fileName))) {
+                $allLocalScriptsPresent = $false
+                break
+            }
+        }
+
+        if ($allLocalScriptsPresent) {
+            foreach ($fileName in $supportScriptNames) {
+                Copy-Item -LiteralPath (Join-Path $sourceDir $fileName) -Destination (Join-Path $supportDir $fileName) -Force
+            }
+            return
+        }
+    }
+
+    foreach ($fileName in $supportScriptNames) {
+        $destinationPath = Join-Path $supportDir $fileName
+        $downloaded = $false
+
+        foreach ($baseUrl in (Get-ScriptDownloadBaseUrls -ResolvedVersion $ResolvedVersion)) {
+            try {
+                Invoke-DownloadFile `
+                    -Uri ($baseUrl.TrimEnd('/') + '/' + $fileName) `
+                    -Headers $Headers `
+                    -OutFile $destinationPath `
+                    -Label "Downloading support script $fileName"
+                $downloaded = $true
+                break
+            }
+            catch {
+                if (Test-Path $destinationPath) {
+                    Remove-Item -LiteralPath $destinationPath -Force
+                }
+            }
+        }
+
+        if (-not $downloaded) {
+            throw "Failed to stage support script $fileName for CloudAgent $ResolvedVersion."
+        }
     }
 }
 
@@ -696,7 +759,7 @@ try {
     Write-StageStart -Step 5 -Title "Installing files"
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     Copy-Item -Path (Join-Path $packageDir.FullName "*") -Destination $targetDir -Recurse -Force
-    Copy-SupportScripts -TargetDir $targetDir
+    Copy-SupportScripts -TargetDir $targetDir -ResolvedVersion $script:ReleaseTag -Headers $headers
     Write-StageDone
 
     if (Test-Path $CurrentDir) {
