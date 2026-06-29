@@ -4,6 +4,13 @@ CloudAgent release installation is managed by the scripts in this directory.
 
 Release process standard: [docs/release-process.md](../docs/release-process.md)
 
+Current note:
+
+- the remote installer entrypoints in this directory are bootstrap and recovery
+  paths
+- the target steady-state design is local-first upgrade using installed support
+  logic plus release metadata and archives
+
 Release entry:
 
 - [CloudAgent Releases](https://github.com/JarsirLiu/CloudAgent/releases)
@@ -69,7 +76,7 @@ cloudagent uninstall
 Linux / macOS:
 
 - Data directory: `~/.cloudagent`
-- Installed binaries: `~/.local/lib/cloudagent/current`
+- Installed binaries: `~/.local/share/cloudagent/current`
 - Launchers: `~/.local/bin`
 
 Windows:
@@ -79,6 +86,13 @@ Windows:
 - Launcher: `%USERPROFILE%\\.local\\bin\\cloudagent.cmd`
 
 ## Upgrade And Uninstall
+
+Normal upgrade is moving toward a local-first model. During migration, some
+bridge behavior may still exist, but the target contract is:
+
+- `cloudagent upgrade` uses installed local upgrade logic first
+- network access is limited to release metadata and release archives
+- remote script execution is transitional rather than the long-term contract
 
 Release version handling is shared across install, upgrade, CI, and release publishing:
 

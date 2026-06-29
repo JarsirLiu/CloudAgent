@@ -37,16 +37,20 @@ $ReleaseChannel = if ($env:CLOUDAGENT_RELEASE_CHANNEL) {
 else {
     "stable"
 }
-$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
-    $env:CLOUDAGENT_INSTALL_ROOT
-}
-elseif ($IsWindows -and $env:LOCALAPPDATA) {
+$DefaultInstallRoot = if ($IsWindows -and $env:LOCALAPPDATA) {
     Join-Path $env:LOCALAPPDATA "CloudAgent"
 }
 else {
-    Join-Path $HOME ".local/share/CloudAgent"
+    Join-Path $HOME ".local/share/cloudagent"
 }
-$InstallsDir = Join-Path $InstallRoot "installs"
+$LegacyInstallRoot = Join-Path $HOME ".local/lib/cloudagent"
+$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
+    $env:CLOUDAGENT_INSTALL_ROOT
+}
+else {
+    $DefaultInstallRoot
+}
+$ReleasesDir = Join-Path $InstallRoot "releases"
 $CurrentDir = Join-Path $InstallRoot "current"
 $InstallMarker = ".cloudagent-install-complete"
 $SupportDirName = "support"
@@ -119,6 +123,62 @@ function Get-LocalScriptDirectory {
     return (Split-Path -Parent $invocationPath)
 }
 
+function Resolve-InstalledScriptRoot {
+    $scriptDir = Get-LocalScriptDirectory
+    if (-not $scriptDir) {
+        return $null
+    }
+
+    $supportParent = Split-Path -Parent $scriptDir
+    if (-not $supportParent) {
+        return $null
+    }
+
+    if ((Split-Path -Leaf $supportParent) -eq "current") {
+        return (Split-Path -Parent $supportParent)
+    }
+
+    $releaseDir = Split-Path -Parent $supportParent
+    if ($releaseDir -and ((Split-Path -Leaf $releaseDir) -eq "releases")) {
+        return (Split-Path -Parent $releaseDir)
+    }
+
+    return $null
+}
+
+function Test-InstallRootPresent {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    return (Test-Path (Join-Path $Root "current")) -or
+        (Test-Path (Join-Path $Root "releases")) -or
+        (Test-Path (Join-Path $Root "installs"))
+}
+
+function Resolve-InstallRoot {
+    if ($env:CLOUDAGENT_INSTALL_ROOT) {
+        return $env:CLOUDAGENT_INSTALL_ROOT
+    }
+
+    $scriptInstallRoot = Resolve-InstalledScriptRoot
+    if ($scriptInstallRoot) {
+        return $scriptInstallRoot
+    }
+
+    if (Test-InstallRootPresent -Root $DefaultInstallRoot) {
+        return $DefaultInstallRoot
+    }
+
+    if ((-not $IsWindows) -and (Test-InstallRootPresent -Root $LegacyInstallRoot)) {
+        return $LegacyInstallRoot
+    }
+
+    return $DefaultInstallRoot
+}
+
+$InstallRoot = Resolve-InstallRoot
+$ReleasesDir = Join-Path $InstallRoot "releases"
+$CurrentDir = Join-Path $InstallRoot "current"
+
 function Get-SupportScriptNames {
     return @("install.ps1", "upgrade.ps1", "uninstall.ps1", "release-tag-rules.ps1")
 }
@@ -136,6 +196,8 @@ function Get-ScriptDownloadBaseUrls {
 }
 
 if ($SelfTest) {
+    $originalDefaultInstallRoot = $DefaultInstallRoot
+    $originalLegacyInstallRoot = $LegacyInstallRoot
     $validTags = @(
         "v0.1.0"
         "v1.2.3"
@@ -168,6 +230,30 @@ if ($SelfTest) {
     Assert-True ((Normalize-ReleaseTag -Version "v1.2.3-beta.1") -eq "v1.2.3-beta.1") "normalize-release-tag failed for v1.2.3-beta.1"
     Assert-True ((Resolve-RequestedVersion "") -eq "latest") "empty requested version should fall back to latest"
     Assert-True ((Resolve-RequestedVersion "  v1.2.3  ") -eq "v1.2.3") "requested version should be trimmed"
+    Assert-True ((Resolve-InstallRoot) -eq $DefaultInstallRoot) "resolve-install-root should use the default install root when no override exists"
+
+    $resolveInstallRootTestDir = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-install-root-test-" + $PID)
+    if (Test-Path $resolveInstallRootTestDir) {
+        Remove-Item -LiteralPath $resolveInstallRootTestDir -Recurse -Force
+    }
+
+    try {
+        $DefaultInstallRoot = Join-Path $resolveInstallRootTestDir "default"
+        $LegacyInstallRoot = Join-Path $resolveInstallRootTestDir "legacy"
+        New-Item -ItemType Directory -Path (Join-Path $DefaultInstallRoot "releases"), (Join-Path $LegacyInstallRoot "releases") -Force | Out-Null
+
+        Assert-True ((Resolve-InstallRoot) -eq $DefaultInstallRoot) "resolve-install-root should prefer the default install root when both roots exist"
+
+        Remove-Item -LiteralPath $DefaultInstallRoot -Recurse -Force
+        Assert-True ((Resolve-InstallRoot) -eq $LegacyInstallRoot) "resolve-install-root should fall back to the legacy install root when the default root is absent"
+    }
+    finally {
+        $DefaultInstallRoot = $originalDefaultInstallRoot
+        $LegacyInstallRoot = $originalLegacyInstallRoot
+        if (Test-Path $resolveInstallRootTestDir) {
+            Remove-Item -LiteralPath $resolveInstallRootTestDir -Recurse -Force
+        }
+    }
 
     Write-Host "install.ps1 self-test passed"
     return
@@ -469,6 +555,23 @@ function Test-PathEntryEquals {
     return (Normalize-PathEntry $Left).Equals((Normalize-PathEntry $Right), [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-CurrentTargetPath {
+    if (-not (Test-Path $CurrentDir)) {
+        return $null
+    }
+
+    $item = Get-Item $CurrentDir -ErrorAction SilentlyContinue
+    if (-not $item) {
+        return $null
+    }
+
+    if ($item.Target) {
+        return [string]$item.Target
+    }
+
+    return $item.FullName
+}
+
 function Write-Launcher {
     $launcherPath = Join-Path $BinDir "cloudagent.cmd"
     $helperPath = Join-Path $BinDir "cloudagent-launch.ps1"
@@ -480,11 +583,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptBaseUrl = '__SCRIPT_BASE_URL__'
-$ScriptFallbackUrl = '__SCRIPT_FALLBACK_URL__'
 $CurrentDir = '__CURRENT_DIR__'
 $SupportDirName = '__SUPPORT_DIR_NAME__'
-$script:CurlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
 
 function Get-RemainingArgs {
     param([string[]]$Arguments)
@@ -495,88 +595,6 @@ function Get-RemainingArgs {
 
     $remaining = @($Arguments[1..($Arguments.Count - 1)])
     return @($remaining | Where-Object { $null -ne $_ -and $_.Length -gt 0 })
-}
-
-function Get-RemoteScriptBundle {
-    param([Parameter(Mandatory = $true)][string]$FileName)
-
-    switch ($FileName) {
-        "upgrade.ps1" {
-            return @(
-                "upgrade.ps1"
-                "install.ps1"
-                "release-tag-rules.ps1"
-            )
-        }
-        default {
-            return @($FileName)
-        }
-    }
-}
-
-function Invoke-RemoteScript {
-    param(
-        [Parameter(Mandatory = $true)][string]$FileName,
-        [string[]]$RemainingArgs = @()
-    )
-
-    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("cloudagent-" + [guid]::NewGuid().ToString("N"))
-
-    try {
-        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-
-        foreach ($bundleFile in (Get-RemoteScriptBundle -FileName $FileName)) {
-            $tempScript = Join-Path $tempRoot $bundleFile
-            $downloaded = $false
-
-            foreach ($baseUrl in @($ScriptBaseUrl, $ScriptFallbackUrl)) {
-                if (-not $baseUrl) {
-                    continue
-                }
-
-                $scriptUrl = ($baseUrl.TrimEnd('/') + '/' + $bundleFile)
-                try {
-                    if ($script:CurlCommand) {
-                        & $script:CurlCommand.Source `
-                            --fail `
-                            --location `
-                            --silent `
-                            --show-error `
-                            --output $tempScript `
-                            $scriptUrl
-                        if ($LASTEXITCODE -ne 0) {
-                            throw "curl.exe download failed for $scriptUrl"
-                        }
-                    }
-                    else {
-                        Invoke-WebRequest -Uri $scriptUrl -Headers @{ "User-Agent" = "cloudagent-installer" } -OutFile $tempScript
-                    }
-
-                    $downloaded = $true
-                    break
-                }
-                catch {
-                    if (Test-Path $tempScript) {
-                        Remove-Item -LiteralPath $tempScript -Force
-                    }
-                }
-            }
-
-            if (-not $downloaded) {
-                throw "failed to download $bundleFile from configured script sources"
-            }
-        }
-
-        & (Join-Path $tempRoot $FileName) @RemainingArgs
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
-    }
-    finally {
-        if (Test-Path $tempRoot) {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force
-        }
-    }
 }
 
 function Invoke-SupportScript {
@@ -594,7 +612,8 @@ function Invoke-SupportScript {
         return
     }
 
-    Invoke-RemoteScript -FileName $FileName -RemainingArgs $RemainingArgs
+    Write-Error "Missing local support script: $localScript. Re-run the bootstrap installer to repair this installation."
+    exit 1
 }
 
 if (-not $Args -or $Args.Count -eq 0) {
@@ -618,9 +637,7 @@ switch ($Args[0]) {
 }
 '@ |
         ForEach-Object {
-            $_.Replace('__SCRIPT_BASE_URL__', $ScriptBaseUrl).
-               Replace('__SCRIPT_FALLBACK_URL__', $ScriptFallbackUrl).
-               Replace('__CURRENT_DIR__', $CurrentDir).
+            $_.Replace('__CURRENT_DIR__', $CurrentDir).
                Replace('__SUPPORT_DIR_NAME__', $SupportDirName)
         } | Set-Content -Encoding ASCII -Path $helperPath
 
@@ -656,9 +673,10 @@ $assetName = Get-TargetAssetName
 $assetMetadata = Get-ReleaseAssetMetadata -AssetName $assetName -ResolvedVersion $script:ReleaseTag
 Write-StageDone -Detail "($script:ReleaseTag)"
 
-$targetDir = Join-Path $InstallsDir $releaseVersion
+$targetDir = Join-Path $ReleasesDir $releaseVersion
 $markerPath = Join-Path $targetDir $InstallMarker
-if ((-not $Force) -and (Test-Path $markerPath) -and (Test-Path $CurrentDir) -and ((Get-Item $CurrentDir).Target -eq $targetDir)) {
+$currentTarget = Get-CurrentTargetPath
+if ((-not $Force) -and (Test-Path $markerPath) -and $currentTarget -and (Test-PathEntryEquals $currentTarget $targetDir)) {
     Write-Host "CloudAgent $releaseVersion is already installed"
     Write-Launcher
     if (Add-UserPathEntry) {
@@ -723,7 +741,7 @@ function Copy-SupportScripts {
     }
 }
 
-New-Item -ItemType Directory -Path $InstallsDir, $BinDir, $DataDir -Force | Out-Null
+New-Item -ItemType Directory -Path $ReleasesDir, $BinDir, $DataDir -Force | Out-Null
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cloudagent-install-$PID"
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 try {
@@ -750,30 +768,94 @@ try {
     if (-not $packageDir) {
         throw "Invalid archive layout: missing package directory"
     }
+    foreach ($requiredFile in @("cloudagent.exe", "cli.exe", "node.exe", "agentd.exe")) {
+        if (-not (Test-Path (Join-Path $packageDir.FullName $requiredFile))) {
+            throw "Invalid archive layout: missing $requiredFile"
+        }
+    }
     Write-StageDone
 
-    if (Test-Path $targetDir) {
-        Write-Host "Replacing existing installation at $targetDir"
-        Remove-Item -LiteralPath $targetDir -Recurse -Force
+    $stagingRoot = Join-Path $InstallRoot ".staging"
+    $stagedTargetDir = Join-Path $stagingRoot ("release-" + $releaseVersion + "-" + $PID)
+    if (Test-Path $stagedTargetDir) {
+        Remove-Item -LiteralPath $stagedTargetDir -Recurse -Force
     }
     Write-StageStart -Step 5 -Title "Installing files"
-    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-    Copy-Item -Path (Join-Path $packageDir.FullName "*") -Destination $targetDir -Recurse -Force
-    Copy-SupportScripts -TargetDir $targetDir -ResolvedVersion $script:ReleaseTag -Headers $headers
+    New-Item -ItemType Directory -Path $stagingRoot, $stagedTargetDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $packageDir.FullName "*") -Destination $stagedTargetDir -Recurse -Force
+    Copy-SupportScripts -TargetDir $stagedTargetDir -ResolvedVersion $script:ReleaseTag -Headers $headers
+    $stagedMarkerPath = Join-Path $stagedTargetDir $InstallMarker
+    Set-Content -Encoding ASCII -NoNewline -Path $stagedMarkerPath -Value ""
     Write-StageDone
 
+    $currentTarget = Get-CurrentTargetPath
+    if ($currentTarget -and (Test-PathEntryEquals $currentTarget $targetDir)) {
+        throw "Refusing to replace the active version in place. Install a different version or uninstall first."
+    }
+
+    $backupTargetDir = $null
+    if (Test-Path $targetDir) {
+        $backupTargetDir = Join-Path $stagingRoot ("backup-" + $releaseVersion + "-" + $PID)
+        if (Test-Path $backupTargetDir) {
+            Remove-Item -LiteralPath $backupTargetDir -Recurse -Force
+        }
+        Write-Host "Replacing existing installation at $targetDir"
+        Move-Item -LiteralPath $targetDir -Destination $backupTargetDir
+    }
+
+    try {
+        Move-Item -LiteralPath $stagedTargetDir -Destination $targetDir
+    }
+    catch {
+        if ($backupTargetDir -and (-not (Test-Path $targetDir)) -and (Test-Path $backupTargetDir)) {
+            Move-Item -LiteralPath $backupTargetDir -Destination $targetDir -ErrorAction SilentlyContinue
+        }
+        throw "Failed to move the staged release into place. $($_.Exception.Message)"
+    }
+
+    if ($backupTargetDir -and (Test-Path $backupTargetDir)) {
+        Remove-Item -LiteralPath $backupTargetDir -Recurse -Force
+    }
+
+    Write-StageStart -Step 6 -Title "Refreshing command launchers"
+    $previousCurrentDir = $null
+    $currentBackupDir = $null
+    $temporaryCurrentDir = Join-Path $stagingRoot (".current-" + $PID)
+    if (Test-Path $temporaryCurrentDir) {
+        Remove-Item -LiteralPath $temporaryCurrentDir -Recurse -Force
+    }
+    New-Item -ItemType Junction -Path $temporaryCurrentDir -Target $targetDir | Out-Null
     if (Test-Path $CurrentDir) {
         Write-Host "Updating current launcher target"
-        Remove-Item -LiteralPath $CurrentDir -Recurse -Force
+        $currentBackupDir = Join-Path $stagingRoot (".current-backup-" + $PID)
+        if (Test-Path $currentBackupDir) {
+            Remove-Item -LiteralPath $currentBackupDir -Recurse -Force
+        }
+        Move-Item -LiteralPath $CurrentDir -Destination $currentBackupDir
+        $previousCurrentDir = $currentBackupDir
     }
-    Write-StageStart -Step 6 -Title "Refreshing command launchers"
-   New-Item -ItemType Junction -Path $CurrentDir -Target $targetDir | Out-Null
-   Write-Launcher
+    try {
+        Move-Item -LiteralPath $temporaryCurrentDir -Destination $CurrentDir
+    }
+    catch {
+        if ($previousCurrentDir -and (Test-Path $previousCurrentDir) -and (-not (Test-Path $CurrentDir))) {
+            Move-Item -LiteralPath $previousCurrentDir -Destination $CurrentDir -ErrorAction SilentlyContinue
+        }
+        if (Test-Path $temporaryCurrentDir) {
+            Remove-Item -LiteralPath $temporaryCurrentDir -Recurse -Force
+        }
+        throw "Failed to update current launcher target. $($_.Exception.Message)"
+    }
+
+    if ($previousCurrentDir -and (Test-Path $previousCurrentDir)) {
+        Remove-Item -LiteralPath $previousCurrentDir -Recurse -Force
+    }
+
+    Write-Launcher
     if (Add-UserPathEntry) {
         Write-Host "Added launcher directory to PATH: $BinDir"
     }
-   Set-Content -Encoding ASCII -NoNewline -Path $markerPath -Value ""
-   Write-StageDone
+    Write-StageDone
 
     Write-Host "CloudAgent $releaseVersion installed"
     Write-Host "Install root: $InstallRoot"

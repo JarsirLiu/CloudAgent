@@ -4,7 +4,9 @@ set -eu
 REPO="JarsirLiu/CloudAgent"
 SCRIPT_BASE_URL="${CLOUDAGENT_SCRIPT_BASE_URL:-https://github.com/$REPO/releases/latest/download}"
 SCRIPT_FALLBACK_URL="${CLOUDAGENT_SCRIPT_FALLBACK_URL:-https://raw.githubusercontent.com/$REPO/main/scripts}"
-INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
+DEFAULT_INSTALL_ROOT="$HOME/.local/share/cloudagent"
+LEGACY_INSTALL_ROOT="$HOME/.local/lib/cloudagent"
+INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
 CURRENT_LINK="$INSTALL_ROOT/current"
 SUPPORT_DIR="$CURRENT_LINK/support"
 CURRENT_EXE="$CURRENT_LINK/cloudagent"
@@ -20,6 +22,40 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+resolve_install_root() {
+  if [ -n "${CLOUDAGENT_INSTALL_ROOT:-}" ]; then
+    printf '%s\n' "$CLOUDAGENT_INSTALL_ROOT"
+    return 0
+  fi
+
+  if [ -n "${0:-}" ] && [ -f "$0" ]; then
+    script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    case "$script_dir" in
+      */current/support)
+        root_dir=$(dirname "$(dirname "$script_dir")")
+        ;;
+      */releases/*/support)
+        root_dir=$(dirname "$(dirname "$(dirname "$script_dir")")")
+        ;;
+      *)
+        root_dir=""
+        ;;
+    esac
+
+    if [ -n "$root_dir" ]; then
+      printf '%s\n' "$root_dir"
+      return 0
+    fi
+  fi
+
+  if [ -e "$LEGACY_INSTALL_ROOT/current" ] || [ -L "$LEGACY_INSTALL_ROOT/current" ]; then
+    printf '%s\n' "$LEGACY_INSTALL_ROOT"
+    return 0
+  fi
+
+  printf '%s\n' "$DEFAULT_INSTALL_ROOT"
+}
+
 stage_start() {
   step="$1"
   title="$2"
@@ -33,50 +69,6 @@ stage_done() {
   else
     printf 'done\n' >&2
   fi
-}
-
-curl_download() {
-  url="$1"
-  output="$2"
-  mkdir -p "$(dirname "$output")"
-  if [ -t 2 ]; then
-    if curl --fail --location --progress-bar "$url" -o "$output"; then
-      return 0
-    fi
-  else
-    if curl -fsSL "$url" -o "$output"; then
-      return 0
-    fi
-  fi
-
-  if command -v wget >/dev/null 2>&1; then
-    if [ -t 2 ]; then
-      if wget --show-progress -O "$output" "$url"; then
-        return 0
-      fi
-    else
-      if wget -q -O "$output" "$url"; then
-        return 0
-      fi
-    fi
-  fi
-
-  return 1
-}
-
-download_remote_script() {
-  script_name="$1"
-  output="$2"
-  for base_url in "$SCRIPT_BASE_URL" "$SCRIPT_FALLBACK_URL"; do
-    [ -n "$base_url" ] || continue
-    if curl_download "${base_url%/}/$script_name" "$output"; then
-      return 0
-    fi
-    rm -f "$output"
-  done
-
-  echo "failed to download $script_name from configured script sources" >&2
-  exit 1
 }
 
 node_running() {
@@ -100,11 +92,32 @@ stop_node_if_running() {
     pkill -f "$CURRENT_AGENTD" >/dev/null 2>&1 || true
     pkill -f "$CURRENT_NODE" >/dev/null 2>&1 || true
   else
-    ps -ef 2>/dev/null | grep -F "$CURRENT_AGENTD" | grep -v grep | awk '{print $2}' | xargs -r kill >/dev/null 2>&1 || true
-    ps -ef 2>/dev/null | grep -F "$CURRENT_NODE" | grep -v grep | awk '{print $2}' | xargs -r kill >/dev/null 2>&1 || true
+    agentd_pids="$(ps -ef 2>/dev/null | grep -F "$CURRENT_AGENTD" | grep -v grep | awk '{print $2}')"
+    node_pids="$(ps -ef 2>/dev/null | grep -F "$CURRENT_NODE" | grep -v grep | awk '{print $2}')"
+    for pid in $agentd_pids $node_pids; do
+      [ -n "$pid" ] || continue
+      kill "$pid" >/dev/null 2>&1 || true
+    done
   fi
   stage_done "(stopped)"
   return 0
+}
+
+preflight_local_installer() {
+  if [ -f "$SUPPORT_DIR/install.sh" ]; then
+    return 0
+  fi
+
+  if [ -n "${0:-}" ] && [ -f "$0" ]; then
+    script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    if [ -f "$script_dir/install.sh" ]; then
+      return 0
+    fi
+  fi
+
+  echo "missing local installer support at $SUPPORT_DIR/install.sh" >&2
+  echo "run the bootstrap installer again to repair this installation" >&2
+  exit 1
 }
 
 start_node_after_upgrade() {
@@ -132,16 +145,19 @@ invoke_install_script() {
     fi
   fi
 
-  mkdir -p "$WORK"
-  install_script="$WORK/install.sh"
-  stage_start 2 "Downloading installer script"
-  download_remote_script "install.sh" "$install_script"
-  chmod +x "$install_script"
-  stage_done
-  "$install_script" "$@"
+  echo "missing local installer support at $SUPPORT_DIR/install.sh" >&2
+  echo "run the bootstrap installer again to repair this installation" >&2
+  exit 1
 }
 
+INSTALL_ROOT="$(resolve_install_root)"
+CURRENT_LINK="$INSTALL_ROOT/current"
+SUPPORT_DIR="$CURRENT_LINK/support"
+CURRENT_EXE="$CURRENT_LINK/cloudagent"
+CURRENT_NODE="$CURRENT_LINK/node"
+CURRENT_AGENTD="$CURRENT_LINK/agentd"
 restart_node=0
+preflight_local_installer
 if test_upgrade_restart_needed; then
   STAGE_TOTAL=4
   stop_node_if_running
@@ -152,8 +168,16 @@ else
 fi
 
 stage_start 3 "Running installer"
-invoke_install_script "$@"
-stage_done
+if invoke_install_script "$@"; then
+  stage_done
+else
+  if [ "$restart_node" -eq 1 ] && [ -x "$CURRENT_EXE" ]; then
+    stage_start 4 "Restoring local node"
+    "$CURRENT_EXE" start || true
+    stage_done "(best effort)"
+  fi
+  exit 1
+fi
 
 if [ "$restart_node" -eq 1 ]; then
   start_node_after_upgrade

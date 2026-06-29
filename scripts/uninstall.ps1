@@ -5,18 +5,22 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
-    $env:CLOUDAGENT_INSTALL_ROOT
-}
-elseif ($IsWindows -and $env:LOCALAPPDATA) {
+$DefaultInstallRoot = if ($IsWindows -and $env:LOCALAPPDATA) {
     Join-Path $env:LOCALAPPDATA "CloudAgent"
 }
 else {
-    Join-Path $HOME ".local/share/CloudAgent"
+    Join-Path $HOME ".local/share/cloudagent"
+}
+$LegacyInstallRoot = Join-Path $HOME ".local/lib/cloudagent"
+$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) {
+    $env:CLOUDAGENT_INSTALL_ROOT
+}
+else {
+    $DefaultInstallRoot
 }
 $BinDir = if ($env:CLOUDAGENT_BIN_DIR) { $env:CLOUDAGENT_BIN_DIR } else { Join-Path $HOME ".local/bin" }
 $DataDir = if ($env:CLOUDAGENT_DATA_DIR) { $env:CLOUDAGENT_DATA_DIR } else { Join-Path $HOME ".cloudagent" }
-$script:StageTotal = 3
+$script:StageTotal = 4
 
 function Get-CurrentVersion {
     $currentDir = Join-Path $InstallRoot "current"
@@ -34,6 +38,33 @@ function Get-CurrentVersion {
     }
 
     return Split-Path -Leaf $item.FullName
+}
+
+function Resolve-InstallRoot {
+    if ($env:CLOUDAGENT_INSTALL_ROOT) {
+        return $env:CLOUDAGENT_INSTALL_ROOT
+    }
+
+    if ($PSScriptRoot) {
+        $scriptDir = $PSScriptRoot
+        $supportParent = Split-Path -Parent $scriptDir
+        if ($supportParent) {
+            if ((Split-Path -Leaf $supportParent) -eq "current") {
+                return (Split-Path -Parent $supportParent)
+            }
+
+            $releaseDir = Split-Path -Parent $supportParent
+            if ($releaseDir -and ((Split-Path -Leaf $releaseDir) -eq "releases")) {
+                return (Split-Path -Parent $releaseDir)
+            }
+        }
+    }
+
+    if ((-not $IsWindows) -and (Test-Path (Join-Path $LegacyInstallRoot "current"))) {
+        return $LegacyInstallRoot
+    }
+
+    return $DefaultInstallRoot
 }
 
 function Write-StageStart {
@@ -56,6 +87,21 @@ function Write-StageDone {
     }
 }
 
+function Normalize-PathEntry {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    return $Path.Trim().TrimEnd('\')
+}
+
+function Test-PathEntryEquals {
+    param(
+        [Parameter(Mandatory = $true)][string]$Left,
+        [Parameter(Mandatory = $true)][string]$Right
+    )
+
+    return (Normalize-PathEntry $Left).Equals((Normalize-PathEntry $Right), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Remove-UserPathEntry {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if (-not $userPath) {
@@ -63,30 +109,66 @@ function Remove-UserPathEntry {
     }
 
     $parts = $userPath.Split(';') | Where-Object { $_ }
-    $filtered = $parts | Where-Object { $_ -ine $BinDir }
+    $filtered = $parts | Where-Object { -not (Test-PathEntryEquals $_ $BinDir) }
     if ($filtered.Count -eq $parts.Count) {
         return $false
     }
 
     $newPath = ($filtered -join ';')
     [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    $env:Path = (($env:Path -split ';') | Where-Object { $_ -and (-not (Test-PathEntryEquals $_ $BinDir)) }) -join ';'
     return $true
 }
 
-function Disable-LauncherStub {
+function Remove-LauncherFile {
     param(
-        [Parameter(Mandatory = $true)][string]$LauncherPath
+        [Parameter(Mandatory = $true)][string]$Path
     )
 
-    if (-not (Test-Path $LauncherPath)) {
+    if (-not (Test-Path $Path)) {
         return $false
     }
 
-    @'
-@echo off
-rem CloudAgent has been removed. Reinstall to use this command again.
-exit /b 0
-'@ | Set-Content -Encoding ASCII -Path $LauncherPath
+    Remove-Item -LiteralPath $Path -Force
+    return $true
+}
+
+function Get-ManagedProcessIds {
+    if (-not (Test-Path $InstallRoot)) {
+        return @()
+    }
+
+    @(Get-CimInstance Win32_Process | Where-Object {
+        $_.ExecutablePath -and
+        $_.ExecutablePath.StartsWith($InstallRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+        ($_.Name -eq "node.exe" -or $_.Name -eq "agentd.exe")
+    } | Select-Object -ExpandProperty ProcessId)
+}
+
+function Test-NodeRunning {
+    if (-not (Test-Path $CurrentNode)) {
+        return $false
+    }
+
+    @(Get-CimInstance Win32_Process | Where-Object {
+        $_.ExecutablePath -and
+        $_.ExecutablePath.Equals($CurrentNode, [System.StringComparison]::OrdinalIgnoreCase)
+    }).Count -gt 0
+}
+
+function Stop-ManagedProcessesIfRunning {
+    if (-not (Test-NodeRunning)) {
+        Write-StageStart -Step 1 -Title "Checking local node"
+        Write-StageDone -Detail "(not running)"
+        return $false
+    }
+
+    Write-StageStart -Step 1 -Title "Stopping local node"
+    $processIds = Get-ManagedProcessIds
+    if ($processIds.Count -gt 0) {
+        Stop-Process -Id $processIds -Force
+    }
+    Write-StageDone -Detail "(stopped)"
     return $true
 }
 
@@ -144,18 +226,20 @@ fish_add_path "$HOME/.local/bin"
         $script:InstallRoot = $installRoot
         $script:DataDir = $dataDir
 
-        if (-not (Disable-LauncherStub -LauncherPath (Join-Path $bin "cloudagent.cmd"))) {
-            throw "expected cloudagent.cmd to be rewritten"
+        if (-not (Remove-LauncherFile -Path (Join-Path $bin "cloudagent.cmd"))) {
+            throw "expected cloudagent.cmd to be removed"
         }
 
-        $stubContent = Get-Content -Raw -Path (Join-Path $bin "cloudagent.cmd")
-        if ($stubContent -notmatch "CloudAgent has been removed") {
-            throw "expected launcher stub content"
+        if (Test-Path (Join-Path $bin "cloudagent.cmd")) {
+            throw "expected cloudagent.cmd to be deleted"
         }
 
-        $binContent = Get-Content -Raw -Path (Join-Path $bin "cloudagent-launch.ps1")
-        if ($binContent -notmatch "stub") {
-            throw "expected helper stub content"
+        if (-not (Remove-LauncherFile -Path (Join-Path $bin "cloudagent-launch.ps1"))) {
+            throw "expected cloudagent-launch.ps1 to be removed"
+        }
+
+        if (Test-Path (Join-Path $bin "cloudagent-launch.ps1")) {
+            throw "expected cloudagent-launch.ps1 to be deleted"
         }
 
         if ($IsWindows) {
@@ -188,6 +272,10 @@ if ($SelfTest) {
     exit 0
 }
 
+$InstallRoot = Resolve-InstallRoot
+$CurrentDir = Join-Path $InstallRoot "current"
+$CurrentNode = Join-Path $CurrentDir "node.exe"
+
 Write-Host "Uninstalling CloudAgent"
 $version = Get-CurrentVersion
 if ($version) {
@@ -195,15 +283,21 @@ if ($version) {
 }
 Write-Host ""
 
-Write-StageStart -Step 1 -Title "Removing launchers"
+Stop-ManagedProcessesIfRunning | Out-Null
+
+Write-StageStart -Step 2 -Title "Removing launchers"
 $launcherRemoved = $false
-if (Disable-LauncherStub -LauncherPath (Join-Path $BinDir "cloudagent.cmd")) {
+if (Remove-LauncherFile -Path (Join-Path $BinDir "cloudagent.cmd")) {
     $launcherRemoved = $true
 }
 $helperPath = Join-Path $BinDir "cloudagent-launch.ps1"
-if (Test-Path $helperPath) {
-    Remove-Item -LiteralPath $helperPath -Force
+if (Remove-LauncherFile -Path $helperPath) {
     $launcherRemoved = $true
+}
+foreach ($name in @("cli", "node", "agentd")) {
+    if (Remove-LauncherFile -Path (Join-Path $BinDir $name)) {
+        $launcherRemoved = $true
+    }
 }
 if (Remove-UserPathEntry) {
     $launcherRemoved = $true
@@ -215,7 +309,7 @@ else {
     Write-StageDone -Detail "(already removed)"
 }
 
-Write-StageStart -Step 2 -Title "Removing installation"
+Write-StageStart -Step 3 -Title "Removing installation"
 if (Test-Path $InstallRoot) {
     Remove-Item -LiteralPath $InstallRoot -Recurse -Force
     Write-StageDone
@@ -225,7 +319,7 @@ else {
 }
 
 $dataStageTitle = if ($Purge) { "Removing user data" } else { "Keeping user data" }
-Write-StageStart -Step 3 -Title $dataStageTitle
+Write-StageStart -Step 4 -Title $dataStageTitle
 if ($Purge -and (Test-Path $DataDir)) {
     Remove-Item -LiteralPath $DataDir -Recurse -Force
     Write-StageDone

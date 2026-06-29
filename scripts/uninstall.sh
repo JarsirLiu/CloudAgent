@@ -1,12 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 
-INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$HOME/.local/lib/cloudagent}"
+DEFAULT_INSTALL_ROOT="$HOME/.local/share/cloudagent"
+LEGACY_INSTALL_ROOT="$HOME/.local/lib/cloudagent"
+INSTALL_ROOT="${CLOUDAGENT_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
 BIN_DIR="${CLOUDAGENT_BIN_DIR:-$HOME/.local/bin}"
 DATA_DIR="${CLOUDAGENT_DATA_DIR:-$HOME/.cloudagent}"
 PURGE=0
 SELF_TEST=0
-STAGE_TOTAL=3
+STAGE_TOTAL=4
 
 usage() {
   cat <<'EOF'
@@ -208,6 +210,66 @@ current_version() {
   fi
 }
 
+node_running() {
+  [ -x "$CURRENT_NODE" ] || return 1
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "$CURRENT_NODE" >/dev/null 2>&1
+    return $?
+  fi
+  ps -ef 2>/dev/null | grep -F "$CURRENT_NODE" | grep -v grep >/dev/null 2>&1
+}
+
+stop_managed_processes_if_running() {
+  if ! node_running; then
+    stage_start 1 "Checking local node"
+    stage_done "(not running)"
+    return 1
+  fi
+
+  stage_start 1 "Stopping local node"
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -f "$CURRENT_AGENTD" >/dev/null 2>&1 || true
+    pkill -f "$CURRENT_NODE" >/dev/null 2>&1 || true
+  else
+    agentd_pids="$(ps -ef 2>/dev/null | grep -F "$CURRENT_AGENTD" | grep -v grep | awk '{print $2}')"
+    node_pids="$(ps -ef 2>/dev/null | grep -F "$CURRENT_NODE" | grep -v grep | awk '{print $2}')"
+    for pid in $agentd_pids $node_pids; do
+      [ -n "$pid" ] || continue
+      kill "$pid" >/dev/null 2>&1 || true
+    done
+  fi
+  stage_done "(stopped)"
+  return 0
+}
+
+resolve_install_root() {
+  if [ -n "${CLOUDAGENT_INSTALL_ROOT:-}" ]; then
+    printf '%s\n' "$CLOUDAGENT_INSTALL_ROOT"
+    return 0
+  fi
+
+  if [ -n "${0:-}" ] && [ -f "$0" ]; then
+    script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    case "$script_dir" in
+      */current/support)
+        dirname "$(dirname "$script_dir")"
+        return 0
+        ;;
+      */releases/*/support)
+        dirname "$(dirname "$(dirname "$script_dir")")"
+        return 0
+        ;;
+    esac
+  fi
+
+  if [ -e "$LEGACY_INSTALL_ROOT/current" ] || [ -L "$LEGACY_INSTALL_ROOT/current" ]; then
+    printf '%s\n' "$LEGACY_INSTALL_ROOT"
+    return 0
+  fi
+
+  printf '%s\n' "$DEFAULT_INSTALL_ROOT"
+}
+
 stage_start() {
   step="$1"
   title="$2"
@@ -224,12 +286,18 @@ stage_done() {
 }
 
 printf '🧹 Uninstalling CloudAgent\n'
+INSTALL_ROOT="$(resolve_install_root)"
+CURRENT_LINK="$INSTALL_ROOT/current"
+CURRENT_NODE="$CURRENT_LINK/node"
+CURRENT_AGENTD="$CURRENT_LINK/agentd"
 if version=$(current_version 2>/dev/null); then
   printf 'CloudAgent %s\n' "$version"
 fi
 printf '\n'
 
-stage_start 1 "Removing launchers"
+stop_managed_processes_if_running || true
+
+stage_start 2 "Removing launchers"
 launcher_removed=0
 for name in cloudagent cli node agentd; do
   target="$BIN_DIR/$name"
@@ -245,7 +313,7 @@ else
   stage_done "(already removed)"
 fi
 
-stage_start 2 "Removing installation"
+stage_start 3 "Removing installation"
 if [ -d "$INSTALL_ROOT" ]; then
   rm -rf "$INSTALL_ROOT"
   stage_done
@@ -258,7 +326,7 @@ if [ "$PURGE" -eq 1 ]; then
   data_stage_title="Removing user data"
 fi
 
-stage_start 3 "$data_stage_title"
+stage_start 4 "$data_stage_title"
 if [ "$PURGE" -eq 1 ] && [ -d "$DATA_DIR" ]; then
   rm -rf "$DATA_DIR"
   stage_done

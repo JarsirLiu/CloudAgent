@@ -1,10 +1,21 @@
 # CloudAgent Release Process
 
-This document defines the target release, install, upgrade, mirror, rollback,
-and migration strategy for CloudAgent across Windows, Linux, and macOS.
+This document defines the release, install, upgrade, mirror, rollback, and
+migration strategy for CloudAgent across Windows, Linux, and macOS.
 
 The goal is to keep installation and upgrades predictable for all platforms
-while avoiding a fragile dependency on remotely executed installer scripts.
+while avoiding fragile dependencies on remotely executed installer scripts.
+
+## 0. Scope
+
+This document intentionally separates three states:
+
+- current implementation, including bridge behavior that still exists today
+- target steady-state behavior
+- migration rules for moving from the current implementation to the target
+
+When implementation and target differ, the target is the long-term design and
+the current behavior should be treated as transitional.
 
 ## 1. Goals
 
@@ -23,7 +34,7 @@ CloudAgent release and update behavior should satisfy all of the following:
 ## 2. Current Problem
 
 The current implementation already uses versioned install directories and a
-`current` pointer, which is good.
+`current` pointer, which is a good foundation.
 
 The weak point is the upgrade control plane:
 
@@ -35,6 +46,13 @@ The weak point is the upgrade control plane:
 
 That model is too fragile for long-term, cross-platform, mirrored
 distribution.
+
+Current state summary:
+
+- the directory layout is already close to the target
+- the normal upgrade path still depends on bridge logic
+- some paths still fall back to remote script retrieval or GitHub API lookups
+- uninstall behavior is not yet fully uniform across platforms
 
 ## 3. Target Architecture
 
@@ -65,6 +83,13 @@ Each installed CloudAgent must include local install and upgrade logic that can:
 
 This local logic is allowed to evolve with each release and should be replaced
 as part of a successful upgrade.
+
+Steady-state rule:
+
+- local upgrade logic must be sufficient for normal upgrade execution
+- remote systems may provide only metadata and archives
+- remote executable helper scripts are allowed only as migration bridge or
+  recovery tooling
 
 ### 3.2 Remote Metadata
 
@@ -178,6 +203,8 @@ Rules for the metadata contract:
 - clients may ignore unknown optional fields
 - archive URLs may change at any time
 - the metadata endpoint itself should be treated as the durable client contract
+- metadata parsers should fail closed when required fields are missing or
+  malformed
 
 ## 7. Distribution Topology
 
@@ -260,6 +287,9 @@ Implementation notes:
 - `current` may be a junction
 - visible launcher files may remain small local wrappers
 - normal upgrade must not require downloading remote PowerShell helper scripts
+- `current` must not be removed before the replacement pointer is ready
+- pointer replacement should be atomic where the platform supports it
+- if switch fails, the previous install must remain usable
 
 ### 9.2 Linux
 
@@ -309,6 +339,13 @@ The installer should:
 
 This keeps the active installation intact until the new version is ready.
 
+Required robustness rules:
+
+- staging must complete before the active pointer is changed
+- a failed install must not destroy the prior working version
+- archive validation failures must abort before activation
+- launcher refresh must be idempotent
+
 ## 11. Upgrade Flow
 
 The upgrade flow should be platform-neutral.
@@ -327,6 +364,13 @@ Critical rule:
 
 If upgrade fails before the final pointer switch, the previous installed
 version must remain usable.
+
+Required robustness rules:
+
+- stopping managed processes must happen only after the target package is
+  known to be retrievable
+- restart must happen only after the new version is active
+- failure during upgrade must not orphan the previous version
 
 ## 12. Launcher Policy
 
@@ -351,6 +395,8 @@ Remote script entrypoints may still exist for:
 - manual recovery
 
 But they are not the normal steady-state upgrade path.
+
+Bridge behavior should be explicitly labeled as transitional in code and docs.
 
 ## 13. Mirror Strategy
 
@@ -382,7 +428,20 @@ The release workflow should:
 This means developers do not need local Linux or macOS environments to ship
 multi-platform releases.
 
-## 15. Migration Plan For Existing Users
+## 15. Reliability Requirements
+
+Implementation should satisfy these minimum robustness requirements:
+
+- no silent fallback from checksum verification to unchecked installs
+- no destructive removal of the only working install before a replacement is
+  fully staged
+- no dependence on remote executable scripts for normal upgrade
+- no mixed semantics where install succeeds but launcher state is partially
+  updated
+- no platform-specific uninstall behavior that leaves the system in a half
+  removed state
+
+## 16. Migration Plan For Existing Users
 
 Migration should be explicit and staged.
 
@@ -414,7 +473,7 @@ After metadata publishing is stable:
 This avoids forcing users to uninstall and reinstall just to adopt a new
 distribution topology.
 
-## 16. Rollback Policy
+## 17. Rollback Policy
 
 CloudAgent should keep previous version directories whenever possible.
 
@@ -426,7 +485,7 @@ That gives two rollback paths:
 There is no need to overwrite the last known-good install during normal
 upgrades.
 
-## 17. Beta And Prerelease Policy
+## 18. Beta And Prerelease Policy
 
 Beta and alpha releases are first-class channels.
 
@@ -438,11 +497,11 @@ Recommended rules:
 - expose channel metadata separately from stable metadata
 - never move stable users to prerelease builds implicitly
 
-## 18. Uninstall Policy
+## 19. Uninstall Policy
 
 CloudAgent should keep two uninstall paths:
 
-### 18.1 Product Command
+### 19.1 Product Command
 
 Users can uninstall through the installed product entrypoint:
 
@@ -461,14 +520,14 @@ Default behavior:
 - remove launchers and installation files
 - remove user data as well
 
-### 18.2 Direct Bootstrap Entry
+### 19.2 Direct Bootstrap Entry
 
 Users may also run a direct bootstrap uninstall entry for manual recovery.
 
 That entry should be documented for all supported platforms, but it should be
 treated as a recovery path, not the primary steady-state lifecycle path.
 
-## 19. Recovery And Diagnostics
+## 20. Recovery And Diagnostics
 
 The installer and upgrader should emit enough detail to distinguish:
 
@@ -486,7 +545,7 @@ Recovery documentation should include:
 - how to override metadata endpoints
 - how to force GitHub fallback if the mirror is down
 
-## 20. Documentation Sources
+## 21. Documentation Sources
 
 The main implementation references are:
 

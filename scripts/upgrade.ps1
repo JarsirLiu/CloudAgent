@@ -18,7 +18,9 @@ $ScriptFallbackUrl = if ($env:CLOUDAGENT_SCRIPT_FALLBACK_URL) {
 else {
     "https://raw.githubusercontent.com/$Repo/main/scripts"
 }
-$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA "CloudAgent" }
+$DefaultInstallRoot = if ($IsWindows -and $env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "CloudAgent" } else { Join-Path $HOME ".local/share/cloudagent" }
+$LegacyInstallRoot = Join-Path $HOME ".local/lib/cloudagent"
+$InstallRoot = if ($env:CLOUDAGENT_INSTALL_ROOT) { $env:CLOUDAGENT_INSTALL_ROOT } else { $DefaultInstallRoot }
 $CurrentDir = Join-Path $InstallRoot "current"
 $SupportDir = Join-Path $CurrentDir "support"
 $CurrentExe = Join-Path $CurrentDir "cloudagent.exe"
@@ -103,6 +105,37 @@ function Resolve-RequestedVersion {
     }
 
     return $normalized
+}
+
+function Resolve-InstallRoot {
+    if ($env:CLOUDAGENT_INSTALL_ROOT) {
+        return $env:CLOUDAGENT_INSTALL_ROOT
+    }
+
+    if ($PSScriptRoot) {
+        $scriptDir = $PSScriptRoot
+        $supportParent = Split-Path -Parent $scriptDir
+        if ($supportParent) {
+            if ((Split-Path -Leaf $supportParent) -eq "current") {
+                return (Split-Path -Parent $supportParent)
+            }
+
+            $releaseOrInstallDir = Split-Path -Parent $supportParent
+            if ($releaseOrInstallDir) {
+                $leafName = Split-Path -Leaf $releaseOrInstallDir
+                if ($leafName -eq "releases" -or $leafName -eq "installs") {
+                    $resolvedRoot = Split-Path -Parent $releaseOrInstallDir
+                    return $resolvedRoot
+                }
+            }
+        }
+    }
+
+    if ((-not $IsWindows) -and (Test-Path (Join-Path $LegacyInstallRoot "current"))) {
+        return $LegacyInstallRoot
+    }
+
+    return $DefaultInstallRoot
 }
 
 function Invoke-DownloadFile {
@@ -222,6 +255,46 @@ function Stop-NodeIfRunning {
     return $true
 }
 
+function Test-LocalInstallerAvailable {
+    $localSupportScript = Join-Path $SupportDir "install.ps1"
+    if (Test-Path $localSupportScript) {
+        return $true
+    }
+
+    if ($PSScriptRoot) {
+        $localScript = Join-Path $PSScriptRoot "install.ps1"
+        if (Test-Path $localScript) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-LocalInstallerPath {
+    $localSupportScript = Join-Path $SupportDir "install.ps1"
+    if (Test-Path $localSupportScript) {
+        return $localSupportScript
+    }
+
+    if ($PSScriptRoot) {
+        $localScript = Join-Path $PSScriptRoot "install.ps1"
+        if (Test-Path $localScript) {
+            return $localScript
+        }
+    }
+
+    return $null
+}
+
+function Assert-LocalInstallerAvailable {
+    if (Get-LocalInstallerPath) {
+        return
+    }
+
+    throw "Missing local installer support at $(Join-Path $SupportDir 'install.ps1'). Re-run the bootstrap installer to repair this installation."
+}
+
 function Test-UpgradeRestartNeeded {
     if (-not (Test-Path $CurrentNode)) {
         return $false
@@ -246,64 +319,26 @@ function Start-NodeAfterUpgrade {
 function Invoke-InstallScript {
     $requestedVersion = Resolve-RequestedVersion $Version
 
-    $localSupportScript = Join-Path $SupportDir "install.ps1"
-    if (Test-Path $localSupportScript) {
-        & $localSupportScript -Version $requestedVersion -Force:$Force
+    $localInstaller = Get-LocalInstallerPath
+    if ($localInstaller) {
+        & $localInstaller -Version $requestedVersion -Force:$Force
         if ($LASTEXITCODE -ne 0) {
             throw "support install.ps1 failed with exit code $LASTEXITCODE"
         }
         return
     }
 
-    if ($PSScriptRoot) {
-        $localScript = Join-Path $PSScriptRoot "install.ps1"
-        if (Test-Path $localScript) {
-            & $localScript -Version $requestedVersion -Force:$Force
-            if ($LASTEXITCODE -ne 0) {
-                throw "local install.ps1 failed with exit code $LASTEXITCODE"
-            }
-            return
-        }
-    }
-
-    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-    $installScript = Join-Path $tempRoot "install.ps1"
-    Write-StageStart -Step 2 -Title "Downloading installer script"
-    $downloaded = $false
-    foreach ($baseUrl in @($ScriptBaseUrl, $ScriptFallbackUrl)) {
-        if (-not $baseUrl) {
-            continue
-        }
-
-        $scriptUrl = ($baseUrl.TrimEnd('/') + '/install.ps1')
-        try {
-            Invoke-DownloadFile `
-                -Uri $scriptUrl `
-                -Headers @{ "User-Agent" = "cloudagent-upgrade" } `
-                -OutFile $installScript `
-                -Label "Downloading installer script"
-            $downloaded = $true
-            break
-        }
-        catch {
-            if (Test-Path $installScript) {
-                Remove-Item -LiteralPath $installScript -Force
-            }
-        }
-    }
-
-    if (-not $downloaded) {
-        throw "failed to download install.ps1 from configured script sources"
-    }
-    Write-StageDone
-    & $installScript -Version $requestedVersion -Force:$Force
-    if ($LASTEXITCODE -ne 0) {
-        throw "install.ps1 failed with exit code $LASTEXITCODE"
-    }
+    throw "Missing local installer support at $(Join-Path $SupportDir 'install.ps1'). Re-run the bootstrap installer to repair this installation."
 }
 
 try {
+    $InstallRoot = Resolve-InstallRoot
+    $CurrentDir = Join-Path $InstallRoot "current"
+    $SupportDir = Join-Path $CurrentDir "support"
+    $CurrentExe = Join-Path $CurrentDir "cloudagent.exe"
+    $CurrentNode = Join-Path $CurrentDir "node.exe"
     $restartNode = $false
+    Assert-LocalInstallerAvailable
     if (Test-UpgradeRestartNeeded) {
         $restartNode = Stop-NodeIfRunning
     }
@@ -312,8 +347,22 @@ try {
         Write-StageDone -Detail "(not running)"
     }
     Write-StageStart -Step 3 -Title "Running installer"
-    Invoke-InstallScript
-    Write-StageDone
+    try {
+        Invoke-InstallScript
+        Write-StageDone
+    }
+    catch {
+        if ($restartNode -and (Test-Path $CurrentExe)) {
+            Write-StageStart -Step 4 -Title "Restoring local node"
+            try {
+                & $CurrentExe start
+            }
+            catch {
+            }
+            Write-StageDone -Detail "(best effort)"
+        }
+        throw
+    }
     if ($restartNode) {
         Start-NodeAfterUpgrade
     }
