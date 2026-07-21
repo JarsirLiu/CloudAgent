@@ -31,7 +31,7 @@ fn esc_closes_help_view_without_interrupting() {
 }
 
 #[test]
-fn completion_popup_does_not_expand_input_pane_height() {
+fn completion_popup_is_an_overlay_and_does_not_expand_input_pane_height() {
     let mut pane = InputPane::new();
     let before = pane.desired_height(agent_protocol::FrontendMode::Idle, 100);
     assert_eq!(before, 6);
@@ -44,7 +44,7 @@ fn completion_popup_does_not_expand_input_pane_height() {
     });
 
     let after = pane.desired_height(agent_protocol::FrontendMode::Idle, 100);
-    assert!(after > before);
+    assert_eq!(after, before);
 
     let snapshot = pane.snapshot_for_test(
         Rect::new(0, 10, 100, after),
@@ -56,11 +56,11 @@ fn completion_popup_does_not_expand_input_pane_height() {
         .popup_area
         .expect("completion popup should render");
     assert_eq!(snapshot.layout.composer_area.height, 1);
-    assert_eq!(popup_area.y, snapshot.layout.input_area.bottom());
+    assert_eq!(popup_area.bottom(), snapshot.layout.input_area.y);
 }
 
 #[test]
-fn config_panel_popup_renders_below_input_pane() {
+fn config_panel_popup_renders_above_input_pane() {
     let mut pane = InputPane::new();
     pane.set_config_panel(
         "key".to_string(),
@@ -83,11 +83,11 @@ fn config_panel_popup_renders_below_input_pane() {
         .popup_area
         .expect("config panel should render as popup");
 
-    assert_eq!(popup_area.y, snapshot.layout.input_area.bottom());
+    assert_eq!(popup_area.bottom(), snapshot.layout.input_area.y);
 }
 
 #[test]
-fn session_picker_renders_below_input_pane() {
+fn session_picker_renders_above_input_pane() {
     let mut pane = InputPane::new();
     pane.set_session_picker(
         vec![ConversationSummary {
@@ -115,11 +115,11 @@ fn session_picker_renders_below_input_pane() {
         .popup_area
         .expect("session picker should render as popup");
 
-    assert_eq!(popup_area.y, snapshot.layout.input_area.bottom());
+    assert_eq!(popup_area.bottom(), snapshot.layout.input_area.y);
 }
 
 #[test]
-fn model_picker_renders_below_input_pane() {
+fn model_picker_renders_above_input_pane() {
     let mut pane = InputPane::new();
     pane.set_model_picker(
         "gpt-5".to_string(),
@@ -141,7 +141,7 @@ fn model_picker_renders_below_input_pane() {
         .popup_area
         .expect("model picker should render as popup");
 
-    assert_eq!(popup_area.y, snapshot.layout.input_area.bottom());
+    assert_eq!(popup_area.bottom(), snapshot.layout.input_area.y);
 }
 
 #[test]

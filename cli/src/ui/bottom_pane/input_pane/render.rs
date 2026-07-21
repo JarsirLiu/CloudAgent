@@ -8,7 +8,7 @@ use agent_protocol::FrontendMode;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 pub(crate) struct InputPaneSnapshot {
     pub(super) layout: super::layout::InputPaneLayout,
@@ -68,6 +68,7 @@ impl InputPane {
         );
 
         if let Some(popup_area) = snapshot.layout.popup_area {
+            frame.render_widget(Clear, popup_area);
             let panel = Paragraph::new(Text::from(snapshot.popup_lines)).block(
                 Block::default()
                     .borders(Borders::TOP)
@@ -253,9 +254,7 @@ impl InputPane {
             input_lines.push(Line::raw(""));
         }
         input_lines.extend(composer.lines);
-        if layout.popup_area.is_none() {
-            input_lines.push(hint_line(request.mode, inner_width, request.hint_meta));
-        }
+        input_lines.push(hint_line(request.mode, inner_width, request.hint_meta));
         let cursor_position = match (self.navigator.active_view(), layout.popup_area) {
             (Some(view), Some(popup_area)) if !view_uses_full_input_pane(view.kind()) => {
                 view.cursor_position(popup_inner_area(popup_area))
@@ -265,7 +264,7 @@ impl InputPane {
                     .cursor_position(layout.composer_area, request.mode),
             ),
         };
-        let height = compute_desired_height(composer.height, popup_height);
+        let height = compute_desired_height(composer.height);
 
         InputPaneSnapshot {
             layout,

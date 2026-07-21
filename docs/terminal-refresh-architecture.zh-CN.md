@@ -176,30 +176,30 @@ flush
 - `cli/src/ui/bottom_pane/input_pane/layout.rs`
 - `cli/src/ui/bottom_pane/input_pane/render.rs`
 
-没有 popup 时，输入区包含状态行、composer、提示行和边框；有 popup 时，popup 高度被追加到输入区整体高度。
+输入区本体包含状态行、composer、提示行和边框。completion、配置、会话、模型等非全屏 view 的 popup 不属于输入区本体，而是锚定在输入框上方的 overlay；它只改变绘制层，不改变 bottom pane 的 desired height。
 
 因此：
 
 ```text
 输入 /
     -> completion_lines 非空
-    -> popup_height 非空
-    -> bottom pane desired_height 增加
-    -> 可用 body 高度减少
-    -> viewport_height 改变
-    -> 当前实现错误触发 FullReplay
+    -> 计算输入框上方 popup_area
+    -> 清理并绘制 overlay
+    -> bottom pane desired_height 不变
+    -> viewport_height 不变
+    -> 历史 scrollback 不参与这次 UI 变化
 ```
 
 ### 5.2 为什么历史越多越明显
 
-历史消息多不会直接改变 slash popup 的逻辑，但会放大重放副作用：
+历史消息多不会直接改变 slash popup 的逻辑；在旧布局中，popup 高度变化会放大终端滚动副作用：
 
 - 需要重新渲染和写入的历史行更多；
 - scrollback 被清空、重建的范围更大；
 - 终端滚动区域调整距离更大；
 - 重新绘制期间，活动 viewport 的起始位置更容易发生可见跳动。
 
-所以 `/` 问题和流式闪烁共享同一个主根因，但 `/` 还额外提供了一个稳定、容易复现的 viewport 高度变化触发器。
+所以 `/` 问题和流式闪烁共享终端 projection 的边界问题。popup 作为 overlay 后，打开命令列表不再是 viewport transition，也不再需要用 history replay 兜底。
 
 ## 6. 问题三：两套滚动模型职责冲突
 
@@ -324,7 +324,8 @@ Codex 只有在 transcript 需要 resize reflow、历史前缀发生变化或明
 | 变化类型 | 例子 | 应执行的动作 |
 | --- | --- | --- |
 | Frame 请求 | server delta、输入字符、状态变化 | 合并后绘制一帧 |
-| Viewport 变化 | 活动消息变高、popup 出现、输入框换行 | 调整 viewport，局部清理和 diff |
+| Viewport 变化 | 活动消息变高、输入框换行 | 调整 viewport，局部清理和 diff |
+| Overlay 变化 | popup、配置面板、会话/模型选择器出现 | 清理 overlay Rect 后在当前 frame 最后绘制，不改变 viewport |
 | History append | 新稳定历史行提交 | append 到终端 scrollback |
 | History replay | 宽度变化、历史前缀替换、恢复会话 | 清理并重放历史 |
 
@@ -333,7 +334,7 @@ Codex 只有在 transcript 需要 resize reflow、历史前缀发生变化或明
 ```text
 viewport height change -> history replay
 frame request          -> clear terminal
-popup open             -> reset transcript scroll
+popup open             -> render overlay only
 active tail change     -> rebuild all history
 ```
 
@@ -411,7 +412,22 @@ if revision_unchanged && metrics_unchanged && cells_unchanged {
 
 这是最小修复，也是最应该先落地的一步。
 
-### 阶段二：补 viewport transition 测试
+### 阶段二：将非全屏 popup 从布局高度中分离
+
+修改：
+
+- `cli/src/ui/bottom_pane/input_pane/layout.rs`
+- `cli/src/ui/bottom_pane/input_pane/render.rs`
+- `cli/src/ui/bottom_pane/input_pane/esc_tests.rs`
+
+要求：
+
+1. `desired_height` 只返回输入框本体高度。
+2. 非全屏 popup 使用输入框上方的 `popup_area`，并在绘制前清理该矩形。
+3. popup 绘制顺序晚于 transcript，因此流式输出可以继续更新；被 popup 覆盖的区域属于正常 overlay 视觉层，不参与 transcript 状态。
+4. popup 关闭后由下一帧重新绘制 transcript，不修改 `TranscriptScroll` 的跟随状态。
+
+### 阶段三：补 viewport transition 测试
 
 修改：
 
@@ -422,11 +438,11 @@ if revision_unchanged && metrics_unchanged && cells_unchanged {
 
 - 活动 viewport 变高时，上方区域滚动，历史不被清空；
 - 活动 viewport 变矮时，底部保持对齐；
-- popup 出现和消失只改变 viewport，不触发 history replay；
+- popup 出现和消失只改变 overlay，不改变 viewport，也不触发 history replay；
 - viewport 从无历史区域扩展到有历史区域时，不写穿 viewport；
 - viewport 变化后下一个 buffer diff 仍然以正确 Rect 为基准。
 
-### 阶段三：把历史提交改成 pending queue
+### 阶段四：把历史提交改成 pending queue
 
 如果阶段一后仍有终端跳动，继续向 Codex 靠拢：
 
@@ -487,6 +503,8 @@ event=key('/'), viewport_height=12->18,
 history_diff=none, history_update=none
 ```
 
+采用 overlay 布局后，正常日志中的 viewport 高度也应保持不变；上面的 `12->18` 仅用于说明旧实现的错误路径。
+
 错误行为会显示为：
 
 ```text
@@ -539,8 +557,8 @@ history_update == None
 | 历史前缀变化 | `FullReplay` |
 | render width 变化 | `FullReplay` |
 | 只有 viewport height 变化 | 无 history update |
-| `/` popup 导致 viewport 变化 | 无 history update |
-| popup 关闭导致 viewport 变化 | 无 history update |
+| `/` popup 出现 | 无 viewport 变化、无 history update |
+| popup 关闭 | 无 viewport 变化、无 history update |
 
 ### 11.2 Terminal 单元测试
 

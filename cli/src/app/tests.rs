@@ -1292,7 +1292,7 @@ fn committed_history_without_active_cell_keeps_viewport_at_bottom_pane_stack_hei
 }
 
 #[test]
-fn slash_completion_expands_bottom_pane_with_separate_popup_region() {
+fn slash_completion_keeps_bottom_pane_height_stable_with_overlay_popup() {
     let mut app = TuiApp::new(
         "default".to_string(),
         "test",
@@ -1323,11 +1323,8 @@ fn slash_completion_expands_bottom_pane_with_separate_popup_region() {
         .bottom_pane
         .desired_height(app.current_mode(), terminal_area.width);
 
-    assert!(bottom_height_after > bottom_height_before);
-    assert_eq!(
-        after,
-        before.saturating_add(bottom_height_after - bottom_height_before)
-    );
+    assert_eq!(bottom_height_after, bottom_height_before);
+    assert_eq!(after, before);
 }
 
 #[test]
@@ -1354,7 +1351,7 @@ fn escape_closes_completion_menu_in_running_mode_without_interrupting_turn() {
         .bottom_pane
         .desired_height(app.current_mode(), terminal_area.width);
 
-    assert!(bottom_open > bottom_before);
+    assert_eq!(bottom_open, bottom_before);
 
     let parsed = app.handle_key(crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Esc,
@@ -1410,10 +1407,10 @@ fn escape_closes_session_picker_in_running_mode_without_interrupting_turn() {
 
     assert!(parsed.is_none());
     assert!(app.bottom_pane.no_modal_or_popup_active());
-    assert!(
+    assert_eq!(
         app.bottom_pane
-            .desired_height(app.current_mode(), terminal_area.width)
-            < bottom_before
+            .desired_height(app.current_mode(), terminal_area.width),
+        bottom_before
     );
     assert!(!app.run_state.should_exit);
 }
