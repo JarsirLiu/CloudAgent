@@ -160,7 +160,6 @@ where
             Clear(CrosstermClearType::FromCursorDown)
         )?;
         self.previous_buffer_mut().reset();
-        std::io::Write::flush(&mut self.backend)?;
         Ok(())
     }
 
@@ -173,7 +172,6 @@ where
         )?;
         self.current_buffer_mut().reset();
         self.previous_buffer_mut().reset();
-        std::io::Write::flush(&mut self.backend)?;
         Ok(())
     }
 
@@ -221,7 +219,6 @@ where
         }
         queue!(writer, ResetScrollRegion)?;
         queue!(writer, MoveTo(last_cursor_pos.x, last_cursor_pos.y))?;
-        std::io::Write::flush(writer)?;
 
         self.set_viewport_area(area);
         Ok(())
@@ -296,7 +293,6 @@ where
             queue!(writer, Print("\n"))?;
         }
         queue!(writer, ResetScrollRegion)?;
-        std::io::Write::flush(writer)?;
         Ok(())
     }
 }

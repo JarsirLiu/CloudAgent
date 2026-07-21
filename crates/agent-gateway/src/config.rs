@@ -184,17 +184,24 @@ pub fn load_gateway_config(explicit_path: Option<&Path>) -> Result<GatewayConfig
 }
 
 fn load_config_file(explicit_path: Option<&Path>) -> Result<GatewayConfigFile> {
-    let path = resolve_config_path(explicit_path);
-    match path {
-        Some(path) => {
-            let raw = fs::read_to_string(&path)
-                .with_context(|| format!("failed to read config file {}", path.display()))?;
-            let parsed = toml::from_str::<GatewayConfigFile>(&raw)
-                .with_context(|| format!("failed to parse config file {}", path.display()))?;
-            Ok(parsed)
+    let mut merged = toml::Value::Table(toml::map::Map::new());
+    let mut found = false;
+    for path in config_paths(explicit_path) {
+        if !path.exists() {
+            continue;
         }
-        None => Ok(GatewayConfigFile::default()),
+        found = true;
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read config file {}", path.display()))?;
+        let value = toml::from_str::<toml::Value>(&raw)
+            .with_context(|| format!("failed to parse config file {}", path.display()))?;
+        merge_toml_values(&mut merged, value);
     }
+    if !found {
+        return Ok(GatewayConfigFile::default());
+    }
+    toml::from_str::<GatewayConfigFile>(&toml::to_string(&merged)?)
+        .context("failed to decode merged gateway configuration")
 }
 
 fn load_platform_feishu_file() -> Result<FeishuPlatformFile> {
@@ -212,7 +219,7 @@ fn load_platform_feishu_file() -> Result<FeishuPlatformFile> {
 
 fn resolve_platform_config_file(file_name: &str) -> Result<PathBuf> {
     let workspace_root = env::current_dir().context("failed to determine current directory")?;
-    let agent_config = AgentConfig::load(workspace_root)?;
+    let agent_config = AgentConfig::load_runtime(workspace_root)?;
     let data_root = agent_config.runtime.data_root_dir;
     let platform_dir = match (
         data_root.file_name().and_then(|name| name.to_str()),
@@ -230,29 +237,55 @@ fn resolve_platform_config_file(file_name: &str) -> Result<PathBuf> {
     Ok(platform_dir.join(file_name))
 }
 
-fn resolve_config_path(explicit_path: Option<&Path>) -> Option<PathBuf> {
+fn config_paths(explicit_path: Option<&Path>) -> Vec<PathBuf> {
     if let Some(path) = explicit_path {
-        return Some(path.to_path_buf());
+        return vec![path.to_path_buf()];
     }
 
     if let Ok(value) = env::var("CLOUDAGENT_CONFIG")
         && !value.trim().is_empty()
     {
-        return Some(PathBuf::from(value));
+        return vec![PathBuf::from(value)];
     }
 
-    let cwd = env::current_dir().ok();
-    let candidates = [
-        env::var("HOME")
-            .ok()
-            .map(|home| PathBuf::from(home).join(".cloudagent").join("config.toml")),
-        cwd.as_ref()
-            .map(|dir| dir.join(".cloudagent").join("config.toml")),
-        cwd.as_ref()
-            .map(|dir| dir.join("configs").join("config.toml")),
-    ];
+    let Some(cwd) = env::current_dir().ok() else {
+        return Vec::new();
+    };
+    let home = env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
 
-    candidates.into_iter().flatten().find(|path| path.exists())
+    if config::release_mode_enabled() {
+        return home
+            .map(|path| vec![path.join(".cloudagent").join("config.toml")])
+            .unwrap_or_default();
+    }
+
+    // Keep the same low-to-high precedence as AgentConfig::load: user config
+    // is the base, while the checked-out project's config is authoritative.
+    [
+        home.map(|path| path.join(".cloudagent").join("config.toml")),
+        Some(cwd.join(".cloudagent").join("config.toml")),
+        Some(cwd.join("configs").join("config.toml")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn merge_toml_values(target: &mut toml::Value, overlay: toml::Value) {
+    match (target, overlay) {
+        (toml::Value::Table(target), toml::Value::Table(overlay)) => {
+            for (key, value) in overlay {
+                if let Some(existing) = target.get_mut(&key) {
+                    merge_toml_values(existing, value);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+        (target, overlay) => *target = overlay,
+    }
 }
 
 fn required(name: &str, value: Option<String>) -> Result<String> {

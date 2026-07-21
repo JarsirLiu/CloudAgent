@@ -20,11 +20,7 @@ async fn main() -> Result<()> {
     }
     apply_color_cli_preference(&args);
     let workspace_root = std::env::current_dir()?;
-    let config = if should_load_user_only_config() {
-        AgentConfig::load_user_only(workspace_root)?
-    } else {
-        AgentConfig::load(workspace_root)?
-    };
+    let config = AgentConfig::load_runtime(workspace_root)?;
     let mut config = config;
     apply_data_dir_cli_override(&mut config, &args);
     run_console_surface(&args, config, build_runtime).await
@@ -32,10 +28,6 @@ async fn main() -> Result<()> {
 
 fn build_runtime(config: AgentConfig) -> Result<std::sync::Arc<agent_core::AgentHost>> {
     build_agent_host(config)
-}
-
-fn should_load_user_only_config() -> bool {
-    !cfg!(debug_assertions)
 }
 
 fn wants_help(args: &[OsString]) -> bool {

@@ -235,6 +235,20 @@ impl AgentConfig {
         Self::load_from_paths(workspace_root, paths)
     }
 
+    /// Load the configuration for the current executable mode.
+    ///
+    /// Development binaries are workspace-scoped. Release binaries are
+    /// user-scoped so an installed application cannot accidentally consume a
+    /// checkout's credentials or runtime state.
+    pub fn load_runtime(workspace_root: impl Into<PathBuf>) -> Result<Self> {
+        let workspace_root = workspace_root.into();
+        if release_mode_enabled() {
+            Self::load_user_only(workspace_root)
+        } else {
+            Self::load(workspace_root)
+        }
+    }
+
     fn load_from_paths(workspace_root: PathBuf, paths: Vec<PathBuf>) -> Result<Self> {
         let mut config = Self::defaults(workspace_root.clone());
         for config_path in paths {
@@ -737,10 +751,12 @@ impl AgentConfig {
             config.runtime.data_root_dir = data_root.clone();
             config.runtime.conversation_store_dir = data_root.join("conversations");
             config.runtime.memory.root_dir = data_root.join("state").join("memory");
-            let config_path = data_root
-                .parent()
-                .map(|parent| parent.join("config.toml"))
-                .unwrap_or_else(|| PathBuf::from(".cloudagent").join("config.toml"));
+            let config_path = configured_config_path().unwrap_or_else(|| {
+                data_root
+                    .parent()
+                    .map(|parent| parent.join("config.toml"))
+                    .unwrap_or_else(|| PathBuf::from(".cloudagent").join("config.toml"))
+            });
             if config_path.exists() {
                 let text = std::fs::read_to_string(&config_path)
                     .with_context(|| format!("failed to read {}", config_path.display()))?;
@@ -801,16 +817,25 @@ fn parse_input_modalities(value: &str) -> Vec<InputModality> {
 }
 
 fn config_search_paths(workspace_root: &Path) -> Vec<PathBuf> {
+    if let Some(path) = configured_config_path() {
+        return vec![path];
+    }
     config_search_paths_with_home(workspace_root, user_home_dir())
+}
+
+fn configured_config_path() -> Option<PathBuf> {
+    env::var_os("CLOUDAGENT_CONFIG")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 fn config_search_paths_with_home(workspace_root: &Path, home: Option<PathBuf>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    paths.push(workspace_root.join("configs").join("config.toml"));
-    paths.push(workspace_root.join(".cloudagent").join("config.toml"));
     if let Some(home) = home {
         paths.push(home.join(".cloudagent").join("config.toml"));
     }
+    paths.push(workspace_root.join(".cloudagent").join("config.toml"));
+    paths.push(workspace_root.join("configs").join("config.toml"));
     paths
 }
 
@@ -1076,7 +1101,7 @@ mod tests {
     }
 
     #[test]
-    fn config_search_paths_apply_user_config_last() {
+    fn config_search_paths_apply_project_config_last() {
         let workspace = PathBuf::from("D:/repo");
         let home = PathBuf::from("C:/Users/alice");
 
@@ -1085,15 +1110,15 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                workspace.join("configs").join("config.toml"),
-                workspace.join(".cloudagent").join("config.toml"),
                 home.join(".cloudagent").join("config.toml"),
+                workspace.join(".cloudagent").join("config.toml"),
+                workspace.join("configs").join("config.toml"),
             ]
         );
     }
 
     #[test]
-    fn user_config_overrides_workspace_config_on_load() {
+    fn project_config_overrides_user_config_on_load() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock after unix epoch")
@@ -1124,9 +1149,9 @@ mod tests {
         )
         .expect("load config");
 
-        assert_eq!(config.llm.base_url, "https://user.example/v1");
-        assert_eq!(config.llm.api_key, "user-key");
-        assert_eq!(config.llm.model, "user-model");
+        assert_eq!(config.llm.base_url, "https://workspace.example/v1");
+        assert_eq!(config.llm.api_key, "workspace-key");
+        assert_eq!(config.llm.model, "workspace-model");
         assert_eq!(config.llm.model_reasoning_effort, ReasoningEffort::Medium);
 
         let _ = std::fs::remove_dir_all(root);

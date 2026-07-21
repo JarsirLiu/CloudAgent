@@ -457,7 +457,7 @@ impl SeenEvents {
 fn resolve_seen_events_path() -> Result<PathBuf> {
     let workspace_root =
         std::env::current_dir().context("failed to determine current directory")?;
-    let agent_config = AgentConfig::load(workspace_root)?;
+    let agent_config = AgentConfig::load_runtime(workspace_root)?;
     let data_root = agent_config.runtime.data_root_dir;
     let platform_dir = match data_root.file_name().and_then(|name| name.to_str()) {
         Some("data") => data_root

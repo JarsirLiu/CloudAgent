@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     match args.get(1).map(String::as_str) {
         Some("console") => {
             let workspace_root = std::env::current_dir()?;
-            let mut config = AgentConfig::load(workspace_root)?;
+            let mut config = AgentConfig::load_runtime(workspace_root)?;
             apply_data_dir_override(&mut config, &args);
             if let Ok(Some(settings)) = load_cli_settings(&config.runtime.conversation_store_dir) {
                 config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;

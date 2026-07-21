@@ -7,7 +7,7 @@ use cli::terminal::apply_color_cli_preference;
 use config::AgentConfig;
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[tokio::main]
@@ -25,11 +25,7 @@ async fn main() -> Result<()> {
     apply_color_cli_preference(&args);
     ensure_user_config_exists()?;
     let workspace_root = std::env::current_dir()?;
-    let config = if config::release_mode_enabled() {
-        AgentConfig::load_user_only(workspace_root)?
-    } else {
-        AgentConfig::load(std::env::current_dir()?)?
-    };
+    let config = AgentConfig::load_runtime(workspace_root)?;
     let mut config = config;
     apply_data_dir_cli_override(&mut config, &args);
 
@@ -53,11 +49,12 @@ async fn main() -> Result<()> {
 }
 
 fn build_runtime(config: AgentConfig) -> Result<std::sync::Arc<agent_core::AgentHost>> {
+    let workspace_root = config.workspace_root.clone();
     let runtime = match build_agent_host(config) {
         Ok(runtime) => runtime,
         Err(err) => {
             if err.to_string().contains("missing LLM api key") {
-                let path = default_user_config_path()?;
+                let path = active_config_path(&workspace_root)?;
                 try_open_config_in_editor(&path);
                 bail!(
                     "missing LLM api key. please edit {} and set llm.api_key",
@@ -71,6 +68,9 @@ fn build_runtime(config: AgentConfig) -> Result<std::sync::Arc<agent_core::Agent
 }
 
 fn ensure_user_config_exists() -> Result<()> {
+    if !config::release_mode_enabled() {
+        return Ok(());
+    }
     let path = default_user_config_path()?;
     if path.exists() {
         return Ok(());
@@ -104,6 +104,13 @@ fn default_user_config_path() -> Result<PathBuf> {
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .ok_or_else(|| anyhow::anyhow!("cannot resolve HOME/USERPROFILE"))?;
     Ok(home.join(".cloudagent").join("config.toml"))
+}
+
+fn active_config_path(workspace_root: &Path) -> Result<PathBuf> {
+    if !config::release_mode_enabled() {
+        return Ok(workspace_root.join("configs").join("config.toml"));
+    }
+    default_user_config_path()
 }
 
 fn normalize_console_args(args: Vec<OsString>) -> Vec<OsString> {

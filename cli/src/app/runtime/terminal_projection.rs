@@ -13,7 +13,6 @@ use anyhow::Result;
 pub(crate) struct TerminalProjectionController {
     last_scrollback_revision: Option<u64>,
     last_scrollback_metrics: Option<TranscriptRenderMetrics>,
-    last_viewport_height: Option<u16>,
     last_scrollback_cells: Vec<HistoryCell>,
 }
 
@@ -21,7 +20,6 @@ impl TerminalProjectionController {
     pub(crate) fn reset(&mut self) {
         self.last_scrollback_revision = None;
         self.last_scrollback_metrics = None;
-        self.last_viewport_height = None;
         self.last_scrollback_cells.clear();
     }
 
@@ -46,13 +44,12 @@ impl TerminalProjectionController {
         &mut self,
         app: &mut TuiApp,
         render_metrics: TranscriptRenderMetrics,
-        viewport_height: u16,
+        _viewport_height: u16,
     ) -> Option<HistoryReplayBatch> {
         let snapshot = app.transcript_owner.scrollback_snapshot();
         let revision = snapshot.revision;
         if self.last_scrollback_revision == Some(revision)
             && self.last_scrollback_metrics == Some(render_metrics)
-            && self.last_viewport_height == Some(viewport_height)
         {
             return None;
         }
@@ -60,7 +57,6 @@ impl TerminalProjectionController {
         let cells = snapshot.cells;
         let update = scrollback_diff(&self.last_scrollback_cells, &cells);
         let full_replay = self.last_scrollback_metrics != Some(render_metrics)
-            || self.last_viewport_height != Some(viewport_height)
             || matches!(update, ScrollbackDiff::Replay);
         let update_cells = match update {
             ScrollbackDiff::None if full_replay => cells.clone(),
@@ -71,7 +67,6 @@ impl TerminalProjectionController {
 
         self.last_scrollback_revision = Some(revision);
         self.last_scrollback_metrics = Some(render_metrics);
-        self.last_viewport_height = Some(viewport_height);
         self.last_scrollback_cells = cells;
 
         let previous_cell = match update {

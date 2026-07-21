@@ -54,7 +54,13 @@ pub(crate) async fn handle_workspace_input(
                 );
                 return Ok(false);
             }
-            save_user_llm_settings(&api_key, &base_url, &model, ReasoningEffort::Medium)?;
+            save_user_llm_settings(
+                &app.workspace_root,
+                &api_key,
+                &base_url,
+                &model,
+                ReasoningEffort::Medium,
+            )?;
             app.model_catalog.reset().await;
             app.model_catalog
                 .spawn_prewarm(base_url.clone(), api_key.clone());
@@ -70,7 +76,7 @@ pub(crate) async fn handle_workspace_input(
             show_local_notice(
                 app,
                 crate::state::NoticeLevel::Info,
-                "Saved API Key / Base URL / Model to ~/.cloudagent/config.toml.",
+                "Saved API Key / Base URL / Model to the active configuration file.",
             );
             Ok(false)
         }
@@ -92,7 +98,13 @@ pub(crate) async fn handle_workspace_input(
                 }
             };
             let cfg = UserLlmSettings::load(&app.workspace_root)?;
-            save_user_llm_settings(&cfg.api_key, &cfg.base_url, &cfg.model, effort)?;
+            save_user_llm_settings(
+                &app.workspace_root,
+                &cfg.api_key,
+                &cfg.base_url,
+                &cfg.model,
+                effort,
+            )?;
             if let Err(err) =
                 client.send_command(agent_protocol::AppClientCommand::ReloadLlmConfig {
                     api_key: cfg.api_key.clone(),
@@ -148,7 +160,7 @@ pub(crate) async fn handle_workspace_input(
 
             let mut cfg = UserLlmSettings::load(&app.workspace_root)?;
             cfg.model = trimmed.to_string();
-            cfg.save()?;
+            cfg.save(&app.workspace_root)?;
             if let Err(err) =
                 client.send_command(agent_protocol::AppClientCommand::ReloadLlmConfig {
                     api_key: cfg.api_key.clone(),

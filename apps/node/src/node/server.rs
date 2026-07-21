@@ -112,7 +112,7 @@ pub(crate) async fn run_resident_node(args: &[OsString]) -> Result<()> {
 }
 
 fn load_node_skill_runtime(workspace_root: &Path) -> SkillRuntime {
-    match config::AgentConfig::load_user_only(workspace_root.to_path_buf()) {
+    match config::AgentConfig::load_runtime(workspace_root.to_path_buf()) {
         Ok(config) => SkillRuntime::new(
             config.runtime.skills_enabled,
             config.runtime.skill_roots.clone(),

@@ -33,7 +33,7 @@ struct GatewayRuntime {
 impl GatewayRuntime {
     fn new(_config: GatewayConfig, adapter: Arc<dyn PlatformAdapter>) -> Result<Self> {
         let workspace_root = env::current_dir()?;
-        let agent_config = AgentConfig::load(workspace_root)?;
+        let agent_config = AgentConfig::load_runtime(workspace_root)?;
         let agent_host = build_agent_host(agent_config)?;
         Ok(Self {
             adapter,

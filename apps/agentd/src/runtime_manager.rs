@@ -107,7 +107,7 @@ impl RuntimeCacheKey {
 }
 
 fn build_runtime(workspace_root: &Path, data_root_dir: Option<&Path>) -> Result<Arc<AgentHost>> {
-    let mut config = AgentConfig::load(workspace_root.to_path_buf())?;
+    let mut config = AgentConfig::load_runtime(workspace_root.to_path_buf())?;
     apply_data_dir_override(&mut config, data_root_dir);
     if let Ok(Some(settings)) = load_cli_settings(&config.runtime.conversation_store_dir) {
         config.cli.pre_llm_filter_enabled = settings.pre_llm_filter_enabled;

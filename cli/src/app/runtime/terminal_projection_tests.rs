@@ -26,7 +26,7 @@ fn empty_committed_cells_do_not_emit_scrollback_update() {
 }
 
 #[test]
-fn viewport_height_change_forces_full_replay_even_when_scrollback_is_unchanged() {
+fn viewport_height_change_does_not_replay_unchanged_scrollback() {
     let mut app = crate::app::TuiApp::new(
         "default".to_string(),
         "test",
@@ -59,6 +59,41 @@ fn viewport_height_change_forces_full_replay_even_when_scrollback_is_unchanged()
             left_padding: 4,
         },
         14,
+    );
+    assert!(second.is_none());
+}
+
+#[test]
+fn render_metrics_change_still_forces_full_replay() {
+    let mut app = crate::app::TuiApp::new(
+        "default".to_string(),
+        "test",
+        std::path::PathBuf::from("D:\\learn\\gifti\\cloudagent"),
+        std::path::PathBuf::from("D:\\learn\\gifti\\cloudagent\\.test-store"),
+        false,
+        "ReadOnly".to_string(),
+    );
+    let mut projection = TerminalProjectionController::default();
+    app.transcript_owner
+        .push_committed_cell(HistoryCell::user("hello"));
+
+    let first = projection.prepare_history_update(
+        &mut app,
+        crate::ui::chat_surface::TranscriptRenderMetrics {
+            width: 80,
+            left_padding: 4,
+        },
+        10,
+    );
+    assert!(first.is_some());
+
+    let second = projection.prepare_history_update(
+        &mut app,
+        crate::ui::chat_surface::TranscriptRenderMetrics {
+            width: 60,
+            left_padding: 4,
+        },
+        10,
     );
     assert!(matches!(
         second.map(|batch| batch.mode),
