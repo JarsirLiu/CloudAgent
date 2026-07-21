@@ -56,7 +56,8 @@ fn completion_popup_is_an_overlay_and_does_not_expand_input_pane_height() {
         .popup_area
         .expect("completion popup should render");
     assert_eq!(snapshot.layout.composer_area.height, 1);
-    assert_eq!(popup_area.bottom(), snapshot.layout.input_area.y);
+    assert_eq!(popup_area.y, snapshot.layout.input_area.y);
+    assert!(popup_area.bottom() <= snapshot.layout.input_area.bottom());
 }
 
 #[test]
@@ -83,7 +84,8 @@ fn config_panel_popup_renders_above_input_pane() {
         .popup_area
         .expect("config panel should render as popup");
 
-    assert_eq!(popup_area.bottom(), snapshot.layout.input_area.y);
+    assert_eq!(popup_area.y, snapshot.layout.input_area.y);
+    assert!(popup_area.bottom() <= snapshot.layout.input_area.bottom());
 }
 
 #[test]
@@ -115,7 +117,8 @@ fn session_picker_renders_above_input_pane() {
         .popup_area
         .expect("session picker should render as popup");
 
-    assert_eq!(popup_area.bottom(), snapshot.layout.input_area.y);
+    assert_eq!(popup_area.y, snapshot.layout.input_area.y);
+    assert!(popup_area.bottom() <= snapshot.layout.input_area.bottom());
 }
 
 #[test]
@@ -141,7 +144,8 @@ fn model_picker_renders_above_input_pane() {
         .popup_area
         .expect("model picker should render as popup");
 
-    assert_eq!(popup_area.bottom(), snapshot.layout.input_area.y);
+    assert_eq!(popup_area.y, snapshot.layout.input_area.y);
+    assert!(popup_area.bottom() <= snapshot.layout.input_area.bottom());
 }
 
 #[test]

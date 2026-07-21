@@ -176,14 +176,14 @@ flush
 - `cli/src/ui/bottom_pane/input_pane/layout.rs`
 - `cli/src/ui/bottom_pane/input_pane/render.rs`
 
-输入区本体包含状态行、composer、提示行和边框。completion、配置、会话、模型等非全屏 view 的 popup 不属于输入区本体，而是锚定在输入框上方的 overlay；它只改变绘制层，不改变 bottom pane 的 desired height。
+输入区本体包含状态行、composer、提示行和边框。completion、配置、会话、模型等非全屏 view 的 popup 不属于输入区本体，而是绘制在稳定 input pane buffer 内的 overlay；它只改变绘制层，不改变 bottom pane 的 desired height。由于当前终端 buffer 只覆盖底部 viewport，popup 不能使用物理屏幕上方的绝对坐标；空间不足时必须在 input pane 内裁剪。
 
 因此：
 
 ```text
 输入 /
     -> completion_lines 非空
-    -> 计算输入框上方 popup_area
+    -> 计算 input pane 内的 popup_area
     -> 清理并绘制 overlay
     -> bottom pane desired_height 不变
     -> viewport_height 不变
@@ -423,7 +423,7 @@ if revision_unchanged && metrics_unchanged && cells_unchanged {
 要求：
 
 1. `desired_height` 只返回输入框本体高度。
-2. 非全屏 popup 使用输入框上方的 `popup_area`，并在绘制前清理该矩形。
+2. 非全屏 popup 使用稳定 input pane 内的 `popup_area`，并在绘制前清理该矩形；不得把 popup 的 `y` 坐标算到 viewport buffer 之外。
 3. popup 绘制顺序晚于 transcript，因此流式输出可以继续更新；被 popup 覆盖的区域属于正常 overlay 视觉层，不参与 transcript 状态。
 4. popup 关闭后由下一帧重新绘制 transcript，不修改 `TranscriptScroll` 的跟随状态。
 

@@ -28,12 +28,15 @@ pub(super) fn compute_input_layout(
         height: input_height.min(area.height),
         ..area
     };
+    // The input pane is rendered into the terminal viewport buffer, whose origin may be
+    // below row zero. Keep the overlay inside that buffer instead of positioning it in the
+    // physical screen area above the viewport.
     let popup_area = popup_height.and_then(|requested_height| {
-        let popup_height = requested_height.min(area.y);
+        let popup_height = requested_height.min(input_area.height);
         (popup_height > 0).then_some(Rect {
-            x: area.x,
-            y: area.y.saturating_sub(popup_height),
-            width: area.width,
+            x: input_area.x,
+            y: input_area.y,
+            width: input_area.width,
             height: popup_height,
         })
     });
